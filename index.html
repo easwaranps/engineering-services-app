@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Engineering Services App</title>
+    <meta charset="utf-8">
+
+    <!-- Tailwind (OK for testing) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Google Identity Services -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+
+    <!-- Google API client -->
+    <script src="https://apis.google.com/js/api.js"></script>
+</head>
+
+<body class="bg-gray-100 min-h-screen flex items-center justify-center">
+
+<div id="app" class="text-center"></div>
+
+<script>
+const CLIENT_ID = "784901480574-21mmgrs54f5rguq19gkvp848l5tm1mhi.apps.googleusercontent.com";
+
+let tokenClient;
+let accessToken = null;
+
+// Load GAPI
+function gapiLoaded() {
+    gapi.load("client", async () => {
+        await gapi.client.init({
+            discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"],
+        });
+    });
+}
+
+// GIS callback after login
+function handleCredentialResponse(response) {
+    console.log("Login success");
+
+    document.getElementById("app").innerHTML = `
+        <div class="bg-white p-8 rounded-xl shadow-lg">
+            <h2 class="text-2xl font-bold text-green-600 mb-4">
+                ✅ Login Successful
+            </h2>
+            <button onclick="requestDriveAccess()"
+                class="bg-blue-600 text-white px-6 py-3 rounded-lg">
+                Connect Google Drive
+            </button>
+        </div>
+    `;
+}
+
+// Ask Drive permission
+function requestDriveAccess() {
+    tokenClient.requestAccessToken();
+}
+
+// After Drive permission
+function handleTokenResponse(resp) {
+    accessToken = resp.access_token;
+    gapi.client.setToken({ access_token: accessToken });
+
+    document.getElementById("app").innerHTML = `
+        <div class="bg-white p-8 rounded-xl shadow-lg">
+            <h2 class="text-2xl font-bold text-green-600 mb-4">
+                🎉 Google Drive Connected!
+            </h2>
+            <button onclick="createFolder()"
+                class="bg-purple-600 text-white px-6 py-3 rounded-lg">
+                Create App Folder
+            </button>
+        </div>
+    `;
+}
+
+// Create Drive folder test
+async function createFolder() {
+    const res = await gapi.client.drive.files.create({
+        resource: {
+            name: "EngineeringServicesApp",
+            mimeType: "application/vnd.google-apps.folder"
+        }
+    });
+
+    alert("Folder created in Drive!");
+}
+
+// Initialize login
+window.onload = () => {
+    gapiLoaded();
+
+    tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: CLIENT_ID,
+        scope: "https://www.googleapis.com/auth/drive.file",
+        callback: handleTokenResponse,
+    });
+
+    google.accounts.id.initialize({
+        client_id: CLIENT_ID,
+        callback: handleCredentialResponse
+    });
+
+    google.accounts.id.renderButton(
+        document.getElementById("app"),
+        { theme: "outline", size: "large" }
+    );
+};
+</script>
+
+</body>
+</html>
