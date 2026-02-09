@@ -10,160 +10,214 @@
 <script src="https://apis.google.com/js/api.js"></script>
 </head>
 
-<body class="bg-gray-100 min-h-screen">
+<body class="bg-gray-100">
 
 <div id="app"></div>
 
 <script>
-const CLIENT_ID = "807569986194-feca4li2k0t96tbbutlpu2ko64obe95k.apps.googleusercontent.com";
+/* ========== CONFIG ========== */
+
+const CLIENT_ID = "784901480574-689pm46oisagmiuffvlh7tjuiklc8cst.apps.googleusercontent.com";
 const SCOPES = "https://www.googleapis.com/auth/drive.file";
 const DISCOVERY_DOCS = ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"];
 const APP_FOLDER_NAME = "EngineeringServicesApp";
 
-let tokenClient;
-let accessToken = null;
-let appFolderId = null;
-let transactions = [];
+/* ========== GLOBALS ========== */
 
-/* ---------- INIT ---------- */
+let tokenClient;
+let accessToken=null;
+let appFolderId=null;
+
+let transactions=[];
+let parties=[];
+
+/* ========== INIT ========== */
 
 function gapiLoaded(){
   gapi.load("client", async ()=>{
-    await gapi.client.init({ discoveryDocs: DISCOVERY_DOCS });
+    await gapi.client.init({discoveryDocs:DISCOVERY_DOCS});
     renderLogin();
   });
 }
 
 function gisLoaded(){
   tokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: CLIENT_ID,
-    scope: SCOPES,
+    client_id:CLIENT_ID,
+    scope:SCOPES,
     callback:(resp)=>{
-      accessToken = resp.access_token;
+      accessToken=resp.access_token;
       gapi.client.setToken({access_token:accessToken});
+      loadAllData();
       renderApp();
     }
   });
 }
 
-window.onload = ()=>{
+window.onload=()=>{
   gapiLoaded();
   gisLoaded();
 };
 
-/* ---------- LOGIN UI ---------- */
+/* ========== LOGIN UI ========== */
 
 function renderLogin(){
-  document.getElementById("app").innerHTML = `
-  <div class="flex justify-center items-center h-screen">
+  document.getElementById("app").innerHTML=`
+  <div class="h-screen flex justify-center items-center">
     <button onclick="tokenClient.requestAccessToken()"
-      class="px-6 py-3 bg-blue-600 text-white rounded">
-      Sign in with Google
+    class="px-6 py-3 bg-blue-600 text-white rounded-xl">
+    Sign in with Google
     </button>
   </div>`;
 }
+
+/* ========== APP UI ========== */
 
 function renderApp(){
-  document.getElementById("app").innerHTML = `
-  <div class="p-10">
-    <h1 class="text-2xl mb-4">Engineering App</h1>
-    <button onclick="testSave()"
-      class="px-6 py-3 bg-green-600 text-white rounded">
-      Test Save to Drive
-    </button>
-  </div>`;
+document.getElementById("app").innerHTML=`
+<div class="p-6">
+
+<h1 class="text-2xl font-bold mb-4">Engineering Services</h1>
+
+<div class="flex gap-3 mb-6">
+<button onclick="newTransaction()" class="bg-indigo-600 text-white px-4 py-2 rounded">+ Transaction</button>
+<button onclick="newParty()" class="bg-purple-600 text-white px-4 py-2 rounded">+ Party</button>
+<button onclick="saveAll()" class="bg-green-600 text-white px-4 py-2 rounded">Save All</button>
+</div>
+
+<h2 class="text-xl font-semibold">Transactions</h2>
+<div id="txnList"></div>
+
+<h2 class="text-xl font-semibold mt-6">Parties</h2>
+<div id="partyList"></div>
+
+</div>`;
+refreshLists();
 }
 
-/* ---------- DRIVE ---------- */
+function refreshLists(){
+document.getElementById("txnList").innerHTML =
+transactions.map(t=>`<div class="bg-white p-2 my-1 shadow">${t}</div>`).join("");
+
+document.getElementById("partyList").innerHTML =
+parties.map(p=>`<div class="bg-white p-2 my-1 shadow">${p}</div>`).join("");
+}
+
+/* ========== SIMPLE INPUTS ========== */
+
+function newTransaction(){
+const val=prompt("Enter Transaction Name");
+if(val){transactions.push(val);refreshLists();}
+}
+
+function newParty(){
+const val=prompt("Enter Party Name");
+if(val){parties.push(val);refreshLists();}
+}
+
+/* ========== DRIVE FUNCTIONS ========== */
 
 async function getOrCreateFolder(){
-  if(appFolderId) return appFolderId;
+if(appFolderId) return appFolderId;
 
-  const res = await gapi.client.drive.files.list({
-    q:`name='${APP_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
-    fields:"files(id)"
-  });
+const res=await gapi.client.drive.files.list({
+q:`name='${APP_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+fields:"files(id)"
+});
 
-  if(res.result.files.length){
-    appFolderId = res.result.files[0].id;
-    return appFolderId;
-  }
-
-  const folder = await gapi.client.drive.files.create({
-    resource:{name:APP_FOLDER_NAME,mimeType:"application/vnd.google-apps.folder"},
-    fields:"id"
-  });
-
-  appFolderId = folder.result.id;
-  return appFolderId;
+if(res.result.files.length){
+appFolderId=res.result.files[0].id;
+return appFolderId;
 }
 
-async function saveFileToDrive(fileName,data){
+const folder=await gapi.client.drive.files.create({
+resource:{name:APP_FOLDER_NAME,mimeType:"application/vnd.google-apps.folder"},
+fields:"id"
+});
 
-  const folderId = await getOrCreateFolder();
-
-  const search = await gapi.client.drive.files.list({
-    q:`name='${fileName}' and '${folderId}' in parents and trashed=false`,
-    fields:"files(id)"
-  });
-
-  const boundary="foo_bar";
-  const delimiter=`\r\n--${boundary}\r\n`;
-  const close=`\r\n--${boundary}--`;
-
-  let metadata={name:fileName,mimeType:"application/json"};
-
-  /* ---------- UPDATE ---------- */
-  if(search.result.files.length){
-
-    const fileId=search.result.files[0].id;
-
-    const body =
-      delimiter+"Content-Type: application/json\r\n\r\n"+
-      JSON.stringify(metadata)+
-      delimiter+"Content-Type: application/json\r\n\r\n"+
-      JSON.stringify(data)+
-      close;
-
-    await gapi.client.request({
-      path:`/upload/drive/v3/files/${fileId}`,
-      method:"PATCH",
-      params:{uploadType:"multipart"},
-      headers:{'Content-Type':`multipart/related; boundary=${boundary}`},
-      body:body
-    });
-
-  } else {
-
-    /* ---------- CREATE ---------- */
-    metadata.parents=[folderId];
-
-    const body =
-      delimiter+"Content-Type: application/json\r\n\r\n"+
-      JSON.stringify(metadata)+
-      delimiter+"Content-Type: application/json\r\n\r\n"+
-      JSON.stringify(data)+
-      close;
-
-    await gapi.client.request({
-      path:"/upload/drive/v3/files",
-      method:"POST",
-      params:{uploadType:"multipart"},
-      headers:{'Content-Type':`multipart/related; boundary=${boundary}`},
-      body:body
-    });
-  }
-
-  alert("Saved to Drive!");
+appFolderId=folder.result.id;
+return appFolderId;
 }
 
-/* ---------- TEST ---------- */
+async function uploadFile(name,data){
 
-async function testSave(){
-  const sample={time:new Date(),note:"Test OK"};
-  await saveFileToDrive("transactions.json",sample);
+const folderId=await getOrCreateFolder();
+
+const search=await gapi.client.drive.files.list({
+q:`name='${name}' and '${folderId}' in parents and trashed=false`,
+fields:"files(id)"
+});
+
+const boundary="foo_bar";
+const delimiter=`\r\n--${boundary}\r\n`;
+const close=`\r\n--${boundary}--`;
+
+let metadata={name:name,mimeType:"application/json"};
+
+let body =
+delimiter+"Content-Type: application/json\r\n\r\n"+
+JSON.stringify(metadata)+
+delimiter+"Content-Type: application/json\r\n\r\n"+
+JSON.stringify(data)+
+close;
+
+if(search.result.files.length){
+await gapi.client.request({
+path:`/upload/drive/v3/files/${search.result.files[0].id}`,
+method:"PATCH",
+params:{uploadType:"multipart"},
+headers:{'Content-Type':`multipart/related; boundary=${boundary}`},
+body:body
+});
+}else{
+metadata.parents=[folderId];
+
+body =
+delimiter+"Content-Type: application/json\r\n\r\n"+
+JSON.stringify(metadata)+
+delimiter+"Content-Type: application/json\r\n\r\n"+
+JSON.stringify(data)+
+close;
+
+await gapi.client.request({
+path:"/upload/drive/v3/files",
+method:"POST",
+params:{uploadType:"multipart"},
+headers:{'Content-Type':`multipart/related; boundary=${boundary}`},
+body:body
+});
 }
+}
+
+/* ========== SAVE & LOAD ========== */
+
+async function saveAll(){
+await uploadFile("transactions.json",transactions);
+await uploadFile("parties.json",parties);
+alert("Saved to Drive!");
+}
+
+async function loadAllData(){
+transactions = await loadFile("transactions.json") || [];
+parties = await loadFile("parties.json") || [];
+}
+
+async function loadFile(name){
+const folderId=await getOrCreateFolder();
+const res=await gapi.client.drive.files.list({
+q:`name='${name}' and '${folderId}' in parents and trashed=false`,
+fields:"files(id)"
+});
+
+if(!res.result.files.length) return null;
+
+const file=await gapi.client.drive.files.get({
+fileId:res.result.files[0].id,
+alt:"media"
+});
+
+return file.result;
+}
+
 </script>
-
 </body>
 </html>
