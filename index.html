@@ -162,9 +162,9 @@
     </div>
 
     <script>
-       
+        // ===== CONFIGURATION - REPLACE WITH YOUR CREDENTIALS =====
         const CLIENT_ID = '807569986194-feca4li2k0t96tbbutlpu2ko64obe95k.apps.googleusercontent.com';
-        
+        // ==========================================================
 
         const DISCOVERY_DOCS = ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"];
         const SCOPES = 'https://www.googleapis.com/auth/drive.file';
@@ -287,7 +287,9 @@
                         path: `/upload/drive/v3/files/${fileId}`,
                         method: 'PATCH',
                         params: { uploadType: 'multipart' },
-                        headers: { 'Content-Type': 'multipart/related; boundary="' + boundary + '"' },
+                       headers: {
+  'Content-Type': 'multipart/related; boundary=' + boundary
+},
                         body: multipartRequestBody
                     });
                 } else {
@@ -295,7 +297,10 @@
                         path: '/upload/drive/v3/files',
                         method: 'POST',
                         params: { uploadType: 'multipart' },
-                        headers: { 'Content-Type': 'multipart/related; boundary="' + boundary + '"' },
+                        headers: { 
+  'Content-Type': 'multipart/related; boundary=' + boundary 
+},
+,
                         body: multipartRequestBody
                     });
                 }
@@ -351,13 +356,14 @@
         }
 
         async function saveData(type, data) {
-            try {
-                await saveFileToDrive(`${type}.json`, data);
-            } catch (error) {
-                console.error(`Error saving ${type}:`, error);
-                alert(`Failed to save ${type}. Please try again.`);
-            }
-        }
+    try {
+        await saveFileToDrive(`${type}.json`, data);
+        console.log("Saved OK");
+    } catch (error) {
+        console.error("REAL DRIVE ERROR:", error);
+        alert("Save failed. Press F12 → Console.");
+    }
+}
 
         // Transaction Functions
         function generateTxnID(category) {
