@@ -219,5 +219,158 @@ return file.result;
 }
 
 </script>
+  <script>
+const CLIENT_ID = "807569986194-feca4li2k0t96tbbutlpu2ko64obe95k.apps.googleusercontent.com";
+
+const DISCOVERY_DOCS = [
+  "https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"
+];
+
+const SCOPES = "https://www.googleapis.com/auth/drive.file";
+const APP_FOLDER_NAME = "EngineeringServicesApp";
+
+let tokenClient;
+let accessToken = null;
+let appFolderId = null;
+
+/* ---------- GAPI LOAD ---------- */
+
+function gapiLoaded() {
+  gapi.load("client", async () => {
+    await gapi.client.init({
+      discoveryDocs: DISCOVERY_DOCS
+    });
+
+    console.log("GAPI ready");
+  });
+}
+
+/* ---------- LOGIN ---------- */
+
+function handleSignIn() {
+  tokenClient.requestAccessToken();
+}
+
+function handleSignOut() {
+  if (accessToken) {
+    google.accounts.oauth2.revoke(accessToken);
+  }
+
+  accessToken = null;
+  gapi.client.setToken(null);
+
+  renderLoginScreen();
+}
+
+/* ---------- TOKEN ---------- */
+
+function handleTokenResponse(resp) {
+  accessToken = resp.access_token;
+
+  gapi.client.setToken({
+    access_token: accessToken
+  });
+
+  console.log("Drive connected");
+
+  loadDataFromDrive();
+}
+
+/* ---------- INIT ---------- */
+
+window.onload = () => {
+  gapiLoaded();
+
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID,
+    scope: SCOPES,
+    callback: handleTokenResponse
+  });
+};
+
+/* ---------- DRIVE ---------- */
+
+async function getOrCreateAppFolder() {
+  if (appFolderId) return appFolderId;
+
+  const res = await gapi.client.drive.files.list({
+    q: `name='${APP_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+    fields: "files(id,name)"
+  });
+
+  if (res.result.files.length > 0) {
+    appFolderId = res.result.files[0].id;
+    return appFolderId;
+  }
+
+  const folder = await gapi.client.drive.files.create({
+    resource: {
+      name: APP_FOLDER_NAME,
+      mimeType: "application/vnd.google-apps.folder"
+    },
+    fields: "id"
+  });
+
+  appFolderId = folder.result.id;
+  return appFolderId;
+}
+
+/* ---------- SAVE ---------- */
+
+async function saveFileToDrive(fileName, content) {
+  const folderId = await getOrCreateAppFolder();
+
+  const boundary = "foo_bar_baz";
+  const metadata = {
+    name: fileName,
+    parents: [folderId],
+    mimeType: "application/json"
+  };
+
+  const body =
+    `--${boundary}\r\n` +
+    "Content-Type: application/json\r\n\r\n" +
+    JSON.stringify(metadata) +
+    `\r\n--${boundary}\r\n` +
+    "Content-Type: application/json\r\n\r\n" +
+    JSON.stringify(content) +
+    `\r\n--${boundary}--`;
+
+  await gapi.client.request({
+    path: "/upload/drive/v3/files",
+    method: "POST",
+    params: { uploadType: "multipart" },
+    headers: {
+      "Content-Type": `multipart/related; boundary=${boundary}`
+    },
+    body: body
+  });
+
+  console.log("Saved:", fileName);
+}
+
+/* ---------- LOAD ---------- */
+
+async function loadFileFromDrive(fileName) {
+  const folderId = await getOrCreateAppFolder();
+
+  const res = await gapi.client.drive.files.list({
+    q: `name='${fileName}' and '${folderId}' in parents and trashed=false`,
+    fields: "files(id)"
+  });
+
+  if (!res.result.files.length) return null;
+
+  const fileId = res.result.files[0].id;
+
+  const file = await gapi.client.drive.files.get({
+    fileId: fileId,
+    alt: "media"
+  });
+
+  return file.result;
+}
+</script>
+
 </body>
 </html>
