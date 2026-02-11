@@ -548,8 +548,8 @@
         const DISCOVERY_DOCS = [
             "https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"
         ];
-        const SCOPES = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets';
-        const APP_FOLDER_NAME = 'EngineeringServicesApp';
+        const SCOPES = 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/spreadsheets';
+        const APP_FOLDER_NAME = 'Engineering Service App';  // Must match exact folder name on Drive
 
         // Currency symbols
         const CURRENCY_SYMBOLS = {
@@ -651,7 +651,7 @@
         }
 
         function handleSignIn() {
-            tokenClient.requestAccessToken({ prompt: 'consent' });
+            tokenClient.requestAccessToken({ prompt: 'consent', enable_granular_consent: false });
         }
 
         function handleSignOut() {
@@ -669,6 +669,7 @@
             parties = [];
             settings = {};
             expenses = [];
+            appFolderId = null;   // Reset so next login re-searches Drive
             
             renderLoginScreen();
         }
@@ -677,167 +678,194 @@
         async function getOrCreateAppFolder() {
             if (appFolderId) return appFolderId;
 
-            try {
-                const response = await gapi.client.drive.files.list({
-                    q: `name='${APP_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
-                    fields: 'files(id, name)',
-                    spaces: 'drive'
-                });
+            // All known folder name variants (handles renames / typos)
+            const namesToTry = [
+                'Engineering Service App',
+                'Engineering Services App',
+                'EngineeringServicesApp',
+                APP_FOLDER_NAME
+            ];
 
-                if (response.result.files.length > 0) {
-                    appFolderId = response.result.files[0].id;
-                    return appFolderId;
+            try {
+                for (const folderName of namesToTry) {
+                    const resp = await fetch(
+                        `https://www.googleapis.com/drive/v3/files?` +
+                        `q=${encodeURIComponent(`name='${folderName}' and mimeType='application/vnd.google-apps.folder' and trashed=false`)}` +
+                        `&fields=files(id,name)&spaces=drive&orderBy=createdTime`,
+                        { headers: { 'Authorization': `Bearer ${accessToken}` } }
+                    );
+                    if (resp.ok) {
+                        const data = await resp.json();
+                        if (data.files && data.files.length > 0) {
+                            appFolderId = data.files[0].id;
+                            console.log('✅ Found folder "' + data.files[0].name + '" id:', appFolderId);
+                            return appFolderId;
+                        }
+                    }
                 }
 
-                const folderMetadata = {
-                    name: APP_FOLDER_NAME,
-                    mimeType: 'application/vnd.google-apps.folder'
-                };
-
-                const folder = await gapi.client.drive.files.create({
-                    resource: folderMetadata,
-                    fields: 'id'
-                });
-
-                appFolderId = folder.result.id;
+                // Not found — create fresh
+                console.log('Creating new folder:', APP_FOLDER_NAME);
+                const createResp = await fetch(
+                    'https://www.googleapis.com/drive/v3/files',
+                    {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name: APP_FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder' })
+                    }
+                );
+                const folder = await createResp.json();
+                appFolderId = folder.id;
+                console.log('✅ Created folder:', appFolderId);
                 return appFolderId;
+
             } catch (error) {
-                console.error('Error with folder:', error);
+                console.error('❌ Folder error:', error);
                 throw error;
             }
         }
 
-        async function saveFileToDrive(fileName, content) {
-            try {
-                console.log(`Attempting to save ${fileName}...`);
-                console.log('Access token present:', !!accessToken);
-                
-                const folderId = await getOrCreateAppFolder();
-                console.log('Folder ID:', folderId);
-                
-                const searchResponse = await gapi.client.drive.files.list({
-                    q: `name='${fileName}' and '${folderId}' in parents and trashed=false`,
-                    fields: 'files(id)',
-                    spaces: 'drive'
-                });
+        async function saveFileToDrive(fileName, fileData) {
+            const folderId = await getOrCreateAppFolder();
+            const jsonStr  = JSON.stringify(fileData);
+            const blob     = new Blob([jsonStr], { type: 'application/json' });
+            const authHdr  = { 'Authorization': `Bearer ${accessToken}` };
 
-                console.log('Existing files found:', searchResponse.result.files.length);
+            // Check if file already exists in folder
+            const q = encodeURIComponent(`name='${fileName}' and '${folderId}' in parents and trashed=false`);
+            const listRes = await fetch(
+                `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)&spaces=drive`,
+                { headers: authHdr }
+            );
+            const listData = await listRes.json();
+            const existingId = listData.files && listData.files.length > 0 ? listData.files[0].id : null;
 
-                const fileContent = JSON.stringify(content);
-                const blob = new Blob([fileContent], { type: 'application/json' });
+            const form = new FormData();
+            form.append('metadata', new Blob(
+                [JSON.stringify(existingId ? { name: fileName } : { name: fileName, parents: [folderId] })],
+                { type: 'application/json' }
+            ));
+            form.append('file', blob);
 
-                let result;
-                if (searchResponse.result.files.length > 0) {
-                    const fileId = searchResponse.result.files[0].id;
-                    console.log('Updating existing file:', fileId);
-                    
-                    const fileMetadata = {
-                        name: fileName
-                    };
+            const uploadRes = existingId
+                ? await fetch(`https://www.googleapis.com/upload/drive/v3/files/${existingId}?uploadType=multipart`,
+                    { method: 'PATCH', headers: authHdr, body: form })
+                : await fetch(`https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`,
+                    { method: 'POST', headers: authHdr, body: form });
 
-                    const form = new FormData();
-                    form.append('metadata', new Blob([JSON.stringify(fileMetadata)], { type: 'application/json' }));
-                    form.append('file', blob);
-
-                    result = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`, {
-                        method: 'PATCH',
-                        headers: {
-                            'Authorization': `Bearer ${accessToken}`
-                        },
-                        body: form
-                    });
-                } else {
-                    console.log('Creating new file');
-                    
-                    const fileMetadata = {
-                        name: fileName,
-                        parents: [folderId]
-                    };
-
-                    const form = new FormData();
-                    form.append('metadata', new Blob([JSON.stringify(fileMetadata)], { type: 'application/json' }));
-                    form.append('file', blob);
-
-                    result = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': `Bearer ${accessToken}`
-                        },
-                        body: form
-                    });
-                }
-
-                if (!result.ok) {
-                    const errorData = await result.json();
-                    console.error('Drive API error:', errorData);
-                    throw new Error(`Drive API error: ${errorData.error?.message || result.statusText}`);
-                }
-
-                const resultData = await result.json();
-                console.log('Save successful:', resultData);
-                return resultData;
-            } catch (error) {
-                console.error('Error saving to Drive:', error);
-                throw error;
+            if (!uploadRes.ok) {
+                const err = await uploadRes.json().catch(() => ({}));
+                throw new Error(`Drive save failed for ${fileName}: ${err.error?.message || uploadRes.statusText}`);
             }
+            const saved = await uploadRes.json();
+            console.log(`✅ Saved ${fileName} (${saved.id})`);
+            return saved;
         }
 
         async function loadFileFromDrive(fileName) {
             try {
                 const folderId = await getOrCreateAppFolder();
-                const response = await gapi.client.drive.files.list({
-                    q: `name='${fileName}' and '${folderId}' in parents and trashed=false`,
-                    fields: 'files(id)',
-                    spaces: 'drive'
-                });
 
-                if (response.result.files.length === 0) return null;
+                // Step 1: Find the file ID inside the app folder
+                const q = encodeURIComponent(
+                    `name='${fileName}' and '${folderId}' in parents and trashed=false`
+                );
+                const listRes = await fetch(
+                    `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime)&spaces=drive&orderBy=modifiedTime+desc`,
+                    { headers: { 'Authorization': `Bearer ${accessToken}` } }
+                );
+                if (!listRes.ok) {
+                    console.warn(`List failed for ${fileName}:`, listRes.status);
+                    return null;
+                }
+                const listData = await listRes.json();
+                if (!listData.files || listData.files.length === 0) {
+                    console.log(`${fileName} not found in folder — will be created on first save`);
+                    return null;
+                }
 
-                const fileId = response.result.files[0].id;
-                const fileContent = await gapi.client.drive.files.get({
-                    fileId: fileId,
-                    alt: 'media'
-                });
+                // Step 2: Download file content
+                const fileId = listData.files[0].id;
+                console.log(`📄 Downloading ${fileName} (${fileId})...`);
+                const dlRes = await fetch(
+                    `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+                    { headers: { 'Authorization': `Bearer ${accessToken}` } }
+                );
+                if (!dlRes.ok) {
+                    console.warn(`Download failed for ${fileName}:`, dlRes.status);
+                    return null;
+                }
+                const text = await dlRes.text();
+                if (!text || text.trim() === '') {
+                    console.warn(`${fileName} is empty`);
+                    return null;
+                }
+                const parsed = JSON.parse(text);
+                console.log(`✅ ${fileName} loaded`);
+                return parsed;
 
-                return fileContent.result;
             } catch (error) {
-                console.error('Error loading from Drive:', error);
+                console.error(`❌ Error loading ${fileName}:`, error);
                 return null;
             }
         }
 
         async function loadDataFromDrive() {
+            // Show loading indicator
+            const appEl = document.getElementById('app');
+            if (appEl) {
+                appEl.innerHTML = `<div class="min-h-screen flex items-center justify-center">
+                    <div class="text-center">
+                        <div class="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                        <p class="text-gray-600 font-medium">Loading your data from Drive...</p>
+                        <p class="text-gray-400 text-xs mt-1" id="loadStatus">Connecting to folder...</p>
+                    </div>
+                </div>`;
+            }
+
             try {
-                const [txnData, partyData, settingsData] = await Promise.all([
+                const setStatus = (msg) => {
+                    const el = document.getElementById('loadStatus');
+                    if (el) el.textContent = msg;
+                };
+
+                setStatus('Finding app folder...');
+                // Load all 4 files — each individually so one failure doesn't kill others
+                const [txnData, partyData, settingsData, expData] = await Promise.all([
                     loadFileFromDrive('transactions.json'),
                     loadFileFromDrive('parties.json'),
                     loadFileFromDrive('settings.json'),
                     loadFileFromDrive('expenses.json')
                 ]);
 
-                if (txnData) {
-                    transactions = Array.isArray(txnData) ? txnData : [];
-                    console.log('Loaded transactions:', transactions.length);
-                }
-                if (partyData) {
-                    parties = Array.isArray(partyData) ? partyData : [];
-                    console.log('Loaded parties:', parties.length);
-                }
-                if (settingsData) {
-                    settings = (typeof settingsData === 'object' && !Array.isArray(settingsData)) ? settingsData : {};
-                    console.log('Loaded settings:', settings);
-                    const expData = results[3];
-                    expenses = Array.isArray(expData) ? expData : [];
-                    console.log('Loaded expenses:', expenses.length);
-                }
+                setStatus('Processing data...');
+                transactions = Array.isArray(txnData)        ? txnData      : [];
+                parties      = Array.isArray(partyData)      ? partyData    : [];
+                settings     = (settingsData && typeof settingsData === 'object' && !Array.isArray(settingsData))
+                                ? settingsData : {};
+                expenses     = Array.isArray(expData)        ? expData      : [];
+
+                console.log('✅ Data loaded — transactions:', transactions.length,
+                    '| parties:', parties.length,
+                    '| settings keys:', Object.keys(settings).length,
+                    '| expenses:', expenses.length);
 
                 renderApp();
+
             } catch (error) {
-                console.error('Error loading data:', error);
-                transactions = [];
-                parties = [];
-                settings = {};
-                renderApp();
+                console.error('❌ Error loading data from Drive:', error);
+                const appEl2 = document.getElementById('app');
+                if (appEl2) {
+                    appEl2.innerHTML = `<div class="min-h-screen flex items-center justify-center p-8">
+                        <div class="bg-white rounded-2xl shadow-xl p-8 max-w-md text-center">
+                            <div class="text-5xl mb-4">⚠️</div>
+                            <h2 class="text-xl font-bold text-red-700 mb-2">Could not load your data</h2>
+                            <p class="text-gray-600 text-sm mb-1">${error.message || 'Drive connection failed.'}</p>
+                            <p class="text-gray-400 text-xs mb-6">Check your internet connection and try signing in again.</p>
+                            <button onclick="handleSignOut()" class="px-6 py-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 font-medium">↩ Sign Out &amp; Retry</button>
+                        </div>
+                    </div>`;
+                }
             }
         }
 
@@ -860,7 +888,7 @@
                     try {
                         await new Promise((resolve, reject) => {
                             tokenClient.requestAccessToken({
-                                prompt: '',
+                                prompt: 'none',
                                 callback: async (response) => {
                                     if (response.error) {
                                         reject(response.error);
@@ -1408,18 +1436,37 @@
                 if (!spreadsheetId) {
                     btn.textContent = 'Searching Drive...';
                     try {
-                        const q = encodeURIComponent("name='Engineering Services Data' and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false");
-                        const searchRes = await fetch(
-                            `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&spaces=drive`,
-                            { headers: { 'Authorization': `Bearer ${accessToken}` } }
-                        );
-                        if (searchRes.ok) {
-                            const found = await searchRes.json();
-                            if (found.files && found.files.length > 0) {
-                                spreadsheetId = found.files[0].id;
-                                settings.spreadsheetId = spreadsheetId;
-                                await saveData('settings', settings);
-                                console.log('Found existing spreadsheet:', spreadsheetId, found.files[0].name);
+                        // Search inside the app folder first, then anywhere in Drive
+                        const folderId = await getOrCreateAppFolder();
+                        const queries = [
+                            `name='Engineering Services Data' and '${folderId}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`,
+                            `name='Engineering Services Data' and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`
+                        ];
+                        for (const q of queries) {
+                            const searchRes = await fetch(
+                                `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)&spaces=drive&orderBy=modifiedTime+desc`,
+                                { headers: { 'Authorization': `Bearer ${accessToken}` } }
+                            );
+                            if (searchRes.ok) {
+                                const found = await searchRes.json();
+                                if (found.files && found.files.length > 0) {
+                                    spreadsheetId = found.files[0].id;
+                                    settings.spreadsheetId = spreadsheetId;
+                                    await saveData('settings', settings);
+                                    console.log('Found spreadsheet:', spreadsheetId, found.files[0].name);
+                                    // If found in root Drive (not in app folder), move it in
+                                    if (q.includes("in parents") === false) {
+                                        try {
+                                            const fid = await getOrCreateAppFolder();
+                                            await fetch(
+                                                `https://www.googleapis.com/drive/v3/files/${spreadsheetId}?addParents=${fid}&removeParents=root&fields=id`,
+                                                { method: 'PATCH', headers: { 'Authorization': `Bearer ${accessToken}` } }
+                                            );
+                                            console.log('Migrated spreadsheet into app folder');
+                                        } catch(me) { console.warn('Move skipped:', me); }
+                                    }
+                                    break;
+                                }
                             }
                         }
                     } catch (e) {
@@ -1448,17 +1495,14 @@
                     await saveData('settings', settings);
                     console.log('Created new spreadsheet:', spreadsheetId);
 
-                    // Move spreadsheet into app folder so it's easy to find in Drive
+                    // Move spreadsheet into app folder (remove from root, add to app folder)
                     try {
                         const folderId = await getOrCreateAppFolder();
                         await fetch(
-                            `https://www.googleapis.com/drive/v3/files/${spreadsheetId}?addParents=${folderId}&fields=id`,
-                            {
-                                method: 'PATCH',
-                                headers: { 'Authorization': `Bearer ${accessToken}` }
-                            }
+                            `https://www.googleapis.com/drive/v3/files/${spreadsheetId}?addParents=${folderId}&removeParents=root&fields=id,parents`,
+                            { method: 'PATCH', headers: { 'Authorization': `Bearer ${accessToken}` } }
                         );
-                        console.log('Moved spreadsheet into app folder:', folderId);
+                        console.log('Moved new spreadsheet into app folder:', folderId);
                     } catch (moveErr) {
                         console.warn('Could not move spreadsheet to app folder:', moveErr);
                     }
