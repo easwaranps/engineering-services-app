@@ -1119,7 +1119,7 @@
                 for (let p = 1; p <= totalPages; p++) {
                     doc.setPage(p);
                     doc.setFontSize(8);
-                    doc.setFont(undefined, 'italic');
+                    doc.setFont(undefined, 'italic');<br>
                     doc.text('Thank you for your business!', 105, 287, { align: 'center' });
                     doc.setFont(undefined, 'normal');
                     doc.text('Page ' + p + ' of ' + totalPages, 196, 287, { align: 'right' });
