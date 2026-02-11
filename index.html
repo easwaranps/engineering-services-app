@@ -39,6 +39,211 @@
 <body class="bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 min-h-screen">
     <div id="app"></div>
 
+
+    <!-- Expense Modal -->
+    <div id="expenseModal" class="modal">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] overflow-y-auto m-4">
+            <div class="bg-gradient-to-r from-orange-500 to-red-500 p-5 text-white sticky top-0 z-10">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-xl font-bold" id="expenseModalTitle">New Expense / Bill</h2>
+                    <button onclick="closeExpenseModal()" class="text-white hover:text-orange-200 text-2xl font-bold">✕</button>
+                </div>
+            </div>
+            <form id="expenseForm" onsubmit="saveExpense(event)" class="p-6">
+                <!-- Row 1: Voucher / Bill info -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Voucher No</label>
+                        <input type="text" id="expVoucherNo" placeholder="Auto / Manual" class="w-full px-3 py-2 border rounded-lg text-sm" />
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Supporting / Bill No</label>
+                        <input type="text" id="expBillNo" placeholder="Bill / Invoice No" class="w-full px-3 py-2 border rounded-lg text-sm" required/>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Bill Date <span class="text-red-500">*</span></label>
+                        <input type="date" id="expBillDate" class="w-full px-3 py-2 border rounded-lg text-sm" required/>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Company / Vendor Name <span class="text-red-500">*</span></label>
+                        <input type="text" id="expCompanyName" placeholder="Vendor / Supplier" class="w-full px-3 py-2 border rounded-lg text-sm" required/>
+                    </div>
+                </div>
+
+                <!-- Row 2: Description + Currency + Amounts -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                    <div class="md:col-span-2">
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Description <span class="text-red-500">*</span></label>
+                        <input type="text" id="expDescription" placeholder="Nature of expense" class="w-full px-3 py-2 border rounded-lg text-sm" required/>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Currency</label>
+                        <select id="expCurrency" class="w-full px-3 py-2 border rounded-lg text-sm" onchange="calcExpAmounts()">
+                            <option value="INR">INR</option>
+                            <option value="USD">USD</option>
+                            <option value="GBP">GBP</option>
+                            <option value="SGD">SGD</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Exchange Rate</label>
+                        <input type="number" id="expExchRate" value="1" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Bill Amount <span class="text-red-500">*</span></label>
+                        <input type="number" id="expBillAmount" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()" required/>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Bill Amount in INR</label>
+                        <input type="number" id="expBillAmtINR" placeholder="Auto" class="w-full px-3 py-2 border rounded-lg bg-gray-50 text-sm" readonly/>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">CGST Amount</label>
+                        <input type="number" id="expCGST" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">SGST Amount</label>
+                        <input type="number" id="expSGST" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">IGST Amount</label>
+                        <input type="number" id="expIGST" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Credit Note / Discount</label>
+                        <input type="number" id="expCreditNote" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
+                    </div>
+                    <div class="md:col-span-2">
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Credit Note / Discount Details</label>
+                        <input type="text" id="expCreditNoteDetails" placeholder="Reference / description of credit note" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                    </div>
+                </div>
+
+                <!-- TDS Section -->
+                <div class="bg-yellow-50 border border-yellow-200 rounded-xl p-4 mb-4">
+                    <div class="flex items-center gap-3 mb-3">
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" id="expTDSApplicable" onchange="calcExpAmounts()" class="w-4 h-4 accent-yellow-600"/>
+                            <span class="text-sm font-semibold text-yellow-800">TDS Applicable</span>
+                        </label>
+                    </div>
+                    <div id="expTDSFields" class="grid grid-cols-2 md:grid-cols-4 gap-4 hidden">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Taxable Amount</label>
+                            <input type="number" id="expTaxableAmt" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">TDS %</label>
+                            <select id="expTDSPct" class="w-full px-3 py-2 border rounded-lg text-sm" onchange="calcExpAmounts()">
+                                <option value="1">1%</option>
+                                <option value="2" selected>2%</option>
+                                <option value="5">5%</option>
+                                <option value="10">10%</option>
+                                <option value="Other">Other</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">TDS Amount</label>
+                            <input type="number" id="expTDSAmt" placeholder="Auto" class="w-full px-3 py-2 border rounded-lg bg-gray-50 text-sm" readonly/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Net Amount (after TDS)</label>
+                            <input type="number" id="expNetAmt" placeholder="Auto" class="w-full px-3 py-2 border rounded-lg bg-gray-50 text-sm" readonly/>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Advance + Payment -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Advance Paid Amount</label>
+                        <input type="number" id="expAdvanceAmt" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Advance Paid Date</label>
+                        <input type="date" id="expAdvanceDate" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Balance to Pay</label>
+                        <input type="number" id="expBalanceAmt" placeholder="Auto" class="w-full px-3 py-2 border rounded-lg bg-gray-50 text-sm" readonly/>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Payment Status <span class="text-red-500">*</span></label>
+                        <select id="expPayStatus" class="w-full px-3 py-2 border rounded-lg text-sm" required>
+                            <option value="Pending">Pending</option>
+                            <option value="Partial">Partial</option>
+                            <option value="Paid">Paid</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Payment Mode -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Payment Mode</label>
+                        <select id="expPayMode" class="w-full px-3 py-2 border rounded-lg text-sm" onchange="toggleChequeFields()">
+                            <option value="">-- Select --</option>
+                            <option value="Cash">Cash</option>
+                            <option value="Cheque">Cheque</option>
+                            <option value="NEFT">NEFT</option>
+                            <option value="RTGS">RTGS</option>
+                            <option value="IMPS">IMPS</option>
+                            <option value="UPI">UPI</option>
+                        </select>
+                    </div>
+                    <div id="chequeNoField">
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Cheque No</label>
+                        <input type="text" id="expChequeNo" placeholder="Cheque number" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Cheque / Online Paid Date</label>
+                        <input type="date" id="expPayDate" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Bank Name</label>
+                        <input type="text" id="expBankName" placeholder="Bank" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                    </div>
+                </div>
+
+                <!-- Remark + Bill Photo -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Remark</label>
+                        <textarea id="expRemark" rows="2" placeholder="Additional notes..." class="w-full px-3 py-2 border rounded-lg text-sm"></textarea>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Bill Photo / Attachment</label>
+                        <input type="file" id="expBillPhoto" accept="image/*,application/pdf" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        <p class="text-xs text-gray-400 mt-1">Image or PDF, max 2MB</p>
+                        <div id="expPhotoPreview" class="mt-2 hidden">
+                            <img id="expPhotoImg" src="" alt="Bill photo" class="max-h-24 rounded border"/>
+                            <span id="expPhotoName" class="text-xs text-gray-500 block"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Computed totals summary -->
+                <div class="bg-orange-50 border border-orange-200 rounded-xl p-4 mb-6 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                    <div><span class="text-gray-500 block text-xs">Bill Amount (INR)</span><span id="sumBillINR" class="font-bold text-orange-700">—</span></div>
+                    <div><span class="text-gray-500 block text-xs">Total Tax</span><span id="sumTax" class="font-bold text-orange-700">—</span></div>
+                    <div><span class="text-gray-500 block text-xs">TDS Deducted</span><span id="sumTDS" class="font-bold text-orange-700">—</span></div>
+                    <div><span class="text-gray-500 block text-xs">Net Payable</span><span id="sumNet" class="font-bold text-orange-800 text-base">—</span></div>
+                </div>
+
+                <div class="flex gap-3 justify-end">
+                    <button type="button" onclick="closeExpenseModal()" class="px-5 py-2 border border-gray-300 rounded-xl text-gray-600 hover:bg-gray-50">Cancel</button>
+                    <button type="submit" class="px-6 py-2 bg-orange-600 text-white rounded-xl hover:bg-orange-700 font-semibold">Save Expense</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- Admin Unlock Modal -->
     <div id="unlockModal" class="modal">
         <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm m-4 overflow-hidden">
@@ -360,6 +565,7 @@
         let transactions = [];
         let parties = [];
         let settings = {};
+        let expenses = [];        // Expense & Bills module
         let currentView = 'dashboard';
         let currentTransaction = null;
         let currentParty = null;
@@ -462,6 +668,7 @@
             transactions = [];
             parties = [];
             settings = {};
+            expenses = [];
             
             renderLoginScreen();
         }
@@ -604,7 +811,8 @@
                 const [txnData, partyData, settingsData] = await Promise.all([
                     loadFileFromDrive('transactions.json'),
                     loadFileFromDrive('parties.json'),
-                    loadFileFromDrive('settings.json')
+                    loadFileFromDrive('settings.json'),
+                    loadFileFromDrive('expenses.json')
                 ]);
 
                 if (txnData) {
@@ -618,6 +826,9 @@
                 if (settingsData) {
                     settings = (typeof settingsData === 'object' && !Array.isArray(settingsData)) ? settingsData : {};
                     console.log('Loaded settings:', settings);
+                    const expData = results[3];
+                    expenses = Array.isArray(expData) ? expData : [];
+                    console.log('Loaded expenses:', expenses.length);
                 }
 
                 renderApp();
@@ -1177,7 +1388,7 @@
                 btn.textContent = 'Syncing...';
                 btn.disabled = true;
 
-                const SHEET_NAMES = ['ApprovedTxns', 'AllTransactions', 'Parties', 'Settings'];
+                const SHEET_NAMES = ['ApprovedTxns', 'AllTransactions', 'Parties', 'Settings', 'Expenses'];
                 let spreadsheetId = settings.spreadsheetId;
 
                 // Step 1: Verify saved ID still works
@@ -1302,7 +1513,8 @@
                 // Step 6: Build data arrays
                 btn.textContent = 'Preparing data...';
                 const approvedTxns = transactions.filter(t => t.status === 'Approved');
-                const appUrl = 'https://easwaranps.github.io/engineering-services-app/';
+                // Auto-detect current URL — works on GitHub Pages AND any custom domain
+                const appUrl = window.location.origin + window.location.pathname.replace(/\/+$/, '') + '/';
 
                 const approvedRows = [['Txn ID','Category','Direction','Party','Date','Reference','Currency','Subtotal','Tax','Grand Total','Link']];
                 approvedTxns.forEach(txn => {
@@ -1327,6 +1539,22 @@
                         p.gstNumber||'', p.panNumber||'', p.contactPerson||'', p.email||'', p.mobile||'']);
                 });
 
+                // Expenses sheet data
+                const expenseRows = [['Voucher No','Bill No','Bill Date','Company/Vendor','Description','Currency','Exch Rate',
+                    'Bill Amt','Bill Amt INR','CGST','SGST','IGST','Credit Note','TDS?','Taxable Amt','TDS%','TDS Amt','Net Amt',
+                    'Advance Amt','Advance Date','Balance','Pay Status','Pay Mode','Cheque No','Pay Date','Bank','Remark']];
+                expenses.forEach(e => {
+                    expenseRows.push([
+                        e.voucherNo||'', e.billNo||'', e.billDate||'', e.companyName||'', e.description||'',
+                        e.currency||'INR', e.exchRate||1, parseFloat(e.billAmount||0), parseFloat(e.billAmtINR||0),
+                        parseFloat(e.cgst||0), parseFloat(e.sgst||0), parseFloat(e.igst||0), parseFloat(e.creditNote||0),
+                        e.tdsApplicable?'Y':'N', parseFloat(e.taxableAmt||0), e.tdsPct||0, parseFloat(e.tdsAmt||0),
+                        parseFloat(e.netAmt||0), parseFloat(e.advanceAmt||0), e.advanceDate||'',
+                        parseFloat(e.balanceAmt||0), e.payStatus||'', e.payMode||'', e.chequeNo||'',
+                        e.payDate||'', e.bankName||'', e.remark||''
+                    ]);
+                });
+
                 // Settings sheet data
                 const settingsRows = [
                     ['Field', 'Value'],
@@ -1346,7 +1574,7 @@
                 await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchClear`, {
                     method: 'POST',
                     headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ranges: SHEET_NAMES.map(n => n + '!A:Z') })  // includes Settings
+                    body: JSON.stringify({ ranges: SHEET_NAMES.map(n => n + '!A:AZ') })  // includes Settings + Expenses
                 }).catch(e => console.warn('Clear skipped:', e));
 
                 // Step 8: Write data
@@ -1360,7 +1588,8 @@
                             { range: 'ApprovedTxns!A1',    values: approvedRows },
                             { range: 'AllTransactions!A1', values: allRows      },
                             { range: 'Parties!A1',         values: partyRows    },
-                            { range: 'Settings!A1',        values: settingsRows }
+                            { range: 'Settings!A1',        values: settingsRows },
+                            { range: 'Expenses!A1',        values: expenseRows  }
                         ]
                     })
                 });
@@ -1474,6 +1703,8 @@
                         <div class="flex gap-2">
                             <button onclick="switchView('dashboard')" class="px-4 py-2 rounded-lg ${currentView === 'dashboard' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Dashboard</button>
                             <button onclick="switchView('transactions')" class="px-4 py-2 rounded-lg ${currentView === 'transactions' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Transactions</button>
+                            <button onclick="switchView('expenses')" class="px-4 py-2 rounded-lg ${currentView === 'expenses' ? 'bg-orange-100 text-orange-700' : 'text-gray-600 hover:bg-gray-100'}">💸 Expenses</button>
+                            <button onclick="switchView('mis')" class="px-4 py-2 rounded-lg ${currentView === 'mis' ? 'bg-green-100 text-green-700' : 'text-gray-600 hover:bg-gray-100'}">📊 MIS Report</button>
                             <button onclick="switchView('parties')" class="px-4 py-2 rounded-lg ${currentView === 'parties' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Parties</button>
                             <button onclick="switchView('settings')" class="px-4 py-2 rounded-lg ${currentView === 'settings' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Settings</button>
                         </div>
@@ -1500,6 +1731,8 @@
             
             if (currentView === 'dashboard') renderDashboard(content);
             else if (currentView === 'transactions') renderTransactions(content);
+            else if (currentView === 'expenses') renderExpenses(content);
+            else if (currentView === 'mis') renderMIS(content);
             else if (currentView === 'parties') renderParties(content);
             else if (currentView === 'settings') renderSettings(content);
         }
@@ -1533,6 +1766,16 @@
                     <div class="bg-gradient-to-br from-orange-500 to-orange-700 rounded-2xl p-6 text-white shadow-lg">
                         <div class="text-3xl font-bold">${incomingPOs.length}</div>
                         <div class="text-orange-100 text-sm">POs to SubContractors</div>
+                    </div>
+                    <div class="bg-gradient-to-br from-yellow-500 to-orange-600 rounded-2xl p-6 text-white shadow-lg cursor-pointer" onclick="switchView('expenses')">
+                        <div class="text-3xl font-bold">${expenses.length}</div>
+                        <div class="text-yellow-100 text-sm">💸 Expenses / Bills</div>
+                    </div>
+                    <div class="bg-gradient-to-br from-teal-500 to-green-600 rounded-2xl p-6 text-white shadow-lg cursor-pointer" onclick="switchView('mis')">
+                        <div class="text-xl font-bold">
+                            ${(() => { const rev = transactions.filter(t=>t.txnCategory==='INVOICE'&&t.txnDirection==='Outgoing'&&['Approved','Sent','Completed','Paid'].includes(t.status)).reduce((s,t)=>{const tot=calculateTotals(t.items||[]);return s+parseFloat(tot.total);},0); const exp=expenses.reduce((s,e)=>s+(parseFloat(e.billAmtINR)||0),0); const gp=rev-exp; return (gp>=0?'▲ ':'▼ ')+'₹'+(Math.abs(gp)/100000).toFixed(1)+'L'; })()}
+                        </div>
+                        <div class="text-teal-100 text-sm">📊 Gross Profit</div>
                     </div>
                 </div>
                 <div class="bg-white rounded-2xl shadow-lg p-6">
@@ -1712,6 +1955,656 @@
             });
             const container = document.getElementById('txnGroupContainer');
             if (container) container.innerHTML = renderGroupedTransactions(filtered);
+        }
+
+
+        // ════════════════════════════════════════════════════════════════════
+        //  EXPENSES & BILLS MODULE
+        // ════════════════════════════════════════════════════════════════════
+
+        function renderExpenses(content) {
+            content.innerHTML = `
+                <div class="flex justify-between items-center mb-4 flex-wrap gap-3">
+                    <h2 class="text-3xl font-bold">💸 Expenses & Bills</h2>
+                    <button onclick="openExpenseModal()" class="px-5 py-2 bg-orange-600 text-white rounded-xl hover:bg-orange-700 font-medium">+ New Expense</button>
+                </div>
+
+                <!-- Search + filter bar -->
+                <div class="bg-white rounded-xl shadow-sm p-3 mb-4 flex flex-wrap gap-3 items-center">
+                    <div class="flex-1 min-w-48 relative">
+                        <svg class="absolute left-3 top-2.5 text-gray-400" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                        <input type="text" id="expSearchInput" placeholder="Search by vendor, bill no, description..."
+                               class="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-300"
+                               oninput="filterExpenses()"/>
+                    </div>
+                    <select id="expFilterStatus" onchange="filterExpenses()" class="px-3 py-2 border border-gray-200 rounded-lg text-sm">
+                        <option value="">All Statuses</option>
+                        <option>Pending</option><option>Partial</option><option>Paid</option>
+                    </select>
+                    <select id="expFilterMonth" onchange="filterExpenses()" class="px-3 py-2 border border-gray-200 rounded-lg text-sm">
+                        <option value="">All Months</option>
+                        ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+                            .map((m,i) => `<option value="${String(i+1).padStart(2,'0')}">${m}</option>`).join('')}
+                    </select>
+                </div>
+
+                <!-- Summary cards -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                    ${expSummaryCards(expenses)}
+                </div>
+
+                <!-- Table -->
+                <div class="bg-white rounded-2xl shadow-sm overflow-hidden" id="expTableContainer">
+                    ${renderExpenseTable(expenses)}
+                </div>
+            `;
+        }
+
+        function expSummaryCards(list) {
+            const total   = list.reduce((s,e) => s + (parseFloat(e.billAmtINR)||0), 0);
+            const paid    = list.filter(e => e.payStatus === 'Paid').reduce((s,e) => s + (parseFloat(e.billAmtINR)||0), 0);
+            const pending = list.filter(e => e.payStatus === 'Pending').reduce((s,e) => s + (parseFloat(e.netPayable)||0), 0);
+            const tds     = list.reduce((s,e) => s + (parseFloat(e.tdsAmt)||0), 0);
+            const fmt = n => '₹' + n.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
+            return [
+                {label:'Total Bills (INR)', val:fmt(total), color:'bg-orange-600'},
+                {label:'Paid Amount',       val:fmt(paid),  color:'bg-green-600'},
+                {label:'Pending Payment',   val:fmt(pending),color:'bg-red-600'},
+                {label:'TDS Deducted',      val:fmt(tds),   color:'bg-yellow-600'},
+            ].map(c => `<div class="${c.color} text-white rounded-xl p-4 shadow">
+                <div class="text-xs opacity-80 mb-1">${c.label}</div>
+                <div class="text-lg font-bold">${c.val}</div>
+            </div>`).join('');
+        }
+
+        function renderExpenseTable(list) {
+            if (!list || list.length === 0)
+                return '<p class="text-gray-400 text-center py-12">No expenses yet. Add your first bill!</p>';
+            return `<div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead class="bg-orange-50 text-xs text-gray-500 uppercase">
+                        <tr>
+                            <th class="px-3 py-2 text-left">Voucher</th>
+                            <th class="px-3 py-2 text-left">Bill No</th>
+                            <th class="px-3 py-2 text-left">Date</th>
+                            <th class="px-3 py-2 text-left">Vendor</th>
+                            <th class="px-3 py-2 text-left">Description</th>
+                            <th class="px-3 py-2 text-right">Bill Amt (INR)</th>
+                            <th class="px-3 py-2 text-right">TDS</th>
+                            <th class="px-3 py-2 text-right">Net Payable</th>
+                            <th class="px-3 py-2 text-center">Status</th>
+                            <th class="px-3 py-2 text-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${list.map(e => expRow(e)).join('')}
+                    </tbody>
+                </table>
+            </div>`;
+        }
+
+        function expRow(e) {
+            const statusCls = {Paid:'bg-green-100 text-green-700', Pending:'bg-red-100 text-red-700', Partial:'bg-yellow-100 text-yellow-700'}[e.payStatus] || 'bg-gray-100';
+            const fmt = n => n ? '₹'+parseFloat(n).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}) : '—';
+            const eJson = JSON.stringify(e).replace(/'/g,"&apos;");
+            return `<tr class="border-b hover:bg-orange-50">
+                <td class="px-3 py-2 font-medium text-orange-700">${e.voucherNo||'—'}</td>
+                <td class="px-3 py-2">${e.billNo||'—'}</td>
+                <td class="px-3 py-2 whitespace-nowrap">${e.billDate||'—'}</td>
+                <td class="px-3 py-2 max-w-xs truncate" title="${e.companyName}">${e.companyName||'—'}</td>
+                <td class="px-3 py-2 max-w-xs truncate" title="${e.description}">${e.description||'—'}</td>
+                <td class="px-3 py-2 text-right">${fmt(e.billAmtINR)}</td>
+                <td class="px-3 py-2 text-right text-yellow-700">${fmt(e.tdsAmt)}</td>
+                <td class="px-3 py-2 text-right font-semibold">${fmt(e.netPayable)}</td>
+                <td class="px-3 py-2 text-center"><span class="px-2 py-0.5 rounded-full text-xs ${statusCls}">${e.payStatus}</span></td>
+                <td class="px-3 py-2 text-right whitespace-nowrap">
+                    ${e.billPhotoData ? `<button onclick='viewExpPhoto("${e.expID}")' class="text-blue-500 hover:text-blue-700 mr-1 text-xs" title="View Bill">📷</button>` : ''}
+                    <button onclick='editExpense(${eJson})' class="text-indigo-600 hover:text-indigo-800 mr-1 text-xs font-medium">Edit</button>
+                    <button onclick="deleteExpense('${e.expID}')" class="text-red-600 hover:text-red-800 text-xs">Del</button>
+                </td>
+            </tr>`;
+        }
+
+        function filterExpenses() {
+            const q   = (document.getElementById('expSearchInput')?.value||'').toLowerCase();
+            const st  = document.getElementById('expFilterStatus')?.value||'';
+            const mo  = document.getElementById('expFilterMonth')?.value||'';
+            const filtered = expenses.filter(e => {
+                const mq = !q || (e.billNo||'').toLowerCase().includes(q) ||
+                           (e.companyName||'').toLowerCase().includes(q) ||
+                           (e.description||'').toLowerCase().includes(q) ||
+                           (e.voucherNo||'').toLowerCase().includes(q);
+                const ms = !st || e.payStatus === st;
+                const mm = !mo || (e.billDate||'').substring(5,7) === mo;
+                return mq && ms && mm;
+            });
+            const c = document.getElementById('expTableContainer');
+            if (c) c.innerHTML = renderExpenseTable(filtered);
+        }
+
+        // ── Expense Modal Functions ──────────────────────────────────────────
+        let currentExpense = null;
+
+        function openExpenseModal(exp = null) {
+            currentExpense = exp;
+            document.getElementById('expenseModalTitle').textContent = exp ? 'Edit Expense / Bill' : 'New Expense / Bill';
+            const form = document.getElementById('expenseForm');
+            form.reset();
+            document.getElementById('expPhotoPreview').classList.add('hidden');
+            document.getElementById('expTDSFields').classList.add('hidden');
+
+            // Auto-generate voucher number
+            if (!exp) {
+                const fyCode = getFinancialYearCode(new Date());
+                const count  = expenses.filter(e => (e.voucherNo||'').includes(fyCode)).length + 1;
+                document.getElementById('expVoucherNo').value = 'VCH' + fyCode + String(count).padStart(3,'0');
+                document.getElementById('expBillDate').value = new Date().toISOString().split('T')[0];
+                document.getElementById('expExchRate').value = '1';
+            } else {
+                document.getElementById('expVoucherNo').value     = exp.voucherNo||'';
+                document.getElementById('expBillNo').value        = exp.billNo||'';
+                document.getElementById('expBillDate').value      = exp.billDate||'';
+                document.getElementById('expCompanyName').value   = exp.companyName||'';
+                document.getElementById('expDescription').value   = exp.description||'';
+                document.getElementById('expCurrency').value      = exp.currency||'INR';
+                document.getElementById('expExchRate').value      = exp.exchRate||'1';
+                document.getElementById('expBillAmount').value    = exp.billAmount||'';
+                document.getElementById('expBillAmtINR').value    = exp.billAmtINR||'';
+                document.getElementById('expCGST').value          = exp.cgst||'';
+                document.getElementById('expSGST').value          = exp.sgst||'';
+                document.getElementById('expIGST').value          = exp.igst||'';
+                document.getElementById('expCreditNote').value    = exp.creditNote||'';
+                document.getElementById('expCreditNoteDetails').value = exp.creditNoteDetails||'';
+                document.getElementById('expTDSApplicable').checked   = exp.tdsApplicable||false;
+                if (exp.tdsApplicable) {
+                    document.getElementById('expTDSFields').classList.remove('hidden');
+                    document.getElementById('expTaxableAmt').value = exp.taxableAmt||'';
+                    document.getElementById('expTDSPct').value     = exp.tdsPct||'2';
+                    document.getElementById('expTDSAmt').value     = exp.tdsAmt||'';
+                    document.getElementById('expNetAmt').value     = exp.netAmt||'';
+                }
+                document.getElementById('expAdvanceAmt').value    = exp.advanceAmt||'';
+                document.getElementById('expAdvanceDate').value   = exp.advanceDate||'';
+                document.getElementById('expBalanceAmt').value    = exp.balanceAmt||'';
+                document.getElementById('expPayStatus').value     = exp.payStatus||'Pending';
+                document.getElementById('expPayMode').value       = exp.payMode||'';
+                document.getElementById('expChequeNo').value      = exp.chequeNo||'';
+                document.getElementById('expPayDate').value       = exp.payDate||'';
+                document.getElementById('expBankName').value      = exp.bankName||'';
+                document.getElementById('expRemark').value        = exp.remark||'';
+                if (exp.billPhotoData) {
+                    document.getElementById('expPhotoImg').src = exp.billPhotoData;
+                    document.getElementById('expPhotoName').textContent = exp.billPhotoName||'';
+                    document.getElementById('expPhotoPreview').classList.remove('hidden');
+                }
+                calcExpAmounts();
+            }
+            toggleChequeFields();
+            document.getElementById('expenseModal').classList.add('show');
+        }
+
+        function closeExpenseModal() {
+            document.getElementById('expenseModal').classList.remove('show');
+            currentExpense = null;
+        }
+
+        function calcExpAmounts() {
+            const bill    = parseFloat(document.getElementById('expBillAmount')?.value)||0;
+            const rate    = parseFloat(document.getElementById('expExchRate')?.value)||1;
+            const cgst    = parseFloat(document.getElementById('expCGST')?.value)||0;
+            const sgst    = parseFloat(document.getElementById('expSGST')?.value)||0;
+            const igst    = parseFloat(document.getElementById('expIGST')?.value)||0;
+            const cn      = parseFloat(document.getElementById('expCreditNote')?.value)||0;
+            const adv     = parseFloat(document.getElementById('expAdvanceAmt')?.value)||0;
+            const billINR = bill * rate;
+            const totalTax = cgst + sgst + igst;
+            const billAmtINREl = document.getElementById('expBillAmtINR');
+            if (billAmtINREl) billAmtINREl.value = billINR.toFixed(2);
+
+            // TDS
+            let tdsAmt = 0, netAmt = billINR;
+            const tdsOn = document.getElementById('expTDSApplicable')?.checked;
+            if (tdsOn) {
+                const taxableRaw = parseFloat(document.getElementById('expTaxableAmt')?.value)||0;
+                const taxable = taxableRaw || billINR;
+                if (!taxableRaw) document.getElementById('expTaxableAmt').value = taxable.toFixed(2);
+                const tdsPct  = parseFloat(document.getElementById('expTDSPct')?.value)||2;
+                tdsAmt = (taxable * tdsPct / 100);
+                netAmt = billINR - tdsAmt;
+                const tdsEl = document.getElementById('expTDSAmt');
+                const netEl = document.getElementById('expNetAmt');
+                if (tdsEl) tdsEl.value = tdsAmt.toFixed(2);
+                if (netEl) netEl.value = netAmt.toFixed(2);
+            }
+
+            // Balance
+            const netPayable = netAmt + totalTax - cn;
+            const balance    = Math.max(0, netPayable - adv);
+            const balEl = document.getElementById('expBalanceAmt');
+            if (balEl) balEl.value = balance.toFixed(2);
+
+            // Summary cards
+            const fmt = n => '₹'+n.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+            const s1 = document.getElementById('sumBillINR');
+            const s2 = document.getElementById('sumTax');
+            const s3 = document.getElementById('sumTDS');
+            const s4 = document.getElementById('sumNet');
+            if (s1) s1.textContent = fmt(billINR);
+            if (s2) s2.textContent = fmt(totalTax);
+            if (s3) s3.textContent = fmt(tdsAmt);
+            if (s4) s4.textContent = fmt(netPayable);
+        }
+
+        function toggleChequeFields() {
+            const mode = document.getElementById('expPayMode')?.value||'';
+            const el   = document.getElementById('chequeNoField');
+            if (el) el.classList.toggle('hidden', mode !== 'Cheque');
+        }
+
+        document.getElementById('expTDSApplicable')?.addEventListener('change', function() {
+            document.getElementById('expTDSFields').classList.toggle('hidden', !this.checked);
+            calcExpAmounts();
+        });
+
+        async function saveExpense(e) {
+            e.preventDefault();
+            const tdsOn = document.getElementById('expTDSApplicable').checked;
+            const bill  = parseFloat(document.getElementById('expBillAmount').value)||0;
+            const rate  = parseFloat(document.getElementById('expExchRate').value)||1;
+            const cgst  = parseFloat(document.getElementById('expCGST').value)||0;
+            const sgst  = parseFloat(document.getElementById('expSGST').value)||0;
+            const igst  = parseFloat(document.getElementById('expIGST').value)||0;
+            const cn    = parseFloat(document.getElementById('expCreditNote').value)||0;
+            const adv   = parseFloat(document.getElementById('expAdvanceAmt').value)||0;
+            const billINR = bill * rate;
+            const tdsAmt  = tdsOn ? (parseFloat(document.getElementById('expTDSAmt').value)||0) : 0;
+            const netAmt  = billINR - tdsAmt;
+            const netPayable = netAmt + cgst + sgst + igst - cn;
+            const balance    = Math.max(0, netPayable - adv);
+
+            // Handle bill photo
+            let photoData = currentExpense?.billPhotoData || null;
+            let photoName = currentExpense?.billPhotoName || null;
+            const photoFile = document.getElementById('expBillPhoto').files[0];
+            if (photoFile) {
+                if (photoFile.size > 2 * 1024 * 1024) { alert('File too large. Max 2MB.'); return; }
+                photoData = await new Promise((res, rej) => {
+                    const r = new FileReader();
+                    r.onload = () => res(r.result);
+                    r.onerror = () => rej(new Error('Read failed'));
+                    r.readAsDataURL(photoFile);
+                });
+                photoName = photoFile.name;
+            }
+
+            const expObj = {
+                expID:             currentExpense?.expID || 'EXP' + getFinancialYearCode(new Date()) + String(expenses.length+1).padStart(3,'0'),
+                voucherNo:         document.getElementById('expVoucherNo').value,
+                billNo:            document.getElementById('expBillNo').value,
+                billDate:          document.getElementById('expBillDate').value,
+                companyName:       document.getElementById('expCompanyName').value,
+                description:       document.getElementById('expDescription').value,
+                currency:          document.getElementById('expCurrency').value,
+                exchRate:          rate,
+                billAmount:        bill,
+                billAmtINR:        billINR,
+                cgst, sgst, igst,
+                creditNote:        cn,
+                creditNoteDetails: document.getElementById('expCreditNoteDetails').value,
+                tdsApplicable:     tdsOn,
+                taxableAmt:        tdsOn ? (parseFloat(document.getElementById('expTaxableAmt').value)||0) : 0,
+                tdsPct:            tdsOn ? document.getElementById('expTDSPct').value : 0,
+                tdsAmt,
+                netAmt,
+                netPayable,
+                advanceAmt:        adv,
+                advanceDate:       document.getElementById('expAdvanceDate').value,
+                balanceAmt:        balance,
+                payStatus:         document.getElementById('expPayStatus').value,
+                payMode:           document.getElementById('expPayMode').value,
+                chequeNo:          document.getElementById('expChequeNo').value,
+                payDate:           document.getElementById('expPayDate').value,
+                bankName:          document.getElementById('expBankName').value,
+                remark:            document.getElementById('expRemark').value,
+                billPhotoData:     photoData,
+                billPhotoName:     photoName,
+                createdAt:         currentExpense?.createdAt || new Date().toISOString()
+            };
+
+            if (currentExpense) {
+                const idx = expenses.findIndex(x => x.expID === currentExpense.expID);
+                if (idx >= 0) expenses[idx] = expObj;
+            } else {
+                expenses.push(expObj);
+            }
+            await saveData('expenses', expenses);
+            closeExpenseModal();
+            renderView();
+        }
+
+        function editExpense(exp) { openExpenseModal(exp); }
+
+        async function deleteExpense(expID) {
+            if (!confirm('Delete this expense record?')) return;
+            expenses = expenses.filter(x => x.expID !== expID);
+            await saveData('expenses', expenses);
+            renderView();
+        }
+
+        function viewExpPhoto(expID) {
+            const exp = expenses.find(x => x.expID === expID);
+            if (!exp?.billPhotoData) return;
+            const w = window.open();
+            w.document.write(`<html><body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;min-height:100vh">
+                <img src="${exp.billPhotoData}" style="max-width:100%;max-height:100vh;object-fit:contain"/>
+            </body></html>`);
+        }
+
+        // Handle bill photo preview
+        document.getElementById('expBillPhoto')?.addEventListener('change', function() {
+            const file = this.files[0];
+            if (!file) return;
+            if (file.type.startsWith('image/')) {
+                const reader = new FileReader();
+                reader.onload = e => {
+                    document.getElementById('expPhotoImg').src = e.target.result;
+                    document.getElementById('expPhotoName').textContent = file.name;
+                    document.getElementById('expPhotoPreview').classList.remove('hidden');
+                };
+                reader.readAsDataURL(file);
+            } else {
+                document.getElementById('expPhotoImg').src = '';
+                document.getElementById('expPhotoName').textContent = file.name + ' (PDF)';
+                document.getElementById('expPhotoPreview').classList.remove('hidden');
+            }
+        });
+
+        // ════════════════════════════════════════════════════════════════════
+        //  MIS REPORT MODULE
+        // ════════════════════════════════════════════════════════════════════
+
+        function renderMIS(content) {
+            const fy = getFinancialYearCode(new Date());
+            const fyLabel = '20' + fy.slice(0,2) + '–' + '20' + fy.slice(2);
+
+            // Revenue: Approved/Completed/Paid outgoing invoices
+            const revTxns   = transactions.filter(t => t.txnCategory === 'INVOICE' && t.txnDirection === 'Outgoing' && ['Approved','Sent','Completed','Paid'].includes(t.status));
+            const revenue   = revTxns.reduce((s,t) => { const tot = calculateTotals(t.items||[]); return s + parseFloat(tot.total); }, 0);
+            const revTax    = revTxns.reduce((s,t) => { const tot = calculateTotals(t.items||[]); return s + parseFloat(tot.tax); }, 0);
+
+            // Expenses
+            const totalExp  = expenses.reduce((s,e) => s + (parseFloat(e.billAmtINR)||0), 0);
+            const expTax    = expenses.reduce((s,e) => s + (parseFloat(e.cgst)||0) + (parseFloat(e.sgst)||0) + (parseFloat(e.igst)||0), 0);
+            const tdsTotal  = expenses.reduce((s,e) => s + (parseFloat(e.tdsAmt)||0), 0);
+            const pendingPay= expenses.filter(e => e.payStatus !== 'Paid').reduce((s,e) => s + (parseFloat(e.balanceAmt)||0), 0);
+            const paidExp   = expenses.filter(e => e.payStatus === 'Paid').reduce((s,e) => s + (parseFloat(e.billAmtINR)||0), 0);
+
+            // PO commitments
+            const poTxns    = transactions.filter(t => t.txnCategory === 'PO' && t.txnDirection === 'Incoming');
+            const poValue   = poTxns.reduce((s,t) => { const tot = calculateTotals(t.items||[]); return s + parseFloat(tot.total); }, 0);
+
+            // Receivables: invoices not yet Paid
+            const receivable = transactions.filter(t => t.txnCategory === 'INVOICE' && t.txnDirection === 'Outgoing' && ['Approved','Sent'].includes(t.status))
+                .reduce((s,t) => { const tot = calculateTotals(t.items||[]); return s + parseFloat(tot.total); }, 0);
+
+            // Quotations pipeline
+            const quotesPipeline = transactions.filter(t => t.txnCategory === 'QUOTATION' && t.txnDirection === 'Outgoing' && t.status !== 'Draft')
+                .reduce((s,t) => { const tot = calculateTotals(t.items||[]); return s + parseFloat(tot.total); }, 0);
+
+            const grossProfit  = revenue - totalExp;
+            const profitMargin = revenue > 0 ? ((grossProfit / revenue) * 100).toFixed(1) : 0;
+
+            const fmt  = n => '₹' + n.toLocaleString('en-IN', {minimumFractionDigits:2,maximumFractionDigits:2});
+            const fmtK = n => n >= 100000 ? '₹' + (n/100000).toFixed(2) + 'L' : n >= 1000 ? '₹' + (n/1000).toFixed(1) + 'K' : fmt(n);
+
+            // Month-wise data (last 6 months)
+            const monthlyData = buildMonthlyData();
+
+            // Expense breakdown by vendor (top 5)
+            const vendorMap = {};
+            expenses.forEach(e => {
+                const v = e.companyName || 'Unknown';
+                vendorMap[v] = (vendorMap[v]||0) + (parseFloat(e.billAmtINR)||0);
+            });
+            const topVendors = Object.entries(vendorMap).sort((a,b) => b[1]-a[1]).slice(0,5);
+
+            // Payment status breakdown
+            const payBreak = {Paid:0,Pending:0,Partial:0};
+            expenses.forEach(e => { payBreak[e.payStatus] = (payBreak[e.payStatus]||0) + 1; });
+
+            content.innerHTML = `
+                <div class="flex justify-between items-center mb-4 flex-wrap gap-3">
+                    <div>
+                        <h2 class="text-3xl font-bold">📊 MIS Report</h2>
+                        <p class="text-sm text-gray-500">Financial Year ${fyLabel} &nbsp;·&nbsp; As of ${new Date().toLocaleDateString('en-IN')}</p>
+                    </div>
+                    <button onclick="exportMISReport()" class="px-4 py-2 bg-green-600 text-white rounded-xl hover:bg-green-700 text-sm font-medium">⬇ Export MIS PDF</button>
+                </div>
+
+                <!-- P&L Summary -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                    <div class="bg-gradient-to-br from-blue-500 to-blue-700 text-white rounded-xl p-4 shadow">
+                        <div class="text-xs opacity-80 mb-1">Total Revenue (Invoiced)</div>
+                        <div class="text-xl font-bold">${fmtK(revenue)}</div>
+                        <div class="text-xs opacity-70 mt-1">Tax: ${fmtK(revTax)}</div>
+                    </div>
+                    <div class="bg-gradient-to-br from-orange-500 to-red-500 text-white rounded-xl p-4 shadow">
+                        <div class="text-xs opacity-80 mb-1">Total Expenses</div>
+                        <div class="text-xl font-bold">${fmtK(totalExp)}</div>
+                        <div class="text-xs opacity-70 mt-1">Tax paid: ${fmtK(expTax)}</div>
+                    </div>
+                    <div class="bg-gradient-to-br ${grossProfit >= 0 ? 'from-green-500 to-green-700' : 'from-red-600 to-red-800'} text-white rounded-xl p-4 shadow">
+                        <div class="text-xs opacity-80 mb-1">Gross Profit</div>
+                        <div class="text-xl font-bold">${fmtK(grossProfit)}</div>
+                        <div class="text-xs opacity-70 mt-1">Margin: ${profitMargin}%</div>
+                    </div>
+                    <div class="bg-gradient-to-br from-purple-500 to-purple-700 text-white rounded-xl p-4 shadow">
+                        <div class="text-xs opacity-80 mb-1">Receivables</div>
+                        <div class="text-xl font-bold">${fmtK(receivable)}</div>
+                        <div class="text-xs opacity-70 mt-1">Pipeline: ${fmtK(quotesPipeline)}</div>
+                    </div>
+                </div>
+
+                <!-- Secondary KPIs -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                    <div class="bg-white rounded-xl p-4 border shadow-sm">
+                        <div class="text-xs text-gray-500 mb-1">PO Commitments</div>
+                        <div class="text-lg font-bold text-indigo-700">${fmtK(poValue)}</div>
+                    </div>
+                    <div class="bg-white rounded-xl p-4 border shadow-sm">
+                        <div class="text-xs text-gray-500 mb-1">TDS Deducted (Expenses)</div>
+                        <div class="text-lg font-bold text-yellow-700">${fmt(tdsTotal)}</div>
+                    </div>
+                    <div class="bg-white rounded-xl p-4 border shadow-sm">
+                        <div class="text-xs text-gray-500 mb-1">Pending Payments (Bills)</div>
+                        <div class="text-lg font-bold text-red-600">${fmt(pendingPay)}</div>
+                    </div>
+                    <div class="bg-white rounded-xl p-4 border shadow-sm">
+                        <div class="text-xs text-gray-500 mb-1">Bills Paid</div>
+                        <div class="text-lg font-bold text-green-600">${fmtK(paidExp)}</div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <!-- Monthly trend table -->
+                    <div class="bg-white rounded-2xl shadow-sm p-4">
+                        <h3 class="font-bold text-gray-700 mb-3">Monthly Revenue vs Expenses</h3>
+                        <table class="w-full text-sm">
+                            <thead class="text-xs text-gray-500 uppercase border-b">
+                                <tr><th class="py-1 text-left">Month</th><th class="py-1 text-right">Revenue</th><th class="py-1 text-right">Expenses</th><th class="py-1 text-right">Profit</th></tr>
+                            </thead>
+                            <tbody>
+                                ${monthlyData.map(m => `<tr class="border-b hover:bg-gray-50">
+                                    <td class="py-1.5 text-gray-700">${m.label}</td>
+                                    <td class="py-1.5 text-right text-blue-600">${fmtK(m.rev)}</td>
+                                    <td class="py-1.5 text-right text-orange-600">${fmtK(m.exp)}</td>
+                                    <td class="py-1.5 text-right font-semibold ${m.rev-m.exp>=0?'text-green-600':'text-red-600'}">${fmtK(m.rev-m.exp)}</td>
+                                </tr>`).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Top vendors + payment status -->
+                    <div class="space-y-4">
+                        <div class="bg-white rounded-2xl shadow-sm p-4">
+                            <h3 class="font-bold text-gray-700 mb-3">Top Vendors by Expense</h3>
+                            ${topVendors.length === 0 ? '<p class="text-gray-400 text-sm">No expenses yet</p>' :
+                              topVendors.map(([v,a]) => `<div class="flex justify-between items-center mb-2">
+                                <span class="text-sm text-gray-700 truncate max-w-xs">${v}</span>
+                                <span class="text-sm font-semibold text-orange-700">${fmtK(a)}</span>
+                              </div>`).join('')}
+                        </div>
+                        <div class="bg-white rounded-2xl shadow-sm p-4">
+                            <h3 class="font-bold text-gray-700 mb-3">Bill Payment Status</h3>
+                            <div class="flex gap-4">
+                                <div class="text-center"><div class="text-2xl font-bold text-green-600">${payBreak.Paid||0}</div><div class="text-xs text-gray-500">Paid</div></div>
+                                <div class="text-center"><div class="text-2xl font-bold text-red-600">${payBreak.Pending||0}</div><div class="text-xs text-gray-500">Pending</div></div>
+                                <div class="text-center"><div class="text-2xl font-bold text-yellow-600">${payBreak.Partial||0}</div><div class="text-xs text-gray-500">Partial</div></div>
+                                <div class="text-center"><div class="text-2xl font-bold text-gray-700">${expenses.length}</div><div class="text-xs text-gray-500">Total Bills</div></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Outstanding invoices table -->
+                <div class="bg-white rounded-2xl shadow-sm p-4 mb-4">
+                    <h3 class="font-bold text-gray-700 mb-3">Outstanding Receivables (Unpaid Invoices)</h3>
+                    ${(() => {
+                        const outstanding = transactions.filter(t => t.txnCategory==='INVOICE' && t.txnDirection==='Outgoing' && ['Approved','Sent'].includes(t.status));
+                        if (outstanding.length === 0) return '<p class="text-gray-400 text-sm">No outstanding invoices.</p>';
+                        return '<div class="overflow-x-auto"><table class="w-full text-sm"><thead class="text-xs text-gray-500 uppercase border-b"><tr><th class="py-1 text-left">Invoice</th><th class="py-1 text-left">Party</th><th class="py-1 text-left">Date</th><th class="py-1 text-right">Amount</th><th class="py-1 text-center">Status</th></tr></thead><tbody>' +
+                            outstanding.map(t => { const tot = calculateTotals(t.items||[]); return `<tr class="border-b"><td class="py-1.5 font-medium text-indigo-700">${t.txnID}</td><td class="py-1.5">${t.partyName}</td><td class="py-1.5">${t.txnDate}</td><td class="py-1.5 text-right font-semibold">${fmt(parseFloat(tot.total))}</td><td class="py-1.5 text-center"><span class="px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-700">${t.status}</span></td></tr>`; }).join('') +
+                        '</tbody></table></div>';
+                    })()}
+                </div>
+
+                <!-- Expense detail table -->
+                <div class="bg-white rounded-2xl shadow-sm p-4">
+                    <h3 class="font-bold text-gray-700 mb-3">All Expenses Summary</h3>
+                    ${renderExpenseTable(expenses)}
+                </div>
+            `;
+        }
+
+        function buildMonthlyData() {
+            const months = [];
+            const now = new Date();
+            for (let i = 5; i >= 0; i--) {
+                const d   = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                const yr  = d.getFullYear();
+                const mo  = String(d.getMonth()+1).padStart(2,'0');
+                const lbl = d.toLocaleDateString('en-IN', {month:'short', year:'2-digit'});
+                const prefix = yr + '-' + mo;
+
+                const rev = transactions
+                    .filter(t => t.txnCategory==='INVOICE' && t.txnDirection==='Outgoing' && (t.txnDate||'').startsWith(prefix) && ['Approved','Sent','Completed','Paid'].includes(t.status))
+                    .reduce((s,t) => { const tot = calculateTotals(t.items||[]); return s+parseFloat(tot.total); }, 0);
+
+                const exp = expenses
+                    .filter(e => (e.billDate||'').startsWith(prefix))
+                    .reduce((s,e) => s+(parseFloat(e.billAmtINR)||0), 0);
+
+                months.push({label:lbl, rev, exp});
+            }
+            return months;
+        }
+
+        async function exportMISReport() {
+            try {
+                const { jsPDF } = window.jspdf;
+                const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+                const fy  = getFinancialYearCode(new Date());
+                const fyLabel = '20'+fy.slice(0,2)+'–'+'20'+fy.slice(2);
+                const pageW = 297, margin = 14;
+
+                // Header
+                doc.setFillColor(25, 40, 110);
+                doc.rect(0, 0, pageW, 22, 'F');
+                doc.setTextColor(255,255,255);
+                doc.setFontSize(14); doc.setFont('helvetica','bold');
+                doc.text((settings.companyName||'Company').toUpperCase(), pageW/2, 10, {align:'center'});
+                doc.setFontSize(9); doc.setFont('helvetica','normal');
+                doc.text('MIS REPORT  ·  FY ' + fyLabel + '  ·  Generated: ' + new Date().toLocaleDateString('en-IN'), pageW/2, 17, {align:'center'});
+                doc.setTextColor(0,0,0);
+
+                let y = 30;
+                const revTxns   = transactions.filter(t => t.txnCategory==='INVOICE' && t.txnDirection==='Outgoing' && ['Approved','Sent','Completed','Paid'].includes(t.status));
+                const revenue   = revTxns.reduce((s,t) => { const tot=calculateTotals(t.items||[]); return s+parseFloat(tot.total); }, 0);
+                const totalExp  = expenses.reduce((s,e) => s+(parseFloat(e.billAmtINR)||0), 0);
+                const tdsTotal  = expenses.reduce((s,e) => s+(parseFloat(e.tdsAmt)||0), 0);
+                const receivable= transactions.filter(t => t.txnCategory==='INVOICE' && t.txnDirection==='Outgoing' && ['Approved','Sent'].includes(t.status))
+                                  .reduce((s,t) => { const tot=calculateTotals(t.items||[]); return s+parseFloat(tot.total); }, 0);
+                const grossProfit = revenue - totalExp;
+                const fmt = n => 'INR ' + n.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+
+                // KPI Summary table
+                doc.autoTable({
+                    startY: y, margin: {left:margin, right:margin},
+                    head: [['Metric','Value']],
+                    body: [
+                        ['Total Revenue (Invoiced)', fmt(revenue)],
+                        ['Total Expenses', fmt(totalExp)],
+                        ['Gross Profit', fmt(grossProfit)],
+                        ['Profit Margin', revenue > 0 ? ((grossProfit/revenue)*100).toFixed(1)+'%' : '0%'],
+                        ['Outstanding Receivables', fmt(receivable)],
+                        ['TDS Deducted', fmt(tdsTotal)],
+                        ['Total Bills', String(expenses.length)],
+                    ],
+                    styles: {fontSize:9},
+                    headStyles: {fillColor:[25,40,110], textColor:255},
+                    alternateRowStyles: {fillColor:[245,247,255]},
+                    columnStyles: {1: {halign:'right', fontStyle:'bold'}},
+                    tableWidth: 100,
+                });
+
+                // Monthly table
+                const monthly = buildMonthlyData();
+                doc.autoTable({
+                    startY: doc.lastAutoTable.finalY + 10,
+                    margin: {left: margin},
+                    head: [['Month','Revenue','Expenses','Profit']],
+                    body: monthly.map(m => [m.label, fmt(m.rev), fmt(m.exp), fmt(m.rev-m.exp)]),
+                    styles: {fontSize:8},
+                    headStyles: {fillColor:[79,70,229], textColor:255},
+                    tableWidth: 130,
+                    didParseCell: function(data) {
+                        if (data.section === 'body' && data.column.index === 3) {
+                            const val = monthly[data.row.index]?.rev - monthly[data.row.index]?.exp;
+                            data.cell.styles.textColor = val >= 0 ? [0,128,0] : [200,0,0];
+                        }
+                    }
+                });
+
+                // Expenses detail on next page
+                if (expenses.length > 0) {
+                    doc.addPage();
+                    doc.setFillColor(220, 90, 30);
+                    doc.rect(0,0,pageW,14,'F');
+                    doc.setTextColor(255,255,255); doc.setFontSize(11); doc.setFont('helvetica','bold');
+                    doc.text('EXPENSES & BILLS DETAIL', margin, 10);
+                    doc.setTextColor(0,0,0);
+
+                    doc.autoTable({
+                        startY: 20, margin:{left:margin,right:margin},
+                        head: [['Voucher','Bill No','Date','Vendor','Description','Bill Amt INR','CGST','SGST','IGST','TDS','Net Payable','Status','Pay Mode']],
+                        body: expenses.map(e => [
+                            e.voucherNo||'', e.billNo||'', e.billDate||'', e.companyName||'', e.description||'',
+                            parseFloat(e.billAmtINR||0).toFixed(2),
+                            parseFloat(e.cgst||0).toFixed(2), parseFloat(e.sgst||0).toFixed(2), parseFloat(e.igst||0).toFixed(2),
+                            parseFloat(e.tdsAmt||0).toFixed(2), parseFloat(e.netPayable||0).toFixed(2),
+                            e.payStatus||'', e.payMode||''
+                        ]),
+                        styles: {fontSize:7},
+                        headStyles: {fillColor:[220,90,30], textColor:255},
+                        alternateRowStyles: {fillColor:[255,245,235]},
+                    });
+                }
+
+                doc.save('MIS_Report_FY' + fy + '_' + (settings.companyName||'IMSE').replace(/\s+/g,'_') + '.pdf');
+            } catch(err) {
+                console.error('MIS PDF error:', err);
+                alert('Error generating MIS PDF: ' + err.message);
+            }
         }
 
         function renderParties(content) {
