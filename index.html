@@ -404,7 +404,11 @@
                 <div class="mb-4">
                     <div class="flex justify-between items-center mb-3">
                         <h3 class="text-lg font-bold">Line Items</h3>
-                        <button type="button" onclick="addLineItem()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">+ Add Item</button>
+                        <div class="flex gap-2">
+                            <button type="button" onclick="addLineItem()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium">+ Add 1 Line</button>
+                            <button type="button" onclick="addMultipleLineItems(5)" class="px-3 py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 text-sm">+ Add 5 Lines</button>
+                            <button type="button" onclick="addMultipleLineItems(10)" class="px-3 py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 text-sm">+ Add 10 Lines</button>
+                        </div>
                     </div>
                     
                     <!-- Line Items Table -->
@@ -734,11 +738,53 @@
             });
         }
 
+        // ═══════════════════════════════════════════════════════════════════
+        //  PROACTIVE TOKEN REFRESH (Auto-refresh every 50 minutes)
+        // ═══════════════════════════════════════════════════════════════════
+        let tokenRefreshTimer = null;
+        
+        function startTokenRefreshTimer() {
+            // Clear any existing timer
+            if (tokenRefreshTimer) clearInterval(tokenRefreshTimer);
+            
+            console.log('⏰ Starting proactive token refresh timer (every 50 min)');
+            
+            // Refresh token every 50 minutes (Google tokens expire after 60 minutes)
+            tokenRefreshTimer = setInterval(() => {
+                console.log('🔄 Proactive token refresh (before expiry)...');
+                if (!tokenClient) {
+                    console.warn('⚠️ tokenClient not available');
+                    return;
+                }
+                tokenClient.requestAccessToken({
+                    prompt: 'none',  // Silent refresh - no user interaction
+                    callback: (response) => {
+                        if (response.access_token) {
+                            accessToken = response.access_token;
+                            gapi.client.setToken({ access_token: accessToken });
+                            console.log('✅ Token refreshed proactively (valid for another 60 min)');
+                        } else if (response.error) {
+                            console.warn('⚠️ Proactive refresh failed:', response.error, '(will retry on next save)');
+                        }
+                    }
+                });
+            }, 50 * 60 * 1000);  // 50 minutes = 3,000,000 milliseconds
+        }
+        
+        function stopTokenRefreshTimer() {
+            if (tokenRefreshTimer) {
+                clearInterval(tokenRefreshTimer);
+                tokenRefreshTimer = null;
+                console.log('⏰ Token refresh timer stopped');
+            }
+        }
+
         function handleSignIn() {
             tokenClient.requestAccessToken({ prompt: 'consent', enable_granular_consent: false });
         }
 
         function handleSignOut() {
+            stopTokenRefreshTimer();  // Stop token refresh
             const token = accessToken;
             accessToken = null;
             gapi.client.setToken(null);
@@ -938,6 +984,7 @@
                     '| settings keys:', Object.keys(settings).length,
                     '| expenses:', expenses.length);
 
+                startTokenRefreshTimer();  // Start proactive token refresh
                 renderApp();
 
             } catch (error) {
@@ -966,19 +1013,29 @@
                 }
                 
                 await saveFileToDrive(`${type}.json`, data);
-                console.log(`Successfully saved ${type}`);
+                console.log(`✅ Successfully saved ${type}`);
             } catch (error) {
-                console.error(`Error saving ${type}:`, error);
+                console.error(`❌ Error saving ${type}:`, error);
                 
-                if (error.status === 401 || error.status === 403) {
-                    console.log('Token expired, requesting new token...');
+                // Check if it's a 401/403 error (token expired)
+                const is401 = error.message && (
+                    error.message.includes('401') || 
+                    error.message.includes('invalid authentication') ||
+                    error.message.includes('Expected OAuth')
+                );
+                const is403 = error.message && error.message.includes('403');
+                
+                if (is401 || is403) {
+                    console.log('🔄 Token expired, requesting new token...');
                     
                     try {
+                        // Request a new token silently
                         await new Promise((resolve, reject) => {
                             tokenClient.requestAccessToken({
-                                prompt: 'none',
+                                prompt: 'none',  // Silent refresh
                                 callback: async (response) => {
                                     if (response.error) {
+                                        console.error('Token refresh error:', response.error);
                                         reject(response.error);
                                         return;
                                     }
@@ -986,15 +1043,22 @@
                                     if (response.access_token) {
                                         accessToken = response.access_token;
                                         gapi.client.setToken({ access_token: accessToken });
-                                        console.log('New token received, retrying save...');
+                                        console.log('✅ New token received, retrying save...');
                                         
                                         try {
                                             await saveFileToDrive(`${type}.json`, data);
-                                            console.log(`Successfully saved ${type} after token refresh`);
+                                            console.log(`✅ Successfully saved ${type} after token refresh`);
+                                            
+                                            // Show success toast
+                                            const toast = document.createElement('div');
+                                            toast.className = 'fixed bottom-6 right-6 bg-green-600 text-white px-4 py-2 rounded-lg shadow-lg text-sm z-50';
+                                            toast.textContent = `✓ Saved ${type} successfully`;
+                                            document.body.appendChild(toast);
+                                            setTimeout(() => toast.remove(), 2000);
+                                            
                                             resolve();
                                         } catch (retryError) {
-                                            console.error('Retry failed:', retryError);
-                                            alert('Failed to save. Please try again or sign in again.');
+                                            console.error('❌ Retry failed:', retryError);
                                             reject(retryError);
                                         }
                                     }
@@ -1002,12 +1066,13 @@
                             });
                         });
                     } catch (refreshError) {
-                        console.error('Token refresh failed:', refreshError);
-                        alert('Session expired. Please sign in again.');
-                        handleSignOut();
+                        console.error('❌ Token refresh failed:', refreshError);
+                        alert('Session expired. Please sign out and sign in again.');
+                        setTimeout(() => handleSignOut(), 1000);
                     }
                 } else {
-                    alert(`Failed to save ${type}. Error: ${error.message || 'Unknown error'}. Please try again.`);
+                    // Not an auth error — show the actual error
+                    alert(`Failed to save ${type}.\n\nError: ${error.message || 'Unknown error'}\n\nPlease try again.`);
                 }
             }
         }
@@ -3615,28 +3680,31 @@
             const party = parties.find(p => p.partyName === partyName);
             const useIGST = shouldUseIGST(settings.gstNumber, party?.gstNumber);
             
-            const defaultSGST = useIGST ? 0 : (item?.sgstPct || 9);
-            const defaultCGST = useIGST ? 0 : (item?.cgstPct || 9);
-            const defaultIGST = useIGST ? (item?.igstPct || 18) : 0;
+            // IMPORTANT: Preserve exact GST values when editing (including 0%, 2.5%, etc)
+            // Use !== undefined instead of || to avoid treating 0 as falsy
+            const defaultSGST = useIGST ? 0 : (item && item.sgstPct !== undefined ? item.sgstPct : 9);
+            const defaultCGST = useIGST ? 0 : (item && item.cgstPct !== undefined ? item.cgstPct : 9);
+            const defaultIGST = useIGST ? (item && item.igstPct !== undefined ? item.igstPct : 18) : 0;
             
             const tr = document.createElement('tr');
             tr.id = `line-${id}`;
             tr.className = 'hover:bg-gray-50';
             tr.innerHTML = `
-                <td class="border px-2 py-2 text-center">${rowNum}</td>
+                <td class="border px-2 py-2 text-center align-top">${rowNum}</td>
                 <td class="border px-2 py-2">
-                    <input type="text" placeholder="Description" value="${item?.description || ''}" 
-                        class="item-desc w-full px-2 py-1 border rounded text-sm" required />
+                    <textarea placeholder="Description (press Enter for new line)" 
+                        class="item-desc w-full px-2 py-1 border rounded text-sm resize-y min-h-[60px]" 
+                        rows="2" required>${item?.description || ''}</textarea>
                 </td>
-                <td class="border px-2 py-2">
+                <td class="border px-2 py-2 align-top">
                     <input type="text" placeholder="HSN" value="${item?.hsnCode || ''}" 
                         class="item-hsn w-full px-2 py-1 border rounded text-sm" />
                 </td>
-                <td class="border px-2 py-2">
+                <td class="border px-2 py-2 align-top">
                     <input type="number" placeholder="0" value="${item?.qty || 1}" 
                         class="item-qty w-full px-2 py-1 border rounded text-sm" min="0" step="0.01" required />
                 </td>
-                <td class="border px-2 py-2">
+                <td class="border px-2 py-2 align-top">
                     <select class="item-uom w-full px-2 py-1 border rounded text-sm">
                         <option value="NOS" ${item?.uom === 'NOS' ? 'selected' : ''}>NOS</option>
                         <option value="KG" ${item?.uom === 'KG' ? 'selected' : ''}>KG</option>
@@ -3652,33 +3720,33 @@
                         <option value="JOB" ${item?.uom === 'JOB' ? 'selected' : ''}>JOB</option>
                     </select>
                 </td>
-                <td class="border px-2 py-2">
+                <td class="border px-2 py-2 align-top">
                     <input type="number" placeholder="0.00" value="${item?.rate || 0}" 
                         class="item-rate w-full px-2 py-1 border rounded text-sm" min="0" step="0.01" required />
                 </td>
-                <td class="border px-2 py-2">
+                <td class="border px-2 py-2 align-top">
                     <input type="number" placeholder="0" value="${item?.discountPct || 0}" 
                         class="item-discount w-full px-2 py-1 border rounded text-sm" min="0" max="100" step="0.01" />
                 </td>
-                <td class="border px-2 py-2 text-right">
+                <td class="border px-2 py-2 text-right align-top">
                     <span class="item-taxable font-medium text-sm">0.00</span>
                 </td>
-                <td class="border px-2 py-2">
+                <td class="border px-2 py-2 align-top">
                     <input type="number" placeholder="0" value="${defaultSGST}" 
                         class="item-sgst w-full px-2 py-1 border rounded text-sm" min="0" max="100" step="0.01" ${useIGST ? 'readonly style="background:#f3f4f6"' : ''} />
                 </td>
-                <td class="border px-2 py-2">
+                <td class="border px-2 py-2 align-top">
                     <input type="number" placeholder="0" value="${defaultCGST}" 
                         class="item-cgst w-full px-2 py-1 border rounded text-sm" min="0" max="100" step="0.01" ${useIGST ? 'readonly style="background:#f3f4f6"' : ''} />
                 </td>
-                <td class="border px-2 py-2">
+                <td class="border px-2 py-2 align-top">
                     <input type="number" placeholder="0" value="${defaultIGST}" 
                         class="item-igst w-full px-2 py-1 border rounded text-sm" min="0" max="100" step="0.01" ${!useIGST ? 'readonly style="background:#f3f4f6"' : ''} />
                 </td>
-                <td class="border px-2 py-2 text-right">
+                <td class="border px-2 py-2 text-right align-top">
                     <span class="item-total font-bold text-sm">0.00</span>
                 </td>
-                <td class="border px-2 py-2 text-center">
+                <td class="border px-2 py-2 text-center align-top">
                     <button type="button" onclick="removeLineItem('${id}')" 
                         class="text-red-600 hover:text-red-800 text-sm font-medium">Remove</button>
                 </td>
@@ -3701,6 +3769,19 @@
                 document.getElementById('totalSection').classList.add('hidden');
             }
             updateTotals();
+        }
+
+        // Add multiple blank line items at once for faster data entry
+        function addMultipleLineItems(count) {
+            for (let i = 0; i < count; i++) {
+                addLineItem();
+            }
+            // Show toast notification
+            const toast = document.createElement('div');
+            toast.className = 'fixed bottom-6 right-6 bg-indigo-600 text-white px-4 py-2 rounded-lg shadow-lg text-sm z-50';
+            toast.textContent = `✓ Added ${count} blank lines`;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 2000);
         }
 
         function updateTotals() {
