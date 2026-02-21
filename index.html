@@ -1482,6 +1482,7 @@
                     head: [['#', 'Description', 'HSN', 'Qty', 'UOM', 'Rate', 'Disc%', 'Taxable Amt', 'SGST%', 'CGST%', 'IGST%', 'Total']],
                     body: tableData,
                     theme: 'grid',
+                    margin: { top: 35, left: 14, right: 14, bottom: 20 }, // Reserve space for header/footer on all pages
                     headStyles: {
                         fillColor: [79, 70, 229],
                         textColor: 255,
@@ -1504,9 +1505,16 @@
                         10: { cellWidth: COL.igst,    halign: 'center' },
                         11: { cellWidth: COL.total,   halign: 'right'  }
                     },
-                    didDrawPage: function(data) { addFooter(doc);
-                        if (data.pageNumber > 1) addHeader(doc, data.pageNumber);
-                    }
+                    didDrawPage: function(data) {
+                        // Always draw footer
+                        addFooter(doc, txn.txnCategory === 'PROFORMA_INVOICE');
+                        
+                        // Draw header on page 2+ (page 1 already has header drawn above)
+                        if (data.pageNumber > 1) {
+                            addHeader(doc, data.pageNumber);
+                        }
+                    },
+                    showHead: 'everyPage' // Show table header on every page
                 });
 
                 // ── Totals table — drawn flush below the line-items table ──
