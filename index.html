@@ -1458,8 +1458,8 @@
                     }
                 }
                 
-                // Show Due Date for Invoice only
-                if (txn.dueDate && txn.txnCategory === 'INVOICE') {
+                // Show Due Date for Invoice and Proforma Invoice
+                if (txn.dueDate && (txn.txnCategory === 'INVOICE' || txn.txnCategory === 'PROFORMA_INVOICE')) {
                     doc.setFont(undefined, 'bold');
                     doc.setTextColor(200, 0, 0);
                     doc.text('Due Date: ' + txn.dueDate, 14, startY + 18 + extraLines);
@@ -1597,10 +1597,8 @@
                         11: { cellWidth: COL.total,   halign: 'right'  }
                     },
                     didDrawPage: function(data) {
-                        // Always draw footer
-                        addFooter(doc, txn.txnCategory === 'PROFORMA_INVOICE');
-                        
                         // Draw header on page 2+ (page 1 already has header drawn above)
+                        // Footer will be drawn in the final loop for all pages - don't draw here to avoid duplicates
                         if (data.pageNumber > 1) {
                             addHeader(doc, data.pageNumber);
                         }
@@ -4279,8 +4277,8 @@
                 invoiceFields?.classList.add('hidden');
             }
             
-            // Show Payment Due Date ONLY for Invoice (NOT Proforma, NOT others)
-            if (cat === 'INVOICE') {
+            // Show Payment Due Date for Invoice AND Proforma Invoice
+            if (cat === 'INVOICE' || cat === 'PROFORMA_INVOICE') {
                 dueDateField?.classList.remove('hidden');
             } else {
                 dueDateField?.classList.add('hidden');
