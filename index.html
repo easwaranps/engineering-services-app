@@ -2723,7 +2723,7 @@
                 document.getElementById('expPayMode').value       = exp.payMode||'';
                 document.getElementById('expChequeNo').value      = exp.chequeNo||'';
                 document.getElementById('expPayDate').value       = exp.payDate||'';
-                document.getElementById('expBankName').value      = exp.bankName||'';
+                if (exp.bankAccountId) document.getElementById('expBankAccount').value = exp.bankAccountId;
                 document.getElementById('expRemark').value        = exp.remark||'';
                 // Show existing multi-attachments
                 renderExpAttachList();
