@@ -282,20 +282,23 @@
                     </div>
                 </div>
 
-                <!-- Remark + Bill Photo -->
+                <!-- Remark + Bill Attachments -->
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                     <div>
                         <label class="block text-xs font-semibold text-gray-600 mb-1">Remark</label>
                         <textarea id="expRemark" rows="2" placeholder="Additional notes..." class="w-full px-3 py-2 border rounded-lg text-sm"></textarea>
                     </div>
                     <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">Bill Photo / Attachment</label>
-                        <input type="file" id="expBillPhoto" accept="image/*,application/pdf" class="w-full px-3 py-2 border rounded-lg text-sm"/>
-                        <p class="text-xs text-gray-400 mt-1">Image or PDF, max 2MB</p>
-                        <div id="expPhotoPreview" class="mt-2 hidden">
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Bill Photos / Attachments</label>
+                        <input type="file" id="expBillPhoto" accept="image/*,application/pdf" multiple class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        <p class="text-xs text-gray-400 mt-1">Images or PDFs, max 2MB each. Hold Ctrl/Cmd to select multiple.</p>
+                        <!-- Legacy single photo preview (hidden, kept for backward compat) -->
+                        <div id="expPhotoPreview" class="hidden">
                             <img id="expPhotoImg" src="" alt="Bill photo" class="max-h-24 rounded border"/>
                             <span id="expPhotoName" class="text-xs text-gray-500 block"></span>
                         </div>
+                        <!-- Multi-file list -->
+                        <div id="expAttachList" class="mt-2 space-y-1"></div>
                     </div>
                 </div>
 
@@ -441,6 +444,14 @@
                     <textarea id="txnTerms" placeholder="Enter terms and conditions for this quotation..." 
                               class="w-full px-4 py-2 border border-gray-300 rounded-lg resize-y min-h-[80px]" rows="3"></textarea>
                     <p class="text-xs text-gray-400 mt-1">These will appear at the end of the quotation PDF</p>
+                </div>
+
+                <!-- Remarks for Credit Note -->
+                <div id="remarksField" class="mb-4 hidden">
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">Remarks</label>
+                    <textarea id="txnRemarks" placeholder="Enter remarks for this credit note..." 
+                              class="w-full px-4 py-2 border border-gray-300 rounded-lg resize-y min-h-[80px]" rows="3"></textarea>
+                    <p class="text-xs text-gray-400 mt-1">These will appear at the end of the credit note PDF</p>
                 </div>
                 
                 <div class="mb-4">
@@ -1658,41 +1669,61 @@
                             }
                         }
                     },
-                    didDrawPage: function(data) { addFooter(doc);
+                    didDrawPage: function(data) {
                         if (data.pageNumber > 1) addHeader(doc, data.pageNumber);
                     }
                 });
 
                 let finalY = doc.lastAutoTable.finalY + 8;
 
-                // ── Bank details ───────────────────────────────────────────
-                if (bankName && txn.txnDirection === 'Outgoing') {
-                    // Check if we need new page BEFORE bank details (more conservative)
-                    if (finalY > 230) {
+                // ── Terms & Conditions (Quotation only) ────────────────────
+                if (txn.txnCategory === 'QUOTATION' && txn.terms) {
+                    // Each terms line is ~5mm; heading is 9mm; add 15mm safety buffer before footer (285-15=270)
+                    const termsLines = doc.splitTextToSize(txn.terms, 180);
+                    const termsBlockH = 9 + (termsLines.length * 5) + 12; // heading + lines + gap
+                    if (finalY + termsBlockH > 265) {
                         doc.addPage();
                         addHeader(doc, doc.internal.getNumberOfPages());
                         finalY = 50;
                     }
-                    
-                    // Terms & Conditions (only for Quotation)
-                    if (txn.txnCategory === 'QUOTATION' && txn.terms) {
-                        doc.setFontSize(9);
-                        doc.setFont(undefined, 'bold');
-                        doc.text('Terms & Conditions:', 14, finalY);
-                        doc.setFont(undefined, 'normal');
-                        doc.setFontSize(8);
-                        const termsLines = doc.splitTextToSize(txn.terms, 180);
-                        doc.text(termsLines, 14, finalY + 6);
-                        finalY += 6 + (termsLines.length * 5) + 12; // More spacing after terms
-                        
-                        // Check if we need a new page after terms
-                        if (finalY > 220) {
-                            doc.addPage();
-                            addHeader(doc, doc.internal.getNumberOfPages());
-                            finalY = 50;
-                        }
+                    doc.setFontSize(9);
+                    doc.setFont(undefined, 'bold');
+                    doc.text('Terms & Conditions:', 14, finalY);
+                    doc.setFont(undefined, 'normal');
+                    doc.setFontSize(8);
+                    doc.text(termsLines, 14, finalY + 6);
+                    finalY += termsBlockH;
+                }
+
+                // ── Remarks (Credit Note only) ──────────────────────────────
+                if (txn.txnCategory === 'CREDIT_NOTE' && txn.remarks) {
+                    const remarkLines = doc.splitTextToSize(txn.remarks, 180);
+                    const remarkBlockH = 9 + (remarkLines.length * 5) + 10;
+                    if (finalY + remarkBlockH > 265) {
+                        doc.addPage();
+                        addHeader(doc, doc.internal.getNumberOfPages());
+                        finalY = 50;
                     }
-                    
+                    doc.setFontSize(9);
+                    doc.setFont(undefined, 'bold');
+                    doc.text('Remarks:', 14, finalY);
+                    doc.setFont(undefined, 'normal');
+                    doc.setFontSize(8);
+                    doc.text(remarkLines, 14, finalY + 6);
+                    finalY += remarkBlockH;
+                }
+
+                // ── Bank details ───────────────────────────────────────────
+                if (bankName && txn.txnDirection === 'Outgoing') {
+                    // Estimate bank block height: heading + up to 5 fields (5mm each) + sig block (30mm) = ~65mm
+                    const bankFields = [bankName, beneficiary, accountNo, ifscCode, branchAddress].filter(Boolean).length;
+                    const bankBlockH = 8 + (bankFields * 5) + 30;
+                    if (finalY + bankBlockH > 265) {
+                        doc.addPage();
+                        addHeader(doc, doc.internal.getNumberOfPages());
+                        finalY = 50;
+                    }
+
                     doc.setFontSize(9);
                     doc.setFont(undefined, 'bold');
                     doc.text('Bank Details:', 14, finalY);
@@ -1703,10 +1734,10 @@
                     if (accountNo)     { bY += 5; doc.text('Account No: '  + accountNo,   14, bY); }
                     if (ifscCode)      { bY += 5; doc.text('IFSC: '        + ifscCode,    14, bY); }
                     if (branchAddress) { bY += 5; doc.text('Branch: '      + branchAddress, 14, bY); }
-                    
-                    // Authorized Signature section (more spacing before signature)
-                    finalY = bY + 18; // Increased from 15 to 18 for more space
-                    if (finalY > 245) { // More conservative threshold (was 260)
+
+                    // Authorized Signature — needs ~30mm; check fits before footer
+                    finalY = bY + 18;
+                    if (finalY + 30 > 265) {
                         doc.addPage();
                         addHeader(doc, doc.internal.getNumberOfPages());
                         finalY = 50;
@@ -2565,7 +2596,7 @@
         function expRow(e) {
             const statusCls = {Paid:'bg-green-100 text-green-700', Pending:'bg-red-100 text-red-700', Partial:'bg-yellow-100 text-yellow-700'}[e.payStatus] || 'bg-gray-100';
             const fmt = n => n ? '₹'+parseFloat(n).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}) : '—';
-            const eJson = JSON.stringify(e).replace(/'/g,"&apos;");
+            const safeId = e.expID.replace(/'/g, "\\'");
             return `<tr class="border-b hover:bg-orange-50">
                 <td class="px-3 py-2 font-medium text-orange-700">${e.voucherNo||'—'}</td>
                 <td class="px-3 py-2">${e.billNo||'—'}</td>
@@ -2577,9 +2608,14 @@
                 <td class="px-3 py-2 text-right font-semibold">${fmt(e.netPayable)}</td>
                 <td class="px-3 py-2 text-center"><span class="px-2 py-0.5 rounded-full text-xs ${statusCls}">${e.payStatus}</span></td>
                 <td class="px-3 py-2 text-right whitespace-nowrap">
-                    ${e.billPhotoData ? `<button onclick='viewExpPhoto("${e.expID}")' class="text-blue-500 hover:text-blue-700 mr-1 text-xs" title="View Bill">📷</button>` : ''}
-                    <button onclick='editExpense(${eJson})' class="text-indigo-600 hover:text-indigo-800 mr-1 text-xs font-medium">Edit</button>
-                    <button onclick="deleteExpense('${e.expID}')" class="text-red-600 hover:text-red-800 text-xs">Del</button>
+                    ${(() => {
+                        const attachCount = (e.billAttachments||[]).length || (e.billPhotoData ? 1 : 0);
+                        return attachCount > 0
+                            ? `<button onclick="viewExpPhotoById('${safeId}', 0)" class="text-blue-500 hover:text-blue-700 mr-1 text-xs" title="View ${attachCount} attachment(s)">📎<span class="font-bold">${attachCount}</span></button>`
+                            : '';
+                    })()}
+                    <button onclick="editExpenseById('${safeId}')" class="text-indigo-600 hover:text-indigo-800 mr-1 text-xs font-medium">Edit</button>
+                    <button onclick="deleteExpense('${safeId}')" class="text-red-600 hover:text-red-800 text-xs">Del</button>
                 </td>
             </tr>`;
         }
@@ -2604,13 +2640,45 @@
         // ── Expense Modal Functions ──────────────────────────────────────────
         let currentExpense = null;
 
+        function renderExpAttachList() {
+            const list = currentExpense?.billAttachments || [];
+            const el = document.getElementById('expAttachList');
+            if (!el) return;
+            if (list.length === 0) { el.innerHTML = ''; return; }
+            el.innerHTML = list.map((a, i) => `
+                <div class="flex items-center gap-2 bg-orange-50 border border-orange-200 rounded-lg px-2 py-1 text-xs">
+                    <span class="flex-1 truncate text-orange-800" title="${a.name}">${a.type === 'pdf' ? '📄' : '🖼️'} ${a.name}</span>
+                    <button type="button" onclick="viewExpAttach(${i})" class="text-blue-500 hover:text-blue-700 font-medium">View</button>
+                    <button type="button" onclick="removeExpAttach(${i})" class="text-red-500 hover:text-red-700 font-medium">✕</button>
+                </div>`).join('');
+        }
+
+        function viewExpAttach(idx) {
+            const a = currentExpense?.billAttachments?.[idx];
+            if (!a) return;
+            const w = window.open();
+            if (a.type === 'pdf') {
+                w.document.write(`<html><body style="margin:0"><embed src="${a.data}" type="application/pdf" width="100%" height="100%"/></body></html>`);
+            } else {
+                w.document.write(`<html><body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${a.data}" style="max-width:100%;max-height:100vh;object-fit:contain"/></body></html>`);
+            }
+        }
+
+        function removeExpAttach(idx) {
+            if (!currentExpense) return;
+            if (!currentExpense.billAttachments) currentExpense.billAttachments = [];
+            currentExpense.billAttachments.splice(idx, 1);
+            renderExpAttachList();
+        }
+
         function openExpenseModal(exp = null) {
-            currentExpense = exp;
+            currentExpense = exp ? JSON.parse(JSON.stringify(exp)) : null; // deep copy so edits don't mutate original until save
             document.getElementById('expenseModalTitle').textContent = exp ? 'Edit Expense / Bill' : 'New Expense / Bill';
             const form = document.getElementById('expenseForm');
             form.reset();
             document.getElementById('expPhotoPreview').classList.add('hidden');
             document.getElementById('expTDSFields').classList.add('hidden');
+            document.getElementById('expAttachList').innerHTML = '';
 
             // Populate bank account dropdown (expense accounts only)
             const bankSelect = document.getElementById('expBankAccount');
@@ -2657,10 +2725,14 @@
                 document.getElementById('expPayDate').value       = exp.payDate||'';
                 document.getElementById('expBankName').value      = exp.bankName||'';
                 document.getElementById('expRemark').value        = exp.remark||'';
-                if (exp.billPhotoData) {
-                    document.getElementById('expPhotoImg').src = exp.billPhotoData;
-                    document.getElementById('expPhotoName').textContent = exp.billPhotoName||'';
-                    document.getElementById('expPhotoPreview').classList.remove('hidden');
+                // Show existing multi-attachments
+                renderExpAttachList();
+                // Backward compat: migrate old single billPhotoData to billAttachments
+                if (exp.billPhotoData && !(exp.billAttachments?.length)) {
+                    if (!currentExpense.billAttachments) currentExpense.billAttachments = [];
+                    const isPdf = exp.billPhotoData.startsWith('data:application/pdf');
+                    currentExpense.billAttachments.push({ name: exp.billPhotoName || 'attachment', data: exp.billPhotoData, type: isPdf ? 'pdf' : 'image' });
+                    renderExpAttachList();
                 }
                 calcExpAmounts();
             }
@@ -2747,19 +2819,24 @@
             const netPayable = netAmt + cgst + sgst + igst - cn;
             const balance    = Math.max(0, netPayable - adv);
 
-            // Handle bill photo
-            let photoData = currentExpense?.billPhotoData || null;
-            let photoName = currentExpense?.billPhotoName || null;
-            const photoFile = document.getElementById('expBillPhoto').files[0];
-            if (photoFile) {
-                if (photoFile.size > 2 * 1024 * 1024) { alert('File too large. Max 2MB.'); return; }
-                photoData = await new Promise((res, rej) => {
+            // Handle multiple file attachments
+            let billAttachments = currentExpense?.billAttachments ? [...currentExpense.billAttachments] : [];
+            // Backward compat: migrate old single photo if no billAttachments array
+            if (!billAttachments.length && currentExpense?.billPhotoData) {
+                const isPdf = currentExpense.billPhotoData.startsWith('data:application/pdf');
+                billAttachments.push({ name: currentExpense.billPhotoName || 'attachment', data: currentExpense.billPhotoData, type: isPdf ? 'pdf' : 'image' });
+            }
+            const newFiles = document.getElementById('expBillPhoto').files;
+            for (const file of newFiles) {
+                if (file.size > 2 * 1024 * 1024) { alert(`File "${file.name}" is too large. Max 2MB per file.`); return; }
+                const data = await new Promise((res, rej) => {
                     const r = new FileReader();
                     r.onload = () => res(r.result);
                     r.onerror = () => rej(new Error('Read failed'));
-                    r.readAsDataURL(photoFile);
+                    r.readAsDataURL(file);
                 });
-                photoName = photoFile.name;
+                const isPdf = file.type === 'application/pdf';
+                billAttachments.push({ name: file.name, data, type: isPdf ? 'pdf' : 'image' });
             }
 
             const expObj = {
@@ -2792,8 +2869,10 @@
                 bankAccountId:     document.getElementById('expBankAccount').value,
                 bankName:          (() => { const ba = bankAccounts.find(b => b.id === document.getElementById('expBankAccount').value); return ba ? ba.accountName : ''; })(),
                 remark:            document.getElementById('expRemark').value,
-                billPhotoData:     photoData,
-                billPhotoName:     photoName,
+                billAttachments,
+                // Keep legacy field populated with first attachment for backward compat
+                billPhotoData:     billAttachments[0]?.data || null,
+                billPhotoName:     billAttachments[0]?.name || null,
                 createdAt:         currentExpense?.createdAt || new Date().toISOString()
             };
 
@@ -2808,6 +2887,11 @@
             renderView();
         }
 
+        function editExpenseById(expID) {
+            const exp = expenses.find(x => x.expID === expID);
+            if (exp) openExpenseModal(exp);
+        }
+
         function editExpense(exp) { openExpenseModal(exp); }
 
         async function deleteExpense(expID) {
@@ -2817,32 +2901,69 @@
             renderView();
         }
 
-        function viewExpPhoto(expID) {
+        function viewExpPhoto(expID) { viewExpPhotoById(expID, 0); }
+
+        function viewExpPhotoById(expID, startIdx) {
             const exp = expenses.find(x => x.expID === expID);
-            if (!exp?.billPhotoData) return;
+            if (!exp) return;
+            // Build unified list: prefer billAttachments array, fallback to legacy single photo
+            const attachments = (exp.billAttachments && exp.billAttachments.length)
+                ? exp.billAttachments
+                : (exp.billPhotoData ? [{ name: exp.billPhotoName || 'attachment', data: exp.billPhotoData, type: exp.billPhotoData.startsWith('data:application/pdf') ? 'pdf' : 'image' }] : []);
+            if (!attachments.length) return;
+
+            let idx = startIdx || 0;
             const w = window.open();
-            w.document.write(`<html><body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;min-height:100vh">
-                <img src="${exp.billPhotoData}" style="max-width:100%;max-height:100vh;object-fit:contain"/>
-            </body></html>`);
+            const render = () => {
+                const a = attachments[idx];
+                const nav = attachments.length > 1 ? `
+                    <div style="position:fixed;top:10px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.7);color:#fff;padding:6px 16px;border-radius:20px;display:flex;align-items:center;gap:10px;z-index:999">
+                        <button onclick="go(-1)" style="background:none;border:none;color:#fff;font-size:18px;cursor:pointer">&#9664;</button>
+                        <span style="font-size:13px">${a.name} (${idx+1}/${attachments.length})</span>
+                        <button onclick="go(1)" style="background:none;border:none;color:#fff;font-size:18px;cursor:pointer">&#9654;</button>
+                    </div>` : `<div style="position:fixed;top:10px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.7);color:#fff;padding:6px 16px;border-radius:20px;font-size:13px;z-index:999">${a.name}</div>`;
+                const body = a.type === 'pdf'
+                    ? `<embed src="${a.data}" type="application/pdf" style="width:100vw;height:100vh"/>`
+                    : `<img src="${a.data}" style="max-width:100%;max-height:100vh;object-fit:contain"/>`;
+                w.document.open();
+                w.document.write(`<html><head><title>${a.name}</title></head><body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh">${nav}${body}
+                    <script>
+                    const atts = ${JSON.stringify(attachments)};
+                    let idx = ${idx};
+                    function go(dir) {
+                        idx = (idx + dir + atts.length) % atts.length;
+                        const a = atts[idx];
+                        document.querySelector('[data-nav-title]') && (document.querySelector('[data-nav-title]').textContent = a.name + ' (' + (idx+1) + '/' + atts.length + ')');
+                        const container = document.getElementById('mediaContainer');
+                        if (a.type === 'pdf') {
+                            container.innerHTML = '<embed src="' + a.data + '" type="application/pdf" style="width:100vw;height:100vh"/>';
+                        } else {
+                            container.innerHTML = '<img src="' + a.data + '" style="max-width:100%;max-height:100vh;object-fit:contain"/>';
+                        }
+                    }
+                    <\/script>
+                </body></html>`);
+                w.document.close();
+            };
+            render();
         }
 
-        // Handle bill photo preview
+        // Handle bill photo file selection — show names in attach list
         document.getElementById('expBillPhoto')?.addEventListener('change', function() {
-            const file = this.files[0];
-            if (!file) return;
-            if (file.type.startsWith('image/')) {
-                const reader = new FileReader();
-                reader.onload = e => {
-                    document.getElementById('expPhotoImg').src = e.target.result;
-                    document.getElementById('expPhotoName').textContent = file.name;
-                    document.getElementById('expPhotoPreview').classList.remove('hidden');
-                };
-                reader.readAsDataURL(file);
-            } else {
-                document.getElementById('expPhotoImg').src = '';
-                document.getElementById('expPhotoName').textContent = file.name + ' (PDF)';
-                document.getElementById('expPhotoPreview').classList.remove('hidden');
-            }
+            const listEl = document.getElementById('expAttachList');
+            if (!listEl) return;
+            const newItems = Array.from(this.files).map(f => {
+                const isPdf = f.type === 'application/pdf';
+                return `<div class="flex items-center gap-1 bg-blue-50 border border-blue-200 rounded px-2 py-1 text-xs text-blue-800">
+                    ${isPdf ? '📄' : '🖼️'} <span class="truncate">${f.name}</span>
+                    <span class="text-gray-400 ml-auto">${(f.size/1024).toFixed(0)}KB</span>
+                </div>`;
+            }).join('');
+            // Show new files pending upload below existing attachments
+            const pending = listEl.querySelector('[data-pending]') || document.createElement('div');
+            pending.setAttribute('data-pending', '1');
+            pending.innerHTML = newItems ? `<p class="text-xs text-gray-400 mt-1">New files to add:</p>${newItems}` : '';
+            if (!listEl.querySelector('[data-pending]')) listEl.appendChild(pending);
         });
 
         // ════════════════════════════════════════════════════════════════════
@@ -3794,6 +3915,11 @@
             if (txn && txn.terms) {
                 document.getElementById('txnTerms').value = txn.terms;
             }
+
+            // Load Remarks if exists (Credit Note)
+            if (txn && txn.remarks) {
+                document.getElementById('txnRemarks').value = txn.remarks;
+            }
             
             // Load Client PIC and Email if exists (Quotation)
             if (txn && txn.clientPIC) {
@@ -4018,6 +4144,7 @@
                     poDate: document.getElementById('txnPoDate')?.value || '',
                     dueDate: document.getElementById('txnDueDate')?.value || '',
                     terms: document.getElementById('txnTerms')?.value || '',
+                    remarks: document.getElementById('txnRemarks')?.value || '',
                     clientPIC: document.getElementById('txnClientPIC')?.value || '',
                     clientEmail: document.getElementById('txnClientEmail')?.value || '',
                     status: document.getElementById('txnStatus').value,
@@ -4267,6 +4394,7 @@
             const cat = document.getElementById('txnCategory')?.value || '';
             const invoiceFields = document.getElementById('invoiceFields');
             const termsField = document.getElementById('termsField');
+            const remarksField = document.getElementById('remarksField');
             const clientContactField = document.getElementById('clientContactField');
             const dueDateField = document.getElementById('dueDateField');
             
@@ -4291,6 +4419,13 @@
             } else {
                 termsField?.classList.add('hidden');
                 clientContactField?.classList.add('hidden');
+            }
+
+            // Show Remarks ONLY for Credit Note
+            if (cat === 'CREDIT_NOTE') {
+                remarksField?.classList.remove('hidden');
+            } else {
+                remarksField?.classList.add('hidden');
             }
         }
 
