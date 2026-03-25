@@ -214,6 +214,7 @@
                                 <option value="2" selected>2%</option>
                                 <option value="5">5%</option>
                                 <option value="10">10%</option>
+                                <option value="30">30%</option>
                                 <option value="Other">Other</option>
                             </select>
                         </div>
@@ -224,6 +225,42 @@
                         <div>
                             <label class="block text-xs font-semibold text-gray-600 mb-1">Net Amount (after TDS)</label>
                             <input type="number" id="expNetAmt" placeholder="Auto" class="w-full px-3 py-2 border rounded-lg bg-gray-50 text-sm" readonly/>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Deductions Section -->
+                <div class="bg-purple-50 border border-purple-200 rounded-xl p-4 mb-4">
+                    <div class="flex items-center gap-3 mb-3">
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" id="expDeductionsApplicable" onchange="toggleDeductionFields(); calcExpAmounts();" class="w-4 h-4 accent-purple-600"/>
+                            <span class="text-sm font-semibold text-purple-800">Deductions Applicable (PF / PT / ESIC)</span>
+                        </label>
+                    </div>
+                    <div id="expDeductionFields" class="grid grid-cols-2 md:grid-cols-4 gap-4 hidden">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Provident Fund (PF)</label>
+                            <input type="number" id="expPF" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Professional Tax (PT)</label>
+                            <input type="number" id="expPT" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">ESIC</label>
+                            <input type="number" id="expESIC" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Other Deduction</label>
+                            <input type="number" id="expOtherDeduction" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
+                        </div>
+                        <div class="md:col-span-2">
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Other Deduction Details</label>
+                            <input type="text" id="expOtherDeductionDetails" placeholder="Description of other deduction" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Total Deductions</label>
+                            <input type="number" id="expTotalDeductions" placeholder="Auto" class="w-full px-3 py-2 border rounded-lg bg-gray-50 text-sm" readonly/>
                         </div>
                     </div>
                 </div>
@@ -423,6 +460,56 @@
                     <div id="dueDateField">
                         <label class="block text-sm font-semibold text-gray-700 mb-2">Payment Due Date</label>
                         <input type="date" id="txnDueDate" class="w-full px-4 py-2 border border-gray-300 rounded-lg" />
+                    </div>
+                </div>
+
+                <!-- PAN Number - Invoice only -->
+                <div id="panField" class="mb-4 hidden">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">PAN Number</label>
+                            <input type="text" id="txnPAN" placeholder="e.g. ABCDE1234F" class="w-full px-4 py-2 border border-gray-300 rounded-lg uppercase" maxlength="10" />
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Supply Details - Invoice only -->
+                <div id="supplyField" class="mb-4 hidden">
+                    <div class="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                        <h4 class="text-sm font-bold text-blue-800 mb-3">Supply Details (for supply of goods)</h4>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-2">Date & Time of Supply</label>
+                                <input type="datetime-local" id="txnSupplyDateTime" class="w-full px-4 py-2 border border-gray-300 rounded-lg" />
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-2">Place of Supply</label>
+                                <input type="text" id="txnPlaceOfSupply" placeholder="City / State" class="w-full px-4 py-2 border border-gray-300 rounded-lg" maxlength="100" />
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-2">Vehicle Number</label>
+                                <input type="text" id="txnVehicleNo" placeholder="e.g. MH04AB1234" class="w-full px-4 py-2 border border-gray-300 rounded-lg uppercase" maxlength="20" />
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- PO-specific fields: Terms & Conditions + Part Number -->
+                <div id="poExtraFields" class="mb-4 hidden">
+                    <div class="bg-green-50 border border-green-200 rounded-xl p-4">
+                        <h4 class="text-sm font-bold text-green-800 mb-3">Purchase Order Details</h4>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-2">Part Number</label>
+                                <input type="text" id="txnPartNumber" placeholder="Part / Item number" class="w-full px-4 py-2 border border-gray-300 rounded-lg" maxlength="100" />
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">Terms & Conditions</label>
+                            <textarea id="txnPOTerms" placeholder="Enter terms and conditions for this purchase order..."
+                                      class="w-full px-4 py-2 border border-gray-300 rounded-lg resize-y min-h-[80px]" rows="3"></textarea>
+                            <p class="text-xs text-gray-400 mt-1">These will appear at the end of the PO PDF</p>
+                        </div>
                     </div>
                 </div>
                 
@@ -1468,6 +1555,12 @@
                         extraLines += 6;
                     }
                 }
+
+                // PAN Number (Invoice only)
+                if (txn.txnCategory === 'INVOICE' && txn.panNumber) {
+                    doc.text('PAN: ' + txn.panNumber.toUpperCase(), 14, startY + 18 + extraLines);
+                    extraLines += 6;
+                }
                 
                 // Show Due Date for Invoice and Proforma Invoice
                 if (txn.dueDate && (txn.txnCategory === 'INVOICE' || txn.txnCategory === 'PROFORMA_INVOICE')) {
@@ -1476,6 +1569,12 @@
                     doc.text('Due Date: ' + txn.dueDate, 14, startY + 18 + extraLines);
                     doc.setFont(undefined, 'normal');
                     doc.setTextColor(0, 0, 0);
+                    extraLines += 6;
+                }
+
+                // Part Number for PO
+                if (txn.txnCategory === 'PO' && txn.partNumber) {
+                    doc.text('Part No: ' + txn.partNumber, 14, startY + 18 + extraLines);
                     extraLines += 6;
                 }
                 
@@ -1521,6 +1620,27 @@
                     doc.setFontSize(8);
                     doc.setTextColor(0, 0, 0);
                     startY += 8; // Extra spacing for client contact
+                }
+
+                // Supply Details for Invoice (right-side block)
+                if (txn.txnCategory === 'INVOICE' && (txn.supplyDateTime || txn.placeOfSupply || txn.vehicleNo)) {
+                    doc.setFontSize(7);
+                    doc.setTextColor(60, 60, 60);
+                    let supY = startY - 20; // align with party block
+                    if (txn.supplyDateTime) {
+                        const dtFormatted = new Date(txn.supplyDateTime).toLocaleString('en-IN', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
+                        doc.text('Supply Date/Time: ' + dtFormatted, 110, supY);
+                        supY += 5;
+                    }
+                    if (txn.placeOfSupply) {
+                        doc.text('Place of Supply: ' + txn.placeOfSupply, 110, supY);
+                        supY += 5;
+                    }
+                    if (txn.vehicleNo) {
+                        doc.text('Vehicle No: ' + txn.vehicleNo.toUpperCase(), 110, supY);
+                    }
+                    doc.setFontSize(8);
+                    doc.setTextColor(0, 0, 0);
                 }
 
                 // ── Line items ─────────────────────────────────────────────
@@ -1637,7 +1757,7 @@
 
                 doc.autoTable({
                     startY: doc.lastAutoTable.finalY, // starts exactly where items table ends
-                    margin: { left: 14 },
+                    margin: { top: 35, left: 14, right: 14, bottom: 20 },
                     tableWidth: totalTableWidth,
                     head: [],
                     body: totalsTableData,
@@ -1678,9 +1798,8 @@
 
                 // ── Terms & Conditions (Quotation only) ────────────────────
                 if (txn.txnCategory === 'QUOTATION' && txn.terms) {
-                    // Each terms line is ~5mm; heading is 9mm; add 15mm safety buffer before footer (285-15=270)
                     const termsLines = doc.splitTextToSize(txn.terms, 180);
-                    const termsBlockH = 9 + (termsLines.length * 5) + 12; // heading + lines + gap
+                    const termsBlockH = 9 + (termsLines.length * 5) + 12;
                     if (finalY + termsBlockH > 265) {
                         doc.addPage();
                         addHeader(doc, doc.internal.getNumberOfPages());
@@ -1693,6 +1812,24 @@
                     doc.setFontSize(8);
                     doc.text(termsLines, 14, finalY + 6);
                     finalY += termsBlockH;
+                }
+
+                // ── Terms & Conditions (PO only) ───────────────────────────
+                if (txn.txnCategory === 'PO' && txn.poTerms) {
+                    const poTermsLines = doc.splitTextToSize(txn.poTerms, 180);
+                    const poTermsBlockH = 9 + (poTermsLines.length * 5) + 12;
+                    if (finalY + poTermsBlockH > 265) {
+                        doc.addPage();
+                        addHeader(doc, doc.internal.getNumberOfPages());
+                        finalY = 50;
+                    }
+                    doc.setFontSize(9);
+                    doc.setFont(undefined, 'bold');
+                    doc.text('Terms & Conditions:', 14, finalY);
+                    doc.setFont(undefined, 'normal');
+                    doc.setFontSize(8);
+                    doc.text(poTermsLines, 14, finalY + 6);
+                    finalY += poTermsBlockH;
                 }
 
                 // ── Remarks (Credit Note only) ──────────────────────────────
@@ -2678,6 +2815,7 @@
             form.reset();
             document.getElementById('expPhotoPreview').classList.add('hidden');
             document.getElementById('expTDSFields').classList.add('hidden');
+            document.getElementById('expDeductionFields')?.classList.add('hidden');
             document.getElementById('expAttachList').innerHTML = '';
 
             // Populate bank account dropdown (expense accounts only)
@@ -2715,6 +2853,17 @@
                     document.getElementById('expTDSPct').value     = exp.tdsPct||'2';
                     document.getElementById('expTDSAmt').value     = exp.tdsAmt||'';
                     document.getElementById('expNetAmt').value     = exp.netAmt||'';
+                }
+                // Load deductions
+                document.getElementById('expDeductionsApplicable').checked = exp.deductionsApplicable||false;
+                if (exp.deductionsApplicable) {
+                    document.getElementById('expDeductionFields').classList.remove('hidden');
+                    document.getElementById('expPF').value                  = exp.pfAmt||'';
+                    document.getElementById('expPT').value                  = exp.ptAmt||'';
+                    document.getElementById('expESIC').value                = exp.esicAmt||'';
+                    document.getElementById('expOtherDeduction').value      = exp.otherDeductionAmt||'';
+                    document.getElementById('expOtherDeductionDetails').value = exp.otherDeductionDetails||'';
+                    document.getElementById('expTotalDeductions').value     = exp.totalDeductions||'';
                 }
                 document.getElementById('expAdvanceAmt').value    = exp.advanceAmt||'';
                 document.getElementById('expAdvanceDate').value   = exp.advanceDate||'';
@@ -2774,9 +2923,22 @@
                 if (netEl) netEl.value = netAmt.toFixed(2);
             }
 
-            // Balance
+            // Deductions (PF, PT, ESIC, Other)
+            let totalDeductions = 0;
+            const deductOn = document.getElementById('expDeductionsApplicable')?.checked;
+            if (deductOn) {
+                const pf    = parseFloat(document.getElementById('expPF')?.value)||0;
+                const pt    = parseFloat(document.getElementById('expPT')?.value)||0;
+                const esic  = parseFloat(document.getElementById('expESIC')?.value)||0;
+                const other = parseFloat(document.getElementById('expOtherDeduction')?.value)||0;
+                totalDeductions = pf + pt + esic + other;
+                const dedEl = document.getElementById('expTotalDeductions');
+                if (dedEl) dedEl.value = totalDeductions.toFixed(2);
+            }
+
+            // Balance = net payable - advance - deductions
             const netPayable = netAmt + totalTax - cn;
-            const balance    = Math.max(0, netPayable - adv);
+            const balance    = Math.max(0, netPayable - adv - totalDeductions);
             const balEl = document.getElementById('expBalanceAmt');
             if (balEl) balEl.value = balance.toFixed(2);
 
@@ -2788,8 +2950,13 @@
             const s4 = document.getElementById('sumNet');
             if (s1) s1.textContent = fmt(billINR);
             if (s2) s2.textContent = fmt(totalTax);
-            if (s3) s3.textContent = fmt(tdsAmt);
+            if (s3) s3.textContent = fmt(tdsAmt + totalDeductions);
             if (s4) s4.textContent = fmt(netPayable);
+        }
+
+        function toggleDeductionFields() {
+            const on = document.getElementById('expDeductionsApplicable')?.checked;
+            document.getElementById('expDeductionFields')?.classList.toggle('hidden', !on);
         }
 
         function toggleChequeFields() {
@@ -2859,6 +3026,13 @@
                 tdsAmt,
                 netAmt,
                 netPayable,
+                deductionsApplicable: document.getElementById('expDeductionsApplicable')?.checked || false,
+                pfAmt:             document.getElementById('expDeductionsApplicable')?.checked ? (parseFloat(document.getElementById('expPF').value)||0) : 0,
+                ptAmt:             document.getElementById('expDeductionsApplicable')?.checked ? (parseFloat(document.getElementById('expPT').value)||0) : 0,
+                esicAmt:           document.getElementById('expDeductionsApplicable')?.checked ? (parseFloat(document.getElementById('expESIC').value)||0) : 0,
+                otherDeductionAmt: document.getElementById('expDeductionsApplicable')?.checked ? (parseFloat(document.getElementById('expOtherDeduction').value)||0) : 0,
+                otherDeductionDetails: document.getElementById('expOtherDeductionDetails')?.value || '',
+                totalDeductions,
                 advanceAmt:        adv,
                 advanceDate:       document.getElementById('expAdvanceDate').value,
                 balanceAmt:        balance,
@@ -3910,6 +4084,16 @@
             if (txn && txn.dueDate) {
                 document.getElementById('txnDueDate').value = txn.dueDate;
             }
+
+            // Load Invoice-only fields
+            if (txn && txn.panNumber)       document.getElementById('txnPAN').value             = txn.panNumber;
+            if (txn && txn.supplyDateTime)  document.getElementById('txnSupplyDateTime').value   = txn.supplyDateTime;
+            if (txn && txn.placeOfSupply)   document.getElementById('txnPlaceOfSupply').value    = txn.placeOfSupply;
+            if (txn && txn.vehicleNo)       document.getElementById('txnVehicleNo').value         = txn.vehicleNo;
+
+            // Load PO-only fields
+            if (txn && txn.partNumber)      document.getElementById('txnPartNumber').value        = txn.partNumber;
+            if (txn && txn.poTerms)         document.getElementById('txnPOTerms').value            = txn.poTerms;
             
             // Load Terms & Conditions if exists
             if (txn && txn.terms) {
@@ -4143,6 +4327,12 @@
                     poNumber: document.getElementById('txnPoNumber')?.value || '',
                     poDate: document.getElementById('txnPoDate')?.value || '',
                     dueDate: document.getElementById('txnDueDate')?.value || '',
+                    panNumber: document.getElementById('txnPAN')?.value || '',
+                    supplyDateTime: document.getElementById('txnSupplyDateTime')?.value || '',
+                    placeOfSupply: document.getElementById('txnPlaceOfSupply')?.value || '',
+                    vehicleNo: document.getElementById('txnVehicleNo')?.value || '',
+                    partNumber: document.getElementById('txnPartNumber')?.value || '',
+                    poTerms: document.getElementById('txnPOTerms')?.value || '',
                     terms: document.getElementById('txnTerms')?.value || '',
                     remarks: document.getElementById('txnRemarks')?.value || '',
                     clientPIC: document.getElementById('txnClientPIC')?.value || '',
@@ -4392,27 +4582,46 @@
         // Show/hide PO fields, Due Date, and Terms based on transaction type
         function updateConditionalFields() {
             const cat = document.getElementById('txnCategory')?.value || '';
-            const invoiceFields = document.getElementById('invoiceFields');
-            const termsField = document.getElementById('termsField');
-            const remarksField = document.getElementById('remarksField');
+            const invoiceFields      = document.getElementById('invoiceFields');
+            const panField           = document.getElementById('panField');
+            const supplyField        = document.getElementById('supplyField');
+            const poExtraFields      = document.getElementById('poExtraFields');
+            const termsField         = document.getElementById('termsField');
+            const remarksField       = document.getElementById('remarksField');
             const clientContactField = document.getElementById('clientContactField');
-            const dueDateField = document.getElementById('dueDateField');
-            
-            // Show PO Number & PO Date for Invoice and Proforma Invoice
+            const dueDateField       = document.getElementById('dueDateField');
+
+            // PO Number & PO Date: Invoice and Proforma Invoice
             if (cat === 'INVOICE' || cat === 'PROFORMA_INVOICE') {
                 invoiceFields?.classList.remove('hidden');
             } else {
                 invoiceFields?.classList.add('hidden');
             }
-            
-            // Show Payment Due Date for Invoice AND Proforma Invoice
+
+            // Payment Due Date: Invoice and Proforma Invoice
             if (cat === 'INVOICE' || cat === 'PROFORMA_INVOICE') {
                 dueDateField?.classList.remove('hidden');
             } else {
                 dueDateField?.classList.add('hidden');
             }
-            
-            // Show Client Contact & Terms ONLY for Quotation
+
+            // PAN Number + Supply Details: Invoice only
+            if (cat === 'INVOICE') {
+                panField?.classList.remove('hidden');
+                supplyField?.classList.remove('hidden');
+            } else {
+                panField?.classList.add('hidden');
+                supplyField?.classList.add('hidden');
+            }
+
+            // PO Extra Fields (Part Number + Terms): PO only
+            if (cat === 'PO') {
+                poExtraFields?.classList.remove('hidden');
+            } else {
+                poExtraFields?.classList.add('hidden');
+            }
+
+            // Client Contact & Terms: Quotation only
             if (cat === 'QUOTATION') {
                 termsField?.classList.remove('hidden');
                 clientContactField?.classList.remove('hidden');
@@ -4421,7 +4630,7 @@
                 clientContactField?.classList.add('hidden');
             }
 
-            // Show Remarks ONLY for Credit Note
+            // Remarks: Credit Note only
             if (cat === 'CREDIT_NOTE') {
                 remarksField?.classList.remove('hidden');
             } else {
