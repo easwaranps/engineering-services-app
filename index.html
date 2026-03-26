@@ -558,6 +558,7 @@
                                 <tr class="bg-gray-100">
                                     <th class="border px-2 py-2 text-left w-12">S.No</th>
                                     <th class="border px-2 py-2 text-left min-w-[200px]">Description</th>
+                                    <th id="thPartNo" class="border px-2 py-2 text-left w-28 hidden">Part No</th>
                                     <th class="border px-2 py-2 text-left w-24">HSN Code</th>
                                     <th class="border px-2 py-2 text-left w-20">Qty</th>
                                     <th class="border px-2 py-2 text-left w-24">UOM</th>
@@ -1646,11 +1647,13 @@
                 // ── Line items ─────────────────────────────────────────────
                 startY += 22;
 
-                // Column widths — A4 usable width = 182mm (14mm left margin, 14mm right)
-                // Total col widened to 28mm to fit "INR 29,500.00" without overflow
+                // Column widths — A4 usable width = 182mm (14mm margins each side)
+                // For PO: add Part No col (14mm), narrow desc 36→27mm, total 28→25mm
+                const isPO = txn.txnCategory === 'PO';
                 const COL = {
                     sno:     7,
-                    desc:   36,
+                    desc:    isPO ? 27 : 36,
+                    partno:  14,               // only rendered for PO
                     hsn:    13,
                     qty:    11,
                     uom:    10,
@@ -1660,9 +1663,8 @@
                     sgst:    9,
                     cgst:    9,
                     igst:    9,
-                    total:  28   // widened from 20 → 28 to fit "INR 29,500.00"
+                    total:   isPO ? 25 : 28
                 };
-                // Verify total = 182: 7+36+13+11+10+18+10+20+9+9+9+28 = 180 (2mm tolerance OK)
 
                 // Build line-item rows
                 let grandSubtotal = 0, grandTax = 0, grandTotal = 0;
@@ -1680,9 +1682,9 @@
                     grandTax      += sgstAmt + cgstAmt + igstAmt;
                     grandTotal    += lineTotal;
 
-                    return [
-                        idx + 1,
-                        item.description,
+                    const row = [idx + 1, item.description];
+                    if (isPO) row.push(item.partNo || '');
+                    row.push(
                         item.hsnCode || '',
                         fmt(item.qty),
                         item.uom || 'NOS',
@@ -1693,18 +1695,50 @@
                         (item.cgstPct || 0) + '%',
                         (item.igstPct || 0) + '%',
                         fmt(lineTotal)
-                    ];
+                    );
+                    return row;
                 });
 
-                // Append 3 totals rows directly inside the table
-                // Simple 2-column approach: label | amount — drawn as a separate table below
+                // Build headers and columnStyles conditionally for PO
+                const tableHead = isPO
+                    ? [['#', 'Description', 'Part No', 'HSN', 'Qty', 'UOM', 'Rate', 'Disc%', 'Taxable', 'SGST%', 'CGST%', 'IGST%', 'Total']]
+                    : [['#', 'Description', 'HSN', 'Qty', 'UOM', 'Rate', 'Disc%', 'Taxable Amt', 'SGST%', 'CGST%', 'IGST%', 'Total']];
+
+                const colStyles = isPO ? {
+                    0:  { cellWidth: COL.sno,    halign: 'center' },
+                    1:  { cellWidth: COL.desc,   halign: 'left'   },
+                    2:  { cellWidth: COL.partno, halign: 'left'   },
+                    3:  { cellWidth: COL.hsn,    halign: 'center' },
+                    4:  { cellWidth: COL.qty,    halign: 'right'  },
+                    5:  { cellWidth: COL.uom,    halign: 'center' },
+                    6:  { cellWidth: COL.rate,   halign: 'right'  },
+                    7:  { cellWidth: COL.disc,   halign: 'center' },
+                    8:  { cellWidth: COL.taxable,halign: 'right'  },
+                    9:  { cellWidth: COL.sgst,   halign: 'center' },
+                    10: { cellWidth: COL.cgst,   halign: 'center' },
+                    11: { cellWidth: COL.igst,   halign: 'center' },
+                    12: { cellWidth: COL.total,  halign: 'right'  }
+                } : {
+                    0:  { cellWidth: COL.sno,    halign: 'center' },
+                    1:  { cellWidth: COL.desc,   halign: 'left'   },
+                    2:  { cellWidth: COL.hsn,    halign: 'center' },
+                    3:  { cellWidth: COL.qty,    halign: 'right'  },
+                    4:  { cellWidth: COL.uom,    halign: 'center' },
+                    5:  { cellWidth: COL.rate,   halign: 'right'  },
+                    6:  { cellWidth: COL.disc,   halign: 'center' },
+                    7:  { cellWidth: COL.taxable,halign: 'right'  },
+                    8:  { cellWidth: COL.sgst,   halign: 'center' },
+                    9:  { cellWidth: COL.cgst,   halign: 'center' },
+                    10: { cellWidth: COL.igst,   halign: 'center' },
+                    11: { cellWidth: COL.total,  halign: 'right'  }
+                };
 
                 doc.autoTable({
                     startY: startY,
-                    head: [['#', 'Description', 'HSN', 'Qty', 'UOM', 'Rate', 'Disc%', 'Taxable Amt', 'SGST%', 'CGST%', 'IGST%', 'Total']],
+                    head: tableHead,
                     body: tableData,
                     theme: 'grid',
-                    margin: { top: 35, left: 14, right: 14, bottom: 20 }, // Reserve space for header/footer on all pages
+                    margin: { top: 35, left: 14, right: 14, bottom: 20 },
                     headStyles: {
                         fillColor: [79, 70, 229],
                         textColor: 255,
@@ -1713,34 +1747,19 @@
                         halign: 'center'
                     },
                     bodyStyles: { fontSize: 7, textColor: [30, 30, 30] },
-                    columnStyles: {
-                        0:  { cellWidth: COL.sno,     halign: 'center' },
-                        1:  { cellWidth: COL.desc,    halign: 'left'   },
-                        2:  { cellWidth: COL.hsn,     halign: 'center' },
-                        3:  { cellWidth: COL.qty,     halign: 'right'  },
-                        4:  { cellWidth: COL.uom,     halign: 'center' },
-                        5:  { cellWidth: COL.rate,    halign: 'right'  },
-                        6:  { cellWidth: COL.disc,    halign: 'center' },
-                        7:  { cellWidth: COL.taxable, halign: 'right'  },
-                        8:  { cellWidth: COL.sgst,    halign: 'center' },
-                        9:  { cellWidth: COL.cgst,    halign: 'center' },
-                        10: { cellWidth: COL.igst,    halign: 'center' },
-                        11: { cellWidth: COL.total,   halign: 'right'  }
-                    },
+                    columnStyles: colStyles,
                     didDrawPage: function(data) {
-                        // Draw header on page 2+ (page 1 already has header drawn above)
-                        // Footer will be drawn in the final loop for all pages - don't draw here to avoid duplicates
                         if (data.pageNumber > 1) {
                             addHeader(doc, data.pageNumber);
                         }
                     },
-                    showHead: 'everyPage' // Show table header on every page
+                    showHead: 'everyPage'
                 });
 
                 // ── Totals table — drawn flush below the line-items table ──
                 // Amount column matches the "Total" column width above (28mm)
                 const totalTableWidth =
-                    COL.sno + COL.desc + COL.hsn + COL.qty + COL.uom +
+                    COL.sno + COL.desc + (isPO ? COL.partno : 0) + COL.hsn + COL.qty + COL.uom +
                     COL.rate + COL.disc + COL.taxable + COL.sgst + COL.cgst +
                     COL.igst + COL.total;
 
@@ -2984,7 +3003,17 @@
             const tdsAmt  = tdsOn ? (parseFloat(document.getElementById('expTDSAmt').value)||0) : 0;
             const netAmt  = billINR - tdsAmt;
             const netPayable = netAmt + cgst + sgst + igst - cn;
-            const balance    = Math.max(0, netPayable - adv);
+
+            // Calculate deductions
+            const deductOn = document.getElementById('expDeductionsApplicable')?.checked || false;
+            const totalDeductions = deductOn
+                ? ((parseFloat(document.getElementById('expPF').value)||0) +
+                   (parseFloat(document.getElementById('expPT').value)||0) +
+                   (parseFloat(document.getElementById('expESIC').value)||0) +
+                   (parseFloat(document.getElementById('expOtherDeduction').value)||0))
+                : 0;
+
+            const balance = Math.max(0, netPayable - adv - totalDeductions);
 
             // Handle multiple file attachments
             let billAttachments = currentExpense?.billAttachments ? [...currentExpense.billAttachments] : [];
@@ -4167,6 +4196,10 @@
                         class="item-desc w-full px-2 py-1 border rounded text-sm resize-y min-h-[60px]" 
                         rows="2" required>${item?.description || ''}</textarea>
                 </td>
+                <td class="td-partno border px-2 py-2 align-top hidden">
+                    <input type="text" placeholder="Part No" value="${item?.partNo || ''}" 
+                        class="item-partno w-full px-2 py-1 border rounded text-sm" />
+                </td>
                 <td class="border px-2 py-2 align-top">
                     <input type="text" placeholder="HSN" value="${item?.hsnCode || ''}" 
                         class="item-hsn w-full px-2 py-1 border rounded text-sm" />
@@ -4225,7 +4258,12 @@
             
             document.getElementById('lineItems').appendChild(tr);
             document.getElementById('totalSection').classList.remove('hidden');
-            
+
+            // Show Part No cell if current category is PO
+            if ((document.getElementById('txnCategory')?.value || '') === 'PO') {
+                tr.querySelector('.td-partno')?.classList.remove('hidden');
+            }
+
             tr.querySelectorAll('input, select').forEach(input => {
                 input.addEventListener('input', updateTotals);
                 input.addEventListener('change', updateTotals);
@@ -4307,6 +4345,7 @@
                 const items = Array.from(document.getElementById('lineItems').children).map((row, idx) => ({
                     itemID: `item-${idx + 1}`,
                     description: row.querySelector('.item-desc').value,
+                    partNo: row.querySelector('.item-partno')?.value || '',
                     hsnCode: row.querySelector('.item-hsn').value,
                     qty: parseFloat(row.querySelector('.item-qty').value) || 0,
                     uom: row.querySelector('.item-uom').value,
@@ -4617,8 +4656,12 @@
             // PO Extra Fields (Part Number + Terms): PO only
             if (cat === 'PO') {
                 poExtraFields?.classList.remove('hidden');
+                document.getElementById('thPartNo')?.classList.remove('hidden');
+                document.querySelectorAll('.td-partno').forEach(td => td.classList.remove('hidden'));
             } else {
                 poExtraFields?.classList.add('hidden');
+                document.getElementById('thPartNo')?.classList.add('hidden');
+                document.querySelectorAll('.td-partno').forEach(td => td.classList.add('hidden'));
             }
 
             // Client Contact & Terms: Quotation only
