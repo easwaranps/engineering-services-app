@@ -34,10 +34,9 @@
             align-items: center;
             justify-content: center;
         }
-        /* ── Attendance Day Button (Wage Calculator) ── */
-        .att-day-btn { border: 1.5px solid #e5e7eb; border-radius: 8px; padding: 4px 2px; text-align: center; cursor: pointer; background: #fff; transition: transform 0.08s; min-height: 48px; width: 100%; font-family: inherit; }
-        .att-day-btn:hover { transform: scale(1.05); }
-        .att-day-btn:active { transform: scale(0.96); }
+        .att-day-btn { border:1.5px solid #e5e7eb; border-radius:8px; padding:4px 2px; text-align:center; cursor:pointer; background:#fff; transition:transform 0.08s; min-height:48px; width:100%; font-family:inherit; }
+        .att-day-btn:hover { transform:scale(1.05); }
+        .att-day-btn:active { transform:scale(0.96); }
     </style>
 </head>
 <body class="bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 min-h-screen">
@@ -814,180 +813,285 @@
             ApprovedLeave:    { label:'Approved Leave',   short:'A/L', color:'#7c3aed', bg:'#ede9fe', text:'#4c1d95', engaged:false },
             UnApprovedLeave:  { label:'Unapproved Leave', short:'U/L', color:'#dc2626', bg:'#fee2e2', text:'#7f1d1d', engaged:false },
         };
-        const ATT_ORDER = ['', 'Working', 'StandBy', 'Outstation', 'Anchorage', 'Sailing', 'ApprovedLeave', 'UnApprovedLeave'];
-        const ENGAGED_TYPES = ['Working', 'Outstation', 'Anchorage', 'Sailing'];
+        const ATT_ORDER = ['','Working','StandBy','Outstation','Anchorage','Sailing','ApprovedLeave','UnApprovedLeave'];
+        const ENGAGED_TYPES = ['Working','Outstation','Anchorage','Sailing'];
 
         let techWageState = {
-            staffID:     '',
-            periodMonth: new Date().getMonth() + 1,
-            periodYear:  new Date().getFullYear(),
-            dailyWage:   0,
-            showRates:   false,
-            att:         Array(30).fill(''),
-            rates: {
-                standbyPct: 50,
-                alPct:      100,
-                outA:       600,
-                ancA:       400,
-                salA:       500,
-                t15:        250,
-                t20:        350,
-            }
+            staffID:'', periodMonth:new Date().getMonth()+1, periodYear:new Date().getFullYear(),
+            dailyWage:0, showRates:false, att:Array(30).fill(''),
+            rates:{ standbyPct:50, alPct:100, outA:600, ancA:400, salA:500, t15:250, t20:350 }
         };
 
-        // ── Wage Calc Helpers ─────────────────────────────────────────────
-        function getTechWagePeriodDates(year, month) {
-            const pm = month === 1 ? 12 : month - 1;
-            const py = month === 1 ? year - 1 : year;
-            const dates = [], start = new Date(py, pm - 1, 26);
-            for (let i = 0; i < 30; i++) {
-                const d = new Date(start);
-                d.setDate(start.getDate() + i);
-                dates.push(d);
+        // ════════════════════════════════════════════════════════════════════
+        //  OFFICE PAY STATE
+        // ════════════════════════════════════════════════════════════════════
+        let officePayState = {
+            staffID:'', periodMonth:new Date().getMonth()+1, periodYear:new Date().getFullYear(),
+            leaveTaken:0, addlAllowance:0, addlAllowanceRemark:'',
+            addlDeduction:0, addlDeductionRemark:''
+        };
+
+        // ── Shared pay slip period helpers ───────────────────────────────────
+        function onPaySlipStaffChange(staffID) {
+            const st = staff.find(x => x.staffID === staffID);
+            techWageState.staffID = ''; officePayState.staffID = '';
+            const noMsg  = document.getElementById('psNoStaffMsg');
+            const twSec  = document.getElementById('twSection');
+            const opSec  = document.getElementById('opSection');
+            if (!st) {
+                noMsg?.classList.remove('hidden');
+                twSec?.classList.add('hidden');
+                opSec?.classList.add('hidden');
+                return;
             }
+            noMsg?.classList.add('hidden');
+            if (st.staffType === 'Technician') {
+                techWageState.staffID    = staffID;
+                techWageState.dailyWage  = parseFloat(st.dailyWage) || 0;
+                const el = document.getElementById('twDailyWage');
+                if (el) el.value = techWageState.dailyWage;
+                twSec?.classList.remove('hidden');
+                opSec?.classList.add('hidden');
+                renderTechWageCalc();
+            } else {
+                officePayState.staffID          = staffID;
+                officePayState.leaveTaken       = 0;
+                officePayState.addlAllowance    = 0;
+                officePayState.addlAllowanceRemark = '';
+                officePayState.addlDeduction    = 0;
+                officePayState.addlDeductionRemark = '';
+                const lt = document.getElementById('opLeaveTaken');
+                const aa = document.getElementById('opAddlAllowance');
+                const ad = document.getElementById('opAddlDeduction');
+                const ar = document.getElementById('opAddlAllowanceRemark');
+                const dr = document.getElementById('opAddlDeductionRemark');
+                if(lt) lt.value='0'; if(aa) aa.value='0'; if(ad) ad.value='0';
+                if(ar) ar.value=''; if(dr) dr.value='';
+                twSec?.classList.add('hidden');
+                opSec?.classList.remove('hidden');
+                renderOfficePayCalc();
+            }
+        }
+
+        function onPaySlipPeriodChange(field, val) {
+            const v = parseInt(val);
+            techWageState[field] = v; officePayState[field] = v;
+            if (!document.getElementById('twSection')?.classList.contains('hidden')) renderTechWageCalc();
+            if (!document.getElementById('opSection')?.classList.contains('hidden')) renderOfficePayCalc();
+        }
+
+        function updateOfficePayState(field, val) {
+            if (['leaveTaken','addlAllowance','addlDeduction'].includes(field))
+                officePayState[field] = parseFloat(val) || 0;
+            else officePayState[field] = val;
+            renderOfficePayCalc();
+        }
+
+        function renderOfficePayCalc() {
+            const el = document.getElementById('opCalcBody');
+            if (el) el.innerHTML = buildOfficePayHTML();
+        }
+
+        function buildOfficePayHTML() {
+            const op = officePayState;
+            const st = staff.find(x => x.staffID === op.staffID);
+            if (!st) return '';
+            const INR  = n => '₹' + Math.max(0,n).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+            const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+            const periodLabel = months[op.periodMonth-1] + ' ' + op.periodYear;
+
+            // ── Salary components ──
+            const basic      = parseFloat(st.basicSalary) || 0;
+            const hraPct     = (st.hraPct !== undefined && st.hraPct !== '') ? parseFloat(st.hraPct) : 30;
+            const daPct      = (st.daPct !== undefined && st.daPct !== '') ? parseFloat(st.daPct) : 65;
+            const hra        = basic * hraPct / 100;
+            const da         = basic * daPct / 100;
+            const gradePay   = parseFloat(st.gradePay)   || 0;
+            const conveyance = parseFloat(st.conveyance) || 0;
+            const medical    = parseFloat(st.medical)    || 0;
+            const variable   = parseFloat(st.variable)   || 0;
+            const bonus      = (basic + da) / 12;
+            const addlAllow  = op.addlAllowance  || 0;
+            const gross      = basic + hra + da + gradePay + conveyance + medical + bonus + variable + addlAllow;
+
+            // ── Leave & LOP ──
+            const leavePerMonth = parseFloat(st.leavePerMonth) || 2;
+            const leaveTaken    = op.leaveTaken || 0;
+            const lopDays       = Math.max(0, leaveTaken - leavePerMonth);
+            const perDayBasic   = basic / 26;
+            const lopAmt        = parseFloat((lopDays * perDayBasic).toFixed(2));
+            const leaveBalance  = leavePerMonth - leaveTaken;
+
+            const addlDed      = op.addlDeduction || 0;
+            const totalDed     = lopAmt + addlDed;
+            const netPay       = gross - totalDed;
+
+            // ── Earnings rows ──
+            const earningsRows = [
+                { name:'Basic Salary',                       amt: basic,      show: true },
+                { name:`HRA (${hraPct}% of Basic)`,          amt: hra,        show: hra > 0 },
+                { name:`DA (${daPct}% of Basic)`,            amt: da,         show: da > 0 },
+                { name:'Grade Pay',                           amt: gradePay,   show: gradePay > 0 },
+                { name:'Conveyance Allowance',                amt: conveyance, show: conveyance > 0 },
+                { name:'Medical Allowance',                   amt: medical,    show: medical > 0 },
+                { name:'Annual Bonus ((Basic+DA)/12)',        amt: bonus,      show: true },
+                { name:'Variable Allowance',                  amt: variable,   show: variable > 0 },
+                { name: op.addlAllowanceRemark ? 'Additional: '+op.addlAllowanceRemark : 'Additional Allowance',
+                                                              amt: addlAllow,  show: addlAllow > 0 },
+            ].filter(r => r.show);
+
+            // ── Deduction rows ──
+            const deductionRows = [
+                { name:`Loss of Pay — ${lopDays} day${lopDays===1?'':'s'} (Basic ÷ 26)`, amt: lopAmt, show: lopDays > 0 },
+                { name: op.addlDeductionRemark ? 'Deduction: '+op.addlDeductionRemark : 'Additional Deduction',
+                                                  amt: addlDed, show: addlDed > 0 },
+            ].filter(r => r.show);
+
+            const leaveStatusColor = leaveBalance < 0 ? '#dc2626' : leaveBalance === 0 ? '#b45309' : '#15803d';
+            const leaveBg = leaveBalance < 0 ? '#fee2e2' : leaveBalance === 0 ? '#fef3c7' : '#dcfce7';
+
+            return `
+            <div style="font-size:12px;color:#374151;margin-bottom:10px;font-weight:500;padding:8px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;">
+                <strong>${st.name}</strong> &nbsp;·&nbsp; ${st.designation||'Staff'} &nbsp;·&nbsp;
+                Salary for: <strong style="color:#1d4ed8;">${periodLabel}</strong>
+            </div>
+
+            <!-- Leave Status Banner -->
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px;">
+                <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:10px;text-align:center;">
+                    <div style="font-size:10px;color:#6b7280;font-weight:500;">LEAVE ELIGIBLE/MONTH</div>
+                    <div style="font-size:20px;font-weight:600;color:#374151;">${leavePerMonth}</div>
+                </div>
+                <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:10px;text-align:center;">
+                    <div style="font-size:10px;color:#6b7280;font-weight:500;">LEAVE TAKEN</div>
+                    <div style="font-size:20px;font-weight:600;color:#374151;">${leaveTaken}</div>
+                </div>
+                <div style="background:${leaveBg};border:1px solid ${leaveStatusColor}55;border-radius:10px;padding:10px;text-align:center;">
+                    <div style="font-size:10px;color:#6b7280;font-weight:500;">BALANCE / LOP</div>
+                    <div style="font-size:20px;font-weight:600;color:${leaveStatusColor};">${leaveBalance < 0 ? lopDays+' LOP' : leaveBalance+' left'}</div>
+                </div>
+                <div style="background:#f0fdf4;border:1px solid #15803d55;border-radius:10px;padding:10px;text-align:center;">
+                    <div style="font-size:10px;color:#6b7280;font-weight:500;">NET PAY</div>
+                    <div style="font-size:16px;font-weight:700;color:#15803d;">${INR(netPay)}</div>
+                </div>
+            </div>
+
+            <!-- Two-column table -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+                <!-- Earnings -->
+                <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                    <div style="background:#1d4ed8;padding:8px 12px;font-weight:600;font-size:12px;color:#fff;">EARNINGS</div>
+                    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                        ${earningsRows.map(r=>`<tr style="border-bottom:0.5px solid #f3f4f6;">
+                            <td style="padding:7px 12px;color:#374151;">${r.name}</td>
+                            <td style="padding:7px 12px;text-align:right;font-weight:500;">${INR(r.amt)}</td>
+                        </tr>`).join('')}
+                        <tr style="background:#eff6ff;font-weight:700;">
+                            <td style="padding:8px 12px;color:#1d4ed8;">GROSS EARNINGS</td>
+                            <td style="padding:8px 12px;text-align:right;color:#1d4ed8;font-size:13px;">${INR(gross)}</td>
+                        </tr>
+                    </table>
+                </div>
+                <!-- Deductions -->
+                <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                    <div style="background:#dc2626;padding:8px 12px;font-weight:600;font-size:12px;color:#fff;">DEDUCTIONS</div>
+                    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                        ${deductionRows.length ? deductionRows.map(r=>`<tr style="border-bottom:0.5px solid #f3f4f6;">
+                            <td style="padding:7px 12px;color:#374151;">${r.name}</td>
+                            <td style="padding:7px 12px;text-align:right;font-weight:500;color:#dc2626;">${INR(r.amt)}</td>
+                        </tr>`).join('') : '<tr><td style="padding:12px;color:#9ca3af;font-size:11px;" colspan="2">No deductions this period</td></tr>'}
+                        <tr style="background:#fef2f2;font-weight:700;">
+                            <td style="padding:8px 12px;color:#dc2626;">TOTAL DEDUCTIONS</td>
+                            <td style="padding:8px 12px;text-align:right;color:#dc2626;font-size:13px;">${INR(totalDed)}</td>
+                        </tr>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Net Pay banner -->
+            <div style="background:linear-gradient(to right,#0f766e,#0891b2);border-radius:12px;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <div style="color:#ccfbf1;font-size:13px;font-weight:500;">NET PAY &nbsp;·&nbsp; ${st.name} &nbsp;·&nbsp; ${periodLabel}</div>
+                <div style="color:#f0fdfa;font-size:22px;font-weight:700;">${INR(netPay)}</div>
+            </div>
+
+            <button onclick="generatePaySlipPDF()" class="px-6 py-2 bg-teal-600 text-white rounded-xl hover:bg-teal-700 font-semibold text-sm">🖨️ Generate Pay Slip PDF</button>`;
+        }
+
+        // ── Technician Wage Helpers ───────────────────────────────────────────
+        function getTechWagePeriodDates(year, month) {
+            const pm = month===1?12:month-1, py = month===1?year-1:year;
+            const dates=[], start=new Date(py,pm-1,26);
+            for(let i=0;i<30;i++){const d=new Date(start);d.setDate(start.getDate()+i);dates.push(d);}
             return dates;
         }
 
         function calcTechWage(state) {
-            const { att, dailyWage: dw, rates } = state;
-            const c = {};
-            ATT_ORDER.forEach(t => { c[t] = 0; });
-            att.forEach(t => { if (t) c[t]++; });
-
-            const eng  = ENGAGED_TYPES.reduce((s, t) => s + (c[t] || 0), 0);
-            const sbd  = c.StandBy || 0;
-            const mrkd = att.filter(t => t !== '').length;
-            const isRet = eng === 0 && sbd >= 28 && mrkd >= 28;
-
-            const wP   = c.Working    * dw;
-            const outP = c.Outstation * dw;
-            const ancP = c.Anchorage  * dw;
-            const salP = c.Sailing    * dw;
-            const sbyP = isRet ? 0 : sbd * dw * (rates.standbyPct / 100);
-            const alP  = (c.ApprovedLeave || 0) * dw * (rates.alPct / 100);
-            const outA = c.Outstation * rates.outA;
-            const ancA = c.Anchorage  * rates.ancA;
-            const salA = c.Sailing    * rates.salA;
-            const t15  = eng >= 15 ? eng * rates.t15 : 0;
-            const t20  = eng >= 20 ? eng * rates.t20 : 0;
-            const ret  = isRet ? 12 * dw : 0;
-            const gross = wP + outP + ancP + salP + sbyP + alP + outA + ancA + salA + t15 + t20 + ret;
-
-            const rows = [
-                { sec:'Wage',      name:'Working days',                                        days: c.Working,          rate: dw,                         amt: wP,   show: c.Working    > 0 },
-                { sec:'Wage',      name:'Outstation days',                                     days: c.Outstation,       rate: dw,                         amt: outP, show: c.Outstation > 0 },
-                { sec:'Wage',      name:'Anchorage days',                                      days: c.Anchorage,        rate: dw,                         amt: ancP, show: c.Anchorage  > 0 },
-                { sec:'Wage',      name:'Sailing days',                                        days: c.Sailing,          rate: dw,                         amt: salP, show: c.Sailing    > 0 },
-                { sec:'Wage',      name:`Stand by pay (${rates.standbyPct}%)`,                 days: sbd,                rate: dw * rates.standbyPct / 100, amt: sbyP, show: sbd > 0 && !isRet },
-                { sec:'Wage',      name:`Approved leave (${rates.alPct}%)`,                    days: c.ApprovedLeave||0, rate: dw * rates.alPct / 100,      amt: alP,  show: (c.ApprovedLeave||0) > 0 },
-                { sec:'Allowance', name:'Outstation allowance',                                days: c.Outstation,       rate: rates.outA,                  amt: outA, show: c.Outstation > 0 },
-                { sec:'Allowance', name:'Anchorage allowance',                                 days: c.Anchorage,        rate: rates.ancA,                  amt: ancA, show: c.Anchorage  > 0 },
-                { sec:'Allowance', name:'Sailing allowance',                                   days: c.Sailing,          rate: rates.salA,                  amt: salA, show: c.Sailing    > 0 },
-                { sec:'Threshold', name:`15+ days project allowance (${eng} engaged days)`,   days: eng, rate: rates.t15, amt: t15, show: eng >= 15 },
-                { sec:'Threshold', name:`20+ days project allowance (${eng} engaged days)`,   days: eng, rate: rates.t20, amt: t20, show: eng >= 20 },
-                { sec:'Retention', name:'Retention pay — full stand by month (12 days × daily wage)', days: 12, rate: dw, amt: ret, show: isRet },
-            ].filter(r => r.show);
-
-            return { c, eng, sbd, mrkd, isRet, rows, gross, t15, t20, ret };
+            const {att, dailyWage:dw, rates} = state;
+            const c={}; ATT_ORDER.forEach(t=>{c[t]=0;}); att.forEach(t=>{if(t)c[t]++;});
+            const eng=ENGAGED_TYPES.reduce((s,t)=>s+(c[t]||0),0);
+            const sbd=c.StandBy||0, mrkd=att.filter(t=>t!=='').length;
+            const isRet=eng===0&&sbd>=28&&mrkd>=28;
+            const wP=c.Working*dw, outP=c.Outstation*dw, ancP=c.Anchorage*dw, salP=c.Sailing*dw;
+            const sbyP=isRet?0:sbd*dw*(rates.standbyPct/100);
+            const alP=(c.ApprovedLeave||0)*dw*(rates.alPct/100);
+            const outA=c.Outstation*rates.outA, ancA=c.Anchorage*rates.ancA, salA=c.Sailing*rates.salA;
+            const t15=eng>=15?eng*rates.t15:0, t20=eng>=20?eng*rates.t20:0, ret=isRet?12*dw:0;
+            const gross=wP+outP+ancP+salP+sbyP+alP+outA+ancA+salA+t15+t20+ret;
+            const rows=[
+                {sec:'Wage',      name:'Working days',                                     days:c.Working,          rate:dw,                        amt:wP,   show:c.Working>0},
+                {sec:'Wage',      name:'Outstation days',                                  days:c.Outstation,       rate:dw,                        amt:outP, show:c.Outstation>0},
+                {sec:'Wage',      name:'Anchorage days',                                   days:c.Anchorage,        rate:dw,                        amt:ancP, show:c.Anchorage>0},
+                {sec:'Wage',      name:'Sailing days',                                     days:c.Sailing,          rate:dw,                        amt:salP, show:c.Sailing>0},
+                {sec:'Wage',      name:`Stand by pay (${rates.standbyPct}%)`,              days:sbd,                rate:dw*rates.standbyPct/100,   amt:sbyP, show:sbd>0&&!isRet},
+                {sec:'Wage',      name:`Approved leave (${rates.alPct}%)`,                 days:c.ApprovedLeave||0, rate:dw*rates.alPct/100,        amt:alP,  show:(c.ApprovedLeave||0)>0},
+                {sec:'Allowance', name:'Outstation allowance',                              days:c.Outstation,       rate:rates.outA,                amt:outA, show:c.Outstation>0},
+                {sec:'Allowance', name:'Anchorage allowance',                               days:c.Anchorage,        rate:rates.ancA,                amt:ancA, show:c.Anchorage>0},
+                {sec:'Allowance', name:'Sailing allowance',                                 days:c.Sailing,          rate:rates.salA,                amt:salA, show:c.Sailing>0},
+                {sec:'Threshold', name:`15+ days project allowance (${eng} engaged days)`, days:eng, rate:rates.t15, amt:t15, show:eng>=15},
+                {sec:'Threshold', name:`20+ days project allowance (${eng} engaged days)`, days:eng, rate:rates.t20, amt:t20, show:eng>=20},
+                {sec:'Retention', name:'Retention pay — full stand by month (12 days × daily wage)', days:12, rate:dw, amt:ret, show:isRet},
+            ].filter(r=>r.show);
+            return {c,eng,sbd,mrkd,isRet,rows,gross,t15,t20,ret};
         }
 
-        function cycleAttDay(idx) {
-            const ci = ATT_ORDER.indexOf(techWageState.att[idx]);
-            techWageState.att[idx] = ATT_ORDER[(ci + 1) % ATT_ORDER.length];
-            renderTechWageCalc();
-        }
-
-        function fillAttDays(type) { techWageState.att = Array(30).fill(type); renderTechWageCalc(); }
-        function clearAttDays()    { techWageState.att = Array(30).fill('');   renderTechWageCalc(); }
-
-        function onTechStaffChange() {
-            const sid = document.getElementById('twStaffSel')?.value || '';
-            techWageState.staffID = sid;
-            const s = staff.find(x => x.staffID === sid);
-            if (s) {
-                const dw = parseFloat(s.dailyWage) || parseFloat(s.basicSalary) || 0;
-                techWageState.dailyWage = dw;
-                const el = document.getElementById('twDailyWage');
-                if (el) el.value = dw;
-            }
-            renderTechWageCalc();
-        }
-
-        function onTechWageFieldChange(field, val) {
-            if      (field === 'periodMonth') techWageState.periodMonth = parseInt(val);
-            else if (field === 'periodYear')  techWageState.periodYear  = parseInt(val);
-            else if (field === 'dailyWage')   techWageState.dailyWage   = parseFloat(val) || 0;
-            renderTechWageCalc();
-        }
-
-        function toggleTechRates() {
-            techWageState.showRates = !techWageState.showRates;
-            document.getElementById('twRatesPanel')?.classList.toggle('hidden', !techWageState.showRates);
-            const btn = document.getElementById('twRatesBtn');
-            if (btn) btn.textContent = techWageState.showRates ? 'Hide ▲' : 'Edit rates ▼';
-        }
-
-        function updateTechWageRate(key, val) {
-            techWageState.rates[key] = parseFloat(val) || 0;
-            renderTechWageCalc();
-        }
-
-        function renderTechWageCalc() {
-            const el = document.getElementById('twCalcBody');
-            if (el) el.innerHTML = buildTechWageCalcHTML();
-        }
+        function cycleAttDay(idx){const ci=ATT_ORDER.indexOf(techWageState.att[idx]);techWageState.att[idx]=ATT_ORDER[(ci+1)%ATT_ORDER.length];renderTechWageCalc();}
+        function fillAttDays(type){techWageState.att=Array(30).fill(type);renderTechWageCalc();}
+        function clearAttDays(){techWageState.att=Array(30).fill('');renderTechWageCalc();}
+        function onTechWageFieldChange(field,val){if(field==='dailyWage')techWageState.dailyWage=parseFloat(val)||0;renderTechWageCalc();}
+        function toggleTechRates(){techWageState.showRates=!techWageState.showRates;document.getElementById('twRatesPanel')?.classList.toggle('hidden',!techWageState.showRates);const b=document.getElementById('twRatesBtn');if(b)b.textContent=techWageState.showRates?'Hide ▲':'Edit rates ▼';}
+        function updateTechWageRate(key,val){techWageState.rates[key]=parseFloat(val)||0;renderTechWageCalc();}
+        function renderTechWageCalc(){const el=document.getElementById('twCalcBody');if(el)el.innerHTML=buildTechWageCalcHTML();}
 
         function buildTechWageCalcHTML() {
-            const s   = techWageState;
-            const cal = calcTechWage(s);
-            const dates = getTechWagePeriodDates(s.periodYear, s.periodMonth);
-            const pl  = dates[0].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) +
-                        ' – ' + dates[29].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
-            const INR = n => '₹' + Math.round(n).toLocaleString('en-IN');
-            const RT  = n => Math.round(n).toLocaleString('en-IN');
-            const secCol = { Wage:'#1d4ed8', Allowance:'#0e7490', Threshold:'#15803d', Retention:'#7c3aed' };
-            const secBg  = { Wage:'transparent', Allowance:'#ecfeff', Threshold:'#f0fdf4', Retention:'#f5f3ff' };
-
-            const gridHTML = dates.map((date, idx) => {
-                const t = s.att[idx], tp = ATT_TYPES[t] || ATT_TYPES[''];
-                const isWE = date.getDay() === 0 || date.getDay() === 6;
-                const bg   = t ? tp.bg : isWE ? '#f3f4f6' : '#fff';
-                const bord = t ? tp.color + '88' : isWE ? '#d1d5db' : '#e5e7eb';
-                const dayN = date.toLocaleDateString('en-IN',{day:'2-digit'});
-                const dayW = date.toLocaleDateString('en-IN',{weekday:'narrow'});
+            const s=techWageState, cal=calcTechWage(s);
+            const dates=getTechWagePeriodDates(s.periodYear,s.periodMonth);
+            const pl=dates[0].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})+' – '+dates[29].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
+            const INR=n=>'₹'+Math.round(n).toLocaleString('en-IN'), RT=n=>Math.round(n).toLocaleString('en-IN');
+            const secCol={Wage:'#1d4ed8',Allowance:'#0e7490',Threshold:'#15803d',Retention:'#7c3aed'};
+            const secBg={Wage:'transparent',Allowance:'#ecfeff',Threshold:'#f0fdf4',Retention:'#f5f3ff'};
+            const gridHTML=dates.map((date,idx)=>{
+                const t=s.att[idx],tp=ATT_TYPES[t]||ATT_TYPES[''];
+                const isWE=date.getDay()===0||date.getDay()===6;
+                const bg=t?tp.bg:isWE?'#f3f4f6':'#fff', bord=t?tp.color+'88':isWE?'#d1d5db':'#e5e7eb';
+                const dayN=date.toLocaleDateString('en-IN',{day:'2-digit'}), dayW=date.toLocaleDateString('en-IN',{weekday:'narrow'});
                 return `<button class="att-day-btn" onclick="cycleAttDay(${idx})" style="background:${bg};border-color:${bord};">
                     <div style="font-size:10px;color:#9ca3af;line-height:1;">${dayN}<span style="opacity:.7">${dayW}</span></div>
                     <div style="font-size:11px;font-weight:${t?700:400};color:${t?tp.text:'#9ca3af'};margin-top:2px;line-height:1;">${t?tp.short:'—'}</div>
                 </button>`;
             }).join('');
-
-            const rowsHTML = cal.rows.length === 0
-                ? `<tr><td colspan="4" style="padding:2rem;text-align:center;color:#9ca3af;font-size:13px;">Mark attendance days in the grid above to calculate wages</td></tr>`
-                : cal.rows.map(row => `<tr style="border-bottom:0.5px solid #f3f4f6;background:${secBg[row.sec]};">
-                    <td style="padding:8px 12px;">
-                        <span style="display:inline-flex;align-items:center;gap:8px;">
-                            <span style="width:3px;height:16px;background:${secCol[row.sec]};border-radius:99px;display:inline-block;flex-shrink:0;"></span>
-                            <span style="color:${row.sec!=='Wage'?secCol[row.sec]:'inherit'}">${row.name}</span>
-                        </span>
-                    </td>
+            const rowsHTML=cal.rows.length===0?`<tr><td colspan="4" style="padding:2rem;text-align:center;color:#9ca3af;font-size:13px;">Mark attendance days to calculate wages</td></tr>`:
+                cal.rows.map(row=>`<tr style="border-bottom:0.5px solid #f3f4f6;background:${secBg[row.sec]};">
+                    <td style="padding:8px 12px;"><span style="display:inline-flex;align-items:center;gap:8px;"><span style="width:3px;height:16px;background:${secCol[row.sec]};border-radius:99px;display:inline-block;flex-shrink:0;"></span><span style="color:${row.sec!=='Wage'?secCol[row.sec]:'inherit'}">${row.name}</span></span></td>
                     <td style="padding:8px 12px;text-align:right;color:#6b7280;">${row.days}</td>
                     <td style="padding:8px 12px;text-align:right;color:#6b7280;">${RT(row.rate)}</td>
                     <td style="padding:8px 12px;text-align:right;font-weight:500;color:${row.sec!=='Wage'?secCol[row.sec]:'inherit'};">${INR(row.amt)}</td>
                 </tr>`).join('');
-
-            const pillsHTML = ATT_ORDER.filter(t => t && cal.c[t] > 0).map(t =>
-                `<span style="background:${ATT_TYPES[t].bg};border:1px solid ${ATT_TYPES[t].color}55;border-radius:99px;padding:3px 10px;font-size:11px;color:${ATT_TYPES[t].text};font-weight:500;">${ATT_TYPES[t].label}: ${cal.c[t]} ${cal.c[t]===1?'day':'days'}</span>`
-            ).join('') + `<span style="background:#f3f4f6;border:0.5px solid #e5e7eb;border-radius:99px;padding:3px 10px;font-size:11px;color:#6b7280;">${cal.mrkd}/30 days marked</span>`;
-
+            const pillsHTML=ATT_ORDER.filter(t=>t&&cal.c[t]>0).map(t=>`<span style="background:${ATT_TYPES[t].bg};border:1px solid ${ATT_TYPES[t].color}55;border-radius:99px;padding:3px 10px;font-size:11px;color:${ATT_TYPES[t].text};font-weight:500;">${ATT_TYPES[t].label}: ${cal.c[t]}</span>`).join('')+`<span style="background:#f3f4f6;border:0.5px solid #e5e7eb;border-radius:99px;padding:3px 10px;font-size:11px;color:#6b7280;">${cal.mrkd}/30 marked</span>`;
             return `
-            <div style="font-size:12px;color:#374151;margin-bottom:6px;font-weight:500;">
-                Period: <strong>${pl}</strong> &nbsp;·&nbsp;
-                Engaged: <strong style="color:#15803d;">${cal.eng} days</strong> &nbsp;·&nbsp;
-                Stand by: <strong style="color:#b45309;">${cal.sbd} days</strong>
-            </div>
+            <div style="font-size:12px;color:#374151;margin-bottom:6px;font-weight:500;">Period: <strong>${pl}</strong> &nbsp;·&nbsp; Engaged: <strong style="color:#15803d;">${cal.eng}d</strong> &nbsp;·&nbsp; Stand by: <strong style="color:#b45309;">${cal.sbd}d</strong></div>
             <div class="bg-white border border-gray-200 rounded-xl p-4 mb-4">
                 <div class="flex justify-between items-center mb-3 flex-wrap gap-2">
-                    <div class="text-sm font-semibold text-gray-700">Attendance Grid — click any day to cycle type</div>
+                    <div class="text-sm font-semibold text-gray-700">Attendance Grid — click day to cycle type</div>
                     <div class="flex gap-2">
                         <button onclick="fillAttDays('Working')" style="font-size:11px;padding:3px 8px;color:#14532d;background:#dcfce7;border:1px solid #15803d44;border-radius:6px;">All Working</button>
                         <button onclick="fillAttDays('StandBy')" style="font-size:11px;padding:3px 8px;color:#78350f;background:#fef3c7;border:1px solid #b4530944;border-radius:6px;">All Stand By</button>
@@ -999,18 +1103,18 @@
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;">
                 <div style="background:${cal.eng>=15?'#f0fdf4':'#f9fafb'};border:1.5px solid ${cal.eng>=15?'#15803d':'#e5e7eb'};border-radius:12px;padding:0.75rem;">
                     <div style="font-size:10px;color:#6b7280;margin-bottom:4px;font-weight:500;">15-DAY THRESHOLD</div>
-                    <div style="font-size:18px;font-weight:500;color:${cal.eng>=15?'#15803d':'#9ca3af'};">${cal.eng>=15?'Eligible ✓':cal.eng+'/15 days'}</div>
-                    <div style="font-size:11px;color:${cal.eng>=15?'#15803d':'#9ca3af'};margin-top:3px;">${cal.eng>=15?INR(cal.t15)+' additional':'Need '+(15-cal.eng)+' more engaged days'}</div>
+                    <div style="font-size:18px;font-weight:500;color:${cal.eng>=15?'#15803d':'#9ca3af'};">${cal.eng>=15?'Eligible ✓':cal.eng+'/15'}</div>
+                    <div style="font-size:11px;color:${cal.eng>=15?'#15803d':'#9ca3af'};margin-top:3px;">${cal.eng>=15?INR(cal.t15)+' additional':'Need '+(15-cal.eng)+' more days'}</div>
                 </div>
                 <div style="background:${cal.eng>=20?'#eff6ff':'#f9fafb'};border:1.5px solid ${cal.eng>=20?'#1d4ed8':'#e5e7eb'};border-radius:12px;padding:0.75rem;">
                     <div style="font-size:10px;color:#6b7280;margin-bottom:4px;font-weight:500;">20-DAY THRESHOLD</div>
-                    <div style="font-size:18px;font-weight:500;color:${cal.eng>=20?'#1d4ed8':'#9ca3af'};">${cal.eng>=20?'Eligible ✓':cal.eng+'/20 days'}</div>
-                    <div style="font-size:11px;color:${cal.eng>=20?'#1d4ed8':'#9ca3af'};margin-top:3px;">${cal.eng>=20?INR(cal.t20)+' additional':'Need '+(20-cal.eng)+' more engaged days'}</div>
+                    <div style="font-size:18px;font-weight:500;color:${cal.eng>=20?'#1d4ed8':'#9ca3af'};">${cal.eng>=20?'Eligible ✓':cal.eng+'/20'}</div>
+                    <div style="font-size:11px;color:${cal.eng>=20?'#1d4ed8':'#9ca3af'};margin-top:3px;">${cal.eng>=20?INR(cal.t20)+' additional':'Need '+(20-cal.eng)+' more days'}</div>
                 </div>
                 <div style="background:${cal.isRet?'#f5f3ff':'#f9fafb'};border:1.5px solid ${cal.isRet?'#7c3aed':'#e5e7eb'};border-radius:12px;padding:0.75rem;">
                     <div style="font-size:10px;color:#6b7280;margin-bottom:4px;font-weight:500;">RETENTION PAY</div>
                     <div style="font-size:18px;font-weight:500;color:${cal.isRet?'#7c3aed':'#9ca3af'};">${cal.isRet?'Applicable ✓':'Not applicable'}</div>
-                    <div style="font-size:11px;color:${cal.isRet?'#7c3aed':'#9ca3af'};margin-top:3px;">${cal.isRet?'12 × '+INR(s.dailyWage)+' = '+INR(cal.ret):'Full month stand by, no project'}</div>
+                    <div style="font-size:11px;color:${cal.isRet?'#7c3aed':'#9ca3af'};margin-top:3px;">${cal.isRet?'12 × '+INR(s.dailyWage)+' = '+INR(cal.ret):'Full month standby, no project'}</div>
                 </div>
             </div>
             <div class="bg-white border border-gray-200 rounded-xl overflow-hidden mb-4">
@@ -1019,14 +1123,11 @@
                     <thead><tr style="background:#f9fafb;border-bottom:0.5px solid #f3f4f6;">
                         <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;font-weight:500;">COMPONENT</th>
                         <th style="padding:8px 12px;text-align:right;font-size:11px;color:#6b7280;font-weight:500;width:50px;">DAYS</th>
-                        <th style="padding:8px 12px;text-align:right;font-size:11px;color:#6b7280;font-weight:500;width:110px;">RATE (₹)</th>
-                        <th style="padding:8px 12px;text-align:right;font-size:11px;color:#6b7280;font-weight:500;width:120px;">AMOUNT (₹)</th>
+                        <th style="padding:8px 12px;text-align:right;font-size:11px;color:#6b7280;font-weight:500;width:100px;">RATE (₹)</th>
+                        <th style="padding:8px 12px;text-align:right;font-size:11px;color:#6b7280;font-weight:500;width:110px;">AMOUNT (₹)</th>
                     </tr></thead>
                     <tbody>${rowsHTML}</tbody>
-                    <tfoot><tr style="background:#0f766e;">
-                        <td colspan="3" style="padding:10px 12px;font-weight:500;font-size:14px;color:#ccfbf1;">Gross Pay</td>
-                        <td style="padding:10px 12px;text-align:right;font-weight:600;font-size:16px;color:#f0fdfa;">${INR(cal.gross)}</td>
-                    </tr></tfoot>
+                    <tfoot><tr style="background:#0f766e;"><td colspan="3" style="padding:10px 12px;font-weight:500;font-size:14px;color:#ccfbf1;">Gross Pay</td><td style="padding:10px 12px;text-align:right;font-weight:600;font-size:16px;color:#f0fdfa;">${INR(cal.gross)}</td></tr></tfoot>
                 </table>
             </div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">${pillsHTML}</div>
@@ -5150,6 +5251,26 @@
                                     <input type="text" id="sProfCert" placeholder="Certificate name / number" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                             </div>
                         </div>
+                        <!-- Office Staff Salary Components -->
+                        <div id="officePayFields" class="border-t pt-4 hidden">
+                            <h4 class="text-sm font-bold text-purple-700 mb-3">💼 Office Salary Components</h4>
+                            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">HRA % <span class="text-gray-400">(of Basic)</span></label>
+                                    <input type="number" id="sHRAPct" value="30" min="0" max="100" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="30"/></div>
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">DA % <span class="text-gray-400">(of Basic)</span></label>
+                                    <input type="number" id="sDAPct" value="65" min="0" max="200" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="65"/></div>
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Grade Pay (₹)</label>
+                                    <input type="number" id="sGradePay" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Conveyance Allowance (₹)</label>
+                                    <input type="number" id="sConveyance" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Medical Allowance (₹)</label>
+                                    <input type="number" id="sMedical" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Variable Allowance (₹)</label>
+                                    <input type="number" id="sVariable" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Leave Eligibility <span class="text-gray-400">(days/month)</span></label>
+                                    <input type="number" id="sLeavePerMonth" value="2" min="0" max="31" step="0.5" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                            </div>
+                        </div>
                         <!-- Technician-only fields -->
                         <div id="techDocFields" class="border-t pt-4">
                             <h4 class="text-sm font-bold text-teal-700 mb-3">Technician Documents</h4>
@@ -5416,71 +5537,114 @@
 
         function renderPayslipTab() {
             const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-            const s = techWageState;
-            // Restore staff-specific daily wage if already selected
-            if (s.staffID) {
-                const st = staff.find(x => x.staffID === s.staffID);
-                if (st && !s.dailyWage) s.dailyWage = parseFloat(st.dailyWage) || parseFloat(st.basicSalary) || 0;
-            }
+            // Determine currently selected staff + period (from either state)
+            const selID   = techWageState.staffID || officePayState.staffID;
+            const selSt   = staff.find(x => x.staffID === selID);
+            const isTech  = selSt?.staffType === 'Technician';
+            const isOff   = selSt?.staffType === 'Office';
+            const sharedM = isTech ? techWageState.periodMonth : officePayState.periodMonth;
+            const sharedY = isTech ? techWageState.periodYear  : officePayState.periodYear;
+
             const rateRows = [
-                { key:'standbyPct', label:'Stand by rate (%)',            val: s.rates.standbyPct },
-                { key:'alPct',      label:'Approved leave rate (%)',       val: s.rates.alPct      },
-                { key:'outA',       label:'Outstation allowance/day (₹)', val: s.rates.outA       },
-                { key:'ancA',       label:'Anchorage allowance/day (₹)',  val: s.rates.ancA       },
-                { key:'salA',       label:'Sailing allowance/day (₹)',    val: s.rates.salA       },
-                { key:'t15',        label:'15+ days allow/engaged day (₹)',val:s.rates.t15        },
-                { key:'t20',        label:'20+ days allow/engaged day (₹)',val:s.rates.t20        },
+                {key:'standbyPct',label:'Stand by rate (%)',          val:techWageState.rates.standbyPct},
+                {key:'alPct',     label:'Approved leave rate (%)',     val:techWageState.rates.alPct},
+                {key:'outA',      label:'Outstation allow/day (₹)',   val:techWageState.rates.outA},
+                {key:'ancA',      label:'Anchorage allow/day (₹)',    val:techWageState.rates.ancA},
+                {key:'salA',      label:'Sailing allow/day (₹)',      val:techWageState.rates.salA},
+                {key:'t15',       label:'15+ days allow/eng day (₹)', val:techWageState.rates.t15},
+                {key:'t20',       label:'20+ days allow/eng day (₹)', val:techWageState.rates.t20},
             ];
+
             return `
+            <!-- ══ UNIFIED HEADER ══ -->
             <div class="bg-white border border-gray-200 rounded-xl p-5 mb-4">
-                <h3 class="font-bold text-gray-700 text-base mb-4">Technician Wage Calculator</h3>
+                <h3 class="font-bold text-gray-700 text-base mb-4">🧾 Pay Slip Generator</h3>
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Staff / Technician</label>
-                        <select id="twStaffSel" onchange="onTechStaffChange()" class="w-full px-3 py-2 border rounded-lg text-sm">
+                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Staff Member</label>
+                        <select id="psStaffSel" onchange="onPaySlipStaffChange(this.value)" class="w-full px-3 py-2 border rounded-lg text-sm">
                             <option value="">-- Select --</option>
-                            ${staff.filter(x=>x.staffType==='Technician').map(x =>
-                                `<option value="${x.staffID}" ${x.staffID===s.staffID?'selected':''}>${x.name}</option>`
-                            ).join('')}
+                            ${staff.map(s=>`<option value="${s.staffID}" ${s.staffID===selID?'selected':''}>${s.name} (${s.staffType||'Staff'})</option>`).join('')}
                         </select></div>
                     <div><label class="block text-xs font-semibold text-gray-600 mb-1">Pay Period Month</label>
-                        <select onchange="onTechWageFieldChange('periodMonth', this.value)" class="w-full px-3 py-2 border rounded-lg text-sm">
-                            ${months.map((m,i)=>`<option value="${i+1}" ${i+1===s.periodMonth?'selected':''}>${m}</option>`).join('')}
+                        <select onchange="onPaySlipPeriodChange('periodMonth',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm">
+                            ${months.map((m,i)=>`<option value="${i+1}" ${i+1===sharedM?'selected':''}>${m}</option>`).join('')}
                         </select></div>
                     <div><label class="block text-xs font-semibold text-gray-600 mb-1">Year</label>
-                        <select onchange="onTechWageFieldChange('periodYear', this.value)" class="w-full px-3 py-2 border rounded-lg text-sm">
-                            ${[2024,2025,2026,2027].map(y=>`<option value="${y}" ${y===s.periodYear?'selected':''}>${y}</option>`).join('')}
+                        <select onchange="onPaySlipPeriodChange('periodYear',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm">
+                            ${[2024,2025,2026,2027].map(y=>`<option value="${y}" ${y===sharedY?'selected':''}>${y}</option>`).join('')}
                         </select></div>
-                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Daily Wage (₹)</label>
-                        <input type="number" id="twDailyWage" value="${s.dailyWage||0}"
-                            oninput="onTechWageFieldChange('dailyWage', this.value)"
+                    <!-- Daily wage only relevant for technician -->
+                    <div id="twDailyWageWrap" class="${isTech?'':'hidden'}">
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Daily Wage (₹)</label>
+                        <input type="number" id="twDailyWage" value="${techWageState.dailyWage||0}"
+                            oninput="onTechWageFieldChange('dailyWage',this.value)"
                             class="w-full px-3 py-2 border rounded-lg text-sm" min="0" step="0.01"/></div>
                 </div>
-                <div class="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 mb-4">
-                    <div class="text-xs font-semibold text-gray-500 mb-2">ATTENDANCE TYPES &nbsp;·&nbsp; ★ counts toward 15/20-day engagement threshold</div>
-                    <div class="flex flex-wrap gap-2">
-                        ${Object.entries(ATT_TYPES).filter(([t])=>t).map(([t,tp])=>
-                            `<span style="background:${tp.bg};color:${tp.text};border:1px solid ${tp.color}44;border-radius:99px;padding:2px 9px;font-size:11px;font-weight:500;">
-                                <strong>${tp.short}</strong> ${tp.label}${tp.engaged?' ★':''}
-                            </span>`
-                        ).join('')}
+                <!-- Technician: rates toggle + legend -->
+                <div id="twRatesWrap" class="${isTech?'':'hidden'}">
+                    <div class="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 mb-3">
+                        <div class="text-xs font-semibold text-gray-500 mb-2">ATTENDANCE TYPES · ★ counts toward 15/20-day threshold</div>
+                        <div class="flex flex-wrap gap-2">
+                            ${Object.entries(ATT_TYPES).filter(([t])=>t).map(([t,tp])=>
+                                `<span style="background:${tp.bg};color:${tp.text};border:1px solid ${tp.color}44;border-radius:99px;padding:2px 9px;font-size:11px;font-weight:500;"><strong>${tp.short}</strong> ${tp.label}${tp.engaged?' ★':''}</span>`
+                            ).join('')}
+                        </div>
+                    </div>
+                    <button id="twRatesBtn" onclick="toggleTechRates()" class="text-sm px-3 py-1.5 border border-teal-300 text-teal-700 rounded-lg hover:bg-teal-50">
+                        ${techWageState.showRates?'Hide ▲':'Edit rates ▼'}
+                    </button>
+                    <div id="twRatesPanel" class="${techWageState.showRates?'':'hidden'} mt-3 bg-teal-50 border border-teal-200 rounded-xl p-4 grid grid-cols-2 md:grid-cols-4 gap-3">
+                        ${rateRows.map(r=>`<div><label class="block text-xs font-semibold text-gray-600 mb-1">${r.label}</label>
+                            <input type="number" value="${r.val}" min="0" step="0.01"
+                                oninput="updateTechWageRate('${r.key}',this.value)"
+                                class="w-full px-3 py-2 border rounded-lg text-sm"/></div>`).join('')}
                     </div>
                 </div>
-                <div class="mb-4">
-                    <button id="twRatesBtn" onclick="toggleTechRates()"
-                        class="text-sm px-3 py-1.5 border border-teal-300 text-teal-700 rounded-lg hover:bg-teal-50">
-                        ${s.showRates ? 'Hide ▲' : 'Edit rates ▼'}
-                    </button>
-                    <div id="twRatesPanel" class="${s.showRates?'':'hidden'} mt-3 bg-teal-50 border border-teal-200 rounded-xl p-4 grid grid-cols-2 md:grid-cols-4 gap-3">
-                        ${rateRows.map(r=>`<div>
-                            <label class="block text-xs font-semibold text-gray-600 mb-1">${r.label}</label>
-                            <input type="number" value="${r.val}" min="0" step="0.01"
-                                oninput="updateTechWageRate('${r.key}', this.value)"
-                                class="w-full px-3 py-2 border rounded-lg text-sm"/>
-                        </div>`).join('')}
+                <!-- Office: additional allowance + deduction inputs -->
+                <div id="opInputsWrap" class="${isOff?'':'hidden'} mt-2">
+                    <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
+                        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Leave Taken This Month</label>
+                            <input type="number" id="opLeaveTaken" value="${officePayState.leaveTaken||0}" min="0" max="31" step="0.5"
+                                oninput="updateOfficePayState('leaveTaken',this.value)"
+                                class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Additional Allowance (₹)</label>
+                            <input type="number" id="opAddlAllowance" value="${officePayState.addlAllowance||0}" min="0" step="0.01"
+                                oninput="updateOfficePayState('addlAllowance',this.value)"
+                                class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Allowance Remark</label>
+                            <input type="text" id="opAddlAllowanceRemark" value="${officePayState.addlAllowanceRemark||''}"
+                                oninput="updateOfficePayState('addlAllowanceRemark',this.value)"
+                                placeholder="e.g. Festival bonus" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Additional Deduction (₹)</label>
+                            <input type="number" id="opAddlDeduction" value="${officePayState.addlDeduction||0}" min="0" step="0.01"
+                                oninput="updateOfficePayState('addlDeduction',this.value)"
+                                class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Deduction Remark</label>
+                            <input type="text" id="opAddlDeductionRemark" value="${officePayState.addlDeductionRemark||''}"
+                                oninput="updateOfficePayState('addlDeductionRemark',this.value)"
+                                placeholder="e.g. Advance recovery" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                     </div>
                 </div>
             </div>
-            <div id="twCalcBody">${buildTechWageCalcHTML()}</div>`;
+
+            <!-- No staff selected message -->
+            <div id="psNoStaffMsg" class="${selID?'hidden':''}">
+                <div class="text-center py-16 text-gray-400 bg-white border border-gray-200 rounded-xl">
+                    <div class="text-5xl mb-4">🧾</div>
+                    <p class="font-medium">Select a staff member above to generate pay slip</p>
+                    <p class="text-xs mt-1">Office Staff → Full salary breakdown &nbsp;|&nbsp; Field Technician → Wage calculator</p>
+                </div>
+            </div>
+
+            <!-- ══ TECHNICIAN SECTION ══ -->
+            <div id="twSection" class="${!isTech||!selID?'hidden':''}">
+                <div id="twCalcBody">${isTech&&selID?buildTechWageCalcHTML():''}</div>
+            </div>
+
+            <!-- ══ OFFICE SECTION ══ -->
+            <div id="opSection" class="${!isOff||!selID?'hidden':''}">
+                <div id="opCalcBody">${isOff&&selID?buildOfficePayHTML():''}</div>
+            </div>`;
         }
 
         // Staff CRUD
@@ -5512,6 +5676,13 @@
                 document.getElementById('sCourseCert').value = s.courseCert||'';
                 document.getElementById('sCourseCertExpiry').value = s.courseCertExpiry||'';
                 document.getElementById('sRemarks').value    = s.remarks||'';
+                document.getElementById('sHRAPct').value       = (s.hraPct !== undefined && s.hraPct !== '') ? s.hraPct : 30;
+                document.getElementById('sDAPct').value        = (s.daPct !== undefined && s.daPct !== '') ? s.daPct : 65;
+                document.getElementById('sGradePay').value     = s.gradePay || '';
+                document.getElementById('sConveyance').value   = s.conveyance || '';
+                document.getElementById('sMedical').value      = s.medical || '';
+                document.getElementById('sVariable').value     = s.variable || '';
+                document.getElementById('sLeavePerMonth').value = (s.leavePerMonth !== undefined && s.leavePerMonth !== '') ? s.leavePerMonth : 2;
             }
             toggleStaffDocFields();
             document.getElementById('staffModal').classList.add('show');
@@ -5520,6 +5691,7 @@
         function toggleStaffDocFields() {
             const isTech = document.getElementById('sType')?.value === 'Technician';
             document.getElementById('techDocFields')?.classList.toggle('hidden', !isTech);
+            document.getElementById('officePayFields')?.classList.toggle('hidden', isTech);
         }
 
         function closeStaffModal() { document.getElementById('staffModal').classList.remove('show'); currentStaff = null; }
@@ -5551,6 +5723,13 @@
                 courseCert:     document.getElementById('sCourseCert').value,
                 courseCertExpiry: document.getElementById('sCourseCertExpiry').value,
                 remarks:        document.getElementById('sRemarks').value,
+                hraPct:         parseFloat(document.getElementById('sHRAPct')?.value) || 30,
+                daPct:          parseFloat(document.getElementById('sDAPct')?.value) || 65,
+                gradePay:       parseFloat(document.getElementById('sGradePay')?.value) || 0,
+                conveyance:     parseFloat(document.getElementById('sConveyance')?.value) || 0,
+                medical:        parseFloat(document.getElementById('sMedical')?.value) || 0,
+                variable:       parseFloat(document.getElementById('sVariable')?.value) || 0,
+                leavePerMonth:  parseFloat(document.getElementById('sLeavePerMonth')?.value) || 2,
                 attendance:     currentStaff?.attendance || [],
                 wageRevisions:  currentStaff?.wageRevisions || [],
                 createdAt:      currentStaff?.createdAt || new Date().toISOString()
@@ -5648,126 +5827,236 @@
             renderStaffTab();
         }
 
-        // Pay Slip PDF
+
+        // Pay Slip PDF — supports both Office Staff and Field Technician
         function generatePaySlipPDF() {
-            const s = techWageState;
-            if (!s.staffID && s.dailyWage <= 0) { alert('Please select a staff member or enter a daily wage.'); return; }
-            const st = staff.find(x => x.staffID === s.staffID);
-            const staffName  = st ? st.name : (s.staffID || 'Technician');
+            const { jsPDF } = window.jspdf;
+
+            // ── Determine who we're generating for ─────────────────────────
+            const isTechActive = !document.getElementById('twSection')?.classList.contains('hidden');
+            const isOffActive  = !document.getElementById('opSection')?.classList.contains('hidden');
+
+            if (!isTechActive && !isOffActive) {
+                alert('Please select a staff member first.');
+                return;
+            }
+
+            if (isTechActive) {
+                _generateTechPaySlipPDF();
+            } else {
+                _generateOfficePaySlipPDF();
+            }
+        }
+
+        function _generateTechPaySlipPDF() {
+            const { jsPDF } = window.jspdf;
+            const s   = techWageState;
+            if (!s.dailyWage && s.dailyWage <= 0) { alert('Please enter a daily wage.'); return; }
+            const st  = staff.find(x => x.staffID === s.staffID);
+            const staffName = st ? st.name : 'Technician';
             const cal = calcTechWage(s);
             const dates = getTechWagePeriodDates(s.periodYear, s.periodMonth);
-            const pl = dates[0].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) +
-                       ' to ' + dates[29].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
-            const monthLabel = new Date(s.periodYear, s.periodMonth - 1, 1)
-                .toLocaleString('en-IN', {month:'long', year:'numeric'});
+            const pl    = dates[0].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) +
+                          ' to ' + dates[29].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
+            const monthLabel = new Date(s.periodYear, s.periodMonth-1, 1).toLocaleString('en-IN',{month:'long',year:'numeric'});
+            const doc  = new jsPDF();
+            const INR  = n => 'INR ' + Math.round(n).toLocaleString('en-IN',{minimumFractionDigits:2});
+            const RT   = n => Math.round(n).toLocaleString('en-IN');
 
-            const { jsPDF } = window.jspdf;
-            const doc = new jsPDF();
-            const INR = n => 'INR ' + Math.round(n).toLocaleString('en-IN', {minimumFractionDigits:2});
-            const RT  = n => Math.round(n).toLocaleString('en-IN');
-
-            // Header band
-            doc.setFillColor(15, 118, 110);
-            doc.rect(0, 0, 210, 38, 'F');
+            // Header
+            doc.setFillColor(15,118,110); doc.rect(0,0,210,38,'F');
             doc.setFontSize(16); doc.setFont('helvetica','bold'); doc.setTextColor(240,253,250);
-            doc.text((settings.companyName || 'EASY EMS').toUpperCase(), 105, 14, {align:'center'});
+            doc.text((settings.companyName||'EASY EMS').toUpperCase(), 105, 13, {align:'center'});
             doc.setFontSize(11); doc.setFont('helvetica','normal'); doc.setTextColor(204,251,241);
-            doc.text('TECHNICIAN PAY SLIP — ' + monthLabel.toUpperCase(), 105, 24, {align:'center'});
-            doc.setFontSize(9); doc.text('Pay period: ' + pl, 105, 32, {align:'center'});
+            doc.text('FIELD TECHNICIAN PAY SLIP — ' + monthLabel.toUpperCase(), 105, 23, {align:'center'});
+            doc.setFontSize(8.5); doc.text('Pay Period: ' + pl, 105, 31, {align:'center'});
             doc.setTextColor(0,0,0);
             let y = 46;
 
-            // Staff details
+            // Employee details
             doc.autoTable({
-                startY: y, margin:{left:14,right:14}, theme:'grid',
-                styles:{fontSize:9}, headStyles:{fillColor:[15,118,110], textColor:255},
+                startY:y, margin:{left:14,right:14}, theme:'grid',
+                styles:{fontSize:9}, headStyles:{fillColor:[15,118,110],textColor:255},
                 head:[['Field','Details','Field','Details']],
                 body:[
-                    ['Employee', staffName,                      'Designation', st?.designation||'—'],
-                    ['Staff Type', st?.staffType||'Technician',  'Date of Joining', st?.doj||'—'],
-                    ['PAN', st?.pan||'—',                        'PF Number', st?.pfNumber||'—'],
-                    ['ESIC', st?.esicNumber||'—',                'Daily Wage', INR(s.dailyWage)],
-                    ['Pay Period', pl,                            'Engaged Days', String(cal.eng)],
+                    ['Employee', staffName,               'Designation', st?.designation||'—'],
+                    ['Staff Type','Field Technician',      'Date of Joining', st?.doj||'—'],
+                    ['PAN', st?.pan||'—',                  'PF Number', st?.pfNumber||'—'],
+                    ['ESIC', st?.esicNumber||'—',          'Daily Wage', INR(s.dailyWage)],
+                    ['Pay Period', pl,                      'Engaged Days', String(cal.eng)],
                 ],
                 columnStyles:{0:{cellWidth:35,fontStyle:'bold'},2:{cellWidth:35,fontStyle:'bold'}}
             });
             y = doc.lastAutoTable.finalY + 6;
 
             // Attendance summary
-            const attSummary = Object.entries(ATT_TYPES)
-                .filter(([t])=>t && cal.c[t]>0)
-                .map(([t,tp])=>[tp.label, cal.c[t]+' day'+(cal.c[t]>1?'s':'')]);
+            const attSummary = Object.entries(ATT_TYPES).filter(([t])=>t&&cal.c[t]>0).map(([t,tp])=>[tp.label, cal.c[t]+' day'+(cal.c[t]>1?'s':'')]);
             if (attSummary.length) {
-                const attRows = [];
-                for (let i = 0; i < attSummary.length; i += 2) {
-                    attRows.push([attSummary[i][0], attSummary[i][1],
-                        attSummary[i+1]?attSummary[i+1][0]:'', attSummary[i+1]?attSummary[i+1][1]:'']);
-                }
-                doc.autoTable({
-                    startY:y, margin:{left:14,right:14}, theme:'grid',
-                    styles:{fontSize:8}, headStyles:{fillColor:[75,85,99],textColor:255},
-                    head:[['Attendance Type','Days','Attendance Type','Days']],
-                    body: attRows,
-                });
+                const attRows=[]; for(let i=0;i<attSummary.length;i+=2) attRows.push([attSummary[i][0],attSummary[i][1],attSummary[i+1]?attSummary[i+1][0]:'',attSummary[i+1]?attSummary[i+1][1]:'']);
+                doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:8},headStyles:{fillColor:[75,85,99],textColor:255},head:[['Attendance Type','Days','Attendance Type','Days']],body:attRows});
                 y = doc.lastAutoTable.finalY + 6;
             }
 
             // Wage breakdown
-            const sectionColors = { Wage:[30,78,216], Allowance:[14,116,144], Threshold:[21,128,61], Retention:[124,58,237] };
+            const sC={Wage:[30,78,216],Allowance:[14,116,144],Threshold:[21,128,61],Retention:[124,58,237]};
             doc.autoTable({
-                startY:y, margin:{left:14,right:14}, theme:'grid',
-                styles:{fontSize:9},
-                headStyles:{fillColor:[30,64,175], textColor:255},
+                startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:9},
+                headStyles:{fillColor:[30,64,175],textColor:255},
                 head:[['Wage Component','Days','Rate (₹)','Amount (₹)']],
-                body: cal.rows.map(r=>[r.name, String(r.days), RT(r.rate), INR(r.amt)]),
+                body:cal.rows.map(r=>[r.name,String(r.days),RT(r.rate),INR(r.amt)]),
                 columnStyles:{0:{cellWidth:90},1:{halign:'right',cellWidth:20},2:{halign:'right',cellWidth:30},3:{halign:'right',cellWidth:40}},
-                didParseCell: function(data) {
-                    if (data.section==='body' && cal.rows[data.row.index]) {
-                        const sec = cal.rows[data.row.index].sec;
-                        const col = sectionColors[sec] || [0,0,0];
-                        if (sec === 'Allowance') data.cell.styles.fillColor = [236,254,255];
-                        if (sec === 'Threshold') data.cell.styles.fillColor = [240,253,244];
-                        if (sec === 'Retention') data.cell.styles.fillColor = [245,243,255];
-                        if (data.column.index===3) data.cell.styles.textColor = col;
-                    }
-                }
+                didParseCell:function(data){if(data.section==='body'&&cal.rows[data.row.index]){const sec=cal.rows[data.row.index].sec;if(sec==='Allowance')data.cell.styles.fillColor=[236,254,255];if(sec==='Threshold')data.cell.styles.fillColor=[240,253,244];if(sec==='Retention')data.cell.styles.fillColor=[245,243,255];if(data.column.index===3)data.cell.styles.textColor=sC[sec]||[0,0,0];}}
             });
             y = doc.lastAutoTable.finalY + 2;
 
-            // Gross pay row
-            doc.autoTable({
-                startY:y, margin:{left:14,right:14}, theme:'grid',
-                styles:{fontSize:11,fontStyle:'bold'},
-                body:[['GROSS PAY — ' + staffName.toUpperCase(), INR(cal.gross)]],
-                columnStyles:{
-                    0:{cellWidth:140,fillColor:[15,118,110],textColor:[204,251,241]},
-                    1:{halign:'right',fillColor:[15,118,110],textColor:[240,253,250],cellWidth:40}
-                },
-            });
+            doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:11,fontStyle:'bold'},body:[['GROSS PAY — '+staffName.toUpperCase(),INR(cal.gross)]],columnStyles:{0:{cellWidth:140,fillColor:[15,118,110],textColor:[204,251,241]},1:{halign:'right',fillColor:[15,118,110],textColor:[240,253,250],cellWidth:40}}});
+            y = doc.lastAutoTable.finalY + 12;
 
-            y = doc.lastAutoTable.finalY + 14;
+            const notes=[];
+            if(cal.eng>=15) notes.push(`15+ day threshold allowance: ${INR(cal.t15)} (${cal.eng} engaged × ${INR(s.rates.t15)}/day)`);
+            if(cal.eng>=20) notes.push(`20+ day threshold allowance: ${INR(cal.t20)} (${cal.eng} engaged × ${INR(s.rates.t20)}/day)`);
+            if(cal.isRet)   notes.push(`Retention pay: full-month standby, no engagement. 12 × ${INR(s.dailyWage)}`);
+            if(notes.length){doc.setFontSize(8);doc.setFont('helvetica','italic');doc.setTextColor(80,80,80);notes.forEach(n=>{const lines=doc.splitTextToSize('* '+n,182);doc.text(lines,14,y);y+=lines.length*4.5;});doc.setFont('helvetica','normal');doc.setTextColor(0,0,0);}
 
-            // Notes for thresholds / retention
-            const notes = [];
-            if (cal.eng >= 15) notes.push(`15+ day project allowance: ${INR(cal.t15)} (${cal.eng} engaged days x ${INR(s.rates.t15)}/day)`);
-            if (cal.eng >= 20) notes.push(`20+ day project allowance: ${INR(cal.t20)} (${cal.eng} engaged days x ${INR(s.rates.t20)}/day)`);
-            if (cal.isRet)    notes.push(`Retention pay: full month stand by, no project. 12 days x ${INR(s.dailyWage)}`);
-            if (notes.length) {
-                doc.setFontSize(8); doc.setFont('helvetica','italic'); doc.setTextColor(80,80,80);
-                notes.forEach(n => { const lines = doc.splitTextToSize('* ' + n, 182); doc.text(lines, 14, y); y += lines.length * 4.5; });
-                doc.setFont('helvetica','normal'); doc.setTextColor(0,0,0);
-            }
-
-            if (y + 30 > 265) { doc.addPage(); y = 20; }
-            y += 6;
-            doc.setFontSize(9);
-            doc.text('Employee Signature: ___________________', 14, y);
-            doc.text('Authorised by: ___________________', 130, y);
-            doc.setFontSize(7); doc.setTextColor(150,150,150);
-            doc.text('Generated by EASY EMS · ' + new Date().toLocaleDateString('en-IN'), 105, 292, {align:'center'});
-            doc.save(`PaySlip_${staffName.replace(/\s+/g,'_')}_${monthLabel.replace(/\s+/g,'_')}.pdf`);
+            if(y+28>265){doc.addPage();y=20;}
+            y+=6;
+            doc.setFontSize(9); doc.text('Employee Signature: ___________________',14,y); doc.text('Authorised by: ___________________',130,y);
+            doc.setFontSize(7); doc.setTextColor(150,150,150); doc.text('Generated by EASY EMS · '+new Date().toLocaleDateString('en-IN'),105,292,{align:'center'});
+            doc.save(`PaySlip_${staffName.replace(/\s+/g,'_')}_${new Date(s.periodYear,s.periodMonth-1,1).toLocaleString('en-IN',{month:'short',year:'numeric'}).replace(/\s+/g,'_')}.pdf`);
         }
 
+        function _generateOfficePaySlipPDF() {
+            const { jsPDF } = window.jspdf;
+            const op = officePayState;
+            const st = staff.find(x => x.staffID === op.staffID);
+            if (!st) { alert('Please select a staff member.'); return; }
+
+            const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+            const monthLabel = months[op.periodMonth-1] + ' ' + op.periodYear;
+            const doc = new jsPDF();
+            const INR  = n => 'INR ' + Math.max(0,n).toLocaleString('en-IN',{minimumFractionDigits:2});
+            const INR2 = n => 'INR ' + parseFloat(n).toFixed(2);
+
+            // ── Salary computation ──────────────────────────────────────────
+            const basic      = parseFloat(st.basicSalary)||0;
+            const hraPct     = (st.hraPct!==undefined&&st.hraPct!=='')?parseFloat(st.hraPct):30;
+            const daPct      = (st.daPct!==undefined&&st.daPct!=='')?parseFloat(st.daPct):65;
+            const hra        = basic*hraPct/100;
+            const da         = basic*daPct/100;
+            const gradePay   = parseFloat(st.gradePay)||0;
+            const conveyance = parseFloat(st.conveyance)||0;
+            const medical    = parseFloat(st.medical)||0;
+            const variable   = parseFloat(st.variable)||0;
+            const bonus      = (basic+da)/12;
+            const addlAllow  = op.addlAllowance||0;
+            const gross      = basic+hra+da+gradePay+conveyance+medical+bonus+variable+addlAllow;
+            const leavePerMonth = parseFloat(st.leavePerMonth)||2;
+            const leaveTaken    = op.leaveTaken||0;
+            const lopDays       = Math.max(0, leaveTaken-leavePerMonth);
+            const lopAmt        = parseFloat((lopDays*(basic/26)).toFixed(2));
+            const addlDed       = op.addlDeduction||0;
+            const totalDed      = lopAmt+addlDed;
+            const netPay        = gross-totalDed;
+            const leaveBalance  = leavePerMonth - leaveTaken;
+
+            // ── Header ──────────────────────────────────────────────────────
+            doc.setFillColor(79,70,229); doc.rect(0,0,210,38,'F');
+            doc.setFontSize(16); doc.setFont('helvetica','bold'); doc.setTextColor(238,242,255);
+            doc.text((settings.companyName||'EASY EMS').toUpperCase(),105,13,{align:'center'});
+            doc.setFontSize(11); doc.setFont('helvetica','normal'); doc.setTextColor(199,210,254);
+            doc.text('OFFICE STAFF PAY SLIP — '+monthLabel.toUpperCase(),105,23,{align:'center'});
+            doc.setFontSize(8.5); doc.text('Salary for the month of '+monthLabel,105,31,{align:'center'});
+            doc.setTextColor(0,0,0);
+            let y = 46;
+
+            // ── Employee details ────────────────────────────────────────────
+            doc.autoTable({
+                startY:y, margin:{left:14,right:14}, theme:'grid',
+                styles:{fontSize:9}, headStyles:{fillColor:[79,70,229],textColor:255},
+                head:[['Field','Details','Field','Details']],
+                body:[
+                    ['Employee Name', st.name,               'Designation', st.designation||'—'],
+                    ['Staff Type', st.staffType||'Office',    'Date of Joining', st.doj||'—'],
+                    ['PAN Number', st.pan||'—',               'PF Number', st.pfNumber||'—'],
+                    ['ESIC Number', st.esicNumber||'—',       'Pay Month', monthLabel],
+                    ['Leave Eligible/Month', String(leavePerMonth), 'Leave Taken', String(leaveTaken)],
+                ],
+                columnStyles:{0:{cellWidth:38,fontStyle:'bold'},2:{cellWidth:38,fontStyle:'bold'}}
+            });
+            y = doc.lastAutoTable.finalY + 8;
+
+            // ── Earnings + Deductions two-column table ──────────────────────
+            const earRows = [
+                ['Basic Salary',                    INR(basic)],
+                [`HRA (${hraPct}% of Basic)`,       INR(hra)],
+                [`DA (${daPct}% of Basic)`,         INR(da)],
+            ];
+            if(gradePay>0)   earRows.push(['Grade Pay',                         INR(gradePay)]);
+            if(conveyance>0) earRows.push(['Conveyance Allowance',              INR(conveyance)]);
+            if(medical>0)    earRows.push(['Medical Allowance',                 INR(medical)]);
+            earRows.push(['Annual Bonus ((Basic+DA)÷12)',  INR(bonus)]);
+            if(variable>0)   earRows.push(['Variable Allowance',                INR(variable)]);
+            if(addlAllow>0)  earRows.push([(op.addlAllowanceRemark?'Additional: '+op.addlAllowanceRemark:'Additional Allowance'), INR(addlAllow)]);
+            earRows.push([{content:'GROSS EARNINGS',styles:{fontStyle:'bold',fillColor:[238,242,255],textColor:[55,48,163]}},{content:INR(gross),styles:{fontStyle:'bold',fillColor:[238,242,255],textColor:[55,48,163]}}]);
+
+            const dedRows = [];
+            if(lopDays>0) dedRows.push([`Loss of Pay (${lopDays} day${lopDays===1?'':'s'} × Basic÷26)`, INR(lopAmt)]);
+            if(addlDed>0) dedRows.push([(op.addlDeductionRemark?'Deduction: '+op.addlDeductionRemark:'Additional Deduction'), INR(addlDed)]);
+            if(dedRows.length===0) dedRows.push(['No deductions this period','—']);
+            dedRows.push([{content:'TOTAL DEDUCTIONS',styles:{fontStyle:'bold',fillColor:[254,242,242],textColor:[153,27,27]}},{content:INR(totalDed),styles:{fontStyle:'bold',fillColor:[254,242,242],textColor:[153,27,27]}}]);
+
+            // Pad shorter array so both tables have same row count
+            const maxR = Math.max(earRows.length, dedRows.length);
+            while(earRows.length<maxR) earRows.splice(earRows.length-1,0,['','']);
+            while(dedRows.length<maxR) dedRows.splice(dedRows.length-1,0,['','']);
+
+            // Merge side by side
+            const combined = earRows.map((er,i)=>[er[0],er[1],dedRows[i][0],dedRows[i][1]]);
+
+            doc.autoTable({
+                startY:y, margin:{left:14,right:14}, theme:'grid',
+                styles:{fontSize:8.5},
+                headStyles:{fillColor:[79,70,229],textColor:255,fontSize:9},
+                head:[['EARNINGS','Amount (₹)','DEDUCTIONS','Amount (₹)']],
+                body: combined,
+                columnStyles:{
+                    0:{cellWidth:58},1:{halign:'right',cellWidth:34},
+                    2:{cellWidth:58},3:{halign:'right',cellWidth:34}
+                },
+            });
+            y = doc.lastAutoTable.finalY + 4;
+
+            // ── Net Pay row ─────────────────────────────────────────────────
+            doc.autoTable({
+                startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:12,fontStyle:'bold'},
+                body:[['NET PAY — '+st.name.toUpperCase()+' — '+monthLabel, INR(netPay)]],
+                columnStyles:{0:{cellWidth:150,fillColor:[79,70,229],textColor:[238,242,255]},1:{halign:'right',fillColor:[79,70,229],textColor:[238,242,255],cellWidth:34}},
+            });
+            y = doc.lastAutoTable.finalY + 8;
+
+            // ── Leave status box ────────────────────────────────────────────
+            doc.autoTable({
+                startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:8.5},
+                headStyles:{fillColor:[16,185,129],textColor:255},
+                head:[['Leave Eligible/Month','Leave Taken','Leave Balance','LOP Days','LOP Amount']],
+                body:[[String(leavePerMonth),String(leaveTaken),leaveBalance>=0?String(leaveBalance):'0 ('+Math.abs(leaveBalance)+' excess)',String(lopDays),lopDays>0?INR(lopAmt):'—']],
+            });
+            y = doc.lastAutoTable.finalY + 14;
+
+            // ── Amount in words ─────────────────────────────────────────────
+            doc.setFontSize(8); doc.setFont('helvetica','italic'); doc.setTextColor(60,60,60);
+            doc.text('Net Pay in Words: ' + numberToWords(netPay), 14, y);
+            doc.setFont('helvetica','normal'); doc.setTextColor(0,0,0);
+            y += 12;
+
+            if(y+28>265){doc.addPage();y=20;}
+            doc.setFontSize(9);
+            doc.text('Employee Signature: ___________________',14,y);
+            doc.text('Authorised by: ___________________',130,y);
+            doc.setFontSize(7); doc.setTextColor(150,150,150);
+            doc.text('Generated by EASY EMS · '+new Date().toLocaleDateString('en-IN'),105,292,{align:'center'});
+            doc.save(`PaySlip_${st.name.replace(/\s+/g,'_')}_${monthLabel.replace(/\s+/g,'_')}.pdf`);
+        }
         // ════════════════════════════════════════════════════════════════════
         //  MODULE 2 — PROJECT EXPENSES (Food, Travel, Reimbursement)
         // ════════════════════════════════════════════════════════════════════
