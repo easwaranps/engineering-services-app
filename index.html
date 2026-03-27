@@ -34,6 +34,10 @@
             align-items: center;
             justify-content: center;
         }
+        /* ── Attendance Day Button (Wage Calculator) ── */
+        .att-day-btn { border: 1.5px solid #e5e7eb; border-radius: 8px; padding: 4px 2px; text-align: center; cursor: pointer; background: #fff; transition: transform 0.08s; min-height: 48px; width: 100%; font-family: inherit; }
+        .att-day-btn:hover { transform: scale(1.05); }
+        .att-day-btn:active { transform: scale(0.96); }
     </style>
 </head>
 <body class="bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 min-h-screen">
@@ -788,11 +792,246 @@
         let settings = {};
         let expenses = [];        // Expense & Bills module
         let bankAccounts = [];    // Bank accounts for income & expense tracking
+        let staff = [];           // Staff master (office + field technicians)
+        let projectExpenses = []; // Project food/travel reimbursement
+        let workLogs = [];        // Technician work logs with photos
         let currentView = 'dashboard';
         let currentTransaction = null;
         let settingsUnlocked = false;  // Password protection for Settings
         let currentParty = null;
         let lineItemCounter = 0;
+
+        // ════════════════════════════════════════════════════════════════════
+        //  TECHNICIAN WAGE CALCULATOR — Constants & State
+        // ════════════════════════════════════════════════════════════════════
+        const ATT_TYPES = {
+            '':               { label:'—',               short:'—',   color:'#9ca3af', bg:'#f9fafb', text:'#6b7280', engaged:false },
+            Working:          { label:'Working',          short:'WRK', color:'#15803d', bg:'#dcfce7', text:'#14532d', engaged:true  },
+            StandBy:          { label:'Stand By',         short:'SBY', color:'#b45309', bg:'#fef3c7', text:'#78350f', engaged:false },
+            Outstation:       { label:'Outstation',       short:'OUT', color:'#1d4ed8', bg:'#dbeafe', text:'#1e3a8a', engaged:true  },
+            Anchorage:        { label:'Anchorage',        short:'ANC', color:'#0e7490', bg:'#cffafe', text:'#164e63', engaged:true  },
+            Sailing:          { label:'Sailing',          short:'SAL', color:'#4338ca', bg:'#e0e7ff', text:'#312e81', engaged:true  },
+            ApprovedLeave:    { label:'Approved Leave',   short:'A/L', color:'#7c3aed', bg:'#ede9fe', text:'#4c1d95', engaged:false },
+            UnApprovedLeave:  { label:'Unapproved Leave', short:'U/L', color:'#dc2626', bg:'#fee2e2', text:'#7f1d1d', engaged:false },
+        };
+        const ATT_ORDER = ['', 'Working', 'StandBy', 'Outstation', 'Anchorage', 'Sailing', 'ApprovedLeave', 'UnApprovedLeave'];
+        const ENGAGED_TYPES = ['Working', 'Outstation', 'Anchorage', 'Sailing'];
+
+        let techWageState = {
+            staffID:     '',
+            periodMonth: new Date().getMonth() + 1,
+            periodYear:  new Date().getFullYear(),
+            dailyWage:   0,
+            showRates:   false,
+            att:         Array(30).fill(''),
+            rates: {
+                standbyPct: 50,
+                alPct:      100,
+                outA:       600,
+                ancA:       400,
+                salA:       500,
+                t15:        250,
+                t20:        350,
+            }
+        };
+
+        // ── Wage Calc Helpers ─────────────────────────────────────────────
+        function getTechWagePeriodDates(year, month) {
+            const pm = month === 1 ? 12 : month - 1;
+            const py = month === 1 ? year - 1 : year;
+            const dates = [], start = new Date(py, pm - 1, 26);
+            for (let i = 0; i < 30; i++) {
+                const d = new Date(start);
+                d.setDate(start.getDate() + i);
+                dates.push(d);
+            }
+            return dates;
+        }
+
+        function calcTechWage(state) {
+            const { att, dailyWage: dw, rates } = state;
+            const c = {};
+            ATT_ORDER.forEach(t => { c[t] = 0; });
+            att.forEach(t => { if (t) c[t]++; });
+
+            const eng  = ENGAGED_TYPES.reduce((s, t) => s + (c[t] || 0), 0);
+            const sbd  = c.StandBy || 0;
+            const mrkd = att.filter(t => t !== '').length;
+            const isRet = eng === 0 && sbd >= 28 && mrkd >= 28;
+
+            const wP   = c.Working    * dw;
+            const outP = c.Outstation * dw;
+            const ancP = c.Anchorage  * dw;
+            const salP = c.Sailing    * dw;
+            const sbyP = isRet ? 0 : sbd * dw * (rates.standbyPct / 100);
+            const alP  = (c.ApprovedLeave || 0) * dw * (rates.alPct / 100);
+            const outA = c.Outstation * rates.outA;
+            const ancA = c.Anchorage  * rates.ancA;
+            const salA = c.Sailing    * rates.salA;
+            const t15  = eng >= 15 ? eng * rates.t15 : 0;
+            const t20  = eng >= 20 ? eng * rates.t20 : 0;
+            const ret  = isRet ? 12 * dw : 0;
+            const gross = wP + outP + ancP + salP + sbyP + alP + outA + ancA + salA + t15 + t20 + ret;
+
+            const rows = [
+                { sec:'Wage',      name:'Working days',                                        days: c.Working,          rate: dw,                         amt: wP,   show: c.Working    > 0 },
+                { sec:'Wage',      name:'Outstation days',                                     days: c.Outstation,       rate: dw,                         amt: outP, show: c.Outstation > 0 },
+                { sec:'Wage',      name:'Anchorage days',                                      days: c.Anchorage,        rate: dw,                         amt: ancP, show: c.Anchorage  > 0 },
+                { sec:'Wage',      name:'Sailing days',                                        days: c.Sailing,          rate: dw,                         amt: salP, show: c.Sailing    > 0 },
+                { sec:'Wage',      name:`Stand by pay (${rates.standbyPct}%)`,                 days: sbd,                rate: dw * rates.standbyPct / 100, amt: sbyP, show: sbd > 0 && !isRet },
+                { sec:'Wage',      name:`Approved leave (${rates.alPct}%)`,                    days: c.ApprovedLeave||0, rate: dw * rates.alPct / 100,      amt: alP,  show: (c.ApprovedLeave||0) > 0 },
+                { sec:'Allowance', name:'Outstation allowance',                                days: c.Outstation,       rate: rates.outA,                  amt: outA, show: c.Outstation > 0 },
+                { sec:'Allowance', name:'Anchorage allowance',                                 days: c.Anchorage,        rate: rates.ancA,                  amt: ancA, show: c.Anchorage  > 0 },
+                { sec:'Allowance', name:'Sailing allowance',                                   days: c.Sailing,          rate: rates.salA,                  amt: salA, show: c.Sailing    > 0 },
+                { sec:'Threshold', name:`15+ days project allowance (${eng} engaged days)`,   days: eng, rate: rates.t15, amt: t15, show: eng >= 15 },
+                { sec:'Threshold', name:`20+ days project allowance (${eng} engaged days)`,   days: eng, rate: rates.t20, amt: t20, show: eng >= 20 },
+                { sec:'Retention', name:'Retention pay — full stand by month (12 days × daily wage)', days: 12, rate: dw, amt: ret, show: isRet },
+            ].filter(r => r.show);
+
+            return { c, eng, sbd, mrkd, isRet, rows, gross, t15, t20, ret };
+        }
+
+        function cycleAttDay(idx) {
+            const ci = ATT_ORDER.indexOf(techWageState.att[idx]);
+            techWageState.att[idx] = ATT_ORDER[(ci + 1) % ATT_ORDER.length];
+            renderTechWageCalc();
+        }
+
+        function fillAttDays(type) { techWageState.att = Array(30).fill(type); renderTechWageCalc(); }
+        function clearAttDays()    { techWageState.att = Array(30).fill('');   renderTechWageCalc(); }
+
+        function onTechStaffChange() {
+            const sid = document.getElementById('twStaffSel')?.value || '';
+            techWageState.staffID = sid;
+            const s = staff.find(x => x.staffID === sid);
+            if (s) {
+                const dw = parseFloat(s.dailyWage) || parseFloat(s.basicSalary) || 0;
+                techWageState.dailyWage = dw;
+                const el = document.getElementById('twDailyWage');
+                if (el) el.value = dw;
+            }
+            renderTechWageCalc();
+        }
+
+        function onTechWageFieldChange(field, val) {
+            if      (field === 'periodMonth') techWageState.periodMonth = parseInt(val);
+            else if (field === 'periodYear')  techWageState.periodYear  = parseInt(val);
+            else if (field === 'dailyWage')   techWageState.dailyWage   = parseFloat(val) || 0;
+            renderTechWageCalc();
+        }
+
+        function toggleTechRates() {
+            techWageState.showRates = !techWageState.showRates;
+            document.getElementById('twRatesPanel')?.classList.toggle('hidden', !techWageState.showRates);
+            const btn = document.getElementById('twRatesBtn');
+            if (btn) btn.textContent = techWageState.showRates ? 'Hide ▲' : 'Edit rates ▼';
+        }
+
+        function updateTechWageRate(key, val) {
+            techWageState.rates[key] = parseFloat(val) || 0;
+            renderTechWageCalc();
+        }
+
+        function renderTechWageCalc() {
+            const el = document.getElementById('twCalcBody');
+            if (el) el.innerHTML = buildTechWageCalcHTML();
+        }
+
+        function buildTechWageCalcHTML() {
+            const s   = techWageState;
+            const cal = calcTechWage(s);
+            const dates = getTechWagePeriodDates(s.periodYear, s.periodMonth);
+            const pl  = dates[0].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) +
+                        ' – ' + dates[29].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
+            const INR = n => '₹' + Math.round(n).toLocaleString('en-IN');
+            const RT  = n => Math.round(n).toLocaleString('en-IN');
+            const secCol = { Wage:'#1d4ed8', Allowance:'#0e7490', Threshold:'#15803d', Retention:'#7c3aed' };
+            const secBg  = { Wage:'transparent', Allowance:'#ecfeff', Threshold:'#f0fdf4', Retention:'#f5f3ff' };
+
+            const gridHTML = dates.map((date, idx) => {
+                const t = s.att[idx], tp = ATT_TYPES[t] || ATT_TYPES[''];
+                const isWE = date.getDay() === 0 || date.getDay() === 6;
+                const bg   = t ? tp.bg : isWE ? '#f3f4f6' : '#fff';
+                const bord = t ? tp.color + '88' : isWE ? '#d1d5db' : '#e5e7eb';
+                const dayN = date.toLocaleDateString('en-IN',{day:'2-digit'});
+                const dayW = date.toLocaleDateString('en-IN',{weekday:'narrow'});
+                return `<button class="att-day-btn" onclick="cycleAttDay(${idx})" style="background:${bg};border-color:${bord};">
+                    <div style="font-size:10px;color:#9ca3af;line-height:1;">${dayN}<span style="opacity:.7">${dayW}</span></div>
+                    <div style="font-size:11px;font-weight:${t?700:400};color:${t?tp.text:'#9ca3af'};margin-top:2px;line-height:1;">${t?tp.short:'—'}</div>
+                </button>`;
+            }).join('');
+
+            const rowsHTML = cal.rows.length === 0
+                ? `<tr><td colspan="4" style="padding:2rem;text-align:center;color:#9ca3af;font-size:13px;">Mark attendance days in the grid above to calculate wages</td></tr>`
+                : cal.rows.map(row => `<tr style="border-bottom:0.5px solid #f3f4f6;background:${secBg[row.sec]};">
+                    <td style="padding:8px 12px;">
+                        <span style="display:inline-flex;align-items:center;gap:8px;">
+                            <span style="width:3px;height:16px;background:${secCol[row.sec]};border-radius:99px;display:inline-block;flex-shrink:0;"></span>
+                            <span style="color:${row.sec!=='Wage'?secCol[row.sec]:'inherit'}">${row.name}</span>
+                        </span>
+                    </td>
+                    <td style="padding:8px 12px;text-align:right;color:#6b7280;">${row.days}</td>
+                    <td style="padding:8px 12px;text-align:right;color:#6b7280;">${RT(row.rate)}</td>
+                    <td style="padding:8px 12px;text-align:right;font-weight:500;color:${row.sec!=='Wage'?secCol[row.sec]:'inherit'};">${INR(row.amt)}</td>
+                </tr>`).join('');
+
+            const pillsHTML = ATT_ORDER.filter(t => t && cal.c[t] > 0).map(t =>
+                `<span style="background:${ATT_TYPES[t].bg};border:1px solid ${ATT_TYPES[t].color}55;border-radius:99px;padding:3px 10px;font-size:11px;color:${ATT_TYPES[t].text};font-weight:500;">${ATT_TYPES[t].label}: ${cal.c[t]} ${cal.c[t]===1?'day':'days'}</span>`
+            ).join('') + `<span style="background:#f3f4f6;border:0.5px solid #e5e7eb;border-radius:99px;padding:3px 10px;font-size:11px;color:#6b7280;">${cal.mrkd}/30 days marked</span>`;
+
+            return `
+            <div style="font-size:12px;color:#374151;margin-bottom:6px;font-weight:500;">
+                Period: <strong>${pl}</strong> &nbsp;·&nbsp;
+                Engaged: <strong style="color:#15803d;">${cal.eng} days</strong> &nbsp;·&nbsp;
+                Stand by: <strong style="color:#b45309;">${cal.sbd} days</strong>
+            </div>
+            <div class="bg-white border border-gray-200 rounded-xl p-4 mb-4">
+                <div class="flex justify-between items-center mb-3 flex-wrap gap-2">
+                    <div class="text-sm font-semibold text-gray-700">Attendance Grid — click any day to cycle type</div>
+                    <div class="flex gap-2">
+                        <button onclick="fillAttDays('Working')" style="font-size:11px;padding:3px 8px;color:#14532d;background:#dcfce7;border:1px solid #15803d44;border-radius:6px;">All Working</button>
+                        <button onclick="fillAttDays('StandBy')" style="font-size:11px;padding:3px 8px;color:#78350f;background:#fef3c7;border:1px solid #b4530944;border-radius:6px;">All Stand By</button>
+                        <button onclick="clearAttDays()" style="font-size:11px;padding:3px 8px;border:1px solid #e5e7eb;border-radius:6px;background:#fff;">Clear</button>
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:4px;">${gridHTML}</div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;">
+                <div style="background:${cal.eng>=15?'#f0fdf4':'#f9fafb'};border:1.5px solid ${cal.eng>=15?'#15803d':'#e5e7eb'};border-radius:12px;padding:0.75rem;">
+                    <div style="font-size:10px;color:#6b7280;margin-bottom:4px;font-weight:500;">15-DAY THRESHOLD</div>
+                    <div style="font-size:18px;font-weight:500;color:${cal.eng>=15?'#15803d':'#9ca3af'};">${cal.eng>=15?'Eligible ✓':cal.eng+'/15 days'}</div>
+                    <div style="font-size:11px;color:${cal.eng>=15?'#15803d':'#9ca3af'};margin-top:3px;">${cal.eng>=15?INR(cal.t15)+' additional':'Need '+(15-cal.eng)+' more engaged days'}</div>
+                </div>
+                <div style="background:${cal.eng>=20?'#eff6ff':'#f9fafb'};border:1.5px solid ${cal.eng>=20?'#1d4ed8':'#e5e7eb'};border-radius:12px;padding:0.75rem;">
+                    <div style="font-size:10px;color:#6b7280;margin-bottom:4px;font-weight:500;">20-DAY THRESHOLD</div>
+                    <div style="font-size:18px;font-weight:500;color:${cal.eng>=20?'#1d4ed8':'#9ca3af'};">${cal.eng>=20?'Eligible ✓':cal.eng+'/20 days'}</div>
+                    <div style="font-size:11px;color:${cal.eng>=20?'#1d4ed8':'#9ca3af'};margin-top:3px;">${cal.eng>=20?INR(cal.t20)+' additional':'Need '+(20-cal.eng)+' more engaged days'}</div>
+                </div>
+                <div style="background:${cal.isRet?'#f5f3ff':'#f9fafb'};border:1.5px solid ${cal.isRet?'#7c3aed':'#e5e7eb'};border-radius:12px;padding:0.75rem;">
+                    <div style="font-size:10px;color:#6b7280;margin-bottom:4px;font-weight:500;">RETENTION PAY</div>
+                    <div style="font-size:18px;font-weight:500;color:${cal.isRet?'#7c3aed':'#9ca3af'};">${cal.isRet?'Applicable ✓':'Not applicable'}</div>
+                    <div style="font-size:11px;color:${cal.isRet?'#7c3aed':'#9ca3af'};margin-top:3px;">${cal.isRet?'12 × '+INR(s.dailyWage)+' = '+INR(cal.ret):'Full month stand by, no project'}</div>
+                </div>
+            </div>
+            <div class="bg-white border border-gray-200 rounded-xl overflow-hidden mb-4">
+                <div class="px-4 py-3 border-b border-gray-100 font-semibold text-sm">Wage Breakdown</div>
+                <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                    <thead><tr style="background:#f9fafb;border-bottom:0.5px solid #f3f4f6;">
+                        <th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;font-weight:500;">COMPONENT</th>
+                        <th style="padding:8px 12px;text-align:right;font-size:11px;color:#6b7280;font-weight:500;width:50px;">DAYS</th>
+                        <th style="padding:8px 12px;text-align:right;font-size:11px;color:#6b7280;font-weight:500;width:110px;">RATE (₹)</th>
+                        <th style="padding:8px 12px;text-align:right;font-size:11px;color:#6b7280;font-weight:500;width:120px;">AMOUNT (₹)</th>
+                    </tr></thead>
+                    <tbody>${rowsHTML}</tbody>
+                    <tfoot><tr style="background:#0f766e;">
+                        <td colspan="3" style="padding:10px 12px;font-weight:500;font-size:14px;color:#ccfbf1;">Gross Pay</td>
+                        <td style="padding:10px 12px;text-align:right;font-weight:600;font-size:16px;color:#f0fdfa;">${INR(cal.gross)}</td>
+                    </tr></tfoot>
+                </table>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">${pillsHTML}</div>
+            <button onclick="generatePaySlipPDF()" class="px-6 py-2 bg-teal-600 text-white rounded-xl hover:bg-teal-700 font-semibold text-sm">🖨️ Generate Pay Slip PDF</button>`;
+        }
 
         // Utility Functions
         function formatNumber(num) {
@@ -1097,26 +1336,32 @@
                 };
 
                 setStatus('Finding app folder...');
-                // Load all 4 files — each individually so one failure doesn't kill others
-                const [txnData, partyData, settingsData, expData, bankData] = await Promise.all([
+                // Load all files — each individually so one failure doesn't kill others
+                const [txnData, partyData, settingsData, expData, bankData, staffData, projExpData, workLogData] = await Promise.all([
                     loadFileFromDrive('transactions.json'),
                     loadFileFromDrive('parties.json'),
                     loadFileFromDrive('settings.json'),
                     loadFileFromDrive('expenses.json'),
-                    loadFileFromDrive('bankAccounts.json')
+                    loadFileFromDrive('bankAccounts.json'),
+                    loadFileFromDrive('staff.json'),
+                    loadFileFromDrive('projectExpenses.json'),
+                    loadFileFromDrive('workLogs.json')
                 ]);
 
                 setStatus('Processing data...');
-                transactions = Array.isArray(txnData)        ? txnData      : [];
-                parties      = Array.isArray(partyData)      ? partyData    : [];
-                settings     = (settingsData && typeof settingsData === 'object' && !Array.isArray(settingsData))
+                transactions    = Array.isArray(txnData)     ? txnData      : [];
+                parties         = Array.isArray(partyData)   ? partyData    : [];
+                settings        = (settingsData && typeof settingsData === 'object' && !Array.isArray(settingsData))
                                 ? settingsData : {};
-                expenses     = Array.isArray(expData)        ? expData      : [];
-                bankAccounts = Array.isArray(bankData)       ? bankData     : getDefaultBankAccounts();
+                expenses        = Array.isArray(expData)     ? expData      : [];
+                bankAccounts    = Array.isArray(bankData)    ? bankData     : getDefaultBankAccounts();
+                staff           = Array.isArray(staffData)   ? staffData    : [];
+                projectExpenses = Array.isArray(projExpData) ? projExpData  : [];
+                workLogs        = Array.isArray(workLogData) ? workLogData  : [];
 
                 console.log('✅ Data loaded — transactions:', transactions.length,
                     '| parties:', parties.length,
-                    '| settings keys:', Object.keys(settings).length,
+                    '| staff:', staff.length,
                     '| expenses:', expenses.length);
 
                 startTokenRefreshTimer();  // Start proactive token refresh
@@ -2284,6 +2529,9 @@
                             <button onclick="switchView('dashboard')" class="px-4 py-2 rounded-lg ${currentView === 'dashboard' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Dashboard</button>
                             <button onclick="switchView('transactions')" class="px-4 py-2 rounded-lg ${currentView === 'transactions' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Transactions</button>
                             <button onclick="switchView('expenses')" class="px-4 py-2 rounded-lg ${currentView === 'expenses' ? 'bg-orange-100 text-orange-700' : 'text-gray-600 hover:bg-gray-100'}">💸 Expenses</button>
+                            <button onclick="switchView('staff')" class="px-4 py-2 rounded-lg ${currentView === 'staff' ? 'bg-teal-100 text-teal-700' : 'text-gray-600 hover:bg-gray-100'}">👥 Staff</button>
+                            <button onclick="switchView('projexp')" class="px-4 py-2 rounded-lg ${currentView === 'projexp' ? 'bg-yellow-100 text-yellow-700' : 'text-gray-600 hover:bg-gray-100'}">🧳 Project Expenses</button>
+                            <button onclick="switchView('worklogs')" class="px-4 py-2 rounded-lg ${currentView === 'worklogs' ? 'bg-purple-100 text-purple-700' : 'text-gray-600 hover:bg-gray-100'}">📋 Work Logs</button>
                             <button onclick="switchView('mis')" class="px-4 py-2 rounded-lg ${currentView === 'mis' ? 'bg-green-100 text-green-700' : 'text-gray-600 hover:bg-gray-100'}">📊 MIS Report</button>
                             <button onclick="switchView('parties')" class="px-4 py-2 rounded-lg ${currentView === 'parties' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Parties</button>
                             <button onclick="switchView('settings')" class="px-4 py-2 rounded-lg ${currentView === 'settings' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Settings</button>
@@ -2321,6 +2569,9 @@
             if (currentView === 'dashboard') renderDashboard(content);
             else if (currentView === 'transactions') renderTransactions(content);
             else if (currentView === 'expenses') renderExpenses(content);
+            else if (currentView === 'staff') renderStaff(content);
+            else if (currentView === 'projexp') renderProjectExpenses(content);
+            else if (currentView === 'worklogs') renderWorkLogs(content);
             else if (currentView === 'mis') renderMIS(content);
             else if (currentView === 'parties') renderParties(content);
             else if (currentView === 'settings') renderSettings(content);
@@ -4819,6 +5070,1257 @@
                 currencySelect.addEventListener('change', updateTotals);
             }
         });
+
+        // ════════════════════════════════════════════════════════════════════
+        //  MODULE 1 — STAFF (Attendance, Wages, Documents, Payslips)
+        // ════════════════════════════════════════════════════════════════════
+
+        let currentStaff = null;
+        let currentStaffSubTab = 'list'; // list | attendance | wages | documents | payslip
+
+        function renderStaff(content) {
+            const officeCount = staff.filter(s => s.staffType === 'Office').length;
+            const techCount   = staff.filter(s => s.staffType === 'Technician').length;
+            content.innerHTML = `
+            <div class="flex items-center justify-between mb-6">
+                <div>
+                    <h2 class="text-3xl font-bold text-gray-800">👥 Staff Management</h2>
+                    <p class="text-gray-500 text-sm mt-1">Office: ${officeCount} &nbsp;|&nbsp; Technicians: ${techCount}</p>
+                </div>
+                <button onclick="openStaffModal()" class="px-5 py-2 bg-teal-600 text-white rounded-xl hover:bg-teal-700 font-medium">+ Add Staff</button>
+            </div>
+
+            <!-- Sub-tabs -->
+            <div class="flex gap-2 mb-6 border-b border-gray-200 flex-wrap">
+                ${['list','attendance','wages','documents','payslip'].map(t => `
+                <button onclick="switchStaffTab('${t}')" class="px-4 py-2 text-sm font-medium border-b-2 ${currentStaffSubTab===t ? 'border-teal-600 text-teal-700' : 'border-transparent text-gray-500 hover:text-gray-700'}">
+                    ${{list:'👤 Staff List', attendance:'📅 Attendance', wages:'💰 Wages', documents:'📁 Documents', payslip:'🧾 Pay Slips'}[t]}
+                </button>`).join('')}
+            </div>
+
+            <div id="staffTabContent"></div>
+
+            <!-- Staff Modal -->
+            <div id="staffModal" class="modal">
+                <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[92vh] overflow-y-auto m-4">
+                    <div class="bg-gradient-to-r from-teal-600 to-cyan-600 p-5 text-white sticky top-0 z-10 flex justify-between items-center">
+                        <h2 class="text-xl font-bold" id="staffModalTitle">Add Staff Member</h2>
+                        <button onclick="closeStaffModal()" class="text-white hover:text-teal-200 text-2xl font-bold">✕</button>
+                    </div>
+                    <form id="staffForm" onsubmit="saveStaff(event)" class="p-6 space-y-4">
+                        <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Staff Type *</label>
+                                <select id="sType" class="w-full px-3 py-2 border rounded-lg text-sm" required onchange="toggleStaffDocFields()">
+                                    <option value="Office">Office Staff</option>
+                                    <option value="Technician">Field Technician</option>
+                                </select></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Full Name *</label>
+                                <input type="text" id="sName" class="w-full px-3 py-2 border rounded-lg text-sm" required/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Designation *</label>
+                                <input type="text" id="sDesignation" placeholder="e.g. Director / Engineer" class="w-full px-3 py-2 border rounded-lg text-sm" required/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Date of Joining</label>
+                                <input type="date" id="sDOJ" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Mobile</label>
+                                <input type="text" id="sMobile" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Email</label>
+                                <input type="email" id="sEmail" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Basic Salary (₹)</label>
+                                <input type="number" id="sBasicSalary" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Daily Wage (₹) <span class="text-gray-400">(if applicable)</span></label>
+                                <input type="number" id="sDailyWage" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Status</label>
+                                <select id="sStatus" class="w-full px-3 py-2 border rounded-lg text-sm">
+                                    <option value="Active">Active</option>
+                                    <option value="Inactive">Inactive</option>
+                                </select></div>
+                        </div>
+                        <!-- Document fields common -->
+                        <div class="border-t pt-4">
+                            <h4 class="text-sm font-bold text-gray-700 mb-3">Identity & Statutory Documents</h4>
+                            <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">PAN Card No</label>
+                                    <input type="text" id="sPAN" class="w-full px-3 py-2 border rounded-lg text-sm uppercase" maxlength="10"/></div>
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Aadhar Card No</label>
+                                    <input type="text" id="sAadhar" class="w-full px-3 py-2 border rounded-lg text-sm" maxlength="12"/></div>
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">PF Number</label>
+                                    <input type="text" id="sPF" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">ESIC Number</label>
+                                    <input type="text" id="sESIC" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Professional Certificate</label>
+                                    <input type="text" id="sProfCert" placeholder="Certificate name / number" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                            </div>
+                        </div>
+                        <!-- Technician-only fields -->
+                        <div id="techDocFields" class="border-t pt-4">
+                            <h4 class="text-sm font-bold text-teal-700 mb-3">Technician Documents</h4>
+                            <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Passport Number</label>
+                                    <input type="text" id="sPassport" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Passport Expiry</label>
+                                    <input type="date" id="sPassportExpiry" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Driving Licence No</label>
+                                    <input type="text" id="sDL" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">DL Expiry Date</label>
+                                    <input type="date" id="sDLExpiry" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">CDC (Continuous Discharge Certificate)</label>
+                                    <input type="text" id="sCDC" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">CDC Expiry</label>
+                                    <input type="date" id="sCDCExpiry" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Course / Safety Certificate</label>
+                                    <input type="text" id="sCourseCert" placeholder="e.g. HUET, BOSIET" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Course Cert. Expiry</label>
+                                    <input type="date" id="sCourseCertExpiry" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                            </div>
+                        </div>
+                        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Remarks</label>
+                            <textarea id="sRemarks" rows="2" class="w-full px-3 py-2 border rounded-lg text-sm"></textarea></div>
+                        <div class="flex gap-3 justify-end pt-2">
+                            <button type="button" onclick="closeStaffModal()" class="px-5 py-2 border border-gray-300 rounded-xl text-gray-600 hover:bg-gray-50">Cancel</button>
+                            <button type="submit" class="px-6 py-2 bg-teal-600 text-white rounded-xl hover:bg-teal-700 font-semibold">Save Staff</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Attendance Modal -->
+            <div id="attendanceModal" class="modal">
+                <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg m-4">
+                    <div class="bg-gradient-to-r from-blue-600 to-indigo-600 p-5 text-white flex justify-between items-center">
+                        <h2 class="text-lg font-bold">Mark Attendance</h2>
+                        <button onclick="closeAttendanceModal()" class="text-white text-2xl font-bold">✕</button>
+                    </div>
+                    <form id="attendanceForm" onsubmit="saveAttendance(event)" class="p-6 space-y-4">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Staff Member *</label>
+                                <select id="attStaff" class="w-full px-3 py-2 border rounded-lg text-sm" required></select></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Date *</label>
+                                <input type="date" id="attDate" class="w-full px-3 py-2 border rounded-lg text-sm" required/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Status *</label>
+                                <select id="attStatus" class="w-full px-3 py-2 border rounded-lg text-sm" required>
+                                    <option value="Present">Present</option>
+                                    <option value="Absent">Absent</option>
+                                    <option value="Half Day">Half Day</option>
+                                    <option value="OT">Overtime (OT)</option>
+                                    <option value="Leave">Leave</option>
+                                </select></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Project / Location</label>
+                                <input type="text" id="attProject" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                        </div>
+                        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Remarks</label>
+                            <input type="text" id="attRemarks" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                        <div class="flex gap-3 justify-end">
+                            <button type="button" onclick="closeAttendanceModal()" class="px-5 py-2 border rounded-xl text-gray-600">Cancel</button>
+                            <button type="submit" class="px-6 py-2 bg-blue-600 text-white rounded-xl font-semibold">Save</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Wage Revision Modal -->
+            <div id="wageModal" class="modal">
+                <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg m-4">
+                    <div class="bg-gradient-to-r from-green-600 to-teal-600 p-5 text-white flex justify-between items-center">
+                        <h2 class="text-lg font-bold">Wage Revision</h2>
+                        <button onclick="closeWageModal()" class="text-white text-2xl font-bold">✕</button>
+                    </div>
+                    <form id="wageForm" onsubmit="saveWageRevision(event)" class="p-6 space-y-4">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Staff Member *</label>
+                                <select id="wagStaff" class="w-full px-3 py-2 border rounded-lg text-sm" required></select></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Effective Date *</label>
+                                <input type="date" id="wagDate" class="w-full px-3 py-2 border rounded-lg text-sm" required/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">New Basic Salary (₹)</label>
+                                <input type="number" id="wagBasic" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">New Daily Wage (₹)</label>
+                                <input type="number" id="wagDaily" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                        </div>
+                        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Reason</label>
+                            <input type="text" id="wagReason" placeholder="Annual increment / promotion etc." class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                        <div class="flex gap-3 justify-end">
+                            <button type="button" onclick="closeWageModal()" class="px-5 py-2 border rounded-xl text-gray-600">Cancel</button>
+                            <button type="submit" class="px-6 py-2 bg-green-600 text-white rounded-xl font-semibold">Save Revision</button>
+                        </div>
+                    </form>
+                </div>
+            </div>`;
+
+            renderStaffTab();
+        }
+
+        function switchStaffTab(tab) {
+            currentStaffSubTab = tab;
+            renderStaffTab();
+            // Update button styles
+            ['list','attendance','wages','documents','payslip'].forEach(t => {
+                const btn = document.querySelector(`button[onclick="switchStaffTab('${t}')"]`);
+                if (btn) {
+                    btn.className = `px-4 py-2 text-sm font-medium border-b-2 ${t===tab ? 'border-teal-600 text-teal-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`;
+                }
+            });
+        }
+
+        function renderStaffTab() {
+            const el = document.getElementById('staffTabContent');
+            if (!el) return;
+            if (currentStaffSubTab === 'list')       el.innerHTML = renderStaffList();
+            else if (currentStaffSubTab === 'attendance') el.innerHTML = renderAttendanceTab();
+            else if (currentStaffSubTab === 'wages')  el.innerHTML = renderWagesTab();
+            else if (currentStaffSubTab === 'documents') el.innerHTML = renderStaffDocuments();
+            else if (currentStaffSubTab === 'payslip') el.innerHTML = renderPayslipTab();
+        }
+
+        function renderStaffList() {
+            if (!staff.length) return `<div class="text-center py-16 text-gray-400"><div class="text-5xl mb-4">👤</div><p class="font-medium">No staff added yet.</p><p class="text-sm mt-1">Click "+ Add Staff" to get started.</p></div>`;
+            return `<div class="overflow-x-auto"><table class="w-full text-sm">
+                <thead class="bg-teal-50 text-xs text-gray-500 uppercase">
+                    <tr>
+                        <th class="px-3 py-2 text-left">Name</th>
+                        <th class="px-3 py-2 text-left">Type</th>
+                        <th class="px-3 py-2 text-left">Designation</th>
+                        <th class="px-3 py-2 text-left">DOJ</th>
+                        <th class="px-3 py-2 text-right">Basic Salary</th>
+                        <th class="px-3 py-2 text-right">Daily Wage</th>
+                        <th class="px-3 py-2 text-center">Status</th>
+                        <th class="px-3 py-2 text-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${staff.map(s => `<tr class="border-b hover:bg-teal-50">
+                        <td class="px-3 py-2 font-medium text-teal-800">${s.name}</td>
+                        <td class="px-3 py-2"><span class="px-2 py-0.5 rounded-full text-xs ${s.staffType==='Technician' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}">${s.staffType}</span></td>
+                        <td class="px-3 py-2">${s.designation||'—'}</td>
+                        <td class="px-3 py-2">${s.doj||'—'}</td>
+                        <td class="px-3 py-2 text-right">${s.basicSalary ? '₹'+parseFloat(s.basicSalary).toLocaleString('en-IN') : '—'}</td>
+                        <td class="px-3 py-2 text-right">${s.dailyWage ? '₹'+parseFloat(s.dailyWage).toLocaleString('en-IN') : '—'}</td>
+                        <td class="px-3 py-2 text-center"><span class="px-2 py-0.5 rounded-full text-xs ${s.status==='Active' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">${s.status||'Active'}</span></td>
+                        <td class="px-3 py-2 text-right whitespace-nowrap">
+                            <button onclick="editStaff('${s.staffID}')" class="text-indigo-600 hover:text-indigo-800 text-xs font-medium mr-2">Edit</button>
+                            <button onclick="deleteStaff('${s.staffID}')" class="text-red-600 hover:text-red-800 text-xs">Del</button>
+                        </td>
+                    </tr>`).join('')}
+                </tbody>
+            </table></div>`;
+        }
+
+        function renderAttendanceTab() {
+            // Gather all attendance records from all staff
+            const allAtt = [];
+            staff.forEach(s => (s.attendance||[]).forEach(a => allAtt.push({...a, staffName: s.name, staffID: s.staffID})));
+            allAtt.sort((a,b) => (b.date||'').localeCompare(a.date||''));
+            const statusCls = {Present:'bg-green-100 text-green-700', Absent:'bg-red-100 text-red-700', 'Half Day':'bg-yellow-100 text-yellow-700', OT:'bg-blue-100 text-blue-700', Leave:'bg-gray-100 text-gray-600'};
+            return `
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="font-bold text-gray-700">Attendance Records (${allAtt.length} entries)</h3>
+                <button onclick="openAttendanceModal()" class="px-4 py-2 bg-blue-600 text-white rounded-xl text-sm hover:bg-blue-700">+ Mark Attendance</button>
+            </div>
+            ${!allAtt.length ? '<p class="text-center text-gray-400 py-12">No attendance records yet.</p>' :
+            `<div class="overflow-x-auto"><table class="w-full text-sm">
+                <thead class="bg-blue-50 text-xs text-gray-500 uppercase">
+                    <tr><th class="px-3 py-2 text-left">Date</th><th class="px-3 py-2 text-left">Staff</th><th class="px-3 py-2 text-center">Status</th><th class="px-3 py-2 text-left">Project</th><th class="px-3 py-2 text-left">Remarks</th><th class="px-3 py-2 text-right">Del</th></tr>
+                </thead>
+                <tbody>${allAtt.slice(0,100).map(a => `<tr class="border-b hover:bg-blue-50">
+                    <td class="px-3 py-2">${a.date}</td>
+                    <td class="px-3 py-2 font-medium">${a.staffName}</td>
+                    <td class="px-3 py-2 text-center"><span class="px-2 py-0.5 rounded-full text-xs ${statusCls[a.status]||'bg-gray-100'}">${a.status}</span></td>
+                    <td class="px-3 py-2">${a.project||'—'}</td>
+                    <td class="px-3 py-2 text-gray-500">${a.remarks||'—'}</td>
+                    <td class="px-3 py-2 text-right"><button onclick="deleteAttendance('${a.staffID}','${a.attID}')" class="text-red-500 hover:text-red-700 text-xs">✕</button></td>
+                </tr>`).join('')}</tbody>
+            </table></div>`}`;
+        }
+
+        function renderWagesTab() {
+            const revisions = [];
+            staff.forEach(s => (s.wageRevisions||[]).forEach(r => revisions.push({...r, staffName: s.name, staffID: s.staffID})));
+            revisions.sort((a,b) => (b.effectiveDate||'').localeCompare(a.effectiveDate||''));
+            return `
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="font-bold text-gray-700">Wage Revisions (${revisions.length} records)</h3>
+                <button onclick="openWageModal()" class="px-4 py-2 bg-green-600 text-white rounded-xl text-sm hover:bg-green-700">+ Add Revision</button>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+                ${staff.filter(s=>s.status==='Active').map(s => `
+                <div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <p class="font-semibold text-gray-800">${s.name}</p>
+                            <p class="text-xs text-gray-500">${s.designation||''} · ${s.staffType}</p>
+                        </div>
+                        <span class="text-xs bg-teal-100 text-teal-700 px-2 py-0.5 rounded-full">${s.status}</span>
+                    </div>
+                    <div class="mt-3 grid grid-cols-2 gap-2 text-sm">
+                        <div><p class="text-xs text-gray-400">Basic Salary</p><p class="font-bold text-green-700">${s.basicSalary ? '₹'+parseFloat(s.basicSalary).toLocaleString('en-IN') : '—'}</p></div>
+                        <div><p class="text-xs text-gray-400">Daily Wage</p><p class="font-bold text-blue-700">${s.dailyWage ? '₹'+parseFloat(s.dailyWage).toLocaleString('en-IN') : '—'}</p></div>
+                    </div>
+                </div>`).join('')}
+            </div>
+            ${revisions.length ? `<h4 class="font-semibold text-gray-700 mb-2">Revision History</h4>
+            <div class="overflow-x-auto"><table class="w-full text-sm">
+                <thead class="bg-green-50 text-xs text-gray-500 uppercase">
+                    <tr><th class="px-3 py-2 text-left">Effective Date</th><th class="px-3 py-2 text-left">Staff</th><th class="px-3 py-2 text-right">Basic</th><th class="px-3 py-2 text-right">Daily Wage</th><th class="px-3 py-2 text-left">Reason</th><th class="px-3 py-2">Del</th></tr>
+                </thead>
+                <tbody>${revisions.map(r => `<tr class="border-b hover:bg-green-50">
+                    <td class="px-3 py-2">${r.effectiveDate}</td>
+                    <td class="px-3 py-2 font-medium">${r.staffName}</td>
+                    <td class="px-3 py-2 text-right">${r.basicSalary ? '₹'+parseFloat(r.basicSalary).toLocaleString('en-IN') : '—'}</td>
+                    <td class="px-3 py-2 text-right">${r.dailyWage ? '₹'+parseFloat(r.dailyWage).toLocaleString('en-IN') : '—'}</td>
+                    <td class="px-3 py-2 text-gray-500">${r.reason||'—'}</td>
+                    <td class="px-3 py-2 text-center"><button onclick="deleteWageRevision('${r.staffID}','${r.revID}')" class="text-red-500 hover:text-red-700 text-xs">✕</button></td>
+                </tr>`).join('')}</tbody>
+            </table></div>` : ''}`;
+        }
+
+        function renderStaffDocuments() {
+            if (!staff.length) return `<p class="text-center text-gray-400 py-12">No staff added yet.</p>`;
+            const today = new Date().toISOString().split('T')[0];
+            const warn30 = new Date(Date.now() + 30*24*3600000).toISOString().split('T')[0];
+            return `<div class="space-y-4">
+            ${staff.map(s => {
+                const docs = [
+                    {label:'PAN Card', val: s.pan, expiry: null},
+                    {label:'Aadhar', val: s.aadhar, expiry: null},
+                    {label:'PF Number', val: s.pfNumber, expiry: null},
+                    {label:'ESIC Number', val: s.esicNumber, expiry: null},
+                    {label:'Prof. Certificate', val: s.profCert, expiry: null},
+                    ...(s.staffType==='Technician' ? [
+                        {label:'Passport', val: s.passport, expiry: s.passportExpiry},
+                        {label:'Driving Licence', val: s.drivingLicence, expiry: s.dlExpiry},
+                        {label:'CDC', val: s.cdc, expiry: s.cdcExpiry},
+                        {label:'Course Cert', val: s.courseCert, expiry: s.courseCertExpiry},
+                    ] : [])
+                ].filter(d => d.val);
+                if (!docs.length) return '';
+                return `<div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+                    <div class="flex justify-between items-center mb-3">
+                        <div>
+                            <span class="font-semibold text-gray-800">${s.name}</span>
+                            <span class="ml-2 text-xs bg-${s.staffType==='Technician'?'blue':'purple'}-100 text-${s.staffType==='Technician'?'blue':'purple'}-700 px-2 py-0.5 rounded-full">${s.staffType}</span>
+                        </div>
+                        <button onclick="editStaff('${s.staffID}')" class="text-xs text-indigo-600 hover:text-indigo-800">Edit Docs</button>
+                    </div>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        ${docs.map(d => {
+                            const expired  = d.expiry && d.expiry < today;
+                            const expiring = d.expiry && d.expiry <= warn30 && !expired;
+                            return `<div class="bg-gray-50 rounded-lg p-2 border ${expired?'border-red-300 bg-red-50':expiring?'border-yellow-300 bg-yellow-50':'border-gray-100'}">
+                                <p class="text-xs text-gray-500 mb-0.5">${d.label}</p>
+                                <p class="text-xs font-semibold text-gray-800">${d.val}</p>
+                                ${d.expiry ? `<p class="text-xs mt-0.5 ${expired?'text-red-600 font-bold':expiring?'text-yellow-700 font-bold':'text-gray-400'}">Exp: ${d.expiry}${expired?' ⚠️ EXPIRED':expiring?' ⚠️ Soon':''}</p>` : ''}
+                            </div>`;
+                        }).join('')}
+                    </div>
+                </div>`;
+            }).join('')}
+            </div>`;
+        }
+
+        function renderPayslipTab() {
+            const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+            const s = techWageState;
+            // Restore staff-specific daily wage if already selected
+            if (s.staffID) {
+                const st = staff.find(x => x.staffID === s.staffID);
+                if (st && !s.dailyWage) s.dailyWage = parseFloat(st.dailyWage) || parseFloat(st.basicSalary) || 0;
+            }
+            const rateRows = [
+                { key:'standbyPct', label:'Stand by rate (%)',            val: s.rates.standbyPct },
+                { key:'alPct',      label:'Approved leave rate (%)',       val: s.rates.alPct      },
+                { key:'outA',       label:'Outstation allowance/day (₹)', val: s.rates.outA       },
+                { key:'ancA',       label:'Anchorage allowance/day (₹)',  val: s.rates.ancA       },
+                { key:'salA',       label:'Sailing allowance/day (₹)',    val: s.rates.salA       },
+                { key:'t15',        label:'15+ days allow/engaged day (₹)',val:s.rates.t15        },
+                { key:'t20',        label:'20+ days allow/engaged day (₹)',val:s.rates.t20        },
+            ];
+            return `
+            <div class="bg-white border border-gray-200 rounded-xl p-5 mb-4">
+                <h3 class="font-bold text-gray-700 text-base mb-4">Technician Wage Calculator</h3>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Staff / Technician</label>
+                        <select id="twStaffSel" onchange="onTechStaffChange()" class="w-full px-3 py-2 border rounded-lg text-sm">
+                            <option value="">-- Select --</option>
+                            ${staff.filter(x=>x.staffType==='Technician').map(x =>
+                                `<option value="${x.staffID}" ${x.staffID===s.staffID?'selected':''}>${x.name}</option>`
+                            ).join('')}
+                        </select></div>
+                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Pay Period Month</label>
+                        <select onchange="onTechWageFieldChange('periodMonth', this.value)" class="w-full px-3 py-2 border rounded-lg text-sm">
+                            ${months.map((m,i)=>`<option value="${i+1}" ${i+1===s.periodMonth?'selected':''}>${m}</option>`).join('')}
+                        </select></div>
+                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Year</label>
+                        <select onchange="onTechWageFieldChange('periodYear', this.value)" class="w-full px-3 py-2 border rounded-lg text-sm">
+                            ${[2024,2025,2026,2027].map(y=>`<option value="${y}" ${y===s.periodYear?'selected':''}>${y}</option>`).join('')}
+                        </select></div>
+                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Daily Wage (₹)</label>
+                        <input type="number" id="twDailyWage" value="${s.dailyWage||0}"
+                            oninput="onTechWageFieldChange('dailyWage', this.value)"
+                            class="w-full px-3 py-2 border rounded-lg text-sm" min="0" step="0.01"/></div>
+                </div>
+                <div class="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 mb-4">
+                    <div class="text-xs font-semibold text-gray-500 mb-2">ATTENDANCE TYPES &nbsp;·&nbsp; ★ counts toward 15/20-day engagement threshold</div>
+                    <div class="flex flex-wrap gap-2">
+                        ${Object.entries(ATT_TYPES).filter(([t])=>t).map(([t,tp])=>
+                            `<span style="background:${tp.bg};color:${tp.text};border:1px solid ${tp.color}44;border-radius:99px;padding:2px 9px;font-size:11px;font-weight:500;">
+                                <strong>${tp.short}</strong> ${tp.label}${tp.engaged?' ★':''}
+                            </span>`
+                        ).join('')}
+                    </div>
+                </div>
+                <div class="mb-4">
+                    <button id="twRatesBtn" onclick="toggleTechRates()"
+                        class="text-sm px-3 py-1.5 border border-teal-300 text-teal-700 rounded-lg hover:bg-teal-50">
+                        ${s.showRates ? 'Hide ▲' : 'Edit rates ▼'}
+                    </button>
+                    <div id="twRatesPanel" class="${s.showRates?'':'hidden'} mt-3 bg-teal-50 border border-teal-200 rounded-xl p-4 grid grid-cols-2 md:grid-cols-4 gap-3">
+                        ${rateRows.map(r=>`<div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">${r.label}</label>
+                            <input type="number" value="${r.val}" min="0" step="0.01"
+                                oninput="updateTechWageRate('${r.key}', this.value)"
+                                class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>`).join('')}
+                    </div>
+                </div>
+            </div>
+            <div id="twCalcBody">${buildTechWageCalcHTML()}</div>`;
+        }
+
+        // Staff CRUD
+        function openStaffModal(s = null) {
+            currentStaff = s;
+            document.getElementById('staffModalTitle').textContent = s ? 'Edit Staff Member' : 'Add Staff Member';
+            document.getElementById('staffForm').reset();
+            if (s) {
+                document.getElementById('sType').value       = s.staffType||'Office';
+                document.getElementById('sName').value       = s.name||'';
+                document.getElementById('sDesignation').value= s.designation||'';
+                document.getElementById('sDOJ').value        = s.doj||'';
+                document.getElementById('sMobile').value     = s.mobile||'';
+                document.getElementById('sEmail').value      = s.email||'';
+                document.getElementById('sBasicSalary').value= s.basicSalary||'';
+                document.getElementById('sDailyWage').value  = s.dailyWage||'';
+                document.getElementById('sStatus').value     = s.status||'Active';
+                document.getElementById('sPAN').value        = s.pan||'';
+                document.getElementById('sAadhar').value     = s.aadhar||'';
+                document.getElementById('sPF').value         = s.pfNumber||'';
+                document.getElementById('sESIC').value       = s.esicNumber||'';
+                document.getElementById('sProfCert').value   = s.profCert||'';
+                document.getElementById('sPassport').value   = s.passport||'';
+                document.getElementById('sPassportExpiry').value = s.passportExpiry||'';
+                document.getElementById('sDL').value         = s.drivingLicence||'';
+                document.getElementById('sDLExpiry').value   = s.dlExpiry||'';
+                document.getElementById('sCDC').value        = s.cdc||'';
+                document.getElementById('sCDCExpiry').value  = s.cdcExpiry||'';
+                document.getElementById('sCourseCert').value = s.courseCert||'';
+                document.getElementById('sCourseCertExpiry').value = s.courseCertExpiry||'';
+                document.getElementById('sRemarks').value    = s.remarks||'';
+            }
+            toggleStaffDocFields();
+            document.getElementById('staffModal').classList.add('show');
+        }
+
+        function toggleStaffDocFields() {
+            const isTech = document.getElementById('sType')?.value === 'Technician';
+            document.getElementById('techDocFields')?.classList.toggle('hidden', !isTech);
+        }
+
+        function closeStaffModal() { document.getElementById('staffModal').classList.remove('show'); currentStaff = null; }
+
+        async function saveStaff(e) {
+            e.preventDefault();
+            const obj = {
+                staffID:        currentStaff?.staffID || 'STF' + Date.now(),
+                staffType:      document.getElementById('sType').value,
+                name:           document.getElementById('sName').value,
+                designation:    document.getElementById('sDesignation').value,
+                doj:            document.getElementById('sDOJ').value,
+                mobile:         document.getElementById('sMobile').value,
+                email:          document.getElementById('sEmail').value,
+                basicSalary:    parseFloat(document.getElementById('sBasicSalary').value)||0,
+                dailyWage:      parseFloat(document.getElementById('sDailyWage').value)||0,
+                status:         document.getElementById('sStatus').value,
+                pan:            document.getElementById('sPAN').value.toUpperCase(),
+                aadhar:         document.getElementById('sAadhar').value,
+                pfNumber:       document.getElementById('sPF').value,
+                esicNumber:     document.getElementById('sESIC').value,
+                profCert:       document.getElementById('sProfCert').value,
+                passport:       document.getElementById('sPassport').value,
+                passportExpiry: document.getElementById('sPassportExpiry').value,
+                drivingLicence: document.getElementById('sDL').value,
+                dlExpiry:       document.getElementById('sDLExpiry').value,
+                cdc:            document.getElementById('sCDC').value,
+                cdcExpiry:      document.getElementById('sCDCExpiry').value,
+                courseCert:     document.getElementById('sCourseCert').value,
+                courseCertExpiry: document.getElementById('sCourseCertExpiry').value,
+                remarks:        document.getElementById('sRemarks').value,
+                attendance:     currentStaff?.attendance || [],
+                wageRevisions:  currentStaff?.wageRevisions || [],
+                createdAt:      currentStaff?.createdAt || new Date().toISOString()
+            };
+            if (currentStaff) { const i = staff.findIndex(x => x.staffID === currentStaff.staffID); if (i>=0) staff[i] = obj; }
+            else staff.push(obj);
+            await saveData('staff', staff);
+            closeStaffModal();
+            renderView();
+        }
+
+        function editStaff(id) { const s = staff.find(x => x.staffID === id); if (s) openStaffModal(s); }
+
+        async function deleteStaff(id) {
+            if (!confirm('Delete this staff member and all their records?')) return;
+            staff = staff.filter(x => x.staffID !== id);
+            await saveData('staff', staff);
+            renderView();
+        }
+
+        // Attendance
+        function openAttendanceModal() {
+            document.getElementById('attendanceForm').reset();
+            document.getElementById('attDate').value = new Date().toISOString().split('T')[0];
+            const sel = document.getElementById('attStaff');
+            sel.innerHTML = staff.filter(s=>s.status==='Active').map(s => `<option value="${s.staffID}">${s.name}</option>`).join('');
+            document.getElementById('attendanceModal').classList.add('show');
+        }
+        function closeAttendanceModal() { document.getElementById('attendanceModal').classList.remove('show'); }
+
+        async function saveAttendance(e) {
+            e.preventDefault();
+            const sid = document.getElementById('attStaff').value;
+            const idx = staff.findIndex(x => x.staffID === sid);
+            if (idx < 0) return;
+            if (!staff[idx].attendance) staff[idx].attendance = [];
+            staff[idx].attendance.push({
+                attID: 'ATT' + Date.now(),
+                staffID: sid,
+                date: document.getElementById('attDate').value,
+                status: document.getElementById('attStatus').value,
+                project: document.getElementById('attProject').value,
+                remarks: document.getElementById('attRemarks').value
+            });
+            await saveData('staff', staff);
+            closeAttendanceModal();
+            renderStaffTab();
+        }
+
+        async function deleteAttendance(staffID, attID) {
+            const idx = staff.findIndex(x => x.staffID === staffID);
+            if (idx < 0) return;
+            staff[idx].attendance = (staff[idx].attendance||[]).filter(a => a.attID !== attID);
+            await saveData('staff', staff);
+            renderStaffTab();
+        }
+
+        // Wage Revision
+        function openWageModal() {
+            document.getElementById('wageForm').reset();
+            document.getElementById('wagDate').value = new Date().toISOString().split('T')[0];
+            const sel = document.getElementById('wagStaff');
+            sel.innerHTML = staff.map(s => `<option value="${s.staffID}">${s.name}</option>`).join('');
+            document.getElementById('wageModal').classList.add('show');
+        }
+        function closeWageModal() { document.getElementById('wageModal').classList.remove('show'); }
+
+        async function saveWageRevision(e) {
+            e.preventDefault();
+            const sid = document.getElementById('wagStaff').value;
+            const idx = staff.findIndex(x => x.staffID === sid);
+            if (idx < 0) return;
+            if (!staff[idx].wageRevisions) staff[idx].wageRevisions = [];
+            const newBasic = parseFloat(document.getElementById('wagBasic').value)||0;
+            const newDaily = parseFloat(document.getElementById('wagDaily').value)||0;
+            staff[idx].wageRevisions.push({
+                revID: 'REV' + Date.now(),
+                effectiveDate: document.getElementById('wagDate').value,
+                basicSalary: newBasic, dailyWage: newDaily,
+                reason: document.getElementById('wagReason').value
+            });
+            // Update current salary on staff record
+            if (newBasic) staff[idx].basicSalary = newBasic;
+            if (newDaily) staff[idx].dailyWage = newDaily;
+            await saveData('staff', staff);
+            closeWageModal();
+            renderStaffTab();
+        }
+
+        async function deleteWageRevision(staffID, revID) {
+            const idx = staff.findIndex(x => x.staffID === staffID);
+            if (idx < 0) return;
+            staff[idx].wageRevisions = (staff[idx].wageRevisions||[]).filter(r => r.revID !== revID);
+            await saveData('staff', staff);
+            renderStaffTab();
+        }
+
+        // Pay Slip PDF
+        function generatePaySlipPDF() {
+            const s = techWageState;
+            if (!s.staffID && s.dailyWage <= 0) { alert('Please select a staff member or enter a daily wage.'); return; }
+            const st = staff.find(x => x.staffID === s.staffID);
+            const staffName  = st ? st.name : (s.staffID || 'Technician');
+            const cal = calcTechWage(s);
+            const dates = getTechWagePeriodDates(s.periodYear, s.periodMonth);
+            const pl = dates[0].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) +
+                       ' to ' + dates[29].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
+            const monthLabel = new Date(s.periodYear, s.periodMonth - 1, 1)
+                .toLocaleString('en-IN', {month:'long', year:'numeric'});
+
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+            const INR = n => 'INR ' + Math.round(n).toLocaleString('en-IN', {minimumFractionDigits:2});
+            const RT  = n => Math.round(n).toLocaleString('en-IN');
+
+            // Header band
+            doc.setFillColor(15, 118, 110);
+            doc.rect(0, 0, 210, 38, 'F');
+            doc.setFontSize(16); doc.setFont('helvetica','bold'); doc.setTextColor(240,253,250);
+            doc.text((settings.companyName || 'EASY EMS').toUpperCase(), 105, 14, {align:'center'});
+            doc.setFontSize(11); doc.setFont('helvetica','normal'); doc.setTextColor(204,251,241);
+            doc.text('TECHNICIAN PAY SLIP — ' + monthLabel.toUpperCase(), 105, 24, {align:'center'});
+            doc.setFontSize(9); doc.text('Pay period: ' + pl, 105, 32, {align:'center'});
+            doc.setTextColor(0,0,0);
+            let y = 46;
+
+            // Staff details
+            doc.autoTable({
+                startY: y, margin:{left:14,right:14}, theme:'grid',
+                styles:{fontSize:9}, headStyles:{fillColor:[15,118,110], textColor:255},
+                head:[['Field','Details','Field','Details']],
+                body:[
+                    ['Employee', staffName,                      'Designation', st?.designation||'—'],
+                    ['Staff Type', st?.staffType||'Technician',  'Date of Joining', st?.doj||'—'],
+                    ['PAN', st?.pan||'—',                        'PF Number', st?.pfNumber||'—'],
+                    ['ESIC', st?.esicNumber||'—',                'Daily Wage', INR(s.dailyWage)],
+                    ['Pay Period', pl,                            'Engaged Days', String(cal.eng)],
+                ],
+                columnStyles:{0:{cellWidth:35,fontStyle:'bold'},2:{cellWidth:35,fontStyle:'bold'}}
+            });
+            y = doc.lastAutoTable.finalY + 6;
+
+            // Attendance summary
+            const attSummary = Object.entries(ATT_TYPES)
+                .filter(([t])=>t && cal.c[t]>0)
+                .map(([t,tp])=>[tp.label, cal.c[t]+' day'+(cal.c[t]>1?'s':'')]);
+            if (attSummary.length) {
+                const attRows = [];
+                for (let i = 0; i < attSummary.length; i += 2) {
+                    attRows.push([attSummary[i][0], attSummary[i][1],
+                        attSummary[i+1]?attSummary[i+1][0]:'', attSummary[i+1]?attSummary[i+1][1]:'']);
+                }
+                doc.autoTable({
+                    startY:y, margin:{left:14,right:14}, theme:'grid',
+                    styles:{fontSize:8}, headStyles:{fillColor:[75,85,99],textColor:255},
+                    head:[['Attendance Type','Days','Attendance Type','Days']],
+                    body: attRows,
+                });
+                y = doc.lastAutoTable.finalY + 6;
+            }
+
+            // Wage breakdown
+            const sectionColors = { Wage:[30,78,216], Allowance:[14,116,144], Threshold:[21,128,61], Retention:[124,58,237] };
+            doc.autoTable({
+                startY:y, margin:{left:14,right:14}, theme:'grid',
+                styles:{fontSize:9},
+                headStyles:{fillColor:[30,64,175], textColor:255},
+                head:[['Wage Component','Days','Rate (₹)','Amount (₹)']],
+                body: cal.rows.map(r=>[r.name, String(r.days), RT(r.rate), INR(r.amt)]),
+                columnStyles:{0:{cellWidth:90},1:{halign:'right',cellWidth:20},2:{halign:'right',cellWidth:30},3:{halign:'right',cellWidth:40}},
+                didParseCell: function(data) {
+                    if (data.section==='body' && cal.rows[data.row.index]) {
+                        const sec = cal.rows[data.row.index].sec;
+                        const col = sectionColors[sec] || [0,0,0];
+                        if (sec === 'Allowance') data.cell.styles.fillColor = [236,254,255];
+                        if (sec === 'Threshold') data.cell.styles.fillColor = [240,253,244];
+                        if (sec === 'Retention') data.cell.styles.fillColor = [245,243,255];
+                        if (data.column.index===3) data.cell.styles.textColor = col;
+                    }
+                }
+            });
+            y = doc.lastAutoTable.finalY + 2;
+
+            // Gross pay row
+            doc.autoTable({
+                startY:y, margin:{left:14,right:14}, theme:'grid',
+                styles:{fontSize:11,fontStyle:'bold'},
+                body:[['GROSS PAY — ' + staffName.toUpperCase(), INR(cal.gross)]],
+                columnStyles:{
+                    0:{cellWidth:140,fillColor:[15,118,110],textColor:[204,251,241]},
+                    1:{halign:'right',fillColor:[15,118,110],textColor:[240,253,250],cellWidth:40}
+                },
+            });
+
+            y = doc.lastAutoTable.finalY + 14;
+
+            // Notes for thresholds / retention
+            const notes = [];
+            if (cal.eng >= 15) notes.push(`15+ day project allowance: ${INR(cal.t15)} (${cal.eng} engaged days x ${INR(s.rates.t15)}/day)`);
+            if (cal.eng >= 20) notes.push(`20+ day project allowance: ${INR(cal.t20)} (${cal.eng} engaged days x ${INR(s.rates.t20)}/day)`);
+            if (cal.isRet)    notes.push(`Retention pay: full month stand by, no project. 12 days x ${INR(s.dailyWage)}`);
+            if (notes.length) {
+                doc.setFontSize(8); doc.setFont('helvetica','italic'); doc.setTextColor(80,80,80);
+                notes.forEach(n => { const lines = doc.splitTextToSize('* ' + n, 182); doc.text(lines, 14, y); y += lines.length * 4.5; });
+                doc.setFont('helvetica','normal'); doc.setTextColor(0,0,0);
+            }
+
+            if (y + 30 > 265) { doc.addPage(); y = 20; }
+            y += 6;
+            doc.setFontSize(9);
+            doc.text('Employee Signature: ___________________', 14, y);
+            doc.text('Authorised by: ___________________', 130, y);
+            doc.setFontSize(7); doc.setTextColor(150,150,150);
+            doc.text('Generated by EASY EMS · ' + new Date().toLocaleDateString('en-IN'), 105, 292, {align:'center'});
+            doc.save(`PaySlip_${staffName.replace(/\s+/g,'_')}_${monthLabel.replace(/\s+/g,'_')}.pdf`);
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        //  MODULE 2 — PROJECT EXPENSES (Food, Travel, Reimbursement)
+        // ════════════════════════════════════════════════════════════════════
+
+        let currentProjExp = null;
+
+        function renderProjectExpenses(content) {
+            const totalFunds = projectExpenses.reduce((s,p) => s + (parseFloat(p.totalFunds)||0), 0);
+            const totalSpent = projectExpenses.reduce((s,p) => {
+                const spent = (p.items||[]).reduce((a,i) => a + (parseFloat(i.amount)||0), 0);
+                return s + spent;
+            }, 0);
+            const fmt = n => '₹' + n.toLocaleString('en-IN', {minimumFractionDigits:2});
+            content.innerHTML = `
+            <div class="flex items-center justify-between mb-6">
+                <div>
+                    <h2 class="text-3xl font-bold text-gray-800">🧳 Project Expenses</h2>
+                    <p class="text-gray-500 text-sm mt-1">Food, Travel & Reimbursements</p>
+                </div>
+                <button onclick="openProjExpModal()" class="px-5 py-2 bg-yellow-600 text-white rounded-xl hover:bg-yellow-700 font-medium">+ New Project</button>
+            </div>
+
+            <!-- Summary cards -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <div class="bg-gradient-to-br from-yellow-400 to-orange-500 rounded-xl p-4 text-white shadow">
+                    <p class="text-xs opacity-80">Total Projects</p><p class="text-2xl font-bold">${projectExpenses.length}</p></div>
+                <div class="bg-gradient-to-br from-green-500 to-teal-600 rounded-xl p-4 text-white shadow">
+                    <p class="text-xs opacity-80">Total Funds Received</p><p class="text-2xl font-bold">${fmt(totalFunds)}</p></div>
+                <div class="bg-gradient-to-br from-red-500 to-pink-600 rounded-xl p-4 text-white shadow">
+                    <p class="text-xs opacity-80">Total Spent</p><p class="text-2xl font-bold">${fmt(totalSpent)}</p>
+                    <p class="text-xs opacity-80 mt-1">Balance: ${fmt(totalFunds - totalSpent)}</p></div>
+            </div>
+
+            <!-- Project list -->
+            ${!projectExpenses.length ? `<div class="text-center py-16 text-gray-400"><div class="text-5xl mb-4">🧳</div><p>No project expenses yet.</p></div>` :
+            projectExpenses.map(p => {
+                const spent = (p.items||[]).reduce((a,i) => a + (parseFloat(i.amount)||0), 0);
+                const balance = (parseFloat(p.totalFunds)||0) - spent;
+                const pct = p.totalFunds > 0 ? Math.min(100, (spent/p.totalFunds)*100) : 0;
+                return `<div class="bg-white border border-gray-200 rounded-xl shadow-sm mb-4 overflow-hidden">
+                    <div class="p-4 flex justify-between items-start">
+                        <div>
+                            <p class="font-bold text-gray-800 text-lg">${p.projectName}</p>
+                            <p class="text-xs text-gray-500">${p.projectRef||''} · ${p.startDate||''} ${p.endDate ? '→ '+p.endDate : ''}</p>
+                            <p class="text-xs text-gray-400 mt-1">${p.description||''}</p>
+                        </div>
+                        <div class="flex gap-2">
+                            <button onclick="openProjExpItemModal('${p.projExpID}')" class="px-3 py-1.5 bg-yellow-600 text-white rounded-lg text-xs hover:bg-yellow-700">+ Add Expense</button>
+                            <button onclick="editProjExp('${p.projExpID}')" class="px-3 py-1.5 border text-gray-600 rounded-lg text-xs hover:bg-gray-50">Edit</button>
+                            <button onclick="deleteProjExp('${p.projExpID}')" class="text-red-500 hover:text-red-700 text-xs px-2">✕</button>
+                        </div>
+                    </div>
+                    <!-- Fund summary bar -->
+                    <div class="px-4 pb-2">
+                        <div class="flex justify-between text-xs text-gray-500 mb-1">
+                            <span>Spent: ${fmt(spent)}</span><span>Balance: <strong class="${balance>=0?'text-green-700':'text-red-700'}">${fmt(balance)}</strong></span><span>Fund: ${fmt(parseFloat(p.totalFunds)||0)}</span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-2"><div class="bg-${pct>90?'red':pct>70?'yellow':'green'}-500 h-2 rounded-full" style="width:${pct}%"></div></div>
+                    </div>
+                    <!-- Expense items -->
+                    ${(p.items||[]).length ? `<div class="border-t">
+                        <table class="w-full text-xs">
+                            <thead class="bg-yellow-50"><tr>
+                                <th class="px-3 py-1.5 text-left">Date</th><th class="px-3 py-1.5 text-left">Category</th>
+                                <th class="px-3 py-1.5 text-left">Description</th><th class="px-3 py-1.5 text-left">Staff</th>
+                                <th class="px-3 py-1.5 text-right">Amount</th><th class="px-3 py-1.5 text-center">Bill</th>
+                                <th class="px-3 py-1.5">Del</th>
+                            </tr></thead>
+                            <tbody>${(p.items||[]).map(item => `<tr class="border-t hover:bg-yellow-50">
+                                <td class="px-3 py-1.5">${item.date||'—'}</td>
+                                <td class="px-3 py-1.5"><span class="px-1.5 py-0.5 rounded text-xs bg-yellow-100 text-yellow-800">${item.category||'—'}</span></td>
+                                <td class="px-3 py-1.5">${item.description||'—'}</td>
+                                <td class="px-3 py-1.5">${item.staffName||'—'}</td>
+                                <td class="px-3 py-1.5 text-right font-medium">${fmt(parseFloat(item.amount)||0)}</td>
+                                <td class="px-3 py-1.5 text-center">${item.billData ? `<button onclick="viewProjExpBill('${p.projExpID}','${item.itemID}')" class="text-blue-500 hover:text-blue-700">📎</button>` : '—'}</td>
+                                <td class="px-3 py-1.5 text-center"><button onclick="deleteProjExpItem('${p.projExpID}','${item.itemID}')" class="text-red-500 hover:text-red-700">✕</button></td>
+                            </tr>`).join('')}</tbody>
+                        </table>
+                    </div>` : '<p class="text-xs text-gray-400 px-4 py-2">No expense entries yet.</p>'}
+                </div>`;
+            }).join('')}
+
+            <!-- Project Modal -->
+            <div id="projExpModal" class="modal">
+                <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg m-4">
+                    <div class="bg-gradient-to-r from-yellow-500 to-orange-500 p-5 text-white flex justify-between items-center">
+                        <h2 class="text-lg font-bold" id="projExpModalTitle">New Project</h2>
+                        <button onclick="closeProjExpModal()" class="text-white text-2xl font-bold">✕</button>
+                    </div>
+                    <form id="projExpForm" onsubmit="saveProjExp(event)" class="p-6 space-y-4">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="col-span-2"><label class="block text-xs font-semibold text-gray-600 mb-1">Project Name *</label>
+                                <input type="text" id="peProjectName" class="w-full px-3 py-2 border rounded-lg text-sm" required/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Project Reference / PO</label>
+                                <input type="text" id="peProjectRef" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Total Funds Received (₹)</label>
+                                <input type="number" id="peFunds" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Start Date</label>
+                                <input type="date" id="peStartDate" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">End Date</label>
+                                <input type="date" id="peEndDate" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                            <div class="col-span-2"><label class="block text-xs font-semibold text-gray-600 mb-1">Description</label>
+                                <textarea id="peDescription" rows="2" class="w-full px-3 py-2 border rounded-lg text-sm"></textarea></div>
+                        </div>
+                        <div class="flex gap-3 justify-end">
+                            <button type="button" onclick="closeProjExpModal()" class="px-5 py-2 border rounded-xl text-gray-600">Cancel</button>
+                            <button type="submit" class="px-6 py-2 bg-yellow-600 text-white rounded-xl font-semibold">Save</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Expense Item Modal -->
+            <div id="projExpItemModal" class="modal">
+                <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg m-4">
+                    <div class="bg-gradient-to-r from-orange-500 to-red-500 p-5 text-white flex justify-between items-center">
+                        <h2 class="text-lg font-bold">Add Expense Entry</h2>
+                        <button onclick="closeProjExpItemModal()" class="text-white text-2xl font-bold">✕</button>
+                    </div>
+                    <form id="projExpItemForm" onsubmit="saveProjExpItem(event)" class="p-6 space-y-4">
+                        <input type="hidden" id="peiProjectID"/>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Date *</label>
+                                <input type="date" id="peiDate" class="w-full px-3 py-2 border rounded-lg text-sm" required/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Category *</label>
+                                <select id="peiCategory" class="w-full px-3 py-2 border rounded-lg text-sm" required>
+                                    <option value="Food">Food / Meals</option>
+                                    <option value="Travel">Travel / Transport</option>
+                                    <option value="Accommodation">Accommodation</option>
+                                    <option value="Communication">Communication</option>
+                                    <option value="Tools">Tools / Equipment</option>
+                                    <option value="Misc">Miscellaneous</option>
+                                </select></div>
+                            <div class="col-span-2"><label class="block text-xs font-semibold text-gray-600 mb-1">Description *</label>
+                                <input type="text" id="peiDescription" class="w-full px-3 py-2 border rounded-lg text-sm" required/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Staff Member</label>
+                                <select id="peiStaff" class="w-full px-3 py-2 border rounded-lg text-sm">
+                                    <option value="">-- Select --</option>
+                                    ${staff.map(s => `<option value="${s.staffID}" data-name="${s.name}">${s.name}</option>`).join('')}
+                                </select></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Amount (₹) *</label>
+                                <input type="number" id="peiAmount" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" required/></div>
+                            <div class="col-span-2"><label class="block text-xs font-semibold text-gray-600 mb-1">Supporting Bill (Image/PDF, max 2MB)</label>
+                                <input type="file" id="peiBill" accept="image/*,application/pdf" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                        </div>
+                        <div class="flex gap-3 justify-end">
+                            <button type="button" onclick="closeProjExpItemModal()" class="px-5 py-2 border rounded-xl text-gray-600">Cancel</button>
+                            <button type="submit" class="px-6 py-2 bg-orange-600 text-white rounded-xl font-semibold">Add Expense</button>
+                        </div>
+                    </form>
+                </div>
+            </div>`;
+        }
+
+        function openProjExpModal(p = null) {
+            currentProjExp = p;
+            document.getElementById('projExpModalTitle').textContent = p ? 'Edit Project' : 'New Project';
+            document.getElementById('projExpForm').reset();
+            if (p) {
+                document.getElementById('peProjectName').value = p.projectName||'';
+                document.getElementById('peProjectRef').value  = p.projectRef||'';
+                document.getElementById('peFunds').value       = p.totalFunds||'';
+                document.getElementById('peStartDate').value   = p.startDate||'';
+                document.getElementById('peEndDate').value     = p.endDate||'';
+                document.getElementById('peDescription').value = p.description||'';
+            }
+            document.getElementById('projExpModal').classList.add('show');
+        }
+        function closeProjExpModal() { document.getElementById('projExpModal').classList.remove('show'); currentProjExp = null; }
+        function editProjExp(id) { const p = projectExpenses.find(x => x.projExpID === id); if (p) openProjExpModal(p); }
+
+        async function saveProjExp(e) {
+            e.preventDefault();
+            const obj = {
+                projExpID:   currentProjExp?.projExpID || 'PE' + Date.now(),
+                projectName: document.getElementById('peProjectName').value,
+                projectRef:  document.getElementById('peProjectRef').value,
+                totalFunds:  parseFloat(document.getElementById('peFunds').value)||0,
+                startDate:   document.getElementById('peStartDate').value,
+                endDate:     document.getElementById('peEndDate').value,
+                description: document.getElementById('peDescription').value,
+                items:       currentProjExp?.items || [],
+                createdAt:   currentProjExp?.createdAt || new Date().toISOString()
+            };
+            if (currentProjExp) { const i = projectExpenses.findIndex(x => x.projExpID === currentProjExp.projExpID); if (i>=0) projectExpenses[i] = obj; }
+            else projectExpenses.push(obj);
+            await saveData('projectExpenses', projectExpenses);
+            closeProjExpModal();
+            renderView();
+        }
+
+        async function deleteProjExp(id) {
+            if (!confirm('Delete this project and all expense entries?')) return;
+            projectExpenses = projectExpenses.filter(x => x.projExpID !== id);
+            await saveData('projectExpenses', projectExpenses);
+            renderView();
+        }
+
+        function openProjExpItemModal(projID) {
+            document.getElementById('projExpItemForm').reset();
+            document.getElementById('peiProjectID').value = projID;
+            document.getElementById('peiDate').value = new Date().toISOString().split('T')[0];
+            document.getElementById('projExpItemModal').classList.add('show');
+        }
+        function closeProjExpItemModal() { document.getElementById('projExpItemModal').classList.remove('show'); }
+
+        async function saveProjExpItem(e) {
+            e.preventDefault();
+            const projID = document.getElementById('peiProjectID').value;
+            const idx = projectExpenses.findIndex(x => x.projExpID === projID);
+            if (idx < 0) return;
+            const staffSel = document.getElementById('peiStaff');
+            const staffName = staffSel.options[staffSel.selectedIndex]?.dataset.name || '';
+            let billData = null, billName = null;
+            const file = document.getElementById('peiBill').files[0];
+            if (file) {
+                if (file.size > 2 * 1024 * 1024) { alert('File too large. Max 2MB.'); return; }
+                billData = await new Promise((res, rej) => { const r = new FileReader(); r.onload = ()=>res(r.result); r.onerror=()=>rej(new Error('Read failed')); r.readAsDataURL(file); });
+                billName = file.name;
+            }
+            if (!projectExpenses[idx].items) projectExpenses[idx].items = [];
+            projectExpenses[idx].items.push({
+                itemID: 'PEI' + Date.now(),
+                date: document.getElementById('peiDate').value,
+                category: document.getElementById('peiCategory').value,
+                description: document.getElementById('peiDescription').value,
+                staffID: document.getElementById('peiStaff').value,
+                staffName, amount: parseFloat(document.getElementById('peiAmount').value)||0,
+                billData, billName
+            });
+            await saveData('projectExpenses', projectExpenses);
+            closeProjExpItemModal();
+            renderView();
+        }
+
+        async function deleteProjExpItem(projID, itemID) {
+            const idx = projectExpenses.findIndex(x => x.projExpID === projID);
+            if (idx < 0) return;
+            projectExpenses[idx].items = (projectExpenses[idx].items||[]).filter(i => i.itemID !== itemID);
+            await saveData('projectExpenses', projectExpenses);
+            renderView();
+        }
+
+        function viewProjExpBill(projID, itemID) {
+            const p = projectExpenses.find(x => x.projExpID === projID);
+            const item = (p?.items||[]).find(i => i.itemID === itemID);
+            if (!item?.billData) return;
+            const w = window.open();
+            if (item.billData.startsWith('data:application/pdf')) {
+                w.document.write(`<html><body style="margin:0"><embed src="${item.billData}" type="application/pdf" width="100%" height="100%"/></body></html>`);
+            } else {
+                w.document.write(`<html><body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${item.billData}" style="max-width:100%;max-height:100vh;object-fit:contain"/></body></html>`);
+            }
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        //  MODULE 3 — WORK LOGS (Technician Work, Photos, Project Reports)
+        // ════════════════════════════════════════════════════════════════════
+
+        let currentWorkLog = null;
+
+        function renderWorkLogs(content) {
+            content.innerHTML = `
+            <div class="flex items-center justify-between mb-6">
+                <div>
+                    <h2 class="text-3xl font-bold text-gray-800">📋 Work Logs</h2>
+                    <p class="text-gray-500 text-sm mt-1">Technician work records, photos & project reports</p>
+                </div>
+                <button onclick="openWorkLogModal()" class="px-5 py-2 bg-purple-600 text-white rounded-xl hover:bg-purple-700 font-medium">+ New Work Log</button>
+            </div>
+
+            <!-- Filter bar -->
+            <div class="flex flex-wrap gap-3 mb-4">
+                <input type="text" id="wlSearch" placeholder="Search by project / staff..." class="px-3 py-2 border rounded-lg text-sm w-56" oninput="filterWorkLogs()"/>
+                <select id="wlFilterStaff" class="px-3 py-2 border rounded-lg text-sm" onchange="filterWorkLogs()">
+                    <option value="">All Staff</option>
+                    ${staff.map(s=>`<option value="${s.staffID}">${s.name}</option>`).join('')}
+                </select>
+                <button onclick="generateProjectReport()" class="px-4 py-2 bg-purple-600 text-white rounded-xl text-sm hover:bg-purple-700">📄 Generate Project Report PDF</button>
+            </div>
+
+            <div id="workLogList"></div>
+
+            <!-- Work Log Modal -->
+            <div id="workLogModal" class="modal">
+                <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto m-4">
+                    <div class="bg-gradient-to-r from-purple-600 to-indigo-600 p-5 text-white sticky top-0 z-10 flex justify-between items-center">
+                        <h2 class="text-xl font-bold" id="wlModalTitle">New Work Log</h2>
+                        <button onclick="closeWorkLogModal()" class="text-white text-2xl font-bold">✕</button>
+                    </div>
+                    <form id="workLogForm" onsubmit="saveWorkLog(event)" class="p-6 space-y-4">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Date *</label>
+                                <input type="date" id="wlDate" class="w-full px-3 py-2 border rounded-lg text-sm" required/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Staff / Technician *</label>
+                                <select id="wlStaff" class="w-full px-3 py-2 border rounded-lg text-sm" required>
+                                    <option value="">-- Select --</option>
+                                    ${staff.map(s=>`<option value="${s.staffID}" data-name="${s.name}">${s.name}</option>`).join('')}
+                                </select></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Project Name *</label>
+                                <input type="text" id="wlProject" class="w-full px-3 py-2 border rounded-lg text-sm" required/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Location / Vessel</label>
+                                <input type="text" id="wlLocation" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Work Category</label>
+                                <select id="wlCategory" class="w-full px-3 py-2 border rounded-lg text-sm">
+                                    <option value="Inspection">Inspection</option>
+                                    <option value="Maintenance">Maintenance / Repair</option>
+                                    <option value="Installation">Installation</option>
+                                    <option value="Survey">Survey</option>
+                                    <option value="Testing">Testing / Commissioning</option>
+                                    <option value="Calibration">Calibration</option>
+                                    <option value="Other">Other</option>
+                                </select></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Status</label>
+                                <select id="wlStatus" class="w-full px-3 py-2 border rounded-lg text-sm">
+                                    <option value="In Progress">In Progress</option>
+                                    <option value="Completed">Completed</option>
+                                    <option value="On Hold">On Hold</option>
+                                </select></div>
+                        </div>
+                        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Work Description *</label>
+                            <textarea id="wlDescription" rows="3" placeholder="Describe the work done..." class="w-full px-3 py-2 border rounded-lg text-sm" required></textarea></div>
+                        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Observations / Findings</label>
+                            <textarea id="wlObservations" rows="2" placeholder="Any findings, issues or observations..." class="w-full px-3 py-2 border rounded-lg text-sm"></textarea></div>
+                        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Recommendations</label>
+                            <textarea id="wlRecommendations" rows="2" placeholder="Recommended actions..." class="w-full px-3 py-2 border rounded-lg text-sm"></textarea></div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Photos (max 5, 2MB each)</label>
+                            <input type="file" id="wlPhotos" accept="image/*" multiple class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                            <div id="wlPhotoPreview" class="mt-2 flex flex-wrap gap-2"></div>
+                        </div>
+                        <div class="flex gap-3 justify-end">
+                            <button type="button" onclick="closeWorkLogModal()" class="px-5 py-2 border rounded-xl text-gray-600">Cancel</button>
+                            <button type="submit" class="px-6 py-2 bg-purple-600 text-white rounded-xl font-semibold">Save Work Log</button>
+                        </div>
+                    </form>
+                </div>
+            </div>`;
+
+            filterWorkLogs();
+
+            // Photo preview handler
+            document.getElementById('wlPhotos')?.addEventListener('change', function() {
+                const preview = document.getElementById('wlPhotoPreview');
+                preview.innerHTML = '';
+                Array.from(this.files).slice(0,5).forEach(f => {
+                    if (!f.type.startsWith('image/')) return;
+                    const reader = new FileReader();
+                    reader.onload = e => {
+                        const img = document.createElement('img');
+                        img.src = e.target.result;
+                        img.className = 'h-20 w-20 object-cover rounded-lg border border-gray-300';
+                        preview.appendChild(img);
+                    };
+                    reader.readAsDataURL(f);
+                });
+            });
+        }
+
+        function filterWorkLogs() {
+            const q = (document.getElementById('wlSearch')?.value||'').toLowerCase();
+            const sid = document.getElementById('wlFilterStaff')?.value||'';
+            const filtered = workLogs.filter(w => {
+                const mq = !q || (w.project||'').toLowerCase().includes(q) || (w.staffName||'').toLowerCase().includes(q) || (w.description||'').toLowerCase().includes(q);
+                const ms = !sid || w.staffID === sid;
+                return mq && ms;
+            });
+            const el = document.getElementById('workLogList');
+            if (!el) return;
+            if (!filtered.length) { el.innerHTML = `<div class="text-center py-16 text-gray-400"><div class="text-5xl mb-4">📋</div><p>No work logs found.</p></div>`; return; }
+            const statusCls = {'In Progress':'bg-yellow-100 text-yellow-700','Completed':'bg-green-100 text-green-700','On Hold':'bg-gray-100 text-gray-600'};
+            el.innerHTML = filtered.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(w => `
+            <div class="bg-white border border-gray-200 rounded-xl shadow-sm mb-3 p-4">
+                <div class="flex justify-between items-start flex-wrap gap-2">
+                    <div>
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <span class="font-bold text-gray-800">${w.project}</span>
+                            <span class="px-2 py-0.5 rounded-full text-xs ${statusCls[w.status]||'bg-gray-100'}">${w.status}</span>
+                            <span class="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">${w.category||'Work'}</span>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-0.5">${w.date} · ${w.staffName} ${w.location ? '· '+w.location : ''}</p>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="editWorkLog('${w.wlID}')" class="text-indigo-600 hover:text-indigo-800 text-xs font-medium">Edit</button>
+                        <button onclick="deleteWorkLog('${w.wlID}')" class="text-red-500 hover:text-red-700 text-xs">Del</button>
+                    </div>
+                </div>
+                <p class="text-sm text-gray-700 mt-2">${w.description}</p>
+                ${w.observations ? `<p class="text-xs text-gray-500 mt-1"><strong>Findings:</strong> ${w.observations}</p>` : ''}
+                ${w.recommendations ? `<p class="text-xs text-gray-500 mt-1"><strong>Recommendations:</strong> ${w.recommendations}</p>` : ''}
+                ${(w.photos||[]).length ? `<div class="flex flex-wrap gap-2 mt-3">${w.photos.map((p,i) => `<img src="${p}" class="h-20 w-20 object-cover rounded-lg border cursor-pointer hover:opacity-80" onclick="viewWorkLogPhoto('${w.wlID}',${i})"/>`).join('')}</div>` : ''}
+            </div>`).join('');
+        }
+
+        function openWorkLogModal(wl = null) {
+            currentWorkLog = wl;
+            document.getElementById('wlModalTitle').textContent = wl ? 'Edit Work Log' : 'New Work Log';
+            document.getElementById('workLogForm').reset();
+            document.getElementById('wlPhotoPreview').innerHTML = '';
+            document.getElementById('wlDate').value = wl?.date || new Date().toISOString().split('T')[0];
+            if (wl) {
+                document.getElementById('wlStaff').value         = wl.staffID||'';
+                document.getElementById('wlProject').value       = wl.project||'';
+                document.getElementById('wlLocation').value      = wl.location||'';
+                document.getElementById('wlCategory').value      = wl.category||'Other';
+                document.getElementById('wlStatus').value        = wl.status||'In Progress';
+                document.getElementById('wlDescription').value   = wl.description||'';
+                document.getElementById('wlObservations').value  = wl.observations||'';
+                document.getElementById('wlRecommendations').value = wl.recommendations||'';
+                // Show existing photos
+                const preview = document.getElementById('wlPhotoPreview');
+                (wl.photos||[]).forEach(p => { const img = document.createElement('img'); img.src=p; img.className='h-20 w-20 object-cover rounded-lg border'; preview.appendChild(img); });
+            }
+            document.getElementById('workLogModal').classList.add('show');
+        }
+        function closeWorkLogModal() { document.getElementById('workLogModal').classList.remove('show'); currentWorkLog = null; }
+        function editWorkLog(id) { const w = workLogs.find(x => x.wlID === id); if (w) openWorkLogModal(w); }
+
+        async function saveWorkLog(e) {
+            e.preventDefault();
+            const staffSel = document.getElementById('wlStaff');
+            const staffName = staffSel.options[staffSel.selectedIndex]?.dataset.name || '';
+            // Process new photos
+            let photos = currentWorkLog?.photos ? [...currentWorkLog.photos] : [];
+            const files = document.getElementById('wlPhotos').files;
+            for (const f of Array.from(files).slice(0,5)) {
+                if (f.size > 2*1024*1024) { alert(`"${f.name}" too large. Max 2MB.`); return; }
+                const data = await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=()=>rej(new Error('fail')); r.readAsDataURL(f); });
+                photos.push(data);
+            }
+            const obj = {
+                wlID:            currentWorkLog?.wlID || 'WL' + Date.now(),
+                date:            document.getElementById('wlDate').value,
+                staffID:         document.getElementById('wlStaff').value,
+                staffName,
+                project:         document.getElementById('wlProject').value,
+                location:        document.getElementById('wlLocation').value,
+                category:        document.getElementById('wlCategory').value,
+                status:          document.getElementById('wlStatus').value,
+                description:     document.getElementById('wlDescription').value,
+                observations:    document.getElementById('wlObservations').value,
+                recommendations: document.getElementById('wlRecommendations').value,
+                photos,
+                createdAt:       currentWorkLog?.createdAt || new Date().toISOString()
+            };
+            if (currentWorkLog) { const i = workLogs.findIndex(x => x.wlID === currentWorkLog.wlID); if (i>=0) workLogs[i] = obj; }
+            else workLogs.push(obj);
+            await saveData('workLogs', workLogs);
+            closeWorkLogModal();
+            renderView();
+        }
+
+        async function deleteWorkLog(id) {
+            if (!confirm('Delete this work log?')) return;
+            workLogs = workLogs.filter(x => x.wlID !== id);
+            await saveData('workLogs', workLogs);
+            renderView();
+        }
+
+        function viewWorkLogPhoto(wlID, idx) {
+            const w = workLogs.find(x => x.wlID === wlID);
+            if (!w?.photos?.[idx]) return;
+            const win = window.open();
+            win.document.write(`<html><body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${w.photos[idx]}" style="max-width:100%;max-height:100vh;object-fit:contain"/></body></html>`);
+        }
+
+        function generateProjectReport() {
+            const sid = document.getElementById('wlFilterStaff')?.value || '';
+            const q   = (document.getElementById('wlSearch')?.value||'').toLowerCase();
+            const filtered = workLogs.filter(w => {
+                const mq = !q || (w.project||'').toLowerCase().includes(q) || (w.staffName||'').toLowerCase().includes(q);
+                const ms = !sid || w.staffID === sid;
+                return mq && ms;
+            }).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+
+            if (!filtered.length) { alert('No work logs match the current filter. Please adjust filters first.'); return; }
+
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+            const projectName = filtered[0]?.project || 'Project';
+
+            // Header
+            doc.setFillColor(124, 58, 237);
+            doc.rect(0, 0, 210, 35, 'F');
+            doc.setFontSize(16); doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255);
+            doc.text(settings.companyName || 'EASY EMS', 105, 13, {align:'center'});
+            doc.setFontSize(11); doc.setFont('helvetica','normal');
+            doc.text('PROJECT WORK REPORT', 105, 23, {align:'center'});
+            doc.setFontSize(9);
+            doc.text('Generated: ' + new Date().toLocaleDateString('en-IN'), 105, 31, {align:'center'});
+
+            let y = 42;
+            doc.setTextColor(0,0,0);
+
+            filtered.forEach((w, idx) => {
+                if (y > 250) { doc.addPage(); y = 15; }
+
+                // Entry header
+                doc.setFillColor(237, 233, 254);
+                doc.rect(14, y-4, 182, 8, 'F');
+                doc.setFontSize(9); doc.setFont('helvetica','bold'); doc.setTextColor(109, 40, 217);
+                doc.text(`${idx+1}. ${w.project} — ${w.date}`, 16, y+1);
+                doc.setTextColor(0,0,0); doc.setFont('helvetica','normal');
+                y += 7;
+
+                doc.setFontSize(8);
+                doc.text(`Staff: ${w.staffName}  |  Category: ${w.category}  |  Status: ${w.status}${w.location ? '  |  Location: '+w.location : ''}`, 16, y+2);
+                y += 8;
+
+                // Description
+                const descLines = doc.splitTextToSize(w.description, 178);
+                doc.text(descLines, 16, y);
+                y += descLines.length * 4.5 + 2;
+
+                if (w.observations) {
+                    doc.setFont('helvetica','bold'); doc.text('Findings:', 16, y); doc.setFont('helvetica','normal');
+                    const obsLines = doc.splitTextToSize(w.observations, 170);
+                    doc.text(obsLines, 30, y); y += obsLines.length * 4.5 + 2;
+                }
+                if (w.recommendations) {
+                    doc.setFont('helvetica','bold'); doc.text('Recommendations:', 16, y); doc.setFont('helvetica','normal');
+                    const recLines = doc.splitTextToSize(w.recommendations, 165);
+                    doc.text(recLines, 48, y); y += recLines.length * 4.5 + 2;
+                }
+
+                // Photos
+                if ((w.photos||[]).length) {
+                    let px = 16, py = y;
+                    let photoCount = 0;
+                    w.photos.forEach(photo => {
+                        if (photoCount >= 3) return; // max 3 photos per entry in report
+                        try {
+                            if (px + 55 > 196) { px = 16; py += 45; }
+                            if (py > 255) { doc.addPage(); py = 15; px = 16; }
+                            doc.addImage(photo, 'JPEG', px, py, 50, 40);
+                            px += 55; photoCount++;
+                        } catch(err) { /* skip bad image */ }
+                    });
+                    y = py + 45;
+                }
+                y += 6;
+            });
+
+            // Footer
+            const total = doc.internal.getNumberOfPages();
+            for (let p = 1; p <= total; p++) {
+                doc.setPage(p);
+                doc.setFontSize(7); doc.setTextColor(150,150,150);
+                doc.text(`Page ${p} of ${total}  ·  EASY EMS — ${settings.companyName||''}`, 105, 292, {align:'center'});
+            }
+
+            doc.save(`WorkReport_${projectName.replace(/\s+/g,'_')}_${new Date().toISOString().slice(0,10)}.pdf`);
+        }
     </script>
 </body>
 </html>
