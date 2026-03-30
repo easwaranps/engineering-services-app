@@ -808,28 +808,25 @@
         };
         const ATT_ORDER     = ['','Working','StandBy','Outstation','Anchorage','Sailing','ApprovedLeave','UnApprovedLeave'];
         const ENGAGED_TYPES = ['Working','Outstation','Anchorage','Sailing'];
-        let techWageState = { staffID:'', periodMonth:new Date().getMonth()+1, periodYear:new Date().getFullYear(), dailyWage:0, variableAllow:0, showRates:false, att:Array(30).fill(''), rates:{standbyPct:50,alPct:100,outA:600,ancA:400,salA:500,t15:250,t20:350} };
+        let techWageState = { staffID:'', periodMonth:new Date().getMonth()+1, periodYear:new Date().getFullYear(), dailyWage:0, variableAllow:0, showRates:false, att:Array(30).fill(''), rates:{standbyPct:50,alPct:100,ulPct:0,outA:600,ancA:400,salA:500,t15:250,t20:350} };
         let officePayState = { staffID:'', periodMonth:new Date().getMonth()+1, periodYear:new Date().getFullYear(), leaveTaken:0, addlAllowance:0, addlAllowanceRemark:'', addlDeduction:0, addlDeductionRemark:'', pfPct:null, esicPct:null, ptBase:null, tdsAmt:null };
 
         function _calcPT(ptBase,month){return (parseFloat(ptBase)||200)+(month===3?100:0);}
-        function _calcPF(basic,da,hra,medical,conveyance,gradePay,bonus,pfPct){
-            const pfGross=basic+da+hra+medical+conveyance+gradePay+bonus,rate=(parseFloat(pfPct)||12)/100;
-            return{pfGross,pfAmt:pfGross>15000?parseFloat((15000*rate).toFixed(2)):parseFloat((basic*rate).toFixed(2)),pfCapped:pfGross>15000};
-        }
-        function _calcESIC(gross,esicPct){return gross<=20000?parseFloat((gross*(parseFloat(esicPct)||0.75)/100).toFixed(2)):0;}
+        function _calcPF(basic,da,hra,medical,conv,gp,bonus,pfPct){const g=basic+da+hra+medical+conv+gp+bonus,r=(parseFloat(pfPct)||12)/100;return{pfGross:g,pfAmt:g>15000?+(15000*r).toFixed(2):+(basic*r).toFixed(2),pfCapped:g>15000};}
+        function _calcESIC(gross,esicPct){return gross<=20000?+(gross*(parseFloat(esicPct)||0.75)/100).toFixed(2):0;}
         function computeOfficeSalary(st,op){
-            const basic=parseFloat(st.basicSalary)||0,hraPct=parseFloat(st.hraPct??30),daPct=parseFloat(st.daPct??65);
-            const hra=basic*hraPct/100,da=basic*daPct/100,gradePay=parseFloat(st.gradePay)||0,conveyance=parseFloat(st.conveyance)||0,medical=parseFloat(st.medical)||0,variable=parseFloat(st.variable)||0,bonus=(basic+da)/12,addlAllow=parseFloat(op.addlAllowance)||0;
-            const gross=basic+hra+da+gradePay+conveyance+medical+bonus+variable+addlAllow;
-            const pfPct=op.pfPct!==null&&op.pfPct!==undefined?parseFloat(op.pfPct):parseFloat(st.pfPct??12);
-            const esicPct=op.esicPct!==null&&op.esicPct!==undefined?parseFloat(op.esicPct):parseFloat(st.esicPct??0.75);
-            const ptBase=op.ptBase!==null&&op.ptBase!==undefined?parseFloat(op.ptBase):parseFloat(st.ptBase??200);
-            const tdsAmt=op.tdsAmt!==null&&op.tdsAmt!==undefined?parseFloat(op.tdsAmt):parseFloat(st.tdsMonthly||0);
-            const{pfGross,pfAmt,pfCapped}=_calcPF(basic,da,hra,medical,conveyance,gradePay,bonus,pfPct);
-            const esicAmt=_calcESIC(gross,esicPct),esicWaived=gross>20000,ptAmt=_calcPT(ptBase,op.periodMonth),isMarchFY=op.periodMonth===3;
-            const leavePerMonth=parseFloat(st.leavePerMonth??2),leaveTaken=parseFloat(op.leaveTaken)||0,lopDays=Math.max(0,leaveTaken-leavePerMonth),lopAmt=parseFloat((lopDays*(basic/26)).toFixed(2)),leaveBalance=leavePerMonth-leaveTaken;
-            const addlDed=parseFloat(op.addlDeduction)||0,totalDed=pfAmt+esicAmt+ptAmt+tdsAmt+lopAmt+addlDed,netPay=gross-totalDed;
-            return{basic,hra,hraPct,da,daPct,gradePay,conveyance,medical,bonus,variable,addlAllow,gross,pfPct,pfGross,pfAmt,pfCapped,esicPct,esicAmt,esicWaived,ptBase,ptAmt,isMarchFY,tdsAmt,leavePerMonth,leaveTaken,lopDays,lopAmt,leaveBalance,addlDed,totalDed,netPay};
+            const basic=+st.basicSalary||0,hraPct=+(st.hraPct??30),daPct=+(st.daPct??65),hra=basic*hraPct/100,da=basic*daPct/100;
+            const gp=+st.gradePay||0,cv=+st.conveyance||0,med=+st.medical||0,vr=+st.variable||0,bon=(basic+da)/12,addlA=+op.addlAllowance||0;
+            const gross=basic+hra+da+gp+cv+med+bon+vr+addlA;
+            const pfPct =op.pfPct !=null?+op.pfPct :+(st.pfPct ??12);
+            const ePct  =op.esicPct!=null?+op.esicPct:+(st.esicPct??0.75);
+            const ptBase=op.ptBase !=null?+op.ptBase :+(st.ptBase??200);
+            const tds   =op.tdsAmt !=null?+op.tdsAmt :+(st.tdsMonthly||0);
+            const pf=_calcPF(basic,da,hra,med,cv,gp,bon,pfPct);
+            const esicA=_calcESIC(gross,ePct),esicWaived=gross>20000,ptAmt=_calcPT(ptBase,op.periodMonth),isMarch=op.periodMonth===3;
+            const lpM=+(st.leavePerMonth??2),ltk=+op.leaveTaken||0,lop=Math.max(0,ltk-lpM),lopA=+(lop*(basic/26)).toFixed(2),lbal=lpM-ltk;
+            const addlD=+op.addlDeduction||0,totD=pf.pfAmt+esicA+ptAmt+tds+lopA+addlD,net=gross-totD;
+            return{basic,hra,hraPct,da,daPct,gradePay:gp,conveyance:cv,medical:med,bonus:bon,variable:vr,addlAllow:addlA,gross,pfPct,pfGross:pf.pfGross,pfAmt:pf.pfAmt,pfCapped:pf.pfCapped,esicPct:ePct,esicAmt:esicA,esicWaived,ptBase,ptAmt,isMarchFY:isMarch,tdsAmt:tds,leavePerMonth:lpM,leaveTaken:ltk,lopDays:lop,lopAmt:lopA,leaveBalance:lbal,addlDed:addlD,totalDed:totD,netPay:net};
         }
         function onPaySlipStaffChange(staffID){
             const st=staff.find(x=>x.staffID===staffID);techWageState.staffID='';officePayState.staffID='';
@@ -837,55 +834,72 @@
             document.getElementById('twSection')?.classList.add('hidden');document.getElementById('opSection')?.classList.add('hidden');
             if(!st)return;
             if(st.staffType==='Technician'){
-                techWageState.staffID=staffID;techWageState.dailyWage=parseFloat(st.dailyWage)||0;techWageState.variableAllow=0;
+                techWageState.staffID=staffID; techWageState.dailyWage=+st.dailyWage||0; techWageState.variableAllow=+st.techVariable||0;
+                techWageState.rates={standbyPct:+(st.standbyPct??50),alPct:+(st.alPct??100),ulPct:+(st.ulPct??0),outA:+(st.outstationA??600),ancA:+(st.anchorageA??400),salA:+(st.sailingA??500),t15:+(st.thresh15??250),t20:+(st.thresh20??350)};
                 const dw=document.getElementById('twDailyWage');if(dw)dw.value=techWageState.dailyWage;
-                const va=document.getElementById('twVariableAllow');if(va)va.value=0;
+                const va=document.getElementById('twVariableAllow');if(va)va.value=techWageState.variableAllow;
                 document.getElementById('twSection')?.classList.remove('hidden');renderTechWageCalc();
             } else {
                 officePayState.staffID=staffID;officePayState.leaveTaken=0;officePayState.addlAllowance=0;officePayState.addlAllowanceRemark='';officePayState.addlDeduction=0;officePayState.addlDeductionRemark='';
-                officePayState.pfPct=parseFloat(st.pfPct??12);officePayState.esicPct=parseFloat(st.esicPct??0.75);officePayState.ptBase=parseFloat(st.ptBase??200);officePayState.tdsAmt=parseFloat(st.tdsMonthly||0);
+                officePayState.pfPct=+(st.pfPct??12);officePayState.esicPct=+(st.esicPct??0.75);officePayState.ptBase=+(st.ptBase??200);officePayState.tdsAmt=+st.tdsMonthly||0;
                 _resetOfficeInputs(st);document.getElementById('opSection')?.classList.remove('hidden');renderOfficePayCalc();
             }
         }
-        function _resetOfficeInputs(st){
-            const s=(id,v)=>{const el=document.getElementById(id);if(el)el.value=v??'';};
-            s('opLeaveTaken',0);s('opAddlAllowance',0);s('opAddlAllowanceRemark','');s('opAddlDeduction',0);s('opAddlDeductionRemark','');
-            s('opPFPct',parseFloat(st?.pfPct??12));s('opESICPct',parseFloat(st?.esicPct??0.75));s('opPTBase',parseFloat(st?.ptBase??200));s('opTDSAmt',parseFloat(st?.tdsMonthly||0));
-        }
-        function onPaySlipPeriodChange(field,val){techWageState[field]=parseInt(val);officePayState[field]=parseInt(val);if(!document.getElementById('twSection')?.classList.contains('hidden'))renderTechWageCalc();if(!document.getElementById('opSection')?.classList.contains('hidden'))renderOfficePayCalc();}
-        function updateOfficePayState(field,val){const num=['leaveTaken','addlAllowance','addlDeduction','pfPct','esicPct','ptBase','tdsAmt'];officePayState[field]=num.includes(field)?(parseFloat(val)||0):val;renderOfficePayCalc();}
+        function _resetOfficeInputs(st){const s=(id,v)=>{const el=document.getElementById(id);if(el)el.value=v??'';};s('opLeaveTaken',0);s('opAddlAllowance',0);s('opAddlAllowanceRemark','');s('opAddlDeduction',0);s('opAddlDeductionRemark','');s('opPFPct',+(st?.pfPct??12));s('opESICPct',+(st?.esicPct??0.75));s('opPTBase',+(st?.ptBase??200));s('opTDSAmt',+st?.tdsMonthly||0);}
+        function onPaySlipPeriodChange(f,v){techWageState[f]=+v;officePayState[f]=+v;if(!document.getElementById('twSection')?.classList.contains('hidden'))renderTechWageCalc();if(!document.getElementById('opSection')?.classList.contains('hidden'))renderOfficePayCalc();}
+        function updateOfficePayState(f,v){const num=['leaveTaken','addlAllowance','addlDeduction','pfPct','esicPct','ptBase','tdsAmt'];officePayState[f]=num.includes(f)?(+v||0):v;renderOfficePayCalc();}
         function renderOfficePayCalc(){const el=document.getElementById('opCalcBody');if(el)el.innerHTML=buildOfficePayHTML();}
         function buildOfficePayHTML(){
             const op=officePayState,st=staff.find(x=>x.staffID===op.staffID);if(!st)return '';
             const c=computeOfficeSalary(st,op);
-            const INR=n=>'₹'+Math.max(0,parseFloat(n)||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
-            const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
-            const periodLabel=MONTHS[op.periodMonth-1]+' '+op.periodYear;
-            const leaveColor=c.leaveBalance<0?'#dc2626':c.leaveBalance===0?'#b45309':'#15803d';
-            const leaveBg=c.leaveBalance<0?'#fee2e2':c.leaveBalance===0?'#fef3c7':'#dcfce7';
-            const earRows=[{name:'Basic Salary',amt:c.basic,show:true},{name:`HRA (${c.hraPct}% of Basic)`,amt:c.hra,show:c.hra>0},{name:`DA (${c.daPct}% of Basic)`,amt:c.da,show:c.da>0},{name:'Grade Pay',amt:c.gradePay,show:c.gradePay>0},{name:'Conveyance Allowance',amt:c.conveyance,show:c.conveyance>0},{name:'Medical Allowance',amt:c.medical,show:c.medical>0},{name:'Annual Bonus ((Basic+DA)÷12)',amt:c.bonus,show:true},{name:'Variable Allowance',amt:c.variable,show:c.variable>0},{name:op.addlAllowanceRemark?'Additional: '+op.addlAllowanceRemark:'Additional Allowance',amt:c.addlAllow,show:c.addlAllow>0}].filter(r=>r.show);
-            const dedRows=[{name:`PF – Employee ${c.pfPct}%`+(c.pfCapped?' (on ₹15,000 cap)':' (of Basic)'),amt:c.pfAmt,show:c.pfAmt>0,col:'#1d4ed8',nil:false},{name:c.esicWaived?`ESIC – NIL (Gross > ₹20,000)`:`ESIC – Employee ${c.esicPct}% of Gross`,amt:c.esicAmt,show:true,col:c.esicWaived?'#9ca3af':'#0e7490',nil:c.esicWaived},{name:'Professional Tax (PT)'+(c.isMarchFY?' — March (₹'+c.ptAmt+')':''),amt:c.ptAmt,show:c.ptAmt>0,col:'#7c3aed',nil:false},{name:'Income Tax TDS',amt:c.tdsAmt,show:c.tdsAmt>0,col:'#b45309',nil:false},{name:`Loss of Pay – ${c.lopDays} day${c.lopDays===1?'':'s'} (Basic÷26)`,amt:c.lopAmt,show:c.lopDays>0,col:'#dc2626',nil:false},{name:op.addlDeductionRemark?'Other: '+op.addlDeductionRemark:'Other Deduction',amt:c.addlDed,show:c.addlDed>0,col:'#4b5563',nil:false}].filter(r=>r.show||r.nil);
-            return `<div style="font-size:12px;color:#374151;margin-bottom:10px;padding:8px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;font-weight:500"><strong>${st.name}</strong> &nbsp;·&nbsp; ${st.designation||'Staff'} &nbsp;·&nbsp; Salary for: <strong style="color:#1d4ed8">${periodLabel}</strong>${c.isMarchFY?'&nbsp;<span style="background:#fef3c7;color:#78350f;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:600">March — PT ₹'+c.ptAmt+'</span>':''}</div>
-            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px"><div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:10px;text-align:center"><div style="font-size:10px;color:#6b7280;font-weight:500;margin-bottom:4px">LEAVE/MONTH</div><div style="font-size:20px;font-weight:600;color:#374151">${c.leavePerMonth}</div></div><div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:10px;text-align:center"><div style="font-size:10px;color:#6b7280;font-weight:500;margin-bottom:4px">LEAVE TAKEN</div><div style="font-size:20px;font-weight:600;color:#374151">${c.leaveTaken}</div></div><div style="background:${leaveBg};border:1px solid ${leaveColor}55;border-radius:10px;padding:10px;text-align:center"><div style="font-size:10px;color:#6b7280;font-weight:500;margin-bottom:4px">BALANCE / LOP</div><div style="font-size:20px;font-weight:600;color:${leaveColor}">${c.leaveBalance<0?c.lopDays+' LOP':c.leaveBalance+' left'}</div></div><div style="background:#f0fdf4;border:1px solid #15803d55;border-radius:10px;padding:10px;text-align:center"><div style="font-size:10px;color:#6b7280;font-weight:500;margin-bottom:4px">NET PAY</div><div style="font-size:15px;font-weight:700;color:#15803d">${INR(c.netPay)}</div></div></div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px"><div class="bg-white border border-gray-200 rounded-xl overflow-hidden"><div style="background:#1d4ed8;padding:8px 14px;font-weight:700;font-size:12px;color:#fff">EARNINGS</div><table style="width:100%;border-collapse:collapse;font-size:12px">${earRows.map(r=>`<tr style="border-bottom:0.5px solid #f3f4f6"><td style="padding:7px 12px;color:#374151">${r.name}</td><td style="padding:7px 12px;text-align:right;font-weight:500">${INR(r.amt)}</td></tr>`).join('')}<tr style="background:#eff6ff"><td style="padding:8px 12px;font-weight:700;color:#1d4ed8">GROSS EARNINGS</td><td style="padding:8px 12px;text-align:right;font-weight:700;color:#1d4ed8;font-size:13px">${INR(c.gross)}</td></tr></table></div><div class="bg-white border border-gray-200 rounded-xl overflow-hidden"><div style="background:#dc2626;padding:8px 14px;font-weight:700;font-size:12px;color:#fff">DEDUCTIONS</div><table style="width:100%;border-collapse:collapse;font-size:12px">${dedRows.map(r=>`<tr style="border-bottom:0.5px solid #f3f4f6;${r.nil?'opacity:0.55':''}"><td style="padding:7px 12px;color:#374151;font-size:11px">${r.name}</td><td style="padding:7px 12px;text-align:right;font-weight:500;color:${r.col}">${r.nil?'NIL':INR(r.amt)}</td></tr>`).join('')}<tr style="background:#fef2f2"><td style="padding:8px 12px;font-weight:700;color:#dc2626">TOTAL DEDUCTIONS</td><td style="padding:8px 12px;text-align:right;font-weight:700;color:#dc2626;font-size:13px">${INR(c.totalDed)}</td></tr></table></div></div>
-            <div style="background:linear-gradient(135deg,#0f766e,#0891b2);border-radius:12px;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div><div style="color:#ccfbf1;font-size:12px;font-weight:500">${st.name} &nbsp;·&nbsp; ${st.designation||''} &nbsp;·&nbsp; ${periodLabel}</div><div style="color:#99f6e4;font-size:11px;margin-top:3px">Gross ${INR(c.gross)} &minus; Deductions ${INR(c.totalDed)}</div></div><div style="color:#f0fdfa;font-size:22px;font-weight:700">${INR(c.netPay)}</div></div>
+            const INR=n=>'₹'+Math.max(0,+n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+            const MN=['January','February','March','April','May','June','July','August','September','October','November','December'];
+            const pl=MN[op.periodMonth-1]+' '+op.periodYear;
+            const lc=c.leaveBalance<0?'#dc2626':c.leaveBalance===0?'#b45309':'#15803d';
+            const lb=c.leaveBalance<0?'#fee2e2':c.leaveBalance===0?'#fef3c7':'#dcfce7';
+            const er=[{n:'Basic Salary',a:c.basic,s:true},{n:`HRA (${c.hraPct}% of Basic)`,a:c.hra,s:c.hra>0},{n:`DA (${c.daPct}% of Basic)`,a:c.da,s:c.da>0},{n:'Grade Pay',a:c.gradePay,s:c.gradePay>0},{n:'Conveyance Allow.',a:c.conveyance,s:c.conveyance>0},{n:'Medical Allow.',a:c.medical,s:c.medical>0},{n:'Annual Bonus ((B+DA)÷12)',a:c.bonus,s:true},{n:'Variable Allow.',a:c.variable,s:c.variable>0},{n:op.addlAllowanceRemark?'Add: '+op.addlAllowanceRemark:'Additional Allow.',a:c.addlAllow,s:c.addlAllow>0}].filter(r=>r.s);
+            const dr=[{n:`PF – Employee ${c.pfPct}%`+(c.pfCapped?' (capped ₹15k)':' (of Basic)'),a:c.pfAmt,s:c.pfAmt>0,col:'#1d4ed8',nil:false},{n:c.esicWaived?`ESIC – NIL (Gross>₹20k)`:`ESIC – ${c.esicPct}% of Gross`,a:c.esicAmt,s:true,col:c.esicWaived?'#9ca3af':'#0e7490',nil:c.esicWaived},{n:'Prof. Tax (PT)'+(c.isMarchFY?' — March':'')+' ₹'+c.ptAmt,a:c.ptAmt,s:c.ptAmt>0,col:'#7c3aed',nil:false},{n:'Income Tax TDS',a:c.tdsAmt,s:c.tdsAmt>0,col:'#b45309',nil:false},{n:`Loss of Pay — ${c.lopDays} day${c.lopDays===1?'':'s'}`,a:c.lopAmt,s:c.lopDays>0,col:'#dc2626',nil:false},{n:op.addlDeductionRemark?'Other: '+op.addlDeductionRemark:'Other Deduction',a:c.addlDed,s:c.addlDed>0,col:'#4b5563',nil:false}].filter(r=>r.s||r.nil);
+            return `<div style="font-size:12px;color:#374151;margin-bottom:10px;padding:8px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;font-weight:500"><strong>${st.name}</strong> &nbsp;·&nbsp; ${st.designation||'Staff'} &nbsp;·&nbsp; Salary: <strong style="color:#1d4ed8">${pl}</strong>${c.isMarchFY?'&nbsp;<span style="background:#fef3c7;color:#78350f;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:600">March PT ₹'+c.ptAmt+'</span>':''}</div>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px"><div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:10px;text-align:center"><div style="font-size:10px;color:#6b7280;font-weight:500;margin-bottom:4px">LEAVE/MONTH</div><div style="font-size:20px;font-weight:600;color:#374151">${c.leavePerMonth}</div></div><div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:10px;text-align:center"><div style="font-size:10px;color:#6b7280;font-weight:500;margin-bottom:4px">LEAVE TAKEN</div><div style="font-size:20px;font-weight:600;color:#374151">${c.leaveTaken}</div></div><div style="background:${lb};border:1px solid ${lc}55;border-radius:10px;padding:10px;text-align:center"><div style="font-size:10px;color:#6b7280;font-weight:500;margin-bottom:4px">BALANCE/LOP</div><div style="font-size:20px;font-weight:600;color:${lc}">${c.leaveBalance<0?c.lopDays+' LOP':c.leaveBalance+' left'}</div></div><div style="background:#f0fdf4;border:1px solid #15803d55;border-radius:10px;padding:10px;text-align:center"><div style="font-size:10px;color:#6b7280;font-weight:500;margin-bottom:4px">NET PAY</div><div style="font-size:15px;font-weight:700;color:#15803d">${INR(c.netPay)}</div></div></div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px"><div class="bg-white border border-gray-200 rounded-xl overflow-hidden"><div style="background:#1d4ed8;padding:8px 14px;font-weight:700;font-size:12px;color:#fff">EARNINGS</div><table style="width:100%;border-collapse:collapse;font-size:12px">${er.map(r=>`<tr style="border-bottom:0.5px solid #f3f4f6"><td style="padding:7px 12px;color:#374151">${r.n}</td><td style="padding:7px 12px;text-align:right;font-weight:500">${INR(r.a)}</td></tr>`).join('')}<tr style="background:#eff6ff"><td style="padding:8px 12px;font-weight:700;color:#1d4ed8">GROSS</td><td style="padding:8px 12px;text-align:right;font-weight:700;color:#1d4ed8;font-size:13px">${INR(c.gross)}</td></tr></table></div><div class="bg-white border border-gray-200 rounded-xl overflow-hidden"><div style="background:#dc2626;padding:8px 14px;font-weight:700;font-size:12px;color:#fff">DEDUCTIONS</div><table style="width:100%;border-collapse:collapse;font-size:12px">${dr.map(r=>`<tr style="border-bottom:0.5px solid #f3f4f6;${r.nil?'opacity:0.55':''}"><td style="padding:7px 12px;color:#374151;font-size:11px">${r.n}</td><td style="padding:7px 12px;text-align:right;font-weight:500;color:${r.col}">${r.nil?'NIL':INR(r.a)}</td></tr>`).join('')}<tr style="background:#fef2f2"><td style="padding:8px 12px;font-weight:700;color:#dc2626">TOTAL DED.</td><td style="padding:8px 12px;text-align:right;font-weight:700;color:#dc2626;font-size:13px">${INR(c.totalDed)}</td></tr></table></div></div>
+            <div style="background:linear-gradient(135deg,#0f766e,#0891b2);border-radius:12px;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div><div style="color:#ccfbf1;font-size:12px;font-weight:500">${st.name} &nbsp;·&nbsp; ${st.designation||''} &nbsp;·&nbsp; ${pl}</div><div style="color:#99f6e4;font-size:11px;margin-top:3px">Gross ${INR(c.gross)} − Deductions ${INR(c.totalDed)}</div></div><div style="color:#f0fdfa;font-size:22px;font-weight:700">${INR(c.netPay)}</div></div>
             <button onclick="generatePaySlipPDF()" class="px-6 py-2 bg-teal-600 text-white rounded-xl hover:bg-teal-700 font-semibold text-sm">🖨️ Generate Pay Slip PDF</button>`;
         }
-        function getTechWagePeriodDates(year,month){const pm=month===1?12:month-1,py=month===1?year-1:year,dates=[],start=new Date(py,pm-1,26);for(let i=0;i<30;i++){const d=new Date(start);d.setDate(start.getDate()+i);dates.push(d);}return dates;}
+        function getTechWagePeriodDates(year,month){const pm=month===1?12:month-1,py=month===1?year-1:year,d=[],s=new Date(py,pm-1,26);for(let i=0;i<30;i++){const x=new Date(s);x.setDate(s.getDate()+i);d.push(x);}return d;}
         function calcTechWage(state){
             const{att,dailyWage:dw,rates,variableAllow:varA=0}=state,c={};ATT_ORDER.forEach(t=>{c[t]=0;});att.forEach(t=>{if(t)c[t]++;});
             const eng=ENGAGED_TYPES.reduce((s,t)=>s+(c[t]||0),0),sbd=c.StandBy||0,mrkd=att.filter(t=>t!=='').length,isRet=eng===0&&sbd>=28&&mrkd>=28;
-            const wP=c.Working*dw,outP=c.Outstation*dw,ancP=c.Anchorage*dw,salP=c.Sailing*dw,sbyP=isRet?0:sbd*dw*(rates.standbyPct/100),alP=(c.ApprovedLeave||0)*dw*(rates.alPct/100),outA=c.Outstation*rates.outA,ancA=c.Anchorage*rates.ancA,salA=c.Sailing*rates.salA,t15=eng>=15?eng*rates.t15:0,t20=eng>=20?eng*rates.t20:0,ret=isRet?12*dw:0;
-            const gross=wP+outP+ancP+salP+sbyP+alP+outA+ancA+salA+t15+t20+ret+(parseFloat(varA)||0);
-            const rows=[{sec:'Wage',name:'Working days',days:c.Working,rate:dw,amt:wP,show:c.Working>0},{sec:'Wage',name:'Outstation days',days:c.Outstation,rate:dw,amt:outP,show:c.Outstation>0},{sec:'Wage',name:'Anchorage days',days:c.Anchorage,rate:dw,amt:ancP,show:c.Anchorage>0},{sec:'Wage',name:'Sailing days',days:c.Sailing,rate:dw,amt:salP,show:c.Sailing>0},{sec:'Wage',name:`Stand by pay (${rates.standbyPct}%)`,days:sbd,rate:dw*rates.standbyPct/100,amt:sbyP,show:sbd>0&&!isRet},{sec:'Wage',name:`Approved leave (${rates.alPct}%)`,days:c.ApprovedLeave||0,rate:dw*rates.alPct/100,amt:alP,show:(c.ApprovedLeave||0)>0},{sec:'Allowance',name:'Outstation allowance',days:c.Outstation,rate:rates.outA,amt:outA,show:c.Outstation>0},{sec:'Allowance',name:'Anchorage allowance',days:c.Anchorage,rate:rates.ancA,amt:ancA,show:c.Anchorage>0},{sec:'Allowance',name:'Sailing allowance',days:c.Sailing,rate:rates.salA,amt:salA,show:c.Sailing>0},{sec:'Allowance',name:'Variable Allowance',days:null,rate:null,amt:parseFloat(varA)||0,show:(parseFloat(varA)||0)>0},{sec:'Threshold',name:`15+ days project allowance (${eng} engaged days)`,days:eng,rate:rates.t15,amt:t15,show:eng>=15},{sec:'Threshold',name:`20+ days project allowance (${eng} engaged days)`,days:eng,rate:rates.t20,amt:t20,show:eng>=20},{sec:'Retention',name:'Retention pay — full stand by month (12 days × daily wage)',days:12,rate:dw,amt:ret,show:isRet}].filter(r=>r.show);
+            const wP=c.Working*dw,outP=c.Outstation*dw,ancP=c.Anchorage*dw,salP=c.Sailing*dw;
+            const sbyP=isRet?0:sbd*dw*(rates.standbyPct/100);
+            const alP=(c.ApprovedLeave||0)*dw*(rates.alPct/100);
+            const ulP=(c.UnApprovedLeave||0)*dw*((rates.ulPct||0)/100);
+            const outA=c.Outstation*rates.outA,ancA=c.Anchorage*rates.ancA,salA=c.Sailing*rates.salA;
+            const t15=eng>=15?eng*rates.t15:0,t20=eng>=20?eng*rates.t20:0,ret=isRet?12*dw:0;
+            const gross=wP+outP+ancP+salP+sbyP+alP+ulP+outA+ancA+salA+t15+t20+ret+(+varA||0);
+            const rows=[
+                {sec:'Wage',name:'Working days',days:c.Working,rate:dw,amt:wP,show:c.Working>0},
+                {sec:'Wage',name:'Outstation days',days:c.Outstation,rate:dw,amt:outP,show:c.Outstation>0},
+                {sec:'Wage',name:'Anchorage days',days:c.Anchorage,rate:dw,amt:ancP,show:c.Anchorage>0},
+                {sec:'Wage',name:'Sailing days',days:c.Sailing,rate:dw,amt:salP,show:c.Sailing>0},
+                {sec:'Wage',name:`Stand By pay (${rates.standbyPct}% of daily wage)`,days:sbd,rate:dw*rates.standbyPct/100,amt:sbyP,show:sbd>0&&!isRet},
+                {sec:'Wage',name:`Approved Leave (${rates.alPct}% of daily wage)`,days:c.ApprovedLeave||0,rate:dw*rates.alPct/100,amt:alP,show:(c.ApprovedLeave||0)>0},
+                {sec:'Wage',name:`Unapproved Leave (${rates.ulPct||0}% of daily wage)`,days:c.UnApprovedLeave||0,rate:dw*(rates.ulPct||0)/100,amt:ulP,show:(c.UnApprovedLeave||0)>0},
+                {sec:'Allowance',name:'Outstation allowance',days:c.Outstation,rate:rates.outA,amt:outA,show:c.Outstation>0},
+                {sec:'Allowance',name:'Anchorage allowance',days:c.Anchorage,rate:rates.ancA,amt:ancA,show:c.Anchorage>0},
+                {sec:'Allowance',name:'Sailing allowance',days:c.Sailing,rate:rates.salA,amt:salA,show:c.Sailing>0},
+                {sec:'Allowance',name:'Variable Allowance (fixed)',days:null,rate:null,amt:+varA||0,show:(+varA||0)>0},
+                {sec:'Threshold',name:`15+ days allowance (${eng} engaged days)`,days:eng,rate:rates.t15,amt:t15,show:eng>=15},
+                {sec:'Threshold',name:`20+ days allowance (${eng} engaged days)`,days:eng,rate:rates.t20,amt:t20,show:eng>=20},
+                {sec:'Retention',name:'Retention pay — full stand by month (12×daily wage)',days:12,rate:dw,amt:ret,show:isRet}
+            ].filter(r=>r.show);
             return{c,eng,sbd,mrkd,isRet,rows,gross,t15,t20,ret};
         }
         function cycleAttDay(idx){const ci=ATT_ORDER.indexOf(techWageState.att[idx]);techWageState.att[idx]=ATT_ORDER[(ci+1)%ATT_ORDER.length];renderTechWageCalc();}
         function fillAttDays(type){techWageState.att=Array(30).fill(type);renderTechWageCalc();}
         function clearAttDays(){techWageState.att=Array(30).fill('');renderTechWageCalc();}
-        function onTechWageFieldChange(field,val){if(field==='dailyWage'||field==='variableAllow')techWageState[field]=parseFloat(val)||0;else techWageState[field]=val;renderTechWageCalc();}
+        function onTechWageFieldChange(f,v){if(f==='dailyWage'||f==='variableAllow')techWageState[f]=+v||0;else techWageState[f]=v;renderTechWageCalc();}
         function toggleTechRates(){techWageState.showRates=!techWageState.showRates;document.getElementById('twRatesPanel')?.classList.toggle('hidden',!techWageState.showRates);const b=document.getElementById('twRatesBtn');if(b)b.textContent=techWageState.showRates?'Hide ▲':'Edit rates ▼';}
-        function updateTechWageRate(key,val){techWageState.rates[key]=parseFloat(val)||0;renderTechWageCalc();}
+        function updateTechWageRate(key,val){techWageState.rates[key]=+val||0;renderTechWageCalc();}
         function renderTechWageCalc(){const el=document.getElementById('twCalcBody');if(el)el.innerHTML=buildTechWageCalcHTML();}
         function buildTechWageCalcHTML(){
             const s=techWageState,cal=calcTechWage(s),dates=getTechWagePeriodDates(s.periodYear,s.periodMonth);
@@ -895,11 +909,14 @@
             const grid=dates.map((date,idx)=>{const t=s.att[idx],tp=ATT_TYPES[t]||ATT_TYPES[''],isWE=date.getDay()===0||date.getDay()===6,bg=t?tp.bg:isWE?'#f3f4f6':'#fff',bord=t?tp.color+'88':isWE?'#d1d5db':'#e5e7eb',dayN=date.toLocaleDateString('en-IN',{day:'2-digit'}),dayW=date.toLocaleDateString('en-IN',{weekday:'narrow'});return `<button class="att-day-btn" onclick="cycleAttDay(${idx})" style="background:${bg};border-color:${bord}"><div style="font-size:10px;color:#9ca3af;line-height:1">${dayN}<span style="opacity:.7">${dayW}</span></div><div style="font-size:11px;font-weight:${t?700:400};color:${t?tp.text:'#9ca3af'};margin-top:2px;line-height:1">${t?tp.short:'—'}</div></button>`;}).join('');
             const rows=cal.rows.length===0?`<tr><td colspan="4" style="padding:2rem;text-align:center;color:#9ca3af;font-size:13px">Mark attendance days to calculate wages</td></tr>`:cal.rows.map(r=>`<tr style="border-bottom:0.5px solid #f3f4f6;background:${sB[r.sec]}"><td style="padding:8px 12px"><span style="display:inline-flex;align-items:center;gap:8px"><span style="width:3px;height:16px;background:${sC[r.sec]};border-radius:99px;display:inline-block"></span><span style="color:${r.sec!=='Wage'?sC[r.sec]:'inherit'}">${r.name}</span></span></td><td style="padding:8px 12px;text-align:right;color:#6b7280">${r.days!==null?r.days:'—'}</td><td style="padding:8px 12px;text-align:right;color:#6b7280">${r.rate!==null?RT(r.rate):'—'}</td><td style="padding:8px 12px;text-align:right;font-weight:500;color:${r.sec!=='Wage'?sC[r.sec]:'inherit'}">${INR(r.amt)}</td></tr>`).join('');
             const pills=ATT_ORDER.filter(t=>t&&cal.c[t]>0).map(t=>`<span style="background:${ATT_TYPES[t].bg};border:1px solid ${ATT_TYPES[t].color}55;border-radius:99px;padding:3px 10px;font-size:11px;color:${ATT_TYPES[t].text};font-weight:500">${ATT_TYPES[t].label}: ${cal.c[t]}</span>`).join('')+`<span style="background:#f3f4f6;border:0.5px solid #e5e7eb;border-radius:99px;padding:3px 10px;font-size:11px;color:#6b7280">${cal.mrkd}/30 marked</span>`;
-            return `<div style="font-size:12px;color:#374151;margin-bottom:6px;font-weight:500">Period: <strong>${pl}</strong> &nbsp;·&nbsp; Engaged: <strong style="color:#15803d">${cal.eng}d</strong> &nbsp;·&nbsp; Stand by: <strong style="color:#b45309">${cal.sbd}d</strong></div>
-            <div class="bg-white border border-gray-200 rounded-xl p-4 mb-4"><div class="flex justify-between items-center mb-3 flex-wrap gap-2"><div class="text-sm font-semibold text-gray-700">Attendance Grid — click day to cycle type</div><div class="flex gap-2"><button onclick="fillAttDays('Working')" style="font-size:11px;padding:3px 8px;color:#14532d;background:#dcfce7;border:1px solid #15803d44;border-radius:6px">All Working</button><button onclick="fillAttDays('StandBy')" style="font-size:11px;padding:3px 8px;color:#78350f;background:#fef3c7;border:1px solid #b4530944;border-radius:6px">All Stand By</button><button onclick="clearAttDays()" style="font-size:11px;padding:3px 8px;border:1px solid #e5e7eb;border-radius:6px;background:#fff">Clear</button></div></div><div style="display:grid;grid-template-columns:repeat(6,1fr);gap:4px">${grid}</div></div>
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px"><div style="background:${cal.eng>=15?'#f0fdf4':'#f9fafb'};border:1.5px solid ${cal.eng>=15?'#15803d':'#e5e7eb'};border-radius:12px;padding:0.75rem"><div style="font-size:10px;color:#6b7280;margin-bottom:4px;font-weight:500">15-DAY THRESHOLD</div><div style="font-size:18px;font-weight:500;color:${cal.eng>=15?'#15803d':'#9ca3af'}">${cal.eng>=15?'Eligible ✓':cal.eng+'/15'}</div><div style="font-size:11px;color:${cal.eng>=15?'#15803d':'#9ca3af'};margin-top:3px">${cal.eng>=15?INR(cal.t15)+' additional':'Need '+(15-cal.eng)+' more days'}</div></div><div style="background:${cal.eng>=20?'#eff6ff':'#f9fafb'};border:1.5px solid ${cal.eng>=20?'#1d4ed8':'#e5e7eb'};border-radius:12px;padding:0.75rem"><div style="font-size:10px;color:#6b7280;margin-bottom:4px;font-weight:500">20-DAY THRESHOLD</div><div style="font-size:18px;font-weight:500;color:${cal.eng>=20?'#1d4ed8':'#9ca3af'}">${cal.eng>=20?'Eligible ✓':cal.eng+'/20'}</div><div style="font-size:11px;color:${cal.eng>=20?'#1d4ed8':'#9ca3af'};margin-top:3px">${cal.eng>=20?INR(cal.t20)+' additional':'Need '+(20-cal.eng)+' more days'}</div></div><div style="background:${cal.isRet?'#f5f3ff':'#f9fafb'};border:1.5px solid ${cal.isRet?'#7c3aed':'#e5e7eb'};border-radius:12px;padding:0.75rem"><div style="font-size:10px;color:#6b7280;margin-bottom:4px;font-weight:500">RETENTION PAY</div><div style="font-size:18px;font-weight:500;color:${cal.isRet?'#7c3aed':'#9ca3af'}">${cal.isRet?'Applicable ✓':'Not applicable'}</div><div style="font-size:11px;color:${cal.isRet?'#7c3aed':'#9ca3af'};margin-top:3px">${cal.isRet?'12 × '+INR(s.dailyWage)+' = '+INR(cal.ret):'Full month standby, no project'}</div></div></div>
+            const rateRows=[{key:'standbyPct',label:'Standby rate (%)',val:s.rates.standbyPct},{key:'alPct',label:'Apprvd Leave rate (%)',val:s.rates.alPct},{key:'ulPct',label:'Unapprvd Leave rate (%)',val:s.rates.ulPct||0},{key:'outA',label:'Outstation allow/day (₹)',val:s.rates.outA},{key:'ancA',label:'Anchorage allow/day (₹)',val:s.rates.ancA},{key:'salA',label:'Sailing allow/day (₹)',val:s.rates.salA},{key:'t15',label:'15+ days allow/day (₹)',val:s.rates.t15},{key:'t20',label:'20+ days allow/day (₹)',val:s.rates.t20}];
+            return `<div style="font-size:12px;color:#374151;margin-bottom:6px;font-weight:500">Period: <strong>${pl}</strong> &nbsp;·&nbsp; Engaged: <strong style="color:#15803d">${cal.eng}d</strong> &nbsp;·&nbsp; Stand By: <strong style="color:#b45309">${cal.sbd}d</strong></div>
+            <div class="bg-white border border-gray-200 rounded-xl p-4 mb-3"><div class="flex justify-between items-center mb-3 flex-wrap gap-2"><div class="text-sm font-semibold text-gray-700">Attendance Grid — click a day to cycle type</div><div class="flex gap-2"><button onclick="fillAttDays('Working')" style="font-size:11px;padding:3px 8px;color:#14532d;background:#dcfce7;border:1px solid #15803d44;border-radius:6px">All Working</button><button onclick="fillAttDays('StandBy')" style="font-size:11px;padding:3px 8px;color:#78350f;background:#fef3c7;border:1px solid #b4530944;border-radius:6px">All Stand By</button><button onclick="clearAttDays()" style="font-size:11px;padding:3px 8px;border:1px solid #e5e7eb;border-radius:6px;background:#fff">Clear</button></div></div><div class="flex flex-wrap gap-1.5 mb-3">${Object.entries(ATT_TYPES).filter(([t])=>t).map(([t,tp])=>`<span style="background:${tp.bg};color:${tp.text};border:1px solid ${tp.color}44;border-radius:99px;padding:2px 8px;font-size:11px;font-weight:500">${tp.short} ${tp.label}${tp.engaged?' ★':''}</span>`).join('')}</div><div style="display:grid;grid-template-columns:repeat(6,1fr);gap:4px">${grid}</div></div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px"><div style="background:${cal.eng>=15?'#f0fdf4':'#f9fafb'};border:1.5px solid ${cal.eng>=15?'#15803d':'#e5e7eb'};border-radius:12px;padding:0.75rem"><div style="font-size:10px;color:#6b7280;margin-bottom:4px;font-weight:500">15-DAY THRESHOLD</div><div style="font-size:18px;font-weight:500;color:${cal.eng>=15?'#15803d':'#9ca3af'}">${cal.eng>=15?'Eligible ✓':cal.eng+'/15'}</div><div style="font-size:11px;color:${cal.eng>=15?'#15803d':'#9ca3af'};margin-top:3px">${cal.eng>=15?INR(cal.t15)+' additional':'Need '+(15-cal.eng)+' more days'}</div></div><div style="background:${cal.eng>=20?'#eff6ff':'#f9fafb'};border:1.5px solid ${cal.eng>=20?'#1d4ed8':'#e5e7eb'};border-radius:12px;padding:0.75rem"><div style="font-size:10px;color:#6b7280;margin-bottom:4px;font-weight:500">20-DAY THRESHOLD</div><div style="font-size:18px;font-weight:500;color:${cal.eng>=20?'#1d4ed8':'#9ca3af'}">${cal.eng>=20?'Eligible ✓':cal.eng+'/20'}</div><div style="font-size:11px;color:${cal.eng>=20?'#1d4ed8':'#9ca3af'};margin-top:3px">${cal.eng>=20?INR(cal.t20)+' additional':'Need '+(20-cal.eng)+' more days'}</div></div><div style="background:${cal.isRet?'#f5f3ff':'#f9fafb'};border:1.5px solid ${cal.isRet?'#7c3aed':'#e5e7eb'};border-radius:12px;padding:0.75rem"><div style="font-size:10px;color:#6b7280;margin-bottom:4px;font-weight:500">RETENTION PAY</div><div style="font-size:18px;font-weight:500;color:${cal.isRet?'#7c3aed':'#9ca3af'}">${cal.isRet?'Applicable ✓':'Not applicable'}</div><div style="font-size:11px;color:${cal.isRet?'#7c3aed':'#9ca3af'};margin-top:3px">${cal.isRet?'12×'+INR(s.dailyWage)+' = '+INR(cal.ret):'Full month standby, no project'}</div></div></div>
             <div class="bg-white border border-gray-200 rounded-xl overflow-hidden mb-4"><div class="px-4 py-3 border-b border-gray-100 font-semibold text-sm">Wage Breakdown</div><table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="background:#f9fafb"><th style="padding:8px 12px;text-align:left;font-size:11px;color:#6b7280;font-weight:500">COMPONENT</th><th style="padding:8px 12px;text-align:right;font-size:11px;color:#6b7280;font-weight:500;width:50px">DAYS</th><th style="padding:8px 12px;text-align:right;font-size:11px;color:#6b7280;font-weight:500;width:100px">RATE (₹)</th><th style="padding:8px 12px;text-align:right;font-size:11px;color:#6b7280;font-weight:500;width:110px">AMOUNT (₹)</th></tr></thead><tbody>${rows}</tbody><tfoot><tr style="background:#0f766e"><td colspan="3" style="padding:10px 12px;font-weight:500;font-size:14px;color:#ccfbf1">Gross Pay</td><td style="padding:10px 12px;text-align:right;font-weight:600;font-size:16px;color:#f0fdfa">${INR(cal.gross)}</td></tr></tfoot></table></div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">${pills}</div>
+            <button id="twRatesBtn" onclick="toggleTechRates()" class="text-sm px-3 py-1.5 border border-teal-300 text-teal-700 rounded-lg hover:bg-teal-50 mb-2">${s.showRates?'Hide rates ▲':'Edit rates ▼'}</button>
+            <div id="twRatesPanel" class="${s.showRates?'':'hidden'} bg-teal-50 border border-teal-200 rounded-xl p-4 grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">${rateRows.map(r=>`<div><label class="block text-xs font-semibold text-gray-600 mb-1">${r.label}</label><input type="number" value="${r.val}" min="0" step="0.01" oninput="updateTechWageRate('${r.key}',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>`).join('')}</div>
             <button onclick="generatePaySlipPDF()" class="px-6 py-2 bg-teal-600 text-white rounded-xl hover:bg-teal-700 font-semibold text-sm">🖨️ Generate Pay Slip PDF</button>`;
         }
 
@@ -3881,59 +3898,61 @@
                         </div>
                     </form>
                 </div>
-
-                <!-- ══ WAGE REVISIONS — Admin Only ══ -->
+                <!-- WAGE REVISIONS — Admin Only -->
                 <div class="bg-white rounded-2xl shadow-lg p-6 mt-6">
                     <div class="flex justify-between items-center mb-4">
                         <div>
                             <h3 class="text-xl font-bold text-green-700">💰 Wage & Salary Revisions</h3>
-                            <p class="text-xs text-gray-400 mt-1">Admin-only. Revise Basic, Daily Wage, HRA, DA, Allowances, and Statutory defaults. Office staff show all components; Technician shows Daily Wage + Variable.</p>
+                            <p class="text-xs text-gray-400 mt-1">For Technicians: Daily Wage, attendance rates (Standby, Approved/Unapproved Leave), project allowances (Outstation/Anchorage/Sailing), threshold allowances, and statutory deductions. For Office staff: Basic, HRA, DA, allowances, and statutory deductions.</p>
                         </div>
                         <button onclick="openWageModal()" class="px-4 py-2 bg-green-600 text-white rounded-xl text-sm hover:bg-green-700 font-semibold">+ Add Revision</button>
                     </div>
-                    <!-- Staff cards -->
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
                         ${staff.filter(s=>s.status==='Active').map(s=>{
-                            const isOff = s.staffType !== 'Technician';
+                            const isTech = s.staffType === 'Technician';
                             return `<div class="bg-green-50 border border-green-200 rounded-xl p-4">
                                 <div class="flex justify-between items-start mb-2">
                                     <div><p class="font-semibold text-gray-800">${s.name}</p>
                                         <p class="text-xs text-gray-500">${s.designation||''} · ${s.staffType}</p></div>
-                                    <button onclick="openWageModal('${s.staffID}')"
-                                        class="text-xs text-green-700 border border-green-300 rounded-lg px-2 py-1 hover:bg-green-100 font-medium whitespace-nowrap">+ Revise</button>
+                                    <button onclick="openWageModal('${s.staffID}')" class="text-xs text-green-700 border border-green-300 rounded-lg px-2 py-1 hover:bg-green-100 font-medium">+ Revise</button>
                                 </div>
-                                <div class="grid grid-cols-2 gap-2 text-sm">
+                                <div class="grid grid-cols-2 gap-2 text-sm mb-2">
                                     <div><p class="text-xs text-gray-400">Basic Salary</p><p class="font-bold text-green-700">${s.basicSalary?'₹'+parseFloat(s.basicSalary).toLocaleString('en-IN'):'—'}</p></div>
                                     <div><p class="text-xs text-gray-400">Daily Wage</p><p class="font-bold text-blue-700">${s.dailyWage?'₹'+parseFloat(s.dailyWage).toLocaleString('en-IN'):'—'}</p></div>
                                 </div>
-                                ${isOff && s.hraPct !== undefined ? `<div class="mt-2 text-xs text-gray-400">HRA ${s.hraPct}% · DA ${s.daPct||65}% · PF ${s.pfPct||12}%</div>` : ''}
+                                ${isTech
+                                    ? `<div class="text-xs text-gray-400">SBY ${s.standbyPct||50}% · A/L ${s.alPct||100}% · U/L ${s.ulPct||0}% · Out ₹${s.outstationA||600}/d · Anc ₹${s.anchorageA||400}/d · Sal ₹${s.sailingA||500}/d</div>
+                                       <div class="text-xs text-gray-400">PF ${s.techPFPct||12}% · ESIC ${s.techESICPct||0.75}% · PT ₹${s.techPTBase||200}/mo</div>`
+                                    : `<div class="text-xs text-gray-400">HRA ${s.hraPct||30}% · DA ${s.daPct||65}% · PF ${s.pfPct||12}%</div>`}
                             </div>`;
                         }).join('')}
                     </div>
-                    <!-- Revision history table -->
                     ${(()=>{
                         const revisions=[];
                         staff.forEach(s=>(s.wageRevisions||[]).forEach(r=>revisions.push({...r,staffName:s.name,staffID:s.staffID,staffType:s.staffType})));
                         revisions.sort((a,b)=>(b.effectiveDate||'').localeCompare(a.effectiveDate||''));
                         if(!revisions.length) return '<p class="text-sm text-gray-400 text-center py-8 border border-dashed border-gray-200 rounded-xl">No wage revisions recorded yet.</p>';
-                        return `<h4 class="font-semibold text-gray-700 mb-2">Revision History (${revisions.length} records)</h4>
+                        return `<h4 class="font-semibold text-gray-700 mb-2">Revision History (${revisions.length})</h4>
                         <div class="overflow-x-auto"><table class="w-full text-sm">
-                            <thead class="bg-green-50 text-xs text-gray-500 uppercase">
-                                <tr><th class="px-3 py-2 text-left">Date</th><th class="px-3 py-2 text-left">Staff</th>
+                            <thead class="bg-green-50 text-xs text-gray-500 uppercase"><tr>
+                                <th class="px-3 py-2 text-left">Date</th><th class="px-3 py-2 text-left">Staff</th>
                                 <th class="px-3 py-2 text-right">Basic</th><th class="px-3 py-2 text-right">Daily Wage</th>
                                 <th class="px-3 py-2 text-left">Changes</th><th class="px-3 py-2 text-left">Reason</th>
-                                <th class="px-3 py-2 text-center">Actions</th></tr>
-                            </thead>
+                                <th class="px-3 py-2 text-center">Actions</th>
+                            </tr></thead>
                             <tbody>${revisions.map(r=>{
-                                const chg=[];
-                                if(r.hraPct!==undefined)chg.push('HRA '+r.hraPct+'%');
-                                if(r.daPct!==undefined)chg.push('DA '+r.daPct+'%');
-                                if(r.gradePay)chg.push('Grade Pay');
-                                if(r.conveyance)chg.push('Conv');
-                                if(r.medical)chg.push('Medical');
-                                if(r.variable)chg.push('Variable');
-                                if(r.pfPct!==undefined)chg.push('PF '+r.pfPct+'%');
-                                if(r.esicPct!==undefined)chg.push('ESIC '+r.esicPct+'%');
+                                const isTech=r.staffType==='Technician', chg=[];
+                                if(isTech){
+                                    if(r.standbyPct!==undefined)chg.push('SBY '+r.standbyPct+'%');
+                                    if(r.alPct!==undefined)chg.push('A/L '+r.alPct+'%');
+                                    if(r.ulPct!==undefined)chg.push('U/L '+r.ulPct+'%');
+                                    if(r.outstationA!==undefined)chg.push('Out ₹'+r.outstationA);
+                                    if(r.techPFPct!==undefined)chg.push('PF '+r.techPFPct+'%');
+                                } else {
+                                    if(r.hraPct!==undefined)chg.push('HRA '+r.hraPct+'%');
+                                    if(r.daPct!==undefined)chg.push('DA '+r.daPct+'%');
+                                    if(r.pfPct!==undefined)chg.push('PF '+r.pfPct+'%');
+                                }
                                 return `<tr class="border-b hover:bg-green-50">
                                     <td class="px-3 py-2 text-xs">${r.effectiveDate||'—'}</td>
                                     <td class="px-3 py-2 font-medium">${r.staffName}</td>
@@ -3942,10 +3961,8 @@
                                     <td class="px-3 py-2 text-xs text-gray-500">${chg.length?chg.join(', '):'—'}</td>
                                     <td class="px-3 py-2 text-xs text-gray-500">${r.reason||'—'}</td>
                                     <td class="px-3 py-2 text-center whitespace-nowrap">
-                                        <button onclick="editWageRevision('${r.staffID}','${r.revID}')"
-                                            class="text-indigo-600 hover:text-indigo-800 text-xs font-medium mr-1 px-2 py-1 border border-indigo-200 rounded hover:bg-indigo-50">Edit</button>
-                                        <button onclick="deleteWageRevision('${r.staffID}','${r.revID}')"
-                                            class="text-red-500 hover:text-red-700 text-xs font-medium px-2 py-1 border border-red-200 rounded hover:bg-red-50">Delete</button>
+                                        <button onclick="editWageRevision('${r.staffID}','${r.revID}')" class="text-indigo-600 text-xs font-medium mr-1 px-2 py-1 border border-indigo-200 rounded hover:bg-indigo-50">Edit</button>
+                                        <button onclick="deleteWageRevision('${r.staffID}','${r.revID}')" class="text-red-500 text-xs font-medium px-2 py-1 border border-red-200 rounded hover:bg-red-50">Delete</button>
                                     </td>
                                 </tr>`;
                             }).join('')}</tbody>
@@ -5091,47 +5108,100 @@
                                     <input type="text" id="sProfCert" placeholder="Certificate name / number" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                             </div>
                         </div>
-                        <!-- Office Staff Salary Structure -->
+                        <!-- Technician-only fields -->
+                        <!-- Office Staff Salary Structure (hidden for technicians) -->
                         <div id="officePayFields" class="border-t pt-4 hidden">
                             <h4 class="text-sm font-bold text-purple-700 mb-3">💼 Office Salary Structure</h4>
-                            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">HRA % <span class="text-gray-400">(of Basic)</span></label><input type="number" id="sHRAPct" value="30" min="0" max="100" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
-                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">DA % <span class="text-gray-400">(of Basic)</span></label><input type="number" id="sDAPct" value="65" min="0" max="200" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">HRA % (of Basic)</label><input type="number" id="sHRAPct" value="30" min="0" max="100" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">DA % (of Basic)</label><input type="number" id="sDAPct" value="65" min="0" max="200" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                                 <div><label class="block text-xs font-semibold text-gray-600 mb-1">Grade Pay (₹)</label><input type="number" id="sGradePay" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
-                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Conveyance Allowance (₹)</label><input type="number" id="sConveyance" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
-                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Medical Allowance (₹)</label><input type="number" id="sMedical" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
-                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Variable Allowance (₹)</label><input type="number" id="sVariable" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
-                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Leave Eligibility <span class="text-gray-400">(days/month)</span></label><input type="number" id="sLeavePerMonth" value="2" min="0" max="31" step="0.5" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Conveyance Allow. (₹)</label><input type="number" id="sConveyance" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Medical Allow. (₹)</label><input type="number" id="sMedical" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Variable Allow. (₹)</label><input type="number" id="sVariable" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Leave Days /month</label><input type="number" id="sLeavePerMonth" value="2" min="0" max="31" step="0.5" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                             </div>
-                            <h4 class="text-sm font-bold text-red-700 mb-2">📋 Statutory Deduction Defaults</h4>
-                            <p class="text-xs text-gray-400 mb-3">PF Gross = Basic+DA+HRA+Medical+Conv+GradePay+Bonus (Variable excluded). >₹15k capped. ESIC waived if gross >₹20k. PT ₹200; March = ₹300.</p>
-                            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <h4 class="text-sm font-bold text-red-700 mb-2">📋 Statutory Deductions (Office)</h4>
+                            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
                                 <div><label class="block text-xs font-semibold text-gray-600 mb-1">PF Employee %</label><input type="number" id="sPFPct" value="12" min="0" max="30" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                                 <div><label class="block text-xs font-semibold text-gray-600 mb-1">ESIC Employee %</label><input type="number" id="sESICPct" value="0.75" min="0" max="5" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
-                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">PT Base /month <span class="text-gray-400">(Mar=₹300)</span></label><input type="number" id="sPTBase" value="200" min="0" step="1" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
-                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Income Tax TDS /month (₹)</label><input type="number" id="sTDSMonthly" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">PT Base /month (₹)</label><input type="number" id="sPTBase" value="200" min="0" step="1" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">TDS /month (₹)</label><input type="number" id="sTDSMonthly" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                             </div>
                         </div>
-                        <!-- Technician-only fields -->
-                        <div id="techDocFields" class="border-t pt-4">
-                            <h4 class="text-sm font-bold text-teal-700 mb-3">Technician Documents</h4>
-                            <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
-                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Passport Number</label>
-                                    <input type="text" id="sPassport" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
-                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Passport Expiry</label>
-                                    <input type="date" id="sPassportExpiry" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
-                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Driving Licence No</label>
-                                    <input type="text" id="sDL" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
-                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">DL Expiry Date</label>
-                                    <input type="date" id="sDLExpiry" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
-                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">CDC (Continuous Discharge Certificate)</label>
-                                    <input type="text" id="sCDC" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
-                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">CDC Expiry</label>
-                                    <input type="date" id="sCDCExpiry" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
-                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Course / Safety Certificate</label>
-                                    <input type="text" id="sCourseCert" placeholder="e.g. HUET, BOSIET" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
-                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Course Cert. Expiry</label>
-                                    <input type="date" id="sCourseCertExpiry" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+
+                        <!-- Technician-only section -->
+                        <div id="techDocFields" class="border-t pt-4 space-y-5">
+
+                            <!-- Wage Components & Attendance Rates -->
+                            <div class="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                                <h4 class="text-sm font-bold text-blue-700 mb-1">⚙️ Wage Components & Attendance Rates</h4>
+                                <p class="text-xs text-gray-400 mb-3">Rates used to calculate monthly wages on the Pay Slip. Click any attendance day to cycle: Working → Stand By → Outstation → Anchorage → Sailing → Approved Leave → Unapproved Leave.</p>
+                                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Stand By Rate <span class="text-gray-400">(% of daily wage)</span></label>
+                                        <input type="number" id="sStandbyPct" value="50" min="0" max="100" step="1" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Approved Leave Rate <span class="text-gray-400">(% of daily wage)</span></label>
+                                        <input type="number" id="sAlPct" value="100" min="0" max="100" step="1" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Unapproved Leave Rate <span class="text-gray-400">(% — usually 0)</span></label>
+                                        <input type="number" id="sUlPct" value="0" min="0" max="100" step="1" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Variable Allowance (₹/month)</label>
+                                        <input type="number" id="sTechVariable" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                                </div>
+                                <p class="text-xs font-semibold text-gray-500 mb-2">Project Allowances (₹/day attended)</p>
+                                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Outstation Allow /day</label>
+                                        <input type="number" id="sOutstationA" value="600" min="0" step="1" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Anchorage Allow /day</label>
+                                        <input type="number" id="sAnchorageA" value="400" min="0" step="1" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Sailing Allow /day</label>
+                                        <input type="number" id="sSailingA" value="500" min="0" step="1" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                                </div>
+                                <p class="text-xs font-semibold text-gray-500 mb-2">Threshold Allowances (₹/engaged day — triggered by total engaged days)</p>
+                                <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">15+ Days Allow /engaged day</label>
+                                        <input type="number" id="sThresh15" value="250" min="0" step="1" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">20+ Days Allow /engaged day</label>
+                                        <input type="number" id="sThresh20" value="350" min="0" step="1" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                                </div>
+                            </div>
+
+                            <!-- Statutory Deductions for Technician -->
+                            <div class="bg-red-50 border border-red-200 rounded-xl p-4">
+                                <h4 class="text-sm font-bold text-red-700 mb-1">📋 Statutory Deductions (Technician)</h4>
+                                <p class="text-xs text-gray-400 mb-3">PF & ESIC on gross wage. ESIC waived if gross &gt;₹20,000. PT ₹200/month; ₹300 in March.</p>
+                                <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">PF Employee % <span class="text-gray-400">(12% std)</span></label>
+                                        <input type="number" id="sTechPFPct" value="12" min="0" max="30" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">ESIC Employee % <span class="text-gray-400">(0.75%)</span></label>
+                                        <input type="number" id="sTechESICPct" value="0.75" min="0" max="5" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">PT Base /month (₹)</label>
+                                        <input type="number" id="sTechPTBase" value="200" min="0" step="1" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">TDS /month (₹)</label>
+                                        <input type="number" id="sTechTDS" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                                </div>
+                            </div>
+
+                            <!-- Technician Documents -->
+                            <div>
+                                <h4 class="text-sm font-bold text-teal-700 mb-3">📁 Technician Documents</h4>
+                                <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Passport Number</label>
+                                        <input type="text" id="sPassport" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Passport Expiry</label>
+                                        <input type="date" id="sPassportExpiry" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Driving Licence No</label>
+                                        <input type="text" id="sDL" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">DL Expiry Date</label>
+                                        <input type="date" id="sDLExpiry" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">CDC (Continuous Discharge Certificate)</label>
+                                        <input type="text" id="sCDC" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">CDC Expiry</label>
+                                        <input type="date" id="sCDCExpiry" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Course / Safety Certificate</label>
+                                        <input type="text" id="sCourseCert" placeholder="e.g. HUET, BOSIET" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Course Cert. Expiry</label>
+                                        <input type="date" id="sCourseCertExpiry" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                </div>
                             </div>
                         </div>
                         <div><label class="block text-xs font-semibold text-gray-600 mb-1">Remarks</label>
@@ -5350,33 +5420,67 @@
         }
 
         function renderPayslipTab() {
-            const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
+            const MN=['January','February','March','April','May','June','July','August','September','October','November','December'];
             const selID=techWageState.staffID||officePayState.staffID,selSt=staff.find(x=>x.staffID===selID);
             const isTech=selSt?.staffType==='Technician',isOff=selSt&&!isTech;
             const shM=isTech?techWageState.periodMonth:officePayState.periodMonth,shY=isTech?techWageState.periodYear:officePayState.periodYear;
-            const rateRows=[{key:'standbyPct',label:'Stand by rate (%)',val:techWageState.rates.standbyPct},{key:'alPct',label:'Approved leave rate (%)',val:techWageState.rates.alPct},{key:'outA',label:'Outstation allow/day (₹)',val:techWageState.rates.outA},{key:'ancA',label:'Anchorage allow/day (₹)',val:techWageState.rates.ancA},{key:'salA',label:'Sailing allow/day (₹)',val:techWageState.rates.salA},{key:'t15',label:'15+ days allow/eng day (₹)',val:techWageState.rates.t15},{key:'t20',label:'20+ days allow/eng day (₹)',val:techWageState.rates.t20}];
             return `
             <div class="bg-white border border-gray-200 rounded-xl p-5 mb-4">
                 <h3 class="font-bold text-gray-700 text-base mb-4">🧾 Pay Slip Generator</h3>
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
-                    <div class="md:col-span-1"><label class="block text-xs font-semibold text-gray-600 mb-1">Staff Member</label><select id="psStaffSel" onchange="onPaySlipStaffChange(this.value)" class="w-full px-3 py-2 border rounded-lg text-sm"><option value="">-- Select --</option>${staff.map(s=>`<option value="${s.staffID}" ${s.staffID===selID?'selected':''}>${s.name} (${s.staffType||'Staff'})</option>`).join('')}</select></div>
-                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Pay Period Month</label><select onchange="onPaySlipPeriodChange('periodMonth',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm">${MONTHS.map((m,i)=>`<option value="${i+1}" ${i+1===shM?'selected':''}>${m}</option>`).join('')}</select></div>
-                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Year</label><select onchange="onPaySlipPeriodChange('periodYear',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm">${[2024,2025,2026,2027].map(y=>`<option value="${y}" ${y===shY?'selected':''}>${y}</option>`).join('')}</select></div>
-                    <div class="${isTech?'':'hidden'}"><label class="block text-xs font-semibold text-gray-600 mb-1">Daily Wage (₹)</label><input type="number" id="twDailyWage" value="${techWageState.dailyWage||0}" oninput="onTechWageFieldChange('dailyWage',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm" min="0" step="0.01"/></div>
+                    <div class="md:col-span-1"><label class="block text-xs font-semibold text-gray-600 mb-1">Staff Member</label>
+                        <select id="psStaffSel" onchange="onPaySlipStaffChange(this.value)" class="w-full px-3 py-2 border rounded-lg text-sm">
+                            <option value="">-- Select --</option>
+                            ${staff.map(s=>`<option value="${s.staffID}" ${s.staffID===selID?'selected':''}>${s.name} (${s.staffType||'Staff'})</option>`).join('')}
+                        </select></div>
+                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Pay Period Month</label>
+                        <select onchange="onPaySlipPeriodChange('periodMonth',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm">
+                            ${MN.map((m,i)=>`<option value="${i+1}" ${i+1===shM?'selected':''}>${m}</option>`).join('')}
+                        </select></div>
+                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Year</label>
+                        <select onchange="onPaySlipPeriodChange('periodYear',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm">
+                            ${[2024,2025,2026,2027].map(y=>`<option value="${y}" ${y===shY?'selected':''}>${y}</option>`).join('')}
+                        </select></div>
+                    <div class="${isTech?'':'hidden'}"><label class="block text-xs font-semibold text-gray-600 mb-1">Daily Wage (₹)</label>
+                        <input type="number" id="twDailyWage" value="${techWageState.dailyWage||0}" oninput="onTechWageFieldChange('dailyWage',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm" min="0" step="0.01"/></div>
                 </div>
                 <div id="twRatesWrap" class="${isTech?'':'hidden'}">
-                    <div class="border border-purple-200 rounded-xl p-4 mb-4 bg-purple-50"><p class="text-xs font-bold text-purple-700 mb-3 uppercase tracking-wide">Variable Allowance</p><div class="grid grid-cols-2 md:grid-cols-4 gap-4"><div><label class="block text-xs font-semibold text-gray-600 mb-1">Variable Allowance (₹)</label><input type="number" id="twVariableAllow" value="${techWageState.variableAllow||0}" min="0" step="0.01" oninput="onTechWageFieldChange('variableAllow',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div></div></div>
-                    <div class="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 mb-3"><div class="text-xs font-semibold text-gray-500 mb-2">ATTENDANCE TYPES · ★ counts toward 15/20-day threshold</div><div class="flex flex-wrap gap-2">${Object.entries(ATT_TYPES).filter(([t])=>t).map(([t,tp])=>`<span style="background:${tp.bg};color:${tp.text};border:1px solid ${tp.color}44;border-radius:99px;padding:2px 9px;font-size:11px;font-weight:500"><strong>${tp.short}</strong> ${tp.label}${tp.engaged?' ★':''}</span>`).join('')}</div></div>
-                    <button id="twRatesBtn" onclick="toggleTechRates()" class="text-sm px-3 py-1.5 border border-teal-300 text-teal-700 rounded-lg hover:bg-teal-50">${techWageState.showRates?'Hide ▲':'Edit rates ▼'}</button>
-                    <div id="twRatesPanel" class="${techWageState.showRates?'':'hidden'} mt-3 bg-teal-50 border border-teal-200 rounded-xl p-4 grid grid-cols-2 md:grid-cols-4 gap-3">${rateRows.map(r=>`<div><label class="block text-xs font-semibold text-gray-600 mb-1">${r.label}</label><input type="number" value="${r.val}" min="0" step="0.01" oninput="updateTechWageRate('${r.key}',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>`).join('')}</div>
+                    <div class="border border-purple-200 rounded-xl p-3 mb-4 bg-purple-50 grid grid-cols-2 md:grid-cols-4 gap-3">
+                        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Variable Allowance (₹/month)</label>
+                            <input type="number" id="twVariableAllow" value="${techWageState.variableAllow||0}" min="0" step="0.01" oninput="onTechWageFieldChange('variableAllow',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                    </div>
                 </div>
                 <div id="opInputsWrap" class="${isOff?'':'hidden'}">
-                    <div class="border border-gray-200 rounded-xl p-4 mb-4 bg-gray-50"><p class="text-xs font-bold text-gray-600 mb-3 uppercase tracking-wide">Leave & Loss of Pay</p><div class="grid grid-cols-2 md:grid-cols-4 gap-4"><div><label class="block text-xs font-semibold text-gray-600 mb-1">Leave Taken This Month</label><input type="number" id="opLeaveTaken" value="${officePayState.leaveTaken||0}" min="0" max="31" step="0.5" oninput="updateOfficePayState('leaveTaken',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div></div></div>
-                    <div class="border border-red-200 rounded-xl p-4 mb-4 bg-red-50"><p class="text-xs font-bold text-red-700 mb-1 uppercase tracking-wide">Statutory Deductions</p><p class="text-xs text-gray-400 mb-3">Pre-filled from staff master. PF Gross = Basic+DA+HRA+Medical+Conv+GradePay+Bonus. &gt;₹15k capped. ESIC waived if gross &gt;₹20k. PT ₹200; March = ₹300.</p><div class="grid grid-cols-2 md:grid-cols-4 gap-4"><div><label class="block text-xs font-semibold text-gray-600 mb-1">PF Employee %</label><input type="number" id="opPFPct" value="${officePayState.pfPct??12}" min="0" max="30" step="0.01" oninput="updateOfficePayState('pfPct',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div><div><label class="block text-xs font-semibold text-gray-600 mb-1">ESIC Employee %</label><input type="number" id="opESICPct" value="${officePayState.esicPct??0.75}" min="0" max="5" step="0.01" oninput="updateOfficePayState('esicPct',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div><div><label class="block text-xs font-semibold text-gray-600 mb-1">PT Base /month (₹)</label><input type="number" id="opPTBase" value="${officePayState.ptBase??200}" min="0" step="1" oninput="updateOfficePayState('ptBase',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div><div><label class="block text-xs font-semibold text-gray-600 mb-1">TDS /month (₹)</label><input type="number" id="opTDSAmt" value="${officePayState.tdsAmt||0}" min="0" step="0.01" oninput="updateOfficePayState('tdsAmt',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div></div></div>
-                    <div class="border border-gray-200 rounded-xl p-4 mb-4 bg-gray-50"><p class="text-xs font-bold text-gray-600 mb-3 uppercase tracking-wide">Additional Allowance & Deduction</p><div class="grid grid-cols-2 md:grid-cols-4 gap-4"><div><label class="block text-xs font-semibold text-gray-600 mb-1">Additional Allowance (₹)</label><input type="number" id="opAddlAllowance" value="${officePayState.addlAllowance||0}" min="0" step="0.01" oninput="updateOfficePayState('addlAllowance',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div><div><label class="block text-xs font-semibold text-gray-600 mb-1">Allowance Remark</label><input type="text" id="opAddlAllowanceRemark" value="${officePayState.addlAllowanceRemark||''}" oninput="updateOfficePayState('addlAllowanceRemark',this.value)" placeholder="e.g. Festival bonus" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div><div><label class="block text-xs font-semibold text-gray-600 mb-1">Additional Deduction (₹)</label><input type="number" id="opAddlDeduction" value="${officePayState.addlDeduction||0}" min="0" step="0.01" oninput="updateOfficePayState('addlDeduction',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div><div><label class="block text-xs font-semibold text-gray-600 mb-1">Deduction Remark</label><input type="text" id="opAddlDeductionRemark" value="${officePayState.addlDeductionRemark||''}" oninput="updateOfficePayState('addlDeductionRemark',this.value)" placeholder="e.g. Advance recovery" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div></div></div>
+                    <div class="border border-gray-200 rounded-xl p-4 mb-4 bg-gray-50">
+                        <p class="text-xs font-bold text-gray-600 mb-3 uppercase tracking-wide">Leave & Adjustments</p>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Leave Taken This Month</label>
+                                <input type="number" id="opLeaveTaken" value="${officePayState.leaveTaken||0}" min="0" max="31" step="0.5" oninput="updateOfficePayState('leaveTaken',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">PF Employee %</label>
+                                <input type="number" id="opPFPct" value="${officePayState.pfPct??12}" min="0" max="30" step="0.01" oninput="updateOfficePayState('pfPct',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">ESIC Employee %</label>
+                                <input type="number" id="opESICPct" value="${officePayState.esicPct??0.75}" min="0" max="5" step="0.01" oninput="updateOfficePayState('esicPct',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">PT Base /month (₹)</label>
+                                <input type="number" id="opPTBase" value="${officePayState.ptBase??200}" min="0" step="1" oninput="updateOfficePayState('ptBase',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">TDS /month (₹)</label>
+                                <input type="number" id="opTDSAmt" value="${officePayState.tdsAmt||0}" min="0" step="0.01" oninput="updateOfficePayState('tdsAmt',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Additional Allowance (₹)</label>
+                                <input type="number" id="opAddlAllowance" value="${officePayState.addlAllowance||0}" min="0" step="0.01" oninput="updateOfficePayState('addlAllowance',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Allowance Remark</label>
+                                <input type="text" id="opAddlAllowanceRemark" value="${officePayState.addlAllowanceRemark||''}" oninput="updateOfficePayState('addlAllowanceRemark',this.value)" placeholder="e.g. Festival bonus" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Additional Deduction (₹)</label>
+                                <input type="number" id="opAddlDeduction" value="${officePayState.addlDeduction||0}" min="0" step="0.01" oninput="updateOfficePayState('addlDeduction',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Deduction Remark</label>
+                                <input type="text" id="opAddlDeductionRemark" value="${officePayState.addlDeductionRemark||''}" oninput="updateOfficePayState('addlDeductionRemark',this.value)" placeholder="e.g. Advance recovery" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                        </div>
+                    </div>
                 </div>
             </div>
-            <div id="psNoStaffMsg" class="${selID?'hidden':''}"><div class="text-center py-16 text-gray-400 bg-white border border-gray-200 rounded-xl"><div class="text-5xl mb-4">🧾</div><p class="font-medium">Select a staff member above to generate pay slip</p></div></div>
+            <div id="psNoStaffMsg" class="${selID?'hidden':''}">
+                <div class="text-center py-16 text-gray-400 bg-white border border-gray-200 rounded-xl">
+                    <div class="text-5xl mb-4">🧾</div><p class="font-medium">Select a staff member above to generate pay slip</p>
+                </div>
+            </div>
             <div id="twSection" class="${isTech&&selID?'':'hidden'}"><div id="twCalcBody">${isTech&&selID?buildTechWageCalcHTML():''}</div></div>
             <div id="opSection" class="${isOff&&selID?'':'hidden'}"><div id="opCalcBody">${isOff&&selID?buildOfficePayHTML():''}</div></div>`;
         }
@@ -5409,18 +5513,34 @@
                 document.getElementById('sCDCExpiry').value  = s.cdcExpiry||'';
                 document.getElementById('sCourseCert').value = s.courseCert||'';
                 document.getElementById('sCourseCertExpiry').value = s.courseCertExpiry||'';
-                document.getElementById('sRemarks').value        = s.remarks||'';
-                document.getElementById('sHRAPct').value         = s.hraPct       !== undefined ? s.hraPct       : 30;
-                document.getElementById('sDAPct').value          = s.daPct        !== undefined ? s.daPct        : 65;
-                document.getElementById('sGradePay').value       = s.gradePay     || '';
-                document.getElementById('sConveyance').value     = s.conveyance   || '';
-                document.getElementById('sMedical').value        = s.medical      || '';
-                document.getElementById('sVariable').value       = s.variable     || '';
-                document.getElementById('sLeavePerMonth').value  = s.leavePerMonth !== undefined ? s.leavePerMonth : 2;
-                document.getElementById('sPFPct').value          = s.pfPct        !== undefined ? s.pfPct        : 12;
-                document.getElementById('sESICPct').value        = s.esicPct      !== undefined ? s.esicPct      : 0.75;
-                document.getElementById('sPTBase').value         = s.ptBase       !== undefined ? s.ptBase       : 200;
-                document.getElementById('sTDSMonthly').value     = s.tdsMonthly   || '';
+                document.getElementById('sRemarks').value         = s.remarks||'';
+                // Office fields
+                document.getElementById('sHRAPct').value          = s.hraPct        !== undefined ? s.hraPct        : 30;
+                document.getElementById('sDAPct').value           = s.daPct         !== undefined ? s.daPct         : 65;
+                document.getElementById('sGradePay').value        = s.gradePay      || '';
+                document.getElementById('sConveyance').value      = s.conveyance    || '';
+                document.getElementById('sMedical').value         = s.medical       || '';
+                document.getElementById('sVariable').value        = s.variable      || '';
+                document.getElementById('sLeavePerMonth').value   = s.leavePerMonth !== undefined ? s.leavePerMonth  : 2;
+                document.getElementById('sPFPct').value           = s.pfPct         !== undefined ? s.pfPct          : 12;
+                document.getElementById('sESICPct').value         = s.esicPct       !== undefined ? s.esicPct        : 0.75;
+                document.getElementById('sPTBase').value          = s.ptBase        !== undefined ? s.ptBase         : 200;
+                document.getElementById('sTDSMonthly').value      = s.tdsMonthly    || '';
+                // Technician wage rate fields
+                document.getElementById('sStandbyPct').value      = s.standbyPct    !== undefined ? s.standbyPct    : 50;
+                document.getElementById('sAlPct').value           = s.alPct         !== undefined ? s.alPct         : 100;
+                document.getElementById('sUlPct').value           = s.ulPct         !== undefined ? s.ulPct         : 0;
+                document.getElementById('sTechVariable').value    = s.techVariable  || '';
+                document.getElementById('sOutstationA').value     = s.outstationA   !== undefined ? s.outstationA   : 600;
+                document.getElementById('sAnchorageA').value      = s.anchorageA    !== undefined ? s.anchorageA    : 400;
+                document.getElementById('sSailingA').value        = s.sailingA      !== undefined ? s.sailingA      : 500;
+                document.getElementById('sThresh15').value        = s.thresh15      !== undefined ? s.thresh15      : 250;
+                document.getElementById('sThresh20').value        = s.thresh20      !== undefined ? s.thresh20      : 350;
+                // Technician statutory
+                document.getElementById('sTechPFPct').value       = s.techPFPct     !== undefined ? s.techPFPct     : 12;
+                document.getElementById('sTechESICPct').value     = s.techESICPct   !== undefined ? s.techESICPct   : 0.75;
+                document.getElementById('sTechPTBase').value      = s.techPTBase    !== undefined ? s.techPTBase    : 200;
+                document.getElementById('sTechTDS').value         = s.techTDS       || '';
             }
             toggleStaffDocFields();
             document.getElementById('staffModal').classList.add('show');
@@ -5461,6 +5581,7 @@
                 courseCert:     document.getElementById('sCourseCert').value,
                 courseCertExpiry: document.getElementById('sCourseCertExpiry').value,
                 remarks:        document.getElementById('sRemarks').value,
+                // Office salary
                 hraPct:         parseFloat(document.getElementById('sHRAPct')?.value)       ?? 30,
                 daPct:          parseFloat(document.getElementById('sDAPct')?.value)        ?? 65,
                 gradePay:       parseFloat(document.getElementById('sGradePay')?.value)     || 0,
@@ -5472,6 +5593,21 @@
                 esicPct:        parseFloat(document.getElementById('sESICPct')?.value)     ?? 0.75,
                 ptBase:         parseFloat(document.getElementById('sPTBase')?.value)       ?? 200,
                 tdsMonthly:     parseFloat(document.getElementById('sTDSMonthly')?.value)   || 0,
+                // Technician wage rates
+                standbyPct:     parseFloat(document.getElementById('sStandbyPct')?.value)  ?? 50,
+                alPct:          parseFloat(document.getElementById('sAlPct')?.value)        ?? 100,
+                ulPct:          parseFloat(document.getElementById('sUlPct')?.value)        ?? 0,
+                techVariable:   parseFloat(document.getElementById('sTechVariable')?.value) || 0,
+                outstationA:    parseFloat(document.getElementById('sOutstationA')?.value)  ?? 600,
+                anchorageA:     parseFloat(document.getElementById('sAnchorageA')?.value)   ?? 400,
+                sailingA:       parseFloat(document.getElementById('sSailingA')?.value)     ?? 500,
+                thresh15:       parseFloat(document.getElementById('sThresh15')?.value)     ?? 250,
+                thresh20:       parseFloat(document.getElementById('sThresh20')?.value)     ?? 350,
+                // Technician statutory
+                techPFPct:      parseFloat(document.getElementById('sTechPFPct')?.value)   ?? 12,
+                techESICPct:    parseFloat(document.getElementById('sTechESICPct')?.value) ?? 0.75,
+                techPTBase:     parseFloat(document.getElementById('sTechPTBase')?.value)  ?? 200,
+                techTDS:        parseFloat(document.getElementById('sTechTDS')?.value)     || 0,
                 attendance:     currentStaff?.attendance || [],
                 wageRevisions:  currentStaff?.wageRevisions || [],
                 createdAt:      currentStaff?.createdAt || new Date().toISOString()
@@ -5529,24 +5665,33 @@
             renderStaffTab();
         }
 
-        // ══ WAGE REVISION — global modal, full salary components ══
+        // ══ WAGE REVISION — full technician + office support ══
         let _editWageRevID = null;
 
-        // Called on staff dropdown change — shows the right section immediately
         function onWagStaffChange(staffID) {
             const st = staff.find(x => x.staffID === staffID);
             const isTech = st && st.staffType === 'Technician';
-            const isOff  = st && !isTech;
             document.getElementById('wagTechSection').classList.toggle('hidden', !isTech);
-            document.getElementById('wagOfficeSection').classList.toggle('hidden', !isOff);
+            document.getElementById('wagOfficeSection').classList.toggle('hidden', isTech || !st);
             if (st) _wagFillDefaults(st, isTech);
         }
 
-        // Fill all fields from staff master defaults
         function _wagFillDefaults(st, isTech) {
             const fv = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined && v !== null && v !== '') el.value = v; };
             if (isTech) {
-                fv('wagVariable',       st.variable     || '');
+                fv('wagStandbyPct',   st.standbyPct   !== undefined ? st.standbyPct   : 50);
+                fv('wagAlPct',        st.alPct         !== undefined ? st.alPct         : 100);
+                fv('wagUlPct',        st.ulPct         !== undefined ? st.ulPct         : 0);
+                fv('wagTechVariable', st.techVariable  || '');
+                fv('wagOutstationA',  st.outstationA   !== undefined ? st.outstationA   : 600);
+                fv('wagAnchorageA',   st.anchorageA    !== undefined ? st.anchorageA    : 400);
+                fv('wagSailingA',     st.sailingA      !== undefined ? st.sailingA      : 500);
+                fv('wagThresh15',     st.thresh15      !== undefined ? st.thresh15      : 250);
+                fv('wagThresh20',     st.thresh20      !== undefined ? st.thresh20      : 350);
+                fv('wagTechPFPct',    st.techPFPct     !== undefined ? st.techPFPct     : 12);
+                fv('wagTechESICPct',  st.techESICPct   !== undefined ? st.techESICPct   : 0.75);
+                fv('wagTechPTBase',   st.techPTBase    !== undefined ? st.techPTBase    : 200);
+                fv('wagTechTDS',      st.techTDS       || '');
             } else {
                 fv('wagHRAPct',        st.hraPct        !== undefined ? st.hraPct        : 30);
                 fv('wagDAPct',         st.daPct         !== undefined ? st.daPct         : 65);
@@ -5564,75 +5709,66 @@
 
         function openWageModal(prefillStaffID, rev) {
             _editWageRevID = rev ? rev.revID : null;
-
-            // Update title
             const titleEl = document.getElementById('wageModalTitle');
             if (titleEl) titleEl.textContent = rev ? 'Edit Wage Revision' : 'Add Wage Revision';
 
-            // Clear all inputs individually (no form.reset() needed)
-            ['wagBasic','wagDaily','wagVariable','wagHRAPct','wagDAPct','wagGradePay',
-             'wagConveyance','wagMedical','wagVarOffice','wagLeavePerMonth',
-             'wagPFPct','wagESICPct','wagPTBase','wagTDSMonthly','wagReason'
+            // Clear all fields
+            ['wagBasic','wagDaily','wagStandbyPct','wagAlPct','wagUlPct','wagTechVariable',
+             'wagOutstationA','wagAnchorageA','wagSailingA','wagThresh15','wagThresh20',
+             'wagTechPFPct','wagTechESICPct','wagTechPTBase','wagTechTDS',
+             'wagHRAPct','wagDAPct','wagGradePay','wagConveyance','wagMedical',
+             'wagVarOffice','wagLeavePerMonth','wagPFPct','wagESICPct','wagPTBase',
+             'wagTDSMonthly','wagReason'
             ].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
             document.getElementById('wagDate').value = new Date().toISOString().split('T')[0];
 
-            // Populate staff dropdown with ALL staff
             const sel = document.getElementById('wagStaff');
             sel.innerHTML = staff.map(s =>
                 `<option value="${s.staffID}">${s.name} (${s.staffType || 'Staff'})</option>`
             ).join('');
             sel.disabled = !!rev;
 
-            // Determine which staff to pre-select
             const targetID = prefillStaffID || (rev ? rev.staffID : null) || (staff[0]?.staffID || '');
             if (targetID) sel.value = targetID;
 
-            // Determine staff type and show correct section
-            const selSt = staff.find(x => x.staffID === sel.value);
+            const selSt  = staff.find(x => x.staffID === sel.value);
             const isTech = selSt && selSt.staffType === 'Technician';
-            const isOff  = selSt && !isTech;
             document.getElementById('wagTechSection').classList.toggle('hidden', !isTech);
-            document.getElementById('wagOfficeSection').classList.toggle('hidden', !isOff);
+            document.getElementById('wagOfficeSection').classList.toggle('hidden', isTech || !selSt);
 
             if (rev) {
-                // EDIT MODE: fill from saved revision snapshot
                 const fv = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined && v !== null) el.value = v; };
-                fv('wagDate',          rev.effectiveDate);
-                fv('wagBasic',         rev.basicSalary);
-                fv('wagDaily',         rev.dailyWage);
-                fv('wagVariable',      rev.variable);        // technician variable
-                fv('wagHRAPct',        rev.hraPct);
-                fv('wagDAPct',         rev.daPct);
-                fv('wagGradePay',      rev.gradePay);
-                fv('wagConveyance',    rev.conveyance);
-                fv('wagMedical',       rev.medical);
-                fv('wagVarOffice',     rev.variable);        // office variable (same field, different input)
+                fv('wagDate',          rev.effectiveDate);  fv('wagBasic',        rev.basicSalary);
+                fv('wagDaily',         rev.dailyWage);      fv('wagReason',       rev.reason);
+                fv('wagStandbyPct',    rev.standbyPct);     fv('wagAlPct',        rev.alPct);
+                fv('wagUlPct',         rev.ulPct);           fv('wagTechVariable', rev.techVariable);
+                fv('wagOutstationA',   rev.outstationA);    fv('wagAnchorageA',   rev.anchorageA);
+                fv('wagSailingA',      rev.sailingA);       fv('wagThresh15',     rev.thresh15);
+                fv('wagThresh20',      rev.thresh20);
+                fv('wagTechPFPct',     rev.techPFPct);      fv('wagTechESICPct',  rev.techESICPct);
+                fv('wagTechPTBase',    rev.techPTBase);     fv('wagTechTDS',      rev.techTDS);
+                fv('wagHRAPct',        rev.hraPct);         fv('wagDAPct',        rev.daPct);
+                fv('wagGradePay',      rev.gradePay);       fv('wagConveyance',   rev.conveyance);
+                fv('wagMedical',       rev.medical);        fv('wagVarOffice',    rev.variable);
                 fv('wagLeavePerMonth', rev.leavePerMonth);
-                fv('wagPFPct',         rev.pfPct);
-                fv('wagESICPct',       rev.esicPct);
-                fv('wagPTBase',        rev.ptBase);
-                fv('wagTDSMonthly',    rev.tdsMonthly);
-                fv('wagReason',        rev.reason);
+                fv('wagPFPct',         rev.pfPct);          fv('wagESICPct',      rev.esicPct);
+                fv('wagPTBase',        rev.ptBase);         fv('wagTDSMonthly',   rev.tdsMonthly);
             } else if (selSt) {
-                // ADD MODE: pre-fill defaults from staff master
                 _wagFillDefaults(selSt, isTech);
             }
-
             document.getElementById('wageModal').classList.add('show');
         }
 
         function closeWageModal() {
             document.getElementById('wageModal').classList.remove('show');
             _editWageRevID = null;
-            const sel = document.getElementById('wagStaff');
-            if (sel) sel.disabled = false;
+            const sel = document.getElementById('wagStaff'); if (sel) sel.disabled = false;
         }
 
         function editWageRevision(staffID, revID) {
             const st  = staff.find(x => x.staffID === staffID);
             const rev = (st?.wageRevisions || []).find(r => r.revID === revID);
-            if (rev) openWageModal(staffID, rev);
-            else alert('Revision not found.');
+            if (rev) openWageModal(staffID, rev); else alert('Revision not found.');
         }
 
         async function saveWageRevision(e) {
@@ -5644,41 +5780,32 @@
             if (!staff[idx].wageRevisions) staff[idx].wageRevisions = [];
 
             const pf = id => parseFloat(document.getElementById(id)?.value) || 0;
+            const pn = id => { const v = document.getElementById(id)?.value; return (v !== '' && v !== undefined && v !== null) ? parseFloat(v) : undefined; };
             const ps = id => document.getElementById(id)?.value?.trim() || '';
-            const pn = id => { const v = document.getElementById(id)?.value; return v !== '' && v !== undefined ? parseFloat(v) : undefined; };
-
-            const selSt   = staff.find(x => x.staffID === sid);
-            const isTech  = selSt && selSt.staffType === 'Technician';
-
-            const newBasic        = pf('wagBasic');
-            const newDaily        = pf('wagDaily');
-            // Variable: technician uses wagVariable, office uses wagVarOffice
-            const newVariable     = isTech ? pf('wagVariable') : pf('wagVarOffice');
-            const newHRAPct       = pn('wagHRAPct');
-            const newDAPct        = pn('wagDAPct');
-            const newGradePay     = pf('wagGradePay');
-            const newConveyance   = pf('wagConveyance');
-            const newMedical      = pf('wagMedical');
-            const newLeavePerMonth= pn('wagLeavePerMonth');
-            const newPFPct        = pn('wagPFPct');
-            const newESICPct      = pn('wagESICPct');
-            const newPTBase       = pn('wagPTBase');
-            const newTDSMonthly   = pf('wagTDSMonthly');
-            const newDate         = ps('wagDate');
-            const newReason       = ps('wagReason');
-
+            const newDate = ps('wagDate');
             if (!newDate) { alert('Please enter an effective date.'); return; }
 
+            const selSt  = staff.find(x => x.staffID === sid);
+            const isTech = selSt && selSt.staffType === 'Technician';
+
             const revRecord = {
-                effectiveDate:  newDate,
-                basicSalary:    newBasic,     dailyWage:      newDaily,
-                variable:       newVariable,
-                hraPct:         newHRAPct,    daPct:          newDAPct,
-                gradePay:       newGradePay,  conveyance:     newConveyance,
-                medical:        newMedical,   leavePerMonth:  newLeavePerMonth,
-                pfPct:          newPFPct,     esicPct:        newESICPct,
-                ptBase:         newPTBase,    tdsMonthly:     newTDSMonthly,
-                reason:         newReason
+                effectiveDate: newDate,      reason:        ps('wagReason'),
+                basicSalary:   pf('wagBasic'), dailyWage:   pf('wagDaily'),
+                // Technician
+                standbyPct:    pn('wagStandbyPct'),  alPct:        pn('wagAlPct'),
+                ulPct:         pn('wagUlPct'),        techVariable: pf('wagTechVariable'),
+                outstationA:   pn('wagOutstationA'), anchorageA:   pn('wagAnchorageA'),
+                sailingA:      pn('wagSailingA'),    thresh15:     pn('wagThresh15'),
+                thresh20:      pn('wagThresh20'),
+                techPFPct:     pn('wagTechPFPct'),   techESICPct:  pn('wagTechESICPct'),
+                techPTBase:    pn('wagTechPTBase'),  techTDS:      pf('wagTechTDS'),
+                // Office
+                hraPct:        pn('wagHRAPct'),      daPct:        pn('wagDAPct'),
+                gradePay:      pf('wagGradePay'),    conveyance:   pf('wagConveyance'),
+                medical:       pf('wagMedical'),     variable:     pf('wagVarOffice'),
+                leavePerMonth: pn('wagLeavePerMonth'),
+                pfPct:         pn('wagPFPct'),       esicPct:      pn('wagESICPct'),
+                ptBase:        pn('wagPTBase'),      tdsMonthly:   pf('wagTDSMonthly'),
             };
 
             if (_editWageRevID) {
@@ -5689,21 +5816,28 @@
                 staff[idx].wageRevisions.push(revRecord);
             }
 
-            // Sync all changes back to live staff record
-            if (newBasic)                staff[idx].basicSalary  = newBasic;
-            if (newDaily)                staff[idx].dailyWage     = newDaily;
-            if (newVariable)             staff[idx].variable      = newVariable;
-            if (newHRAPct !== undefined) staff[idx].hraPct        = newHRAPct;
-            if (newDAPct  !== undefined) staff[idx].daPct         = newDAPct;
-            if (newGradePay)             staff[idx].gradePay      = newGradePay;
-            if (newConveyance)           staff[idx].conveyance    = newConveyance;
-            if (newMedical)              staff[idx].medical       = newMedical;
-            if (newLeavePerMonth !== undefined) staff[idx].leavePerMonth = newLeavePerMonth;
-            if (newPFPct  !== undefined) staff[idx].pfPct         = newPFPct;
-            if (newESICPct!== undefined) staff[idx].esicPct       = newESICPct;
-            if (newPTBase !== undefined) staff[idx].ptBase        = newPTBase;
-            staff[idx].tdsMonthly = newTDSMonthly;
-
+            // Sync back to staff master
+            const sync = (k, v) => { if (v !== undefined && v !== null) staff[idx][k] = v; };
+            sync('basicSalary', revRecord.basicSalary || undefined);
+            sync('dailyWage',   revRecord.dailyWage   || undefined);
+            if (isTech) {
+                sync('standbyPct',  revRecord.standbyPct); sync('alPct',        revRecord.alPct);
+                sync('ulPct',       revRecord.ulPct);       sync('techVariable', revRecord.techVariable || undefined);
+                sync('outstationA', revRecord.outstationA); sync('anchorageA',   revRecord.anchorageA);
+                sync('sailingA',    revRecord.sailingA);    sync('thresh15',     revRecord.thresh15);
+                sync('thresh20',    revRecord.thresh20);
+                sync('techPFPct',   revRecord.techPFPct);   sync('techESICPct',  revRecord.techESICPct);
+                sync('techPTBase',  revRecord.techPTBase);  staff[idx].techTDS = revRecord.techTDS;
+            } else {
+                sync('hraPct',       revRecord.hraPct);     sync('daPct',        revRecord.daPct);
+                sync('gradePay',     revRecord.gradePay || undefined);
+                sync('conveyance',   revRecord.conveyance || undefined);
+                sync('medical',      revRecord.medical   || undefined);
+                sync('variable',     revRecord.variable  || undefined);
+                sync('leavePerMonth',revRecord.leavePerMonth);
+                sync('pfPct',        revRecord.pfPct);      sync('esicPct',      revRecord.esicPct);
+                sync('ptBase',       revRecord.ptBase);     staff[idx].tdsMonthly = revRecord.tdsMonthly;
+            }
             await saveData('staff', staff);
             closeWageModal();
             renderView();
@@ -5720,9 +5854,9 @@
 
 
         function generatePaySlipPDF(){const techV=!document.getElementById('twSection')?.classList.contains('hidden'),offV=!document.getElementById('opSection')?.classList.contains('hidden');if(techV)_pdfTech();else if(offV)_pdfOffice();else alert('Please select a staff member first.');}
-        function _pdfHeader(doc,l1,l2,l3){doc.setFillColor(224,242,254);doc.rect(0,0,210,40,'F');doc.setFillColor(186,230,253);doc.rect(0,36,210,4,'F');doc.setFontSize(17);doc.setFont('helvetica','bold');doc.setTextColor(15,23,72);doc.text(l1,105,13,{align:'center'});doc.setFontSize(11);doc.setFont('helvetica','normal');doc.setTextColor(30,64,175);doc.text(l2,105,23,{align:'center'});doc.setFontSize(8.5);doc.setTextColor(71,85,105);doc.text(l3,105,31,{align:'center'});doc.setTextColor(0,0,0);}
-        function _pdfTech(){const{jsPDF}=window.jspdf,s=techWageState;if(!s.dailyWage){alert('Please enter a daily wage.');return;}const st=staff.find(x=>x.staffID===s.staffID),nm=st?st.name:'Technician',cal=calcTechWage(s),dates=getTechWagePeriodDates(s.periodYear,s.periodMonth),pl=dates[0].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})+' to '+dates[29].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}),mL=new Date(s.periodYear,s.periodMonth-1,1).toLocaleString('en-IN',{month:'long',year:'numeric'}),doc=new jsPDF(),INR=n=>'INR '+Math.round(n).toLocaleString('en-IN',{minimumFractionDigits:2}),RT=n=>Math.round(n).toLocaleString('en-IN');_pdfHeader(doc,(settings.companyName||'EASY EMS').toUpperCase(),'FIELD TECHNICIAN PAY SLIP — '+mL.toUpperCase(),'Pay Period: '+pl);let y=48;doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:9},headStyles:{fillColor:[186,230,253],textColor:[15,23,72],fontStyle:'bold'},head:[['Field','Details','Field','Details']],body:[['Employee',nm,'Designation',st?.designation||'—'],['Staff Type','Field Technician','Date of Joining',st?.doj||'—'],['PAN',st?.pan||'—','PF Number',st?.pfNumber||'—'],['ESIC',st?.esicNumber||'—','Daily Wage',INR(s.dailyWage)],['Pay Period',pl,'Engaged Days',String(cal.eng)]],columnStyles:{0:{cellWidth:35,fontStyle:'bold'},2:{cellWidth:35,fontStyle:'bold'}}});y=doc.lastAutoTable.finalY+6;const att=Object.entries(ATT_TYPES).filter(([t])=>t&&cal.c[t]>0).map(([t,tp])=>[tp.label,cal.c[t]+' day'+(cal.c[t]>1?'s':'')]);if(att.length){const rows=[];for(let i=0;i<att.length;i+=2)rows.push([att[i][0],att[i][1],att[i+1]?att[i+1][0]:'',att[i+1]?att[i+1][1]:'']);doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:8},headStyles:{fillColor:[226,232,240],textColor:[15,23,72]},head:[['Attendance Type','Days','Attendance Type','Days']],body:rows});y=doc.lastAutoTable.finalY+6;}const sC={Wage:[30,78,216],Allowance:[14,116,144],Threshold:[21,128,61],Retention:[124,58,237]};doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:9},headStyles:{fillColor:[186,230,253],textColor:[15,23,72],fontStyle:'bold'},head:[['Wage Component','Days','Rate (₹)','Amount (₹)']],body:cal.rows.map(r=>[r.name,r.days!==null?String(r.days):'—',r.rate!==null?RT(r.rate):'—',INR(r.amt)]),columnStyles:{0:{cellWidth:90},1:{halign:'right',cellWidth:20},2:{halign:'right',cellWidth:30},3:{halign:'right',cellWidth:40}},didParseCell:function(d){if(d.section==='body'&&cal.rows[d.row.index]){const sec=cal.rows[d.row.index].sec;if(sec==='Allowance')d.cell.styles.fillColor=[236,254,255];if(sec==='Threshold')d.cell.styles.fillColor=[240,253,244];if(sec==='Retention')d.cell.styles.fillColor=[245,243,255];if(d.column.index===3)d.cell.styles.textColor=sC[sec]||[0,0,0];}}});y=doc.lastAutoTable.finalY+2;doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:12,fontStyle:'bold'},body:[['GROSS PAY — '+nm.toUpperCase(),INR(cal.gross)]],columnStyles:{0:{cellWidth:140,fillColor:[224,242,254],textColor:[15,23,72]},1:{halign:'right',fillColor:[186,230,253],textColor:[15,23,72],cellWidth:40}}});y=doc.lastAutoTable.finalY+12;const notes=[];if(cal.eng>=15)notes.push(`15+ day allowance: ${INR(cal.t15)} (${cal.eng} engaged × ${INR(s.rates.t15)}/day)`);if(cal.eng>=20)notes.push(`20+ day allowance: ${INR(cal.t20)} (${cal.eng} engaged × ${INR(s.rates.t20)}/day)`);if(cal.isRet)notes.push(`Retention pay: full-month standby. 12 × ${INR(s.dailyWage)}`);if(notes.length){doc.setFontSize(8);doc.setFont('helvetica','italic');doc.setTextColor(80,80,80);notes.forEach(n=>{const ls=doc.splitTextToSize('* '+n,182);doc.text(ls,14,y);y+=ls.length*4.5;});doc.setFont('helvetica','normal');doc.setTextColor(0,0,0);}if(y+28>265){doc.addPage();y=20;}y+=6;doc.setFontSize(9);doc.text('Employee Signature: ___________________',14,y);doc.text('Authorised by: ___________________',130,y);doc.setFontSize(7);doc.setTextColor(150,150,150);doc.text('Generated by EASY EMS · '+new Date().toLocaleDateString('en-IN'),105,292,{align:'center'});doc.save(`PaySlip_${nm.replace(/\s+/g,'_')}_${mL.replace(/\s+/g,'_')}.pdf`);}
-        function _pdfOffice(){const{jsPDF}=window.jspdf,op=officePayState,st=staff.find(x=>x.staffID===op.staffID);if(!st){alert('Please select a staff member.');return;}const c=computeOfficeSalary(st,op),MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'],mL=MONTHS[op.periodMonth-1]+' '+op.periodYear,doc=new jsPDF(),INR=n=>'INR '+Math.max(0,parseFloat(n)||0).toLocaleString('en-IN',{minimumFractionDigits:2});_pdfHeader(doc,(settings.companyName||'EASY EMS').toUpperCase(),'OFFICE STAFF PAY SLIP — '+mL.toUpperCase(),'Salary for the month of '+mL);let y=48;doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:9},headStyles:{fillColor:[186,230,253],textColor:[15,23,72],fontStyle:'bold'},head:[['Field','Details','Field','Details']],body:[['Employee Name',st.name,'Designation',st.designation||'—'],['Staff Type',st.staffType||'Office','Date of Joining',st.doj||'—'],['PAN Number',st.pan||'—','PF Number',st.pfNumber||'—'],['ESIC Number',st.esicNumber||'—','Pay Month',mL],['Leave Eligible/Month',String(c.leavePerMonth),'Leave Taken',String(c.leaveTaken)]],columnStyles:{0:{cellWidth:38,fontStyle:'bold'},2:{cellWidth:38,fontStyle:'bold'}}});y=doc.lastAutoTable.finalY+8;const earRows=[['Basic Salary',INR(c.basic)]];if(c.hra>0)earRows.push([`HRA (${c.hraPct}% of Basic)`,INR(c.hra)]);if(c.da>0)earRows.push([`DA (${c.daPct}% of Basic)`,INR(c.da)]);if(c.gradePay>0)earRows.push(['Grade Pay',INR(c.gradePay)]);if(c.conveyance>0)earRows.push(['Conveyance Allowance',INR(c.conveyance)]);if(c.medical>0)earRows.push(['Medical Allowance',INR(c.medical)]);earRows.push(['Annual Bonus ((Basic+DA)÷12)',INR(c.bonus)]);if(c.variable>0)earRows.push(['Variable Allowance',INR(c.variable)]);if(c.addlAllow>0)earRows.push([(op.addlAllowanceRemark?'Additional: '+op.addlAllowanceRemark:'Additional Allowance'),INR(c.addlAllow)]);earRows.push([{content:'GROSS EARNINGS',styles:{fontStyle:'bold',fillColor:[224,242,254],textColor:[15,23,72]}},{content:INR(c.gross),styles:{fontStyle:'bold',fillColor:[186,230,253],textColor:[15,23,72]}}]);const dedRows=[];if(c.pfAmt>0)dedRows.push([`PF – Employee ${c.pfPct}%`+(c.pfCapped?' (on ₹15,000)':' (on Basic)'),INR(c.pfAmt)]);if(c.esicWaived)dedRows.push(['ESIC – NIL (Gross > ₹20,000)','—']);else if(c.esicAmt>0)dedRows.push([`ESIC – Employee ${c.esicPct}%`,INR(c.esicAmt)]);if(c.ptAmt>0)dedRows.push([`Professional Tax (PT)`+(c.isMarchFY?' – March':''),INR(c.ptAmt)]);if(c.tdsAmt>0)dedRows.push(['Income Tax TDS',INR(c.tdsAmt)]);if(c.lopDays>0)dedRows.push([`Loss of Pay – ${c.lopDays} day${c.lopDays===1?'':'s'}`,INR(c.lopAmt)]);if(c.addlDed>0)dedRows.push([(op.addlDeductionRemark?'Other: '+op.addlDeductionRemark:'Other Deduction'),INR(c.addlDed)]);if(!dedRows.length)dedRows.push(['No deductions this period','—']);dedRows.push([{content:'TOTAL DEDUCTIONS',styles:{fontStyle:'bold',fillColor:[254,226,226],textColor:[153,27,27]}},{content:INR(c.totalDed),styles:{fontStyle:'bold',fillColor:[254,202,202],textColor:[153,27,27]}}]);const maxR=Math.max(earRows.length,dedRows.length);while(earRows.length<maxR)earRows.splice(earRows.length-1,0,['','']);while(dedRows.length<maxR)dedRows.splice(dedRows.length-1,0,['','']);const combined=earRows.map((er,i)=>[er[0],er[1],dedRows[i][0],dedRows[i][1]]);doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:8.5},headStyles:{fillColor:[186,230,253],textColor:[15,23,72],fontStyle:'bold',fontSize:9},head:[['EARNINGS','Amount (₹)','DEDUCTIONS','Amount (₹)']],body:combined,columnStyles:{0:{cellWidth:58},1:{halign:'right',cellWidth:34},2:{cellWidth:58},3:{halign:'right',cellWidth:34}}});y=doc.lastAutoTable.finalY+4;doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:12,fontStyle:'bold'},body:[['NET PAY — '+st.name.toUpperCase()+' — '+mL,INR(c.netPay)]],columnStyles:{0:{cellWidth:150,fillColor:[224,242,254],textColor:[15,23,72]},1:{halign:'right',fillColor:[186,230,253],textColor:[15,23,72],cellWidth:34}}});y=doc.lastAutoTable.finalY+8;doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:8.5},headStyles:{fillColor:[186,230,253],textColor:[15,23,72],fontStyle:'bold'},head:[['Leave Eligible/Month','Leave Taken','Balance / LOP','LOP Days','LOP Amount']],body:[[String(c.leavePerMonth),String(c.leaveTaken),c.leaveBalance>=0?c.leaveBalance+' days left':Math.abs(c.leaveBalance)+' excess',String(c.lopDays),c.lopDays>0?INR(c.lopAmt):'—']]});y=doc.lastAutoTable.finalY+10;if(y+10>275){doc.addPage();y=20;}doc.setFontSize(8);doc.setFont('helvetica','italic');doc.setTextColor(60,60,60);doc.text('Net Pay in Words: '+numberToWords(c.netPay),14,y);y+=12;doc.setFont('helvetica','normal');doc.setTextColor(0,0,0);if(y+28>265){doc.addPage();y=20;}doc.setFontSize(9);doc.text('Employee Signature: ___________________',14,y);doc.text('Authorised by: ___________________',130,y);doc.setFontSize(7);doc.setTextColor(150,150,150);doc.text('Generated by EASY EMS · '+new Date().toLocaleDateString('en-IN'),105,292,{align:'center'});doc.save(`PaySlip_${st.name.replace(/\s+/g,'_')}_${mL.replace(/\s+/g,'_')}.pdf`);}
+        function _pdfHdr(doc,l1,l2,l3){doc.setFillColor(224,242,254);doc.rect(0,0,210,40,'F');doc.setFillColor(186,230,253);doc.rect(0,36,210,4,'F');doc.setFontSize(17);doc.setFont('helvetica','bold');doc.setTextColor(15,23,72);doc.text(l1,105,13,{align:'center'});doc.setFontSize(11);doc.setFont('helvetica','normal');doc.setTextColor(30,64,175);doc.text(l2,105,23,{align:'center'});doc.setFontSize(8.5);doc.setTextColor(71,85,105);doc.text(l3,105,31,{align:'center'});doc.setTextColor(0,0,0);}
+        function _pdfTech(){const{jsPDF}=window.jspdf,s=techWageState;if(!s.dailyWage){alert('Please enter a daily wage.');return;}const st=staff.find(x=>x.staffID===s.staffID),nm=st?st.name:'Technician',cal=calcTechWage(s),dates=getTechWagePeriodDates(s.periodYear,s.periodMonth),pl=dates[0].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})+' to '+dates[29].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}),mL=new Date(s.periodYear,s.periodMonth-1,1).toLocaleString('en-IN',{month:'long',year:'numeric'}),doc=new jsPDF(),INR=n=>'INR '+Math.round(n).toLocaleString('en-IN',{minimumFractionDigits:2}),RT=n=>Math.round(n).toLocaleString('en-IN');_pdfHdr(doc,(settings.companyName||'EASY EMS').toUpperCase(),'FIELD TECHNICIAN PAY SLIP — '+mL.toUpperCase(),'Pay Period: '+pl);let y=48;doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:9},headStyles:{fillColor:[186,230,253],textColor:[15,23,72],fontStyle:'bold'},head:[['Field','Details','Field','Details']],body:[['Employee',nm,'Designation',st?.designation||'—'],['Staff Type','Field Technician','Date of Joining',st?.doj||'—'],['PAN',st?.pan||'—','PF Number',st?.pfNumber||'—'],['ESIC',st?.esicNumber||'—','Daily Wage',INR(s.dailyWage)],['Pay Period',pl,'Engaged Days',String(cal.eng)]],columnStyles:{0:{cellWidth:35,fontStyle:'bold'},2:{cellWidth:35,fontStyle:'bold'}}});y=doc.lastAutoTable.finalY+6;const att=Object.entries(ATT_TYPES).filter(([t])=>t&&cal.c[t]>0).map(([t,tp])=>[tp.label,cal.c[t]+' day'+(cal.c[t]>1?'s':'')]);if(att.length){const rows=[];for(let i=0;i<att.length;i+=2)rows.push([att[i][0],att[i][1],att[i+1]?att[i+1][0]:'',att[i+1]?att[i+1][1]:'']);doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:8},headStyles:{fillColor:[226,232,240],textColor:[15,23,72]},head:[['Attendance Type','Days','Attendance Type','Days']],body:rows});y=doc.lastAutoTable.finalY+6;}const sC={Wage:[30,78,216],Allowance:[14,116,144],Threshold:[21,128,61],Retention:[124,58,237]};doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:9},headStyles:{fillColor:[186,230,253],textColor:[15,23,72],fontStyle:'bold'},head:[['Wage Component','Days','Rate (₹)','Amount (₹)']],body:cal.rows.map(r=>[r.name,r.days!==null?String(r.days):'—',r.rate!==null?RT(r.rate):'—',INR(r.amt)]),columnStyles:{0:{cellWidth:90},1:{halign:'right',cellWidth:20},2:{halign:'right',cellWidth:30},3:{halign:'right',cellWidth:40}},didParseCell:function(d){if(d.section==='body'&&cal.rows[d.row.index]){const sc=cal.rows[d.row.index].sec;if(sc==='Allowance')d.cell.styles.fillColor=[236,254,255];if(sc==='Threshold')d.cell.styles.fillColor=[240,253,244];if(sc==='Retention')d.cell.styles.fillColor=[245,243,255];if(d.column.index===3)d.cell.styles.textColor=sC[sc]||[0,0,0];}}});y=doc.lastAutoTable.finalY+2;doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:12,fontStyle:'bold'},body:[['GROSS PAY — '+nm.toUpperCase(),INR(cal.gross)]],columnStyles:{0:{cellWidth:140,fillColor:[224,242,254],textColor:[15,23,72]},1:{halign:'right',fillColor:[186,230,253],textColor:[15,23,72],cellWidth:40}}});y=doc.lastAutoTable.finalY+12;const notes=[];if(cal.eng>=15)notes.push(`15+ day allowance: ${INR(cal.t15)} (${cal.eng} engaged × ${INR(s.rates.t15)}/day)`);if(cal.eng>=20)notes.push(`20+ day allowance: ${INR(cal.t20)} (${cal.eng} engaged × ${INR(s.rates.t20)}/day)`);if(cal.isRet)notes.push(`Retention pay: full-month standby. 12 × ${INR(s.dailyWage)}`);if(notes.length){doc.setFontSize(8);doc.setFont('helvetica','italic');doc.setTextColor(80,80,80);notes.forEach(n=>{const ls=doc.splitTextToSize('* '+n,182);doc.text(ls,14,y);y+=ls.length*4.5;});doc.setFont('helvetica','normal');doc.setTextColor(0,0,0);}if(y+28>265){doc.addPage();y=20;}y+=6;doc.setFontSize(9);doc.text('Employee Signature: ___________________',14,y);doc.text('Authorised by: ___________________',130,y);doc.setFontSize(7);doc.setTextColor(150,150,150);doc.text('Generated by EASY EMS · '+new Date().toLocaleDateString('en-IN'),105,292,{align:'center'});doc.save(`PaySlip_${nm.replace(/\s+/g,'_')}_${mL.replace(/\s+/g,'_')}.pdf`);}
+        function _pdfOffice(){const{jsPDF}=window.jspdf,op=officePayState,st=staff.find(x=>x.staffID===op.staffID);if(!st){alert('Please select a staff member.');return;}const c=computeOfficeSalary(st,op),MN=['January','February','March','April','May','June','July','August','September','October','November','December'],mL=MN[op.periodMonth-1]+' '+op.periodYear,doc=new jsPDF(),INR=n=>'INR '+Math.max(0,+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});_pdfHdr(doc,(settings.companyName||'EASY EMS').toUpperCase(),'OFFICE STAFF PAY SLIP — '+mL.toUpperCase(),'Salary for the month of '+mL);let y=48;doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:9},headStyles:{fillColor:[186,230,253],textColor:[15,23,72],fontStyle:'bold'},head:[['Field','Details','Field','Details']],body:[['Employee Name',st.name,'Designation',st.designation||'—'],['Staff Type',st.staffType||'Office','Date of Joining',st.doj||'—'],['PAN Number',st.pan||'—','PF Number',st.pfNumber||'—'],['ESIC Number',st.esicNumber||'—','Pay Month',mL],['Leave Eligible/Month',String(c.leavePerMonth),'Leave Taken',String(c.leaveTaken)]],columnStyles:{0:{cellWidth:38,fontStyle:'bold'},2:{cellWidth:38,fontStyle:'bold'}}});y=doc.lastAutoTable.finalY+8;const earRows=[['Basic Salary',INR(c.basic)]];if(c.hra>0)earRows.push([`HRA (${c.hraPct}% of Basic)`,INR(c.hra)]);if(c.da>0)earRows.push([`DA (${c.daPct}% of Basic)`,INR(c.da)]);if(c.gradePay>0)earRows.push(['Grade Pay',INR(c.gradePay)]);if(c.conveyance>0)earRows.push(['Conveyance Allow.',INR(c.conveyance)]);if(c.medical>0)earRows.push(['Medical Allow.',INR(c.medical)]);earRows.push(['Annual Bonus ((B+DA)÷12)',INR(c.bonus)]);if(c.variable>0)earRows.push(['Variable Allow.',INR(c.variable)]);if(c.addlAllow>0)earRows.push([(op.addlAllowanceRemark?'Add: '+op.addlAllowanceRemark:'Additional Allow.'),INR(c.addlAllow)]);earRows.push([{content:'GROSS EARNINGS',styles:{fontStyle:'bold',fillColor:[224,242,254],textColor:[15,23,72]}},{content:INR(c.gross),styles:{fontStyle:'bold',fillColor:[186,230,253],textColor:[15,23,72]}}]);const dedRows=[];if(c.pfAmt>0)dedRows.push([`PF – Employee ${c.pfPct}%`+(c.pfCapped?' (on ₹15,000)':' (on Basic)'),INR(c.pfAmt)]);if(c.esicWaived)dedRows.push(['ESIC – NIL (Gross>₹20k)','—']);else if(c.esicAmt>0)dedRows.push([`ESIC – Employee ${c.esicPct}%`,INR(c.esicAmt)]);if(c.ptAmt>0)dedRows.push([`Professional Tax (PT)`+(c.isMarchFY?' – March':''),INR(c.ptAmt)]);if(c.tdsAmt>0)dedRows.push(['Income Tax TDS',INR(c.tdsAmt)]);if(c.lopDays>0)dedRows.push([`Loss of Pay – ${c.lopDays} day${c.lopDays===1?'':'s'}`,INR(c.lopAmt)]);if(c.addlDed>0)dedRows.push([(op.addlDeductionRemark?'Other: '+op.addlDeductionRemark:'Other Deduction'),INR(c.addlDed)]);if(!dedRows.length)dedRows.push(['No deductions this period','—']);dedRows.push([{content:'TOTAL DEDUCTIONS',styles:{fontStyle:'bold',fillColor:[254,226,226],textColor:[153,27,27]}},{content:INR(c.totalDed),styles:{fontStyle:'bold',fillColor:[254,202,202],textColor:[153,27,27]}}]);const maxR=Math.max(earRows.length,dedRows.length);while(earRows.length<maxR)earRows.splice(earRows.length-1,0,['','']);while(dedRows.length<maxR)dedRows.splice(dedRows.length-1,0,['','']);const combined=earRows.map((er,i)=>[er[0],er[1],dedRows[i][0],dedRows[i][1]]);doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:8.5},headStyles:{fillColor:[186,230,253],textColor:[15,23,72],fontStyle:'bold',fontSize:9},head:[['EARNINGS','Amount (₹)','DEDUCTIONS','Amount (₹)']],body:combined,columnStyles:{0:{cellWidth:58},1:{halign:'right',cellWidth:34},2:{cellWidth:58},3:{halign:'right',cellWidth:34}}});y=doc.lastAutoTable.finalY+4;doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:12,fontStyle:'bold'},body:[['NET PAY — '+st.name.toUpperCase()+' — '+mL,INR(c.netPay)]],columnStyles:{0:{cellWidth:150,fillColor:[224,242,254],textColor:[15,23,72]},1:{halign:'right',fillColor:[186,230,253],textColor:[15,23,72],cellWidth:34}}});y=doc.lastAutoTable.finalY+8;if(y+28>265){doc.addPage();y=20;}doc.setFontSize(9);doc.text('Employee Signature: ___________________',14,y);doc.text('Authorised by: ___________________',130,y);doc.setFontSize(7);doc.setTextColor(150,150,150);doc.text('Generated by EASY EMS · '+new Date().toLocaleDateString('en-IN'),105,292,{align:'center'});doc.save(`PaySlip_${st.name.replace(/\s+/g,'_')}_${mL.replace(/\s+/g,'_')}.pdf`);}
         // ════════════════════════════════════════════════════════════════════
         //  MODULE 2 — PROJECT EXPENSES (Food, Travel, Reimbursement)
         // ════════════════════════════════════════════════════════════════════
@@ -6277,143 +6411,114 @@
             doc.save(`WorkReport_${projectName.replace(/\s+/g,'_')}_${new Date().toISOString().slice(0,10)}.pdf`);
         }
     </script>
-    <!-- ══ WAGE REVISION MODAL — permanent, always in DOM ══ -->
+    <!-- WAGE REVISION MODAL — permanent global element, always in DOM -->
     <div id="wageModal" class="modal">
         <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl m-4 max-h-[92vh] overflow-y-auto">
             <div class="bg-gradient-to-r from-green-600 to-teal-600 p-5 text-white flex justify-between items-center sticky top-0 z-10 rounded-t-2xl">
                 <h2 class="text-lg font-bold" id="wageModalTitle">Add Wage Revision</h2>
-                <button onclick="closeWageModal()" class="text-white text-2xl font-bold leading-none hover:opacity-75">&times;</button>
+                <button onclick="closeWageModal()" class="text-white text-2xl font-bold leading-none">&times;</button>
             </div>
             <div class="p-6 space-y-4">
-                <!-- Staff + Date — always visible -->
                 <div class="grid grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">Staff Member *</label>
-                        <select id="wagStaff" class="w-full px-3 py-2 border rounded-lg text-sm" required
-                            onchange="onWagStaffChange(this.value)"></select>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">Effective Date *</label>
-                        <input type="date" id="wagDate" class="w-full px-3 py-2 border rounded-lg text-sm" required/>
-                    </div>
+                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Staff Member *</label>
+                        <select id="wagStaff" class="w-full px-3 py-2 border rounded-lg text-sm" required onchange="onWagStaffChange(this.value)"></select></div>
+                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Effective Date *</label>
+                        <input type="date" id="wagDate" class="w-full px-3 py-2 border rounded-lg text-sm" required/></div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">New Basic Salary (₹) <span class="font-normal text-gray-400">Office staff</span></label>
+                        <input type="number" id="wagBasic" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">New Daily Wage (₹) <span class="font-normal text-gray-400">Technician</span></label>
+                        <input type="number" id="wagDaily" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                 </div>
 
-                <!-- Basic Salary + Daily Wage — always visible (relevant field fills based on type) -->
-                <div class="grid grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">
-                            New Basic Salary (₹) <span class="text-gray-400 font-normal" id="wagBasicHint">Office staff</span>
-                        </label>
-                        <input type="number" id="wagBasic" placeholder="0.00" min="0" step="0.01"
-                            class="w-full px-3 py-2 border rounded-lg text-sm"/>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">
-                            New Daily Wage (₹) <span class="text-gray-400 font-normal">Technician</span>
-                        </label>
-                        <input type="number" id="wagDaily" placeholder="0.00" min="0" step="0.01"
-                            class="w-full px-3 py-2 border rounded-lg text-sm"/>
-                    </div>
-                </div>
-
-                <!-- ══ TECHNICIAN SECTION — variable allowance ══ -->
-                <div id="wagTechSection" class="hidden">
+                <!-- TECHNICIAN SECTION -->
+                <div id="wagTechSection" class="hidden space-y-3">
                     <div class="bg-blue-50 border border-blue-200 rounded-xl p-4">
-                        <p class="text-xs font-bold text-blue-700 mb-3 uppercase tracking-wide">🔧 Technician Allowance</p>
-                        <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
-                            <div>
-                                <label class="block text-xs font-semibold text-gray-600 mb-1">Variable Allowance (₹)</label>
-                                <input type="number" id="wagVariable" placeholder="0.00" min="0" step="0.01"
-                                    class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/>
-                            </div>
+                        <p class="text-xs font-bold text-blue-700 mb-3 uppercase tracking-wide">⚙️ Wage Components & Attendance Rates</p>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Stand By Rate (%)</label>
+                                <input type="number" id="wagStandbyPct" placeholder="50" min="0" max="100" step="1" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Approved Leave Rate (%)</label>
+                                <input type="number" id="wagAlPct" placeholder="100" min="0" max="100" step="1" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Unapproved Leave Rate (%)</label>
+                                <input type="number" id="wagUlPct" placeholder="0" min="0" max="100" step="1" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Variable Allowance (₹/month)</label>
+                                <input type="number" id="wagTechVariable" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                        </div>
+                        <p class="text-xs font-semibold text-gray-500 mb-2">Project Allowances (₹/day)</p>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Outstation Allow /day</label>
+                                <input type="number" id="wagOutstationA" placeholder="600" min="0" step="1" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Anchorage Allow /day</label>
+                                <input type="number" id="wagAnchorageA" placeholder="400" min="0" step="1" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Sailing Allow /day</label>
+                                <input type="number" id="wagSailingA" placeholder="500" min="0" step="1" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                        </div>
+                        <p class="text-xs font-semibold text-gray-500 mb-2">Threshold Allowances (₹/engaged day)</p>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">15+ Days Allow /day</label>
+                                <input type="number" id="wagThresh15" placeholder="250" min="0" step="1" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">20+ Days Allow /day</label>
+                                <input type="number" id="wagThresh20" placeholder="350" min="0" step="1" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                        </div>
+                    </div>
+                    <div class="bg-red-50 border border-red-200 rounded-xl p-4">
+                        <p class="text-xs font-bold text-red-700 mb-3 uppercase tracking-wide">📋 Statutory Deductions (Technician)</p>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">PF Employee %</label>
+                                <input type="number" id="wagTechPFPct" placeholder="12" min="0" max="30" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">ESIC Employee %</label>
+                                <input type="number" id="wagTechESICPct" placeholder="0.75" min="0" max="5" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">PT Base /month (₹)</label>
+                                <input type="number" id="wagTechPTBase" placeholder="200" min="0" step="1" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">TDS /month (₹)</label>
+                                <input type="number" id="wagTechTDS" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
                         </div>
                     </div>
                 </div>
 
-                <!-- ══ OFFICE SECTION — all salary components ══ -->
+                <!-- OFFICE SECTION -->
                 <div id="wagOfficeSection" class="hidden space-y-3">
-                    <!-- Salary Structure -->
                     <div class="bg-purple-50 border border-purple-200 rounded-xl p-4">
                         <p class="text-xs font-bold text-purple-700 mb-3 uppercase tracking-wide">💼 Salary Structure</p>
                         <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-                            <div>
-                                <label class="block text-xs font-semibold text-gray-600 mb-1">HRA % <span class="text-gray-400">(of Basic)</span></label>
-                                <input type="number" id="wagHRAPct" placeholder="30" min="0" max="100" step="0.01"
-                                    class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/>
-                            </div>
-                            <div>
-                                <label class="block text-xs font-semibold text-gray-600 mb-1">DA % <span class="text-gray-400">(of Basic)</span></label>
-                                <input type="number" id="wagDAPct" placeholder="65" min="0" max="200" step="0.01"
-                                    class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/>
-                            </div>
-                            <div>
-                                <label class="block text-xs font-semibold text-gray-600 mb-1">Grade Pay (₹)</label>
-                                <input type="number" id="wagGradePay" placeholder="0.00" min="0" step="0.01"
-                                    class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/>
-                            </div>
-                            <div>
-                                <label class="block text-xs font-semibold text-gray-600 mb-1">Conveyance (₹)</label>
-                                <input type="number" id="wagConveyance" placeholder="0.00" min="0" step="0.01"
-                                    class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/>
-                            </div>
-                            <div>
-                                <label class="block text-xs font-semibold text-gray-600 mb-1">Medical Allow. (₹)</label>
-                                <input type="number" id="wagMedical" placeholder="0.00" min="0" step="0.01"
-                                    class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/>
-                            </div>
-                            <div>
-                                <label class="block text-xs font-semibold text-gray-600 mb-1">Variable Allow. (₹)</label>
-                                <input type="number" id="wagVarOffice" placeholder="0.00" min="0" step="0.01"
-                                    class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/>
-                            </div>
-                            <div>
-                                <label class="block text-xs font-semibold text-gray-600 mb-1">Leave Days /month</label>
-                                <input type="number" id="wagLeavePerMonth" placeholder="2" min="0" max="31" step="0.5"
-                                    class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/>
-                            </div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">HRA % (of Basic)</label>
+                                <input type="number" id="wagHRAPct" placeholder="30" min="0" max="100" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">DA % (of Basic)</label>
+                                <input type="number" id="wagDAPct" placeholder="65" min="0" max="200" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Grade Pay (₹)</label>
+                                <input type="number" id="wagGradePay" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Conveyance (₹)</label>
+                                <input type="number" id="wagConveyance" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Medical Allow. (₹)</label>
+                                <input type="number" id="wagMedical" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Variable Allow. (₹)</label>
+                                <input type="number" id="wagVarOffice" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Leave Days /month</label>
+                                <input type="number" id="wagLeavePerMonth" placeholder="2" min="0" max="31" step="0.5" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
                         </div>
                     </div>
-                    <!-- Statutory Deductions -->
                     <div class="bg-red-50 border border-red-200 rounded-xl p-4">
-                        <p class="text-xs font-bold text-red-700 mb-3 uppercase tracking-wide">📋 Statutory Deductions</p>
-                        <p class="text-xs text-gray-400 mb-3">PF Gross = Basic+DA+HRA+Medical+Conv+GradePay+Bonus (Variable excluded). &gt;₹15k → capped. ESIC waived if gross &gt;₹20k. PT ₹200; March = ₹300.</p>
+                        <p class="text-xs font-bold text-red-700 mb-3 uppercase tracking-wide">📋 Statutory Deductions (Office)</p>
                         <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-                            <div>
-                                <label class="block text-xs font-semibold text-gray-600 mb-1">PF Employee %</label>
-                                <input type="number" id="wagPFPct" placeholder="12" min="0" max="30" step="0.01"
-                                    class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/>
-                            </div>
-                            <div>
-                                <label class="block text-xs font-semibold text-gray-600 mb-1">ESIC Employee %</label>
-                                <input type="number" id="wagESICPct" placeholder="0.75" min="0" max="5" step="0.01"
-                                    class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/>
-                            </div>
-                            <div>
-                                <label class="block text-xs font-semibold text-gray-600 mb-1">PT Base /month (₹)</label>
-                                <input type="number" id="wagPTBase" placeholder="200" min="0" step="1"
-                                    class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/>
-                            </div>
-                            <div>
-                                <label class="block text-xs font-semibold text-gray-600 mb-1">TDS /month (₹)</label>
-                                <input type="number" id="wagTDSMonthly" placeholder="0.00" min="0" step="0.01"
-                                    class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/>
-                            </div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">PF Employee %</label>
+                                <input type="number" id="wagPFPct" placeholder="12" min="0" max="30" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">ESIC Employee %</label>
+                                <input type="number" id="wagESICPct" placeholder="0.75" min="0" max="5" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">PT Base /month (₹)</label>
+                                <input type="number" id="wagPTBase" placeholder="200" min="0" step="1" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">TDS /month (₹)</label>
+                                <input type="number" id="wagTDSMonthly" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Reason — always visible -->
-                <div>
-                    <label class="block text-xs font-semibold text-gray-600 mb-1">Reason</label>
-                    <input type="text" id="wagReason" placeholder="Annual increment / promotion / other"
-                        class="w-full px-3 py-2 border rounded-lg text-sm"/>
-                </div>
-
+                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Reason</label>
+                    <input type="text" id="wagReason" placeholder="Annual increment / promotion / other" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                 <div class="flex gap-3 justify-end pt-2 border-t border-gray-100">
-                    <button type="button" onclick="closeWageModal()"
-                        class="px-5 py-2 border border-gray-300 rounded-xl text-gray-600 hover:bg-gray-50">Cancel</button>
-                    <button type="button" onclick="saveWageRevision(event)"
-                        class="px-6 py-2 bg-green-600 text-white rounded-xl font-semibold hover:bg-green-700">Save Revision</button>
+                    <button type="button" onclick="closeWageModal()" class="px-5 py-2 border border-gray-300 rounded-xl text-gray-600 hover:bg-gray-50">Cancel</button>
+                    <button type="button" onclick="saveWageRevision(event)" class="px-6 py-2 bg-green-600 text-white rounded-xl font-semibold hover:bg-green-700">Save Revision</button>
                 </div>
             </div>
         </div>
