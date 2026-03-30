@@ -813,57 +813,50 @@
 
         function _calcPT(ptBase,month){return (parseFloat(ptBase)||200)+(month===3?100:0);}
         function _calcPF(basic,da,hra,medical,conveyance,gradePay,bonus,pfPct){
-            const pfGross=basic+da+hra+medical+conveyance+gradePay+bonus, rate=(parseFloat(pfPct)||12)/100;
-            return{pfGross, pfAmt:pfGross>15000?parseFloat((15000*rate).toFixed(2)):parseFloat((basic*rate).toFixed(2)), pfCapped:pfGross>15000};
+            const pfGross=basic+da+hra+medical+conveyance+gradePay+bonus,rate=(parseFloat(pfPct)||12)/100;
+            return{pfGross,pfAmt:pfGross>15000?parseFloat((15000*rate).toFixed(2)):parseFloat((basic*rate).toFixed(2)),pfCapped:pfGross>15000};
         }
         function _calcESIC(gross,esicPct){return gross<=20000?parseFloat((gross*(parseFloat(esicPct)||0.75)/100).toFixed(2)):0;}
         function computeOfficeSalary(st,op){
-            const basic=parseFloat(st.basicSalary)||0, hraPct=parseFloat(st.hraPct??30), daPct=parseFloat(st.daPct??65);
-            const hra=basic*hraPct/100, da=basic*daPct/100, gradePay=parseFloat(st.gradePay)||0, conveyance=parseFloat(st.conveyance)||0, medical=parseFloat(st.medical)||0, variable=parseFloat(st.variable)||0, bonus=(basic+da)/12, addlAllow=parseFloat(op.addlAllowance)||0;
+            const basic=parseFloat(st.basicSalary)||0,hraPct=parseFloat(st.hraPct??30),daPct=parseFloat(st.daPct??65);
+            const hra=basic*hraPct/100,da=basic*daPct/100,gradePay=parseFloat(st.gradePay)||0,conveyance=parseFloat(st.conveyance)||0,medical=parseFloat(st.medical)||0,variable=parseFloat(st.variable)||0,bonus=(basic+da)/12,addlAllow=parseFloat(op.addlAllowance)||0;
             const gross=basic+hra+da+gradePay+conveyance+medical+bonus+variable+addlAllow;
             const pfPct=op.pfPct!==null&&op.pfPct!==undefined?parseFloat(op.pfPct):parseFloat(st.pfPct??12);
             const esicPct=op.esicPct!==null&&op.esicPct!==undefined?parseFloat(op.esicPct):parseFloat(st.esicPct??0.75);
             const ptBase=op.ptBase!==null&&op.ptBase!==undefined?parseFloat(op.ptBase):parseFloat(st.ptBase??200);
             const tdsAmt=op.tdsAmt!==null&&op.tdsAmt!==undefined?parseFloat(op.tdsAmt):parseFloat(st.tdsMonthly||0);
             const{pfGross,pfAmt,pfCapped}=_calcPF(basic,da,hra,medical,conveyance,gradePay,bonus,pfPct);
-            const esicAmt=_calcESIC(gross,esicPct), esicWaived=gross>20000, ptAmt=_calcPT(ptBase,op.periodMonth), isMarchFY=op.periodMonth===3;
-            const leavePerMonth=parseFloat(st.leavePerMonth??2), leaveTaken=parseFloat(op.leaveTaken)||0, lopDays=Math.max(0,leaveTaken-leavePerMonth), lopAmt=parseFloat((lopDays*(basic/26)).toFixed(2)), leaveBalance=leavePerMonth-leaveTaken;
-            const addlDed=parseFloat(op.addlDeduction)||0, totalDed=pfAmt+esicAmt+ptAmt+tdsAmt+lopAmt+addlDed, netPay=gross-totalDed;
+            const esicAmt=_calcESIC(gross,esicPct),esicWaived=gross>20000,ptAmt=_calcPT(ptBase,op.periodMonth),isMarchFY=op.periodMonth===3;
+            const leavePerMonth=parseFloat(st.leavePerMonth??2),leaveTaken=parseFloat(op.leaveTaken)||0,lopDays=Math.max(0,leaveTaken-leavePerMonth),lopAmt=parseFloat((lopDays*(basic/26)).toFixed(2)),leaveBalance=leavePerMonth-leaveTaken;
+            const addlDed=parseFloat(op.addlDeduction)||0,totalDed=pfAmt+esicAmt+ptAmt+tdsAmt+lopAmt+addlDed,netPay=gross-totalDed;
             return{basic,hra,hraPct,da,daPct,gradePay,conveyance,medical,bonus,variable,addlAllow,gross,pfPct,pfGross,pfAmt,pfCapped,esicPct,esicAmt,esicWaived,ptBase,ptAmt,isMarchFY,tdsAmt,leavePerMonth,leaveTaken,lopDays,lopAmt,leaveBalance,addlDed,totalDed,netPay};
         }
         function onPaySlipStaffChange(staffID){
-            const st=staff.find(x=>x.staffID===staffID); techWageState.staffID=''; officePayState.staffID='';
+            const st=staff.find(x=>x.staffID===staffID);techWageState.staffID='';officePayState.staffID='';
             document.getElementById('psNoStaffMsg')?.classList.toggle('hidden',!!staffID&&!!st);
-            document.getElementById('twSection')?.classList.add('hidden'); document.getElementById('opSection')?.classList.add('hidden');
+            document.getElementById('twSection')?.classList.add('hidden');document.getElementById('opSection')?.classList.add('hidden');
             if(!st) return;
             if(st.staffType==='Technician'){
-                techWageState.staffID=staffID; techWageState.dailyWage=parseFloat(st.dailyWage)||0; techWageState.variableAllow=0;
-                const dw=document.getElementById('twDailyWage'); if(dw) dw.value=techWageState.dailyWage;
-                const va=document.getElementById('twVariableAllow'); if(va) va.value=0;
-                document.getElementById('twSection')?.classList.remove('hidden'); renderTechWageCalc();
+                techWageState.staffID=staffID;techWageState.dailyWage=parseFloat(st.dailyWage)||0;techWageState.variableAllow=0;
+                const dw=document.getElementById('twDailyWage');if(dw)dw.value=techWageState.dailyWage;
+                const va=document.getElementById('twVariableAllow');if(va)va.value=0;
+                document.getElementById('twSection')?.classList.remove('hidden');renderTechWageCalc();
             } else {
-                officePayState.staffID=staffID; officePayState.leaveTaken=0; officePayState.addlAllowance=0; officePayState.addlAllowanceRemark=''; officePayState.addlDeduction=0; officePayState.addlDeductionRemark='';
-                officePayState.pfPct=parseFloat(st.pfPct??12); officePayState.esicPct=parseFloat(st.esicPct??0.75); officePayState.ptBase=parseFloat(st.ptBase??200); officePayState.tdsAmt=parseFloat(st.tdsMonthly||0);
-                _resetOfficeInputs(st); document.getElementById('opSection')?.classList.remove('hidden'); renderOfficePayCalc();
+                officePayState.staffID=staffID;officePayState.leaveTaken=0;officePayState.addlAllowance=0;officePayState.addlAllowanceRemark='';officePayState.addlDeduction=0;officePayState.addlDeductionRemark='';
+                officePayState.pfPct=parseFloat(st.pfPct??12);officePayState.esicPct=parseFloat(st.esicPct??0.75);officePayState.ptBase=parseFloat(st.ptBase??200);officePayState.tdsAmt=parseFloat(st.tdsMonthly||0);
+                _resetOfficeInputs(st);document.getElementById('opSection')?.classList.remove('hidden');renderOfficePayCalc();
             }
         }
         function _resetOfficeInputs(st){
             const set=(id,v)=>{const el=document.getElementById(id);if(el)el.value=v??'';};
-            set('opLeaveTaken',0); set('opAddlAllowance',0); set('opAddlAllowanceRemark',''); set('opAddlDeduction',0); set('opAddlDeductionRemark','');
-            set('opPFPct',parseFloat(st?.pfPct??12)); set('opESICPct',parseFloat(st?.esicPct??0.75)); set('opPTBase',parseFloat(st?.ptBase??200)); set('opTDSAmt',parseFloat(st?.tdsMonthly||0));
+            set('opLeaveTaken',0);set('opAddlAllowance',0);set('opAddlAllowanceRemark','');set('opAddlDeduction',0);set('opAddlDeductionRemark','');
+            set('opPFPct',parseFloat(st?.pfPct??12));set('opESICPct',parseFloat(st?.esicPct??0.75));set('opPTBase',parseFloat(st?.ptBase??200));set('opTDSAmt',parseFloat(st?.tdsMonthly||0));
         }
-        function onPaySlipPeriodChange(field,val){
-            techWageState[field]=parseInt(val); officePayState[field]=parseInt(val);
-            if(!document.getElementById('twSection')?.classList.contains('hidden')) renderTechWageCalc();
-            if(!document.getElementById('opSection')?.classList.contains('hidden')) renderOfficePayCalc();
-        }
-        function updateOfficePayState(field,val){
-            const num=['leaveTaken','addlAllowance','addlDeduction','pfPct','esicPct','ptBase','tdsAmt'];
-            officePayState[field]=num.includes(field)?(parseFloat(val)||0):val; renderOfficePayCalc();
-        }
+        function onPaySlipPeriodChange(field,val){techWageState[field]=parseInt(val);officePayState[field]=parseInt(val);if(!document.getElementById('twSection')?.classList.contains('hidden'))renderTechWageCalc();if(!document.getElementById('opSection')?.classList.contains('hidden'))renderOfficePayCalc();}
+        function updateOfficePayState(field,val){const num=['leaveTaken','addlAllowance','addlDeduction','pfPct','esicPct','ptBase','tdsAmt'];officePayState[field]=num.includes(field)?(parseFloat(val)||0):val;renderOfficePayCalc();}
         function renderOfficePayCalc(){const el=document.getElementById('opCalcBody');if(el)el.innerHTML=buildOfficePayHTML();}
         function buildOfficePayHTML(){
-            const op=officePayState,st=staff.find(x=>x.staffID===op.staffID); if(!st) return '';
+            const op=officePayState,st=staff.find(x=>x.staffID===op.staffID);if(!st)return '';
             const c=computeOfficeSalary(st,op);
             const INR=n=>'₹'+Math.max(0,parseFloat(n)||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
             const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -874,15 +867,13 @@
             const dedRows=[{name:`PF – Employee ${c.pfPct}%`+(c.pfCapped?' (on ₹15,000 cap)':' (of Basic)'),amt:c.pfAmt,show:c.pfAmt>0,col:'#1d4ed8',nil:false},{name:c.esicWaived?`ESIC – NIL (Gross > ₹20,000)`:`ESIC – Employee ${c.esicPct}% of Gross`,amt:c.esicAmt,show:true,col:c.esicWaived?'#9ca3af':'#0e7490',nil:c.esicWaived},{name:'Professional Tax (PT)'+(c.isMarchFY?' — March (₹'+c.ptAmt+')':''),amt:c.ptAmt,show:c.ptAmt>0,col:'#7c3aed',nil:false},{name:'Income Tax TDS',amt:c.tdsAmt,show:c.tdsAmt>0,col:'#b45309',nil:false},{name:`Loss of Pay – ${c.lopDays} day${c.lopDays===1?'':'s'} (Basic÷26)`,amt:c.lopAmt,show:c.lopDays>0,col:'#dc2626',nil:false},{name:op.addlDeductionRemark?'Other: '+op.addlDeductionRemark:'Other Deduction',amt:c.addlDed,show:c.addlDed>0,col:'#4b5563',nil:false}].filter(r=>r.show||r.nil);
             return `<div style="font-size:12px;color:#374151;margin-bottom:10px;padding:8px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;font-weight:500;"><strong>${st.name}</strong> &nbsp;·&nbsp; ${st.designation||'Staff'} &nbsp;·&nbsp; Salary for: <strong style="color:#1d4ed8;">${periodLabel}</strong>${c.isMarchFY?'&nbsp;<span style="background:#fef3c7;color:#78350f;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:600;">March — PT ₹'+c.ptAmt+'</span>':''}</div>
             <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px;"><div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:10px;text-align:center;"><div style="font-size:10px;color:#6b7280;font-weight:500;margin-bottom:4px;">LEAVE/MONTH</div><div style="font-size:20px;font-weight:600;color:#374151;">${c.leavePerMonth}</div></div><div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:10px;text-align:center;"><div style="font-size:10px;color:#6b7280;font-weight:500;margin-bottom:4px;">LEAVE TAKEN</div><div style="font-size:20px;font-weight:600;color:#374151;">${c.leaveTaken}</div></div><div style="background:${leaveBg};border:1px solid ${leaveColor}55;border-radius:10px;padding:10px;text-align:center;"><div style="font-size:10px;color:#6b7280;font-weight:500;margin-bottom:4px;">BALANCE / LOP</div><div style="font-size:20px;font-weight:600;color:${leaveColor};">${c.leaveBalance<0?c.lopDays+' LOP':c.leaveBalance+' left'}</div></div><div style="background:#f0fdf4;border:1px solid #15803d55;border-radius:10px;padding:10px;text-align:center;"><div style="font-size:10px;color:#6b7280;font-weight:500;margin-bottom:4px;">NET PAY</div><div style="font-size:15px;font-weight:700;color:#15803d;">${INR(c.netPay)}</div></div></div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;"><div class="bg-white border border-gray-200 rounded-xl overflow-hidden"><div style="background:#1d4ed8;padding:8px 14px;font-weight:700;font-size:12px;color:#fff;">EARNINGS</div><table style="width:100%;border-collapse:collapse;font-size:12px;">${earRows.map(r=>`<tr style="border-bottom:0.5px solid #f3f4f6;"><td style="padding:7px 12px;color:#374151;">${r.name}</td><td style="padding:7px 12px;text-align:right;font-weight:500;">${INR(r.amt)}</td></tr>`).join('')}<tr style="background:#eff6ff;"><td style="padding:8px 12px;font-weight:700;color:#1d4ed8;">GROSS EARNINGS</td><td style="padding:8px 12px;text-align:right;font-weight:700;color:#1d4ed8;font-size:13px;">${INR(c.gross)}</td></tr></table></div>
-            <div class="bg-white border border-gray-200 rounded-xl overflow-hidden"><div style="background:#dc2626;padding:8px 14px;font-weight:700;font-size:12px;color:#fff;">DEDUCTIONS</div><table style="width:100%;border-collapse:collapse;font-size:12px;">${dedRows.map(r=>`<tr style="border-bottom:0.5px solid #f3f4f6;${r.nil?'opacity:0.55;':''}"><td style="padding:7px 12px;color:#374151;font-size:11px;">${r.name}</td><td style="padding:7px 12px;text-align:right;font-weight:500;color:${r.col};">${r.nil?'NIL':INR(r.amt)}</td></tr>`).join('')}<tr style="background:#fef2f2;"><td style="padding:8px 12px;font-weight:700;color:#dc2626;">TOTAL DEDUCTIONS</td><td style="padding:8px 12px;text-align:right;font-weight:700;color:#dc2626;font-size:13px;">${INR(c.totalDed)}</td></tr></table></div></div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;"><div class="bg-white border border-gray-200 rounded-xl overflow-hidden"><div style="background:#1d4ed8;padding:8px 14px;font-weight:700;font-size:12px;color:#fff;">EARNINGS</div><table style="width:100%;border-collapse:collapse;font-size:12px;">${earRows.map(r=>`<tr style="border-bottom:0.5px solid #f3f4f6;"><td style="padding:7px 12px;color:#374151;">${r.name}</td><td style="padding:7px 12px;text-align:right;font-weight:500;">${INR(r.amt)}</td></tr>`).join('')}<tr style="background:#eff6ff;"><td style="padding:8px 12px;font-weight:700;color:#1d4ed8;">GROSS EARNINGS</td><td style="padding:8px 12px;text-align:right;font-weight:700;color:#1d4ed8;font-size:13px;">${INR(c.gross)}</td></tr></table></div><div class="bg-white border border-gray-200 rounded-xl overflow-hidden"><div style="background:#dc2626;padding:8px 14px;font-weight:700;font-size:12px;color:#fff;">DEDUCTIONS</div><table style="width:100%;border-collapse:collapse;font-size:12px;">${dedRows.map(r=>`<tr style="border-bottom:0.5px solid #f3f4f6;${r.nil?'opacity:0.55;':''}"><td style="padding:7px 12px;color:#374151;font-size:11px;">${r.name}</td><td style="padding:7px 12px;text-align:right;font-weight:500;color:${r.col};">${r.nil?'NIL':INR(r.amt)}</td></tr>`).join('')}<tr style="background:#fef2f2;"><td style="padding:8px 12px;font-weight:700;color:#dc2626;">TOTAL DEDUCTIONS</td><td style="padding:8px 12px;text-align:right;font-weight:700;color:#dc2626;font-size:13px;">${INR(c.totalDed)}</td></tr></table></div></div>
             <div style="background:linear-gradient(135deg,#0f766e,#0891b2);border-radius:12px;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;"><div><div style="color:#ccfbf1;font-size:12px;font-weight:500;">${st.name} &nbsp;·&nbsp; ${st.designation||''} &nbsp;·&nbsp; ${periodLabel}</div><div style="color:#99f6e4;font-size:11px;margin-top:3px;">Gross ${INR(c.gross)} &minus; Deductions ${INR(c.totalDed)}</div></div><div style="color:#f0fdfa;font-size:22px;font-weight:700;">${INR(c.netPay)}</div></div>
             <button onclick="generatePaySlipPDF()" class="px-6 py-2 bg-teal-600 text-white rounded-xl hover:bg-teal-700 font-semibold text-sm">🖨️ Generate Pay Slip PDF</button>`;
         }
         function getTechWagePeriodDates(year,month){const pm=month===1?12:month-1,py=month===1?year-1:year,dates=[],start=new Date(py,pm-1,26);for(let i=0;i<30;i++){const d=new Date(start);d.setDate(start.getDate()+i);dates.push(d);}return dates;}
         function calcTechWage(state){
-            const{att,dailyWage:dw,rates,variableAllow:varA=0}=state,c={};
-            ATT_ORDER.forEach(t=>{c[t]=0;}); att.forEach(t=>{if(t)c[t]++;});
+            const{att,dailyWage:dw,rates,variableAllow:varA=0}=state,c={};ATT_ORDER.forEach(t=>{c[t]=0;});att.forEach(t=>{if(t)c[t]++;});
             const eng=ENGAGED_TYPES.reduce((s,t)=>s+(c[t]||0),0),sbd=c.StandBy||0,mrkd=att.filter(t=>t!=='').length,isRet=eng===0&&sbd>=28&&mrkd>=28;
             const wP=c.Working*dw,outP=c.Outstation*dw,ancP=c.Anchorage*dw,salP=c.Sailing*dw,sbyP=isRet?0:sbd*dw*(rates.standbyPct/100),alP=(c.ApprovedLeave||0)*dw*(rates.alPct/100),outA=c.Outstation*rates.outA,ancA=c.Anchorage*rates.ancA,salA=c.Sailing*rates.salA,t15=eng>=15?eng*rates.t15:0,t20=eng>=20?eng*rates.t20:0,ret=isRet?12*dw:0;
             const gross=wP+outP+ancP+salP+sbyP+alP+outA+ancA+salA+t15+t20+ret+(parseFloat(varA)||0);
@@ -3896,13 +3887,14 @@
                     <div class="flex justify-between items-center mb-4">
                         <div>
                             <h3 class="text-xl font-bold text-green-700">💰 Wage &amp; Salary Revisions</h3>
-                            <p class="text-xs text-gray-400 mt-1">Admin-only section. Manage all staff wage revision history here.</p>
+                            <p class="text-xs text-gray-400 mt-1">Admin-only section. Updates all salary components — Basic, HRA, DA, Allowances, Statutory deductions.</p>
                         </div>
                         <button onclick="openWageModal()"
                             class="px-4 py-2 bg-green-600 text-white rounded-xl text-sm hover:bg-green-700 font-semibold">
                             + Add Revision
                         </button>
                     </div>
+                    <!-- Active staff wage summary cards with per-staff Revise button -->
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
                         ${staff.filter(s=>s.status==='Active').map(s=>`
                         <div class="bg-green-50 border border-green-200 rounded-xl p-4">
@@ -3912,7 +3904,7 @@
                                     <p class="text-xs text-gray-500">${s.designation||''} · ${s.staffType}</p>
                                 </div>
                                 <button onclick="openWageModal('${s.staffID}')"
-                                    class="text-xs text-green-700 border border-green-300 rounded-lg px-2 py-1 hover:bg-green-100 font-medium">
+                                    class="text-xs text-green-700 border border-green-300 rounded-lg px-2 py-1 hover:bg-green-100 font-medium whitespace-nowrap">
                                     + Revise
                                 </button>
                             </div>
@@ -3920,11 +3912,13 @@
                                 <div><p class="text-xs text-gray-400">Basic Salary</p><p class="font-bold text-green-700">${s.basicSalary?'₹'+parseFloat(s.basicSalary).toLocaleString('en-IN'):'—'}</p></div>
                                 <div><p class="text-xs text-gray-400">Daily Wage</p><p class="font-bold text-blue-700">${s.dailyWage?'₹'+parseFloat(s.dailyWage).toLocaleString('en-IN'):'—'}</p></div>
                             </div>
+                            ${s.staffType!=='Technician'&&s.hraPct!==undefined?`<div class="mt-2 text-xs text-gray-400">HRA ${s.hraPct}% · DA ${s.daPct||65}% · PF ${s.pfPct||12}%</div>`:''}
                         </div>`).join('')}
                     </div>
+                    <!-- Revision history table -->
                     ${(()=>{
                         const revisions=[];
-                        staff.forEach(s=>(s.wageRevisions||[]).forEach(r=>revisions.push({...r,staffName:s.name,staffID:s.staffID})));
+                        staff.forEach(s=>(s.wageRevisions||[]).forEach(r=>revisions.push({...r,staffName:s.name,staffID:s.staffID,staffType:s.staffType})));
                         revisions.sort((a,b)=>(b.effectiveDate||'').localeCompare(a.effectiveDate||''));
                         if(!revisions.length) return '<p class="text-sm text-gray-400 text-center py-8 border border-dashed border-gray-200 rounded-xl">No wage revisions recorded yet.</p>';
                         return `<h4 class="font-semibold text-gray-700 mb-2">Revision History (${revisions.length} records)</h4>
@@ -3935,17 +3929,27 @@
                                     <th class="px-3 py-2 text-left">Staff</th>
                                     <th class="px-3 py-2 text-right">Basic</th>
                                     <th class="px-3 py-2 text-right">Daily Wage</th>
+                                    <th class="px-3 py-2 text-left">Components Changed</th>
                                     <th class="px-3 py-2 text-left">Reason</th>
                                     <th class="px-3 py-2 text-center">Actions</th>
                                 </tr>
                             </thead>
-                            <tbody>${revisions.map(r=>`
-                                <tr class="border-b hover:bg-green-50">
+                            <tbody>${revisions.map(r=>{
+                                const comps=[];
+                                if(r.hraPct!==undefined) comps.push('HRA '+r.hraPct+'%');
+                                if(r.daPct!==undefined)  comps.push('DA '+r.daPct+'%');
+                                if(r.gradePay)           comps.push('Grade Pay');
+                                if(r.conveyance)         comps.push('Conveyance');
+                                if(r.medical)            comps.push('Medical');
+                                if(r.variable)           comps.push('Variable');
+                                if(r.pfPct!==undefined)  comps.push('PF '+r.pfPct+'%');
+                                return `<tr class="border-b hover:bg-green-50">
                                     <td class="px-3 py-2 text-xs">${r.effectiveDate||'—'}</td>
                                     <td class="px-3 py-2 font-medium">${r.staffName}</td>
                                     <td class="px-3 py-2 text-right">${r.basicSalary?'₹'+parseFloat(r.basicSalary).toLocaleString('en-IN'):'—'}</td>
                                     <td class="px-3 py-2 text-right">${r.dailyWage?'₹'+parseFloat(r.dailyWage).toLocaleString('en-IN'):'—'}</td>
-                                    <td class="px-3 py-2 text-gray-500 text-xs">${r.reason||'—'}</td>
+                                    <td class="px-3 py-2 text-xs text-gray-500">${comps.length?comps.join(', '):'—'}</td>
+                                    <td class="px-3 py-2 text-xs text-gray-500">${r.reason||'—'}</td>
                                     <td class="px-3 py-2 text-center whitespace-nowrap">
                                         <button onclick="editWageRevision('${r.staffID}','${r.revID}')"
                                             class="text-indigo-600 hover:text-indigo-800 text-xs font-medium mr-1 px-2 py-1 border border-indigo-200 rounded hover:bg-indigo-50">
@@ -3956,7 +3960,7 @@
                                             🗑 Delete
                                         </button>
                                     </td>
-                                </tr>`).join('')}
+                                </tr>`;}).join('')}
                             </tbody>
                         </table></div>`;
                     })()}
@@ -5186,7 +5190,8 @@
                     </form>
                 </div>
             </div>
-`;
+
+;
 
             renderStaffTab();
         }
@@ -5535,40 +5540,84 @@
             renderStaffTab();
         }
 
-        // Wage Revision — global modal, works from Staff and Settings
+        // ══ WAGE REVISION MODAL — full salary component support ══
         let _editWageRevID = null;
+
+        // Toggle office salary section based on selected staff type
+        function onWagStaffChange(staffID) {
+            const st = staff.find(x => x.staffID === staffID);
+            const isOffice = st && st.staffType !== 'Technician';
+            document.getElementById('wagOfficeSection')?.classList.toggle('hidden', !isOffice);
+            if (isOffice && st) _fillWagOfficeFromStaff(st);
+        }
+
+        function _fillWagOfficeFromStaff(st) {
+            const fv = (id, v) => { const el = document.getElementById(id); if (el) el.value = (v !== undefined && v !== null && v !== '') ? v : ''; };
+            fv('wagHRAPct',       st.hraPct        !== undefined ? st.hraPct        : 30);
+            fv('wagDAPct',        st.daPct         !== undefined ? st.daPct         : 65);
+            fv('wagGradePay',     st.gradePay      || '');
+            fv('wagConveyance',   st.conveyance    || '');
+            fv('wagMedical',      st.medical       || '');
+            fv('wagVariable',     st.variable      || '');
+            fv('wagLeavePerMonth',st.leavePerMonth !== undefined ? st.leavePerMonth : 2);
+            fv('wagPFPct',        st.pfPct         !== undefined ? st.pfPct         : 12);
+            fv('wagESICPct',      st.esicPct       !== undefined ? st.esicPct       : 0.75);
+            fv('wagPTBase',       st.ptBase        !== undefined ? st.ptBase        : 200);
+            fv('wagTDSMonthly',   st.tdsMonthly    || '');
+        }
 
         function openWageModal(prefillStaffID, rev) {
             _editWageRevID = rev ? rev.revID : null;
 
-            // Title
+            // Set title
             const titleEl = document.getElementById('wageModalTitle');
             if (titleEl) titleEl.textContent = rev ? 'Edit Wage Revision' : 'Add Wage Revision';
 
-            // Clear form fields manually (form.reset() would need the form to exist already — it does now)
-            document.getElementById('wagBasic').value  = '';
-            document.getElementById('wagDaily').value  = '';
-            document.getElementById('wagReason').value = '';
-            document.getElementById('wagDate').value   = new Date().toISOString().split('T')[0];
+            // Clear all fields manually
+            ['wagBasic','wagDaily','wagHRAPct','wagDAPct','wagGradePay','wagConveyance',
+             'wagMedical','wagVariable','wagLeavePerMonth','wagPFPct','wagESICPct',
+             'wagPTBase','wagTDSMonthly','wagReason'].forEach(id => {
+                const el = document.getElementById(id); if (el) el.value = '';
+            });
+            document.getElementById('wagDate').value = new Date().toISOString().split('T')[0];
 
             // Populate staff dropdown
             const sel = document.getElementById('wagStaff');
             sel.innerHTML = staff.map(s =>
                 `<option value="${s.staffID}">${s.name} (${s.staffType || 'Staff'})</option>`
             ).join('');
-
-            // Pre-select staff if given
-            if (prefillStaffID) sel.value = prefillStaffID;
-
-            // Lock staff selector in edit mode
             sel.disabled = !!rev;
 
-            // Fill values if editing
+            // Determine which staff to show
+            const targetStaffID = prefillStaffID || (rev ? rev.staffID : null) || (staff[0]?.staffID || '');
+            if (targetStaffID) sel.value = targetStaffID;
+
+            // Show/hide office section based on selected staff
+            const selSt = staff.find(x => x.staffID === sel.value);
+            const isOffice = selSt && selSt.staffType !== 'Technician';
+            document.getElementById('wagOfficeSection')?.classList.toggle('hidden', !isOffice);
+
             if (rev) {
-                document.getElementById('wagDate').value   = rev.effectiveDate || '';
-                document.getElementById('wagBasic').value  = rev.basicSalary   || '';
-                document.getElementById('wagDaily').value  = rev.dailyWage     || '';
-                document.getElementById('wagReason').value = rev.reason        || '';
+                // Edit mode: fill from saved revision
+                const fv = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined && v !== null) el.value = v; };
+                fv('wagDate',         rev.effectiveDate);
+                fv('wagBasic',        rev.basicSalary);
+                fv('wagDaily',        rev.dailyWage);
+                fv('wagHRAPct',       rev.hraPct);
+                fv('wagDAPct',        rev.daPct);
+                fv('wagGradePay',     rev.gradePay);
+                fv('wagConveyance',   rev.conveyance);
+                fv('wagMedical',      rev.medical);
+                fv('wagVariable',     rev.variable);
+                fv('wagLeavePerMonth',rev.leavePerMonth);
+                fv('wagPFPct',        rev.pfPct);
+                fv('wagESICPct',      rev.esicPct);
+                fv('wagPTBase',       rev.ptBase);
+                fv('wagTDSMonthly',   rev.tdsMonthly);
+                fv('wagReason',       rev.reason);
+            } else if (isOffice && selSt) {
+                // Add mode: pre-fill from staff master
+                _fillWagOfficeFromStaff(selSt);
             }
 
             document.getElementById('wageModal').classList.add('show');
@@ -5590,46 +5639,67 @@
 
         async function saveWageRevision(e) {
             e.preventDefault();
-            const sid      = document.getElementById('wagStaff').value;
-            const idx      = staff.findIndex(x => x.staffID === sid);
+            const sid = document.getElementById('wagStaff').value;
+            const idx = staff.findIndex(x => x.staffID === sid);
             if (idx < 0) return;
             if (!staff[idx].wageRevisions) staff[idx].wageRevisions = [];
 
-            const newBasic  = parseFloat(document.getElementById('wagBasic').value)  || 0;
-            const newDaily  = parseFloat(document.getElementById('wagDaily').value)  || 0;
-            const newDate   = document.getElementById('wagDate').value;
-            const newReason = document.getElementById('wagReason').value;
+            const pf = id => parseFloat(document.getElementById(id)?.value) || 0;
+            const ps = id => document.getElementById(id)?.value || '';
+
+            const newBasic        = pf('wagBasic');
+            const newDaily        = pf('wagDaily');
+            const newHRAPct       = pf('wagHRAPct')       || undefined;
+            const newDAPct        = pf('wagDAPct')        || undefined;
+            const newGradePay     = pf('wagGradePay');
+            const newConveyance   = pf('wagConveyance');
+            const newMedical      = pf('wagMedical');
+            const newVariable     = pf('wagVariable');
+            const newLeavePerMonth= pf('wagLeavePerMonth') || undefined;
+            const newPFPct        = pf('wagPFPct')        || undefined;
+            const newESICPct      = pf('wagESICPct')      || undefined;
+            const newPTBase       = pf('wagPTBase')       || undefined;
+            const newTDSMonthly   = pf('wagTDSMonthly');
+            const newDate         = ps('wagDate');
+            const newReason       = ps('wagReason');
+
+            const revRecord = {
+                effectiveDate: newDate,
+                basicSalary:   newBasic,    dailyWage:      newDaily,
+                hraPct:        newHRAPct,   daPct:          newDAPct,
+                gradePay:      newGradePay, conveyance:     newConveyance,
+                medical:       newMedical,  variable:       newVariable,
+                leavePerMonth: newLeavePerMonth,
+                pfPct:         newPFPct,    esicPct:        newESICPct,
+                ptBase:        newPTBase,   tdsMonthly:     newTDSMonthly,
+                reason:        newReason
+            };
 
             if (_editWageRevID) {
-                // Edit existing revision in-place
                 const ri = staff[idx].wageRevisions.findIndex(r => r.revID === _editWageRevID);
-                if (ri >= 0) {
-                    staff[idx].wageRevisions[ri] = {
-                        ...staff[idx].wageRevisions[ri],
-                        effectiveDate: newDate,
-                        basicSalary:   newBasic,
-                        dailyWage:     newDaily,
-                        reason:        newReason
-                    };
-                }
+                if (ri >= 0) staff[idx].wageRevisions[ri] = {...staff[idx].wageRevisions[ri], ...revRecord};
             } else {
-                // Add new revision
-                staff[idx].wageRevisions.push({
-                    revID:         'REV' + Date.now(),
-                    effectiveDate: newDate,
-                    basicSalary:   newBasic,
-                    dailyWage:     newDaily,
-                    reason:        newReason
-                });
+                staff[idx].wageRevisions.push({revID: 'REV' + Date.now(), ...revRecord});
             }
 
-            // Sync current salary on staff record
-            if (newBasic) staff[idx].basicSalary = newBasic;
-            if (newDaily) staff[idx].dailyWage   = newDaily;
+            // Sync all changed fields back to current staff record
+            if (newBasic)        staff[idx].basicSalary  = newBasic;
+            if (newDaily)        staff[idx].dailyWage     = newDaily;
+            if (newHRAPct)       staff[idx].hraPct        = newHRAPct;
+            if (newDAPct)        staff[idx].daPct         = newDAPct;
+            if (newGradePay)     staff[idx].gradePay      = newGradePay;
+            if (newConveyance)   staff[idx].conveyance    = newConveyance;
+            if (newMedical)      staff[idx].medical       = newMedical;
+            if (newVariable)     staff[idx].variable      = newVariable;
+            if (newLeavePerMonth)staff[idx].leavePerMonth = newLeavePerMonth;
+            if (newPFPct)        staff[idx].pfPct         = newPFPct;
+            if (newESICPct)      staff[idx].esicPct       = newESICPct;
+            if (newPTBase)       staff[idx].ptBase        = newPTBase;
+            if (newTDSMonthly !== undefined) staff[idx].tdsMonthly = newTDSMonthly;
 
             await saveData('staff', staff);
             closeWageModal();
-            renderView();   // works from both Staff tab and Settings page
+            renderView();
         }
 
         async function deleteWageRevision(staffID, revID) {
@@ -5638,7 +5708,7 @@
             if (idx < 0) return;
             staff[idx].wageRevisions = (staff[idx].wageRevisions || []).filter(r => r.revID !== revID);
             await saveData('staff', staff);
-            renderView();   // works from both Staff tab and Settings page
+            renderView();
         }
 
 
@@ -6200,27 +6270,84 @@
             doc.save(`WorkReport_${projectName.replace(/\s+/g,'_')}_${new Date().toISOString().slice(0,10)}.pdf`);
         }
     </script>
-    <!-- ══ WAGE REVISION MODAL — global, always in DOM ══ -->
+    <!-- ══ WAGE REVISION MODAL — global permanent element ══ -->
     <div id="wageModal" class="modal">
-        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg m-4">
-            <div class="bg-gradient-to-r from-green-600 to-teal-600 p-5 text-white flex justify-between items-center">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl m-4 max-h-screen overflow-y-auto">
+            <div class="bg-gradient-to-r from-green-600 to-teal-600 p-5 text-white flex justify-between items-center sticky top-0 z-10">
                 <h2 class="text-lg font-bold" id="wageModalTitle">Add Wage Revision</h2>
                 <button onclick="closeWageModal()" class="text-white text-2xl font-bold leading-none">&times;</button>
             </div>
-            <form id="wageForm" onsubmit="saveWageRevision(event)" class="p-6 space-y-4">
+            <form id="wageForm" onsubmit="saveWageRevision(event)" class="p-6 space-y-5">
+
+                <!-- Staff + Date -->
                 <div class="grid grid-cols-2 gap-4">
-                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Staff Member *</label>
-                        <select id="wagStaff" class="w-full px-3 py-2 border rounded-lg text-sm" required></select></div>
-                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Effective Date *</label>
-                        <input type="date" id="wagDate" class="w-full px-3 py-2 border rounded-lg text-sm" required/></div>
-                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">New Basic Salary (₹)</label>
-                        <input type="number" id="wagBasic" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
-                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">New Daily Wage (₹)</label>
-                        <input type="number" id="wagDaily" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Staff Member *</label>
+                        <select id="wagStaff" class="w-full px-3 py-2 border rounded-lg text-sm" required
+                            onchange="onWagStaffChange(this.value)"></select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Effective Date *</label>
+                        <input type="date" id="wagDate" class="w-full px-3 py-2 border rounded-lg text-sm" required/>
+                    </div>
                 </div>
-                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Reason</label>
-                    <input type="text" id="wagReason" placeholder="Annual increment / promotion / other" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
-                <div class="flex gap-3 justify-end">
+
+                <!-- Core pay -->
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">New Basic Salary (₹) <span class="text-gray-400 font-normal">Office staff</span></label>
+                        <input type="number" id="wagBasic" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">New Daily Wage (₹) <span class="text-gray-400 font-normal">Technician</span></label>
+                        <input type="number" id="wagDaily" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                    </div>
+                </div>
+
+                <!-- Office Salary Components — shown for Office staff -->
+                <div id="wagOfficeSection" class="hidden">
+                    <div class="bg-purple-50 border border-purple-200 rounded-xl p-4 mb-1">
+                        <p class="text-xs font-bold text-purple-700 mb-3 uppercase tracking-wide">💼 Salary Structure</p>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">HRA % <span class="text-gray-400">(of Basic)</span></label>
+                                <input type="number" id="wagHRAPct" placeholder="30" min="0" max="100" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">DA % <span class="text-gray-400">(of Basic)</span></label>
+                                <input type="number" id="wagDAPct" placeholder="65" min="0" max="200" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Grade Pay (₹)</label>
+                                <input type="number" id="wagGradePay" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Conveyance (₹)</label>
+                                <input type="number" id="wagConveyance" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Medical Allowance (₹)</label>
+                                <input type="number" id="wagMedical" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Variable Allowance (₹)</label>
+                                <input type="number" id="wagVariable" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Leave Days /month</label>
+                                <input type="number" id="wagLeavePerMonth" placeholder="2" min="0" max="31" step="0.5" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                        </div>
+                    </div>
+                    <div class="bg-red-50 border border-red-200 rounded-xl p-4">
+                        <p class="text-xs font-bold text-red-700 mb-3 uppercase tracking-wide">📋 Statutory Deductions</p>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">PF Employee %</label>
+                                <input type="number" id="wagPFPct" placeholder="12" min="0" max="30" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">ESIC Employee %</label>
+                                <input type="number" id="wagESICPct" placeholder="0.75" min="0" max="5" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">PT Base /month (₹)</label>
+                                <input type="number" id="wagPTBase" placeholder="200" min="0" step="1" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">TDS /month (₹)</label>
+                                <input type="number" id="wagTDSMonthly" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Reason -->
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Reason</label>
+                    <input type="text" id="wagReason" placeholder="Annual increment / promotion / other"
+                        class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                </div>
+
+                <div class="flex gap-3 justify-end pt-1">
                     <button type="button" onclick="closeWageModal()" class="px-5 py-2 border border-gray-300 rounded-xl text-gray-600 hover:bg-gray-50">Cancel</button>
                     <button type="submit" class="px-6 py-2 bg-green-600 text-white rounded-xl font-semibold hover:bg-green-700">Save Revision</button>
                 </div>
