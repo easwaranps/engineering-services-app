@@ -814,10 +814,18 @@
         let officePayState={staffID:'',periodMonth:new Date().getMonth()+1,periodYear:new Date().getFullYear(),leaveTaken:0,addlAllowance:0,addlAllowanceRemark:'',addlDeduction:0,addlDeductionRemark:'',pfPct:null,esicPct:null,ptBase:null,tdsAmt:null};
         let _pendingPayslip=null; // pending payslip object awaiting approval confirmation
 
-        function _calcPT(ptBase,month,gross){if(gross<=15000)return 0;const b=parseFloat(ptBase)||200;return month===3?b+100:b;}
+        function _calcPT(month, grossInclVar, gender) {
+            // PT: Feb = ₹300, all other months = ₹200
+            // Men:   grossInclVar > ₹10,000
+            // Women: grossInclVar > ₹25,000
+            const isFemale = (gender || 'Male').toLowerCase() === 'female';
+            const threshold = isFemale ? 25000 : 10000;
+            if (grossInclVar <= threshold) return 0;
+            return month === 2 ? 300 : 200;
+        }
         function _calcOfficePF(basic,hra,da,med,cv,gp,bonus,pfPct){const g=basic+hra+da+med+cv+gp+bonus,r=(parseFloat(pfPct)||12)/100;return{pfGross:g,pfAmt:g>15000?+(15000*r).toFixed(2):+(g*r).toFixed(2),pfCapped:g>15000};}
         function _calcTechPF(wageEarnings,fixedAllowance,pfPct){const g=wageEarnings*2.15+fixedAllowance*0.30,r=(parseFloat(pfPct)||12)/100;return{pfGross:+g.toFixed(2),pfAmt:+(g*r).toFixed(2),pfCapped:false};}
-        function _calcESIC(gross,esicPct){return gross<=20000?+(gross*(parseFloat(esicPct)||0.75)/100).toFixed(2):0;}
+        function _calcESIC(grossExclVar,esicPct){return grossExclVar<=20000?+(grossExclVar*(parseFloat(esicPct)||0.75)/100).toFixed(2):0;}
 
         // ── LEAVE CALCULATION ─────────────────────────────────────────────────
         // For a given staff + month, compute:
@@ -862,8 +870,10 @@
             const ptBase=op.ptBase!=null?+op.ptBase:+(st.ptBase??200);
             const tds=op.tdsAmt!=null?+op.tdsAmt:+(st.tdsMonthly||0);
             const pf=_calcOfficePF(basic,hra,da,med,cv,gp,bonus,pfPct);
-            const esicAmt=_calcESIC(gross,esicPct),esicWaived=gross>20000;
-            const ptAmt=_calcPT(ptBase,op.periodMonth,gross),ptApplies=gross>15000,isMarchFY=op.periodMonth===3;
+            const grossExclVar=basic+hra+da+gp+cv+med+bonus+addlA; // excl. variable for ESIC
+            const esicAmt=_calcESIC(grossExclVar,esicPct),esicWaived=grossExclVar>20000;
+            const gender=st.gender||'Male';
+            const ptAmt=_calcPT(op.periodMonth,gross,gender),ptApplies=ptAmt>0,isFebruary=op.periodMonth===2,isMarchFY=op.periodMonth===3;
             // Leave-based LOP: use computeLeaveForMonth for the leaveTaken (manual override via opLeaveTaken if set)
             const leaveResult = computeLeaveForMonth(st, op.periodYear||new Date().getFullYear(), op.periodMonth);
             const manualLeave = +op.leaveTaken || 0;  // manual override if user entered
@@ -876,7 +886,7 @@
             const lopBase=basic+hra+da+med+gp+cv+bonus;
             const lopA=+(lopDays*(lopBase/26)).toFixed(2);
             const addlD=+op.addlDeduction||0,totD=pf.pfAmt+esicAmt+ptAmt+tds+lopA+addlD,net=gross-totD;
-            return{basic,hra,hraPct,da,daPct,gradePay:gp,conveyance:cv,medical:med,bonus,variable:vr,addlAllow:addlA,gross,pfPct,pfGross:pf.pfGross,pfAmt:pf.pfAmt,pfCapped:pf.pfCapped,esicPct,esicAmt,esicWaived,ptBase,ptAmt,ptApplies,isMarchFY,tdsAmt:tds,leavePerMonth:lpM,carriedLeave:carried,available,leaveTaken:leaveTakenFinal,lopDays,lopAmt:lopA,leaveBalance:lbal,addlDed:addlD,totalDed:totD,netPay:net};
+            return{basic,hra,hraPct,da,daPct,gradePay:gp,conveyance:cv,medical:med,bonus,variable:vr,addlAllow:addlA,gross,grossExclVar,pfPct,pfGross:pf.pfGross,pfAmt:pf.pfAmt,pfCapped:pf.pfCapped,esicPct,esicAmt,esicWaived,ptAmt,ptApplies,isFebruary,isMarchFY,gender,tdsAmt:tds,leavePerMonth:lpM,carriedLeave:carried,available,leaveTaken:leaveTakenFinal,lopDays,lopAmt:lopA,leaveBalance:lbal,addlDed:addlD,totalDed:totD,netPay:net};
         }
 
         function onPaySlipStaffChange(staffID){
@@ -917,8 +927,10 @@
             const lb=c.leaveBalance<0?'#fee2e2':c.leaveBalance===0?'#fef3c7':'#dcfce7';
             const er=[{n:'Basic Salary',a:c.basic,s:true},{n:`HRA (${c.hraPct}%)`,a:c.hra,s:c.hra>0},{n:`DA (${c.daPct}%)`,a:c.da,s:c.da>0},{n:'Grade Pay',a:c.gradePay,s:c.gradePay>0},{n:'Conveyance',a:c.conveyance,s:c.conveyance>0},{n:'Medical',a:c.medical,s:c.medical>0},{n:'Annual Bonus (Basic÷10)',a:c.bonus,s:true},{n:'Variable (excl. PF)',a:c.variable,s:c.variable>0},{n:op.addlAllowanceRemark?'Add: '+op.addlAllowanceRemark:'Add. Allow.',a:c.addlAllow,s:c.addlAllow>0}].filter(r=>r.s);
             const pfLbl=`PF ${c.pfPct}% `+(c.pfCapped?`(PF Gross ₹${Math.round(c.pfGross).toLocaleString('en-IN')} → cap ₹15k)`:`(PF Gross ₹${Math.round(c.pfGross).toLocaleString('en-IN')})`);
-            const dr=[{n:pfLbl,a:c.pfAmt,s:true,col:'#1d4ed8',nil:false},{n:c.esicWaived?'ESIC NIL (>₹20k)':`ESIC ${c.esicPct}%`,a:c.esicAmt,s:true,col:c.esicWaived?'#9ca3af':'#0e7490',nil:c.esicWaived},{n:c.ptApplies?`PT`+(c.isMarchFY?' (Mar)':'')+' ₹'+c.ptAmt:'PT NIL (≤₹15k)',a:c.ptAmt,s:true,col:c.ptApplies?'#7c3aed':'#9ca3af',nil:!c.ptApplies},{n:'TDS',a:c.tdsAmt,s:c.tdsAmt>0,col:'#b45309',nil:false},{n:`Loss of Pay – ${c.lopDays}d (LOP Base÷26)`,a:c.lopAmt,s:c.lopDays>0,col:'#dc2626',nil:false},{n:op.addlDeductionRemark?'Other: '+op.addlDeductionRemark:'Other Ded.',a:c.addlDed,s:c.addlDed>0,col:'#4b5563',nil:false}].filter(r=>r.s||r.nil);
-            return `<div style="font-size:12px;color:#374151;margin-bottom:10px;padding:8px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;font-weight:500"><strong>${st.name}</strong> · ${st.designation||'Staff'} · <strong style="color:#1d4ed8">${pl}</strong>${c.isMarchFY&&c.ptApplies?' <span style="background:#fef3c7;color:#78350f;padding:2px 6px;border-radius:99px;font-size:10px;font-weight:600">March PT ₹'+c.ptAmt+'</span>':''}${!c.ptApplies?' <span style="background:#f3f4f6;color:#6b7280;padding:2px 6px;border-radius:99px;font-size:10px">PT NIL</span>':''}</div>
+            const esicThresh=c.gender==='Female'?25000:20000,esicNote=c.esicWaived?`ESIC – NIL (Gross excl. Var ₹${Math.round(c.grossExclVar).toLocaleString('en-IN')} > ₹20,000)`:`ESIC – 0.75% of Gross excl. Var ₹${Math.round(c.grossExclVar).toLocaleString('en-IN')}`;
+            const ptNote=c.ptApplies?`PT`+(c.isFebruary?' (Feb ₹300)':'')+' – ₹'+c.ptAmt+` (${c.gender}, gross incl. Var ₹${Math.round(c.gross).toLocaleString('en-IN')})`:(`PT – NIL (${c.gender}: gross incl. Var ₹${Math.round(c.gross).toLocaleString('en-IN')} ≤ ${c.gender==='Female'?'₹25,000':'₹10,000'})`);
+            const dr=[{n:pfLbl,a:c.pfAmt,s:true,col:'#1d4ed8',nil:false},{n:esicNote,a:c.esicAmt,s:true,col:c.esicWaived?'#9ca3af':'#0e7490',nil:c.esicWaived},{n:ptNote,a:c.ptAmt,s:true,col:c.ptApplies?'#7c3aed':'#9ca3af',nil:!c.ptApplies},{n:'TDS',a:c.tdsAmt,s:c.tdsAmt>0,col:'#b45309',nil:false},{n:`Loss of Pay – ${c.lopDays}d (LOP Base÷26)`,a:c.lopAmt,s:c.lopDays>0,col:'#dc2626',nil:false},{n:op.addlDeductionRemark?'Other: '+op.addlDeductionRemark:'Other Ded.',a:c.addlDed,s:c.addlDed>0,col:'#4b5563',nil:false}].filter(r=>r.s||r.nil);
+            return `<div style="font-size:12px;color:#374151;margin-bottom:10px;padding:8px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;font-weight:500"><strong>${st.name}</strong> · ${st.designation||'Staff'} · <strong style="color:#1d4ed8">${pl}</strong>${c.isFebruary&&c.ptApplies?' <span style="background:#fef3c7;color:#78350f;padding:2px 6px;border-radius:99px;font-size:10px;font-weight:600">Feb PT ₹'+c.ptAmt+'</span>':''}${!c.ptApplies?' <span style="background:#f3f4f6;color:#6b7280;padding:2px 6px;border-radius:99px;font-size:10px">PT NIL</span>':''}</div>
             <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:12px">
                 <div style="background:#f0fdf4;border:1px solid #15803d55;border-radius:10px;padding:10px;text-align:center"><div style="font-size:10px;color:#6b7280;font-weight:500;margin-bottom:4px">CARRIED FWD</div><div style="font-size:18px;font-weight:600;color:#15803d">${c.carriedLeave}</div></div>
                 <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:10px;text-align:center"><div style="font-size:10px;color:#6b7280;font-weight:500;margin-bottom:4px">ACCRUED</div><div style="font-size:18px;font-weight:600;color:#374151">${c.leavePerMonth}</div></div>
@@ -946,8 +958,11 @@
         }
         function calcTechDeductions(gross,wageEarnings,fixedAllow,state){
             const pfPct=state.pfPct!=null?+state.pfPct:12,esicPct=state.esicPct!=null?+state.esicPct:0.75,ptBase=state.ptBase!=null?+state.ptBase:200,tdsAmt=+state.tdsAmt||0,addlDed=+state.addlDeduction||0;
-            const pf=_calcTechPF(wageEarnings,fixedAllow||0,pfPct),esicAmt=_calcESIC(gross,esicPct),esicWaived=gross>20000,ptAmt=_calcPT(ptBase,state.periodMonth,gross),ptApplies=gross>15000,isMarchFY=state.periodMonth===3;
-            return{pfPct,pfGross:pf.pfGross,pfAmt:pf.pfAmt,pfCapped:pf.pfCapped,esicPct,esicAmt,esicWaived,ptBase,ptAmt,ptApplies,isMarchFY,tdsAmt,addlDed,totalDed:pf.pfAmt+esicAmt+ptAmt+tdsAmt+addlDed};
+            const grossExclVar=gross-(state.variableAllow||0); // ESIC excludes variable
+            const pf=_calcTechPF(wageEarnings,fixedAllow||0,pfPct),esicAmt=_calcESIC(grossExclVar,esicPct),esicWaived=grossExclVar>20000;
+            const stObj=staff.find(x=>x.staffID===state.staffID),gender=stObj?.gender||'Male';
+            const ptAmt=_calcPT(state.periodMonth,gross,gender),ptApplies=ptAmt>0,isFebruary=state.periodMonth===2,isMarchFY=state.periodMonth===3;
+            return{pfPct,pfGross:pf.pfGross,pfAmt:pf.pfAmt,pfCapped:pf.pfCapped,esicPct,esicAmt,esicWaived,grossExclVar,ptAmt,ptApplies,isFebruary,isMarchFY,gender,tdsAmt,addlDed,totalDed:pf.pfAmt+esicAmt+ptAmt+tdsAmt+addlDed};
         }
 
         function cycleAttDay(idx){const ci=ATT_ORDER.indexOf(techWageState.att[idx]);techWageState.att[idx]=ATT_ORDER[(ci+1)%ATT_ORDER.length];renderTechWageCalc();}
@@ -965,7 +980,9 @@
             const grid=dates.map((date,idx)=>{const t=s.att[idx],tp=ATT_TYPES[t]||ATT_TYPES[''],isWE=date.getDay()===0||date.getDay()===6,bg=t?tp.bg:isWE?'#f3f4f6':'#fff',bord=t?tp.color+'88':isWE?'#d1d5db':'#e5e7eb',dayN=date.toLocaleDateString('en-IN',{day:'2-digit'}),dayW=date.toLocaleDateString('en-IN',{weekday:'narrow'});return `<button class="att-day-btn" onclick="cycleAttDay(${idx})" style="background:${bg};border-color:${bord}"><div style="font-size:10px;color:#9ca3af;line-height:1">${dayN}<span style="opacity:.7">${dayW}</span></div><div style="font-size:11px;font-weight:${t?700:400};color:${t?tp.text:'#9ca3af'};margin-top:2px;line-height:1">${t?tp.short:'—'}</div></button>`;}).join('');
             const earRows=cal.rows.length===0?`<tr><td colspan="4" style="padding:1.5rem;text-align:center;color:#9ca3af">Mark attendance days above</td></tr>`:cal.rows.map(r=>`<tr style="border-bottom:0.5px solid #f3f4f6;background:${sB[r.sec]}"><td style="padding:8px 12px"><span style="display:inline-flex;align-items:center;gap:6px"><span style="width:3px;height:14px;background:${sC[r.sec]};border-radius:99px;display:inline-block"></span><span style="color:${r.sec!=='Wage'?sC[r.sec]:'inherit'}">${r.name}</span></span></td><td style="padding:8px 12px;text-align:right;color:#6b7280">${r.days!==null?r.days:'—'}</td><td style="padding:8px 12px;text-align:right;color:#6b7280">${r.rate!==null?RT(r.rate):'—'}</td><td style="padding:8px 12px;text-align:right;font-weight:500;color:${r.sec!=='Wage'?sC[r.sec]:'inherit'}">${INR(r.amt)}</td></tr>`).join('');
             const pfLbl=`PF ${ded.pfPct}% of PF Gross ₹${Math.round(ded.pfGross).toLocaleString('en-IN')} (Basic+HRA 50%+DA 65%+Fixed Allow)`;
-            const dedRows=[{n:pfLbl,a:ded.pfAmt,col:'#1d4ed8',nil:false,show:true},{n:ded.esicWaived?'ESIC NIL (>₹20k)':`ESIC ${ded.esicPct}%`,a:ded.esicAmt,col:ded.esicWaived?'#9ca3af':'#0e7490',nil:ded.esicWaived,show:true},{n:ded.ptApplies?`PT`+(ded.isMarchFY?' (Mar)':'')+' ₹'+ded.ptAmt:'PT NIL (≤₹15k)',a:ded.ptAmt,col:ded.ptApplies?'#7c3aed':'#9ca3af',nil:!ded.ptApplies,show:true},{n:'TDS',a:ded.tdsAmt,col:'#b45309',nil:false,show:ded.tdsAmt>0},{n:s.addlDeductionRemark?'Other: '+s.addlDeductionRemark:'Other Deduction',a:ded.addlDed,col:'#4b5563',nil:false,show:ded.addlDed>0}].filter(r=>r.show||r.nil);
+            const esicNoteTech=ded.esicWaived?`ESIC – NIL (Gross excl. Var ₹${Math.round(ded.grossExclVar||0).toLocaleString('en-IN')} > ₹20,000)`:`ESIC – 0.75% of Gross excl. Var ₹${Math.round(ded.grossExclVar||0).toLocaleString('en-IN')}`;
+            const ptNoteTech=ded.ptApplies?`PT`+(ded.isFebruary?' (Feb ₹300)':'')+' – ₹'+ded.ptAmt+` (${ded.gender})`:(`PT – NIL (${ded.gender})`);
+            const dedRows=[{n:pfLbl,a:ded.pfAmt,col:'#1d4ed8',nil:false,show:true},{n:esicNoteTech,a:ded.esicAmt,col:ded.esicWaived?'#9ca3af':'#0e7490',nil:ded.esicWaived,show:true},{n:ptNoteTech,a:ded.ptAmt,col:ded.ptApplies?'#7c3aed':'#9ca3af',nil:!ded.ptApplies,show:true},{n:'TDS',a:ded.tdsAmt,col:'#b45309',nil:false,show:ded.tdsAmt>0},{n:s.addlDeductionRemark?'Other: '+s.addlDeductionRemark:'Other Deduction',a:ded.addlDed,col:'#4b5563',nil:false,show:ded.addlDed>0}].filter(r=>r.show||r.nil);
             const dedHTML=dedRows.map(r=>`<tr style="border-bottom:0.5px solid #f3f4f6;${r.nil?'opacity:0.55':''}"><td style="padding:7px 12px;color:#374151;font-size:11px">${r.n}</td><td style="padding:7px 12px;text-align:right;font-weight:500;color:${r.col}">${r.nil?'NIL':INR(r.a)}</td></tr>`).join('');
             const pills=ATT_ORDER.filter(t=>t&&cal.c[t]>0).map(t=>`<span style="background:${ATT_TYPES[t].bg};border:1px solid ${ATT_TYPES[t].color}55;border-radius:99px;padding:3px 10px;font-size:11px;color:${ATT_TYPES[t].text};font-weight:500">${ATT_TYPES[t].label}: ${cal.c[t]}</span>`).join('');
             const rateRows=[{key:'standbyPct',label:'Standby (%)',val:s.rates.standbyPct},{key:'alPct',label:'Apprvd Leave (%)',val:s.rates.alPct},{key:'ulPct',label:'Unapprvd Leave (%)',val:s.rates.ulPct||0},{key:'outA',label:'Outstation ₹/day',val:s.rates.outA},{key:'ancA',label:'Anchorage ₹/day',val:s.rates.ancA},{key:'salA',label:'Sailing ₹/day',val:s.rates.salA},{key:'t15',label:'15+ days ₹/day',val:s.rates.t15},{key:'t20',label:'20+ days ₹/day',val:s.rates.t20}];
@@ -5117,6 +5134,11 @@
                                 <input type="text" id="sName" class="w-full px-3 py-2 border rounded-lg text-sm" required/></div>
                             <div><label class="block text-xs font-semibold text-gray-600 mb-1">Designation *</label>
                                 <input type="text" id="sDesignation" placeholder="e.g. Director / Engineer" class="w-full px-3 py-2 border rounded-lg text-sm" required/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Gender <span class="text-gray-400">(affects PT threshold)</span></label>
+                                <select id="sGender" class="w-full px-3 py-2 border rounded-lg text-sm">
+                                    <option value="Male">Male</option>
+                                    <option value="Female">Female</option>
+                                </select></div>
                             <div><label class="block text-xs font-semibold text-gray-600 mb-1">Date of Joining</label>
                                 <input type="date" id="sDOJ" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                             <div><label class="block text-xs font-semibold text-gray-600 mb-1">Mobile</label>
@@ -5607,6 +5629,7 @@
                 document.getElementById('sType').value       = s.staffType||'Office';
                 document.getElementById('sName').value       = s.name||'';
                 document.getElementById('sDesignation').value= s.designation||'';
+                document.getElementById('sGender').value = s.gender||'Male';
                 document.getElementById('sDOJ').value        = s.doj||'';
                 document.getElementById('sMobile').value     = s.mobile||'';
                 document.getElementById('sEmail').value      = s.email||'';
@@ -5666,6 +5689,7 @@
                 staffType:      document.getElementById('sType').value,
                 name:           document.getElementById('sName').value,
                 designation:    document.getElementById('sDesignation').value,
+                gender:         document.getElementById('sGender').value || 'Male',
                 doj:            document.getElementById('sDOJ').value,
                 mobile:         document.getElementById('sMobile').value,
                 email:          document.getElementById('sEmail').value,
@@ -5843,8 +5867,10 @@
             doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:11,fontStyle:'bold'},body:[['GROSS PAY',INR(cal.gross)]],columnStyles:{0:{cellWidth:140,fillColor:[224,242,254],textColor:[15,23,72]},1:{halign:'right',fillColor:[186,230,253],textColor:[15,23,72],cellWidth:40}}});y=doc.lastAutoTable.finalY+2;
             doc.setFontSize(8);doc.setFont('helvetica','italic');doc.setTextColor(70,70,70);doc.text('PF Basis: Wage Earnings INR '+RT(cal.wageEarnings)+' × 2.15 + Fixed Allow INR '+RT(s.fixedAllow||0)+' × 30% = PF Gross INR '+RT(ded.pfGross),14,y);doc.setFont('helvetica','normal');doc.setTextColor(0,0,0);y+=6;
             const dedBody=[[`PF – ${ded.pfPct}% of PF Gross INR ${RT(ded.pfGross)} (Basic+HRA 50%+DA 65%+Fixed Allow)`,INR(ded.pfAmt)]];
-            if(ded.esicWaived)dedBody.push(['ESIC – NIL (Gross > INR 20,000)','—']);else if(ded.esicAmt>0)dedBody.push([`ESIC – ${ded.esicPct}% of Gross`,INR(ded.esicAmt)]);
-            if(ded.ptApplies&&ded.ptAmt>0)dedBody.push([`Professional Tax (PT)`+(ded.isMarchFY?' — March':''),INR(ded.ptAmt)]);else dedBody.push(['Professional Tax – NIL (Gross ≤ INR 15,000)','—']);
+            if(ded.esicWaived)dedBody.push([`ESIC – NIL (Gross excl. Variable INR ${RT(ded.grossExclVar||0)} > INR 20,000)`,'—']);
+            else if(ded.esicAmt>0)dedBody.push([`ESIC – 0.75% of Gross excl. Variable INR ${RT(ded.grossExclVar||0)}`,INR(ded.esicAmt)]);
+            const ptDescTech=ded.ptApplies?`Professional Tax (PT)`+(ded.isFebruary?' — February (₹300)':'')+` — ${ded.gender}, Gross INR ${RT(cal.gross||0)} > ${ded.gender==='Female'?'INR 25,000':'INR 10,000'}`:`Professional Tax – NIL (${ded.gender}: Gross INR ${RT(cal.gross||0)} ≤ ${ded.gender==='Female'?'INR 25,000':'INR 10,000'})`;
+            dedBody.push([ptDescTech,ded.ptApplies?INR(ded.ptAmt):'—']);
             if(ded.tdsAmt>0)dedBody.push(['Income Tax TDS',INR(ded.tdsAmt)]);if(ded.addlDed>0)dedBody.push([ded.addlDeductionRemark?'Other: '+ded.addlDeductionRemark:'Other Deduction',INR(ded.addlDed)]);
             doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:9},headStyles:{fillColor:[254,226,226],textColor:[153,27,27],fontStyle:'bold'},head:[['Deduction Component','Amount (INR)']],body:dedBody,columnStyles:{0:{cellWidth:140},1:{halign:'right',cellWidth:40}}});y=doc.lastAutoTable.finalY+2;
             doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:10,fontStyle:'bold'},body:[['TOTAL DEDUCTIONS',INR(ded.totalDed)],['NET PAY — '+nm.toUpperCase()+' — '+mL,INR(netPay)]],columnStyles:{0:{cellWidth:140},1:{halign:'right',cellWidth:40}},didParseCell:function(d){if(d.row.index===0){d.cell.styles.fillColor=[254,226,226];d.cell.styles.textColor=[153,27,27];}if(d.row.index===1){d.cell.styles.fillColor=[224,242,254];d.cell.styles.textColor=[15,23,72];d.cell.styles.fontSize=12;}}});y=doc.lastAutoTable.finalY+8;
@@ -5858,7 +5884,10 @@
             _pdfHdr(doc,(settings.companyName||'EASY EMS').toUpperCase(),'OFFICE STAFF PAY SLIP — '+mL.toUpperCase(),'Salary for the month of '+mL);let y=48;
             doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:9},headStyles:{fillColor:[186,230,253],textColor:[15,23,72],fontStyle:'bold'},head:[['Field','Details','Field','Details']],body:[['Employee',st.name,'Designation',st.designation||'—'],['PAN',st.pan||'—','PF Number',st.pfNumber||'—'],['ESIC',st.esicNumber||'—','Pay Month',mL],['Leave Accrual/Month',String(c.leavePerMonth),'Carried Forward',String(c.carriedLeave)],['Available Leave',String(c.available),'Leave Taken',String(c.leaveTaken)],['LOP Days',String(c.lopDays),'Next Month Balance','0 (resets if LOP)']],columnStyles:{0:{cellWidth:38,fontStyle:'bold'},2:{cellWidth:38,fontStyle:'bold'}}});y=doc.lastAutoTable.finalY+6;
             const earRows=[['Basic Salary',INR(c.basic)]];if(c.hra>0)earRows.push([`HRA (${c.hraPct}%)`,INR(c.hra)]);if(c.da>0)earRows.push([`DA (${c.daPct}%)`,INR(c.da)]);if(c.gradePay>0)earRows.push(['Grade Pay',INR(c.gradePay)]);if(c.conveyance>0)earRows.push(['Conveyance',INR(c.conveyance)]);if(c.medical>0)earRows.push(['Medical Allow.',INR(c.medical)]);earRows.push(['Annual Bonus (Basic÷10)',INR(c.bonus)]);if(c.variable>0)earRows.push(['Variable Allow. (excl. PF)',INR(c.variable)]);if(c.addlAllow>0)earRows.push([(op.addlAllowanceRemark?'Additional: '+op.addlAllowanceRemark:'Additional Allow.'),INR(c.addlAllow)]);earRows.push([{content:'GROSS EARNINGS',styles:{fontStyle:'bold',fillColor:[224,242,254],textColor:[15,23,72]}},{content:INR(c.gross),styles:{fontStyle:'bold',fillColor:[186,230,253],textColor:[15,23,72]}}]);
-            const dedRows=[];const pfLbl=c.pfCapped?`PF – ${c.pfPct}% (PF Gross INR ${Math.round(c.pfGross).toLocaleString('en-IN')} → cap INR 15,000)`:`PF – ${c.pfPct}% of PF Gross INR ${Math.round(c.pfGross).toLocaleString('en-IN')}`;if(c.pfAmt>0)dedRows.push([pfLbl,INR(c.pfAmt)]);if(c.esicWaived)dedRows.push(['ESIC – NIL (Gross > INR 20,000)','—']);else if(c.esicAmt>0)dedRows.push([`ESIC – ${c.esicPct}%`,INR(c.esicAmt)]);if(c.ptApplies&&c.ptAmt>0)dedRows.push([`Prof. Tax (PT)`+(c.isMarchFY?' — March':''),INR(c.ptAmt)]);else dedRows.push(['Prof. Tax – NIL (Gross ≤ INR 15,000)','—']);if(c.tdsAmt>0)dedRows.push(['Income Tax TDS',INR(c.tdsAmt)]);if(c.lopDays>0)dedRows.push([`Loss of Pay – ${c.lopDays} day${c.lopDays===1?'':'s'} (LOP Base÷26)`,INR(c.lopAmt)]);if(c.addlDed>0)dedRows.push([(op.addlDeductionRemark?'Other: '+op.addlDeductionRemark:'Other Deduction'),INR(c.addlDed)]);if(!dedRows.length)dedRows.push(['No deductions this period','—']);dedRows.push([{content:'TOTAL DEDUCTIONS',styles:{fontStyle:'bold',fillColor:[254,226,226],textColor:[153,27,27]}},{content:INR(c.totalDed),styles:{fontStyle:'bold',fillColor:[254,202,202],textColor:[153,27,27]}}]);
+            const dedRows=[];const pfLbl=c.pfCapped?`PF – ${c.pfPct}% (PF Gross INR ${Math.round(c.pfGross).toLocaleString('en-IN')} → cap INR 15,000)`:`PF – ${c.pfPct}% of PF Gross INR ${Math.round(c.pfGross).toLocaleString('en-IN')}`;if(c.pfAmt>0)dedRows.push([pfLbl,INR(c.pfAmt)]);if(c.esicWaived)dedRows.push([`ESIC – NIL (Gross excl. Variable INR ${Math.round(c.grossExclVar).toLocaleString('en-IN')} > INR 20,000)`,'—']);
+            else if(c.esicAmt>0)dedRows.push([`ESIC – 0.75% of Gross excl. Variable INR ${Math.round(c.grossExclVar).toLocaleString('en-IN')}`,INR(c.esicAmt)]);
+            const ptDescOff=c.ptApplies?`Prof. Tax (PT)`+(c.isFebruary?' — February (₹300)':'')+` — ${c.gender}, Gross INR ${Math.round(c.gross).toLocaleString('en-IN')} > ${c.gender==='Female'?'INR 25,000':'INR 10,000'}`:`Prof. Tax – NIL (${c.gender}: Gross INR ${Math.round(c.gross).toLocaleString('en-IN')} ≤ ${c.gender==='Female'?'INR 25,000':'INR 10,000'})`;
+            dedRows.push([ptDescOff,c.ptApplies?INR(c.ptAmt):'—']);if(c.tdsAmt>0)dedRows.push(['Income Tax TDS',INR(c.tdsAmt)]);if(c.lopDays>0)dedRows.push([`Loss of Pay – ${c.lopDays} day${c.lopDays===1?'':'s'} (LOP Base÷26)`,INR(c.lopAmt)]);if(c.addlDed>0)dedRows.push([(op.addlDeductionRemark?'Other: '+op.addlDeductionRemark:'Other Deduction'),INR(c.addlDed)]);if(!dedRows.length)dedRows.push(['No deductions this period','—']);dedRows.push([{content:'TOTAL DEDUCTIONS',styles:{fontStyle:'bold',fillColor:[254,226,226],textColor:[153,27,27]}},{content:INR(c.totalDed),styles:{fontStyle:'bold',fillColor:[254,202,202],textColor:[153,27,27]}}]);
             const maxR=Math.max(earRows.length,dedRows.length);while(earRows.length<maxR)earRows.splice(earRows.length-1,0,['','']);while(dedRows.length<maxR)dedRows.splice(dedRows.length-1,0,['','']);
             const combined=earRows.map((er,i)=>[er[0],er[1],dedRows[i][0],dedRows[i][1]]);
             doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:8},headStyles:{fillColor:[186,230,253],textColor:[15,23,72],fontStyle:'bold',fontSize:9},head:[['EARNINGS','Amount (INR)','DEDUCTIONS','Amount (INR)']],body:combined,columnStyles:{0:{cellWidth:55},1:{halign:'right',cellWidth:34},2:{cellWidth:65},3:{halign:'right',cellWidth:30}}});y=doc.lastAutoTable.finalY+4;
