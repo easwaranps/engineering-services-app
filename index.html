@@ -854,13 +854,16 @@
             const carried = +(st.carriedLeave || 0);
             // Count Leave-status attendance records in the 26th–25th pay period
             const pm = month===1?12:month-1, py = month===1?year-1:year;
-            const periodStart = new Date(py, pm-1, 26);
-            const periodEnd   = new Date(year, month-1, 25, 23, 59, 59);
+            // Use local midnight timestamps for comparison — avoid UTC parsing of YYYY-MM-DD strings
+            const periodStart = new Date(py, pm-1, 26).getTime();
+            const periodEnd   = new Date(year, month-1, 25, 23, 59, 59).getTime();
             let leaveTaken = 0;
             (st.attendance||[]).forEach(a => {
                 if(!a.date) return;
-                const d = new Date(a.date);
-                if(d >= periodStart && d <= periodEnd && a.status === 'Leave') leaveTaken++;
+                // Parse "YYYY-MM-DD" as local date (split to avoid UTC interpretation)
+                const [ay,am,ad]=a.date.split('-').map(Number);
+                const t=new Date(ay,am-1,ad).getTime();
+                if(t >= periodStart && t <= periodEnd && a.status === 'Leave') leaveTaken++;
             });
             const available = carried + lpM;
             const lopDays = Math.max(0, leaveTaken - available);
@@ -911,7 +914,7 @@
                 techWageState.rates={standbyPct:+(st.standbyPct??50),alPct:+(st.alPct??100),ulPct:+(st.ulPct??0),outA:+(st.outstationA??600),ancA:+(st.anchorageA??400),salA:+(st.sailingA??500),t15:+(st.thresh15??250),t20:+(st.thresh20??350)};
                 techWageState.pfPct=+(st.techPFPct??12);techWageState.esicPct=+(st.techESICPct??0.75);techWageState.ptBase=+(st.techPTBase??200);techWageState.tdsAmt=+(st.techTDS||0);techWageState.addlDeduction=0;techWageState.addlDeductionRemark='';
                 const dates=getTechWagePeriodDates(techWageState.periodYear,techWageState.periodMonth);
-                techWageState.att=dates.map(d=>{const key=d.toISOString().split('T')[0],rec=(st.attendance||[]).find(a=>a.date===key);return rec&&ATT_ORDER.includes(rec.status)?rec.status:'';});
+                techWageState.att=dates.map(d=>{const key=_localDateKey(d),rec=(st.attendance||[]).find(a=>a.date===key);return rec&&ATT_ORDER.includes(rec.status)?rec.status:'';});
                 const dw=document.getElementById('twDailyWage');if(dw)dw.value=techWageState.dailyWage;
                 const va=document.getElementById('twVariableAllow');if(va)va.value=techWageState.variableAllow;
                 const fa=document.getElementById('twFixedAllow');if(fa)fa.value=techWageState.fixedAllow;
@@ -933,7 +936,7 @@
                 const st=staff.find(x=>x.staffID===techWageState.staffID);
                 if(st){
                     const dates=getTechWagePeriodDates(techWageState.periodYear,techWageState.periodMonth);
-                    techWageState.att=dates.map(d=>{const key=d.toISOString().split('T')[0],rec=(st.attendance||[]).find(a=>a.date===key);return rec&&ATT_ORDER.includes(rec.status)?rec.status:'';});
+                    techWageState.att=dates.map(d=>{const key=_localDateKey(d),rec=(st.attendance||[]).find(a=>a.date===key);return rec&&ATT_ORDER.includes(rec.status)?rec.status:'';});
                 }
             }
             if(!document.getElementById('twSection')?.classList.contains('hidden'))renderTechWageCalc();
@@ -5461,7 +5464,14 @@
             for(let x=new Date(start);x<=end;x.setDate(x.getDate()+1))d.push(new Date(x));
             return d;
         }
-        function _attDayKey(date){return date.toISOString().split('T')[0];}
+        // ── LOCAL DATE KEY — always uses local calendar date, never UTC ──────
+        // date.toISOString() converts to UTC which shifts date by -1 in IST (UTC+5:30).
+        // This function formats YYYY-MM-DD from the LOCAL date fields instead.
+        function _localDateKey(date){
+            const y=date.getFullYear(),m=String(date.getMonth()+1).padStart(2,'0'),d=String(date.getDate()).padStart(2,'0');
+            return `${y}-${m}-${d}`;
+        }
+        function _attDayKey(date){return _localDateKey(date);}
         function _attLookup(staffID,dates){const st=staff.find(x=>x.staffID===staffID);if(!st)return{};const keys=new Set(dates.map(_attDayKey)),lookup={};(st.attendance||[]).forEach(a=>{if(keys.has(a.date))lookup[a.date]=a;});return lookup;}
 
         function renderAttendanceTab() {
