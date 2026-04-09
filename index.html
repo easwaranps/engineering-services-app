@@ -5474,7 +5474,7 @@
             let gridHTML='';
             if(selID&&isTech){
                 const dates=_attPeriodDates(shY,shM),lookup=_attLookup(selID,dates);
-                const pl=dates[0].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})+' – '+dates[29].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
+                const pl=dates[0].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})+' – '+dates[dates.length-1].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})+'  ('+dates.length+' days)';
                 const cells=dates.map(date=>{const key=_attDayKey(date),rec=lookup[key],t=rec?rec.status:'',tp=ATT_TYPES_MAP[t]||ATT_TYPES_MAP[''],isWE=date.getDay()===0||date.getDay()===6,bg=t?tp.bg:isWE?'#f3f4f6':'#fff',bord=t?tp.color+'88':isWE?'#d1d5db':'#e5e7eb',dayN=date.toLocaleDateString('en-IN',{day:'2-digit'}),dayW=date.toLocaleDateString('en-IN',{weekday:'narrow'});return `<button class="att-day-btn" onclick="attGridCycleDay('${key}')" style="background:${bg};border-color:${bord}"><div style="font-size:10px;color:#9ca3af;line-height:1">${dayN}<span style="opacity:.7">${dayW}</span></div><div style="font-size:11px;font-weight:${t?700:400};color:${t?tp.text:'#9ca3af'};margin-top:2px;line-height:1">${t?ATT_TYPES_MAP[t]?.short||t:'—'}</div></button>`;}).join('');
                 const cnt={};ATT_CYCLE.filter(t=>t).forEach(t=>{cnt[t]=0;});dates.forEach(d=>{const r=lookup[_attDayKey(d)];if(r&&cnt[r.status]!==undefined)cnt[r.status]++;});
                 const pills=ATT_CYCLE.filter(t=>t&&cnt[t]>0).map(t=>`<span style="background:${ATT_TYPES_MAP[t].bg};color:${ATT_TYPES_MAP[t].text};border:1px solid ${ATT_TYPES_MAP[t].color}55;border-radius:99px;padding:3px 10px;font-size:11px;font-weight:500">${ATT_TYPES_MAP[t].label}: ${cnt[t]}</span>`).join('');
@@ -5924,6 +5924,10 @@
                 else staff[idx].attendance.push(newRec);
             }
             await saveData('staff',staff);
+            // Always reset modal state so next open is fresh
+            document.getElementById('attendanceModal').dataset.editAttID = '';
+            document.getElementById('attDate').readOnly = false;
+            document.getElementById('attStaff').disabled = false;
             closeAttendanceModal();
             renderView();
         }
