@@ -991,6 +991,7 @@
         }
 
         function getDaysInMonth(year,month){return new Date(year,month,0).getDate();}
+        function getTechWagePeriodDates(year,month){const pm=month===1?12:month-1,py=month===1?year-1:year,d=[],s=new Date(py,pm-1,26);for(let i=0;i<30;i++){const x=new Date(s);x.setDate(s.getDate()+i);d.push(x);}return d;}
         function calcTechWage(state){
             const{att,basic:basicRaw,hraPct:hPct,daPct:dPct,gradePay:gpPct,variableAllow:varA=0,periodYear,periodMonth}=state;
             const basic=+basicRaw||0;
