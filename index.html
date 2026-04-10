@@ -1044,9 +1044,6 @@
             const ancP=+(c.Anchorage*dailyWage).toFixed(2);
             const salP=+(c.Sailing*dailyWage).toFixed(2);
             const sbyP=+(sbd*standbyWage).toFixed(2);
-            // Leave: Approved = 50% daily wage deduction (we show as earning at 50% rate for clarity)
-            const alP=+((c.ApprovedLeave||0)*dailyWage*((+r.alPct||50)/100)).toFixed(2);
-            const ulP=+((c.UnApprovedLeave||0)*dailyWage*((+r.ulPct||100)/100)).toFixed(2);
             // Allowances as % of daily wage
             const outstPct=(+r.outstationPct||20)/100, sailPct=(+r.sailingPct||30)/100, ancPct=(+r.anchoragePct||30)/100;
             const outA=+(c.Outstation*dailyWage*outstPct).toFixed(2);
@@ -1059,14 +1056,15 @@
             // 20+ days: additional 30% of the 15-day allowance rate, for those days
             const t20Rate=(+r.t20extra||30)/100;
             const t20=eng>=20?+(eng*dailyWage*t15Rate*t20Rate).toFixed(2):0;
-            // Leave deductions (unapproved leave is already 0 pay; approved leave at 50%)
-            // The gross = sum of all earnings
-            const grossBase=wP+outP+ancP+salP+sbyP+alP+outA+ancA+salA+t15+t20+(+varA||0);
-            // Deduct unapproved leave (100% daily wage per day)
-            const ulDeduct=+((c.UnApprovedLeave||0)*dailyWage).toFixed(2);
-            // Approved leave deduct (50% daily wage per day)
+            // Leave deductions
+            // Approved leave: 50% of daily wage per day deducted
             const alDeduct=+((c.ApprovedLeave||0)*dailyWage*0.5).toFixed(2);
-            const gross=+(grossBase-ulDeduct-alDeduct).toFixed(2);
+            // Unapproved leave: 100% of daily wage per day deducted
+            const ulDeduct=+((c.UnApprovedLeave||0)*dailyWage).toFixed(2);
+            // Gross = all earned wages + allowances - leave deductions
+            // Variable is already embedded in dailyWage so not added separately
+            const grossBase=wP+outP+ancP+salP+sbyP+outA+ancA+salA+t15+t20;
+            const gross=+(grossBase-alDeduct-ulDeduct).toFixed(2);
             const rows=[
                 {sec:'Wage',name:'Working days',days:c.Working,rate:+dailyWage.toFixed(2),amt:wP,show:c.Working>0},
                 {sec:'Wage',name:'Outstation days',days:c.Outstation,rate:+dailyWage.toFixed(2),amt:outP,show:c.Outstation>0},
@@ -1076,7 +1074,6 @@
                 {sec:'Allowance',name:`Outstation Allow (${+r.outstationPct||20}% of Daily Wage)`,days:c.Outstation,rate:+(dailyWage*outstPct).toFixed(2),amt:outA,show:c.Outstation>0},
                 {sec:'Allowance',name:`Sailing Allow (${+r.sailingPct||30}% of Daily Wage)`,days:c.Sailing,rate:+(dailyWage*sailPct).toFixed(2),amt:salA,show:c.Sailing>0},
                 {sec:'Allowance',name:`Anchorage Allow (${+r.anchoragePct||30}% of Daily Wage)`,days:c.Anchorage,rate:+(dailyWage*ancPct).toFixed(2),amt:ancA,show:c.Anchorage>0},
-                {sec:'Allowance',name:'Variable Allowance',days:null,rate:null,amt:+varA||0,show:(+varA||0)>0},
                 {sec:'Threshold',name:`15+ days bonus (${+r.t15extra||50}% of Daily Wage × ${eng} days)`,days:eng,rate:+(dailyWage*t15Rate).toFixed(2),amt:t15,show:eng>=15},
                 {sec:'Threshold',name:`20+ days bonus (${+r.t20extra||30}% of 15-day rate × ${eng} days)`,days:eng,rate:+(dailyWage*t15Rate*t20Rate).toFixed(2),amt:t20,show:eng>=20},
                 {sec:'Deduct',name:`Approved Leave Deduction (50% × ${c.ApprovedLeave||0} days)`,days:c.ApprovedLeave||0,rate:+(dailyWage*0.5).toFixed(2),amt:-alDeduct,show:(c.ApprovedLeave||0)>0},
@@ -1179,9 +1176,8 @@
             ];
             // Wage structure info box
             const wageInfo=`<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:10px 14px;margin-bottom:10px;font-size:11px;color:#166534">
-                <strong>Wage Structure:</strong> Basic ₹${Math.round(cal.basic).toLocaleString('en-IN')} | HRA(50%) ₹${Math.round(cal.hra).toLocaleString('en-IN')} + DA(65%) ₹${Math.round(cal.da).toLocaleString('en-IN')} + GP(30%) ₹${Math.round(cal.gp).toLocaleString('en-IN')} = <strong>Fixed Allow ₹${Math.round(cal.fixedAllow).toLocaleString('en-IN')}</strong> |
-                Variable ₹${Math.round(cal.varA).toLocaleString('en-IN')} | Days in month: ${cal.daysInMonth}<br>
-                <strong>Daily Wage</strong> = (Basic + Fixed + Variable) ÷ ${cal.daysInMonth} = <strong>₹${cal.dailyWage.toFixed(2)}</strong> &nbsp;|&nbsp;
+                <strong>Wage Structure:</strong> Basic ₹${Math.round(cal.basic).toLocaleString('en-IN')} | HRA(50%) ₹${Math.round(cal.hra).toLocaleString('en-IN')} + DA(65%) ₹${Math.round(cal.da).toLocaleString('en-IN')} + GP(30%) ₹${Math.round(cal.gp).toLocaleString('en-IN')} = <strong>Fixed Allow ₹${Math.round(cal.fixedAllow).toLocaleString('en-IN')}</strong><br>
+                <strong>Daily Wage</strong> = (Basic + Fixed + Variable) ÷ 30 = <strong>₹${cal.dailyWage.toFixed(2)}</strong> &nbsp;<span style="color:#6b7280;font-size:10px">(Variable ₹${Math.round(cal.varA).toLocaleString('en-IN')} embedded)</span>&nbsp;|&nbsp;
                 <strong>Standby Wage</strong> = (Basic + Fixed) ÷ ${cal.daysInMonth} = <strong>₹${cal.standbyWage.toFixed(2)}</strong>
             </div>`;
             return `
