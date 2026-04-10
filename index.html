@@ -4300,7 +4300,7 @@
                         <button onclick="openWageModal()" class="px-4 py-2 bg-green-600 text-white rounded-xl text-sm hover:bg-green-700 font-semibold">+ Add Revision</button>
                     </div>
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-                        ${staff.filter(s=>s.status==='Active').map(s=>{const isTech=s.staffType==='Technician';return `<div class="bg-green-50 border border-green-200 rounded-xl p-4"><div class="flex justify-between items-start mb-2"><div><p class="font-semibold text-gray-800">${s.name}</p><p class="text-xs text-gray-500">${s.designation||''} · ${s.staffType}</p></div><button onclick="openWageModal('${s.staffID}')" class="text-xs text-green-700 border border-green-300 rounded-lg px-2 py-1 hover:bg-green-100">+ Revise</button></div><div class="grid grid-cols-2 gap-2 text-sm"><div><p class="text-xs text-gray-400">Basic Salary</p><p class="font-bold text-green-700">${s.basicSalary?'₹'+parseFloat(s.basicSalary).toLocaleString('en-IN'):'—'}</p></div><div><p class="text-xs text-gray-400">Daily Wage</p><p class="font-bold text-blue-700">${s.dailyWage?'₹'+parseFloat(s.dailyWage).toLocaleString('en-IN'):'—'}</p></div></div>${isTech?`<div class="text-xs text-gray-400 mt-1">Basic ₹${s.basicSalary?parseFloat(s.basicSalary).toLocaleString('en-IN'):'—'} · SBY ${s.standbyPct||50}% · HRA ${s.techHRAPct??50}%+DA ${s.techDAPct??65}%+GP ${s.techGPPct??30}%</div>`:`<div class="text-xs text-gray-400 mt-1">HRA ${s.hraPct||30}% · DA ${s.daPct||65}% · Carried Leave ${s.carriedLeave||0}d</div>`}</div>`;}).join('')}
+                        ${staff.filter(s=>s.status==='Active').map(s=>{const isTech=s.staffType==='Technician';const b=parseFloat(s.basicSalary)||0,hP=s.techHRAPct??50,dP=s.techDAPct??65,gP=s.techGPPct??30,v=parseFloat(s.techVariable)||0,fix=b*(hP+dP+gP)/100,dw=isTech?+((b+fix+v)/30).toFixed(2):(s.dailyWage||0),sw=isTech?+((b+fix)/30).toFixed(2):0;return `<div class="bg-green-50 border border-green-200 rounded-xl p-4"><div class="flex justify-between items-start mb-2"><div><p class="font-semibold text-gray-800">${s.name}</p><p class="text-xs text-gray-500">${s.designation||''} · ${s.staffType}</p></div><button onclick="openWageModal('${s.staffID}')" class="text-xs text-green-700 border border-green-300 rounded-lg px-2 py-1 hover:bg-green-100">+ Revise</button></div><div class="grid grid-cols-2 gap-2 text-sm"><div><p class="text-xs text-gray-400">Basic Salary</p><p class="font-bold text-green-700">${b?'₹'+b.toLocaleString('en-IN'):'—'}</p></div><div><p class="text-xs text-gray-400">Daily Wage</p><p class="font-bold text-blue-700">${dw?'₹'+dw.toLocaleString('en-IN',{minimumFractionDigits:2}):'—'}</p></div></div>${isTech?`<div class="text-xs text-gray-400 mt-1">Fixed ₹${fix.toLocaleString('en-IN',{minimumFractionDigits:2})} · Standby ₹${sw.toLocaleString('en-IN',{minimumFractionDigits:2})}/day · HRA ${hP}%+DA ${dP}%+GP ${gP}%</div>`:`<div class="text-xs text-gray-400 mt-1">HRA ${s.hraPct||30}% · DA ${s.daPct||65}% · Carried Leave ${s.carriedLeave||0}d</div>`}</div>`;}).join('')}
                     </div>
                 </div>
             `;
@@ -5422,9 +5422,11 @@
                             <div><label class="block text-xs font-semibold text-gray-600 mb-1">Email</label>
                                 <input type="email" id="sEmail" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                             <div><label class="block text-xs font-semibold text-gray-600 mb-1">Basic Salary (₹)</label>
-                                <input type="number" id="sBasicSalary" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
-                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Daily Wage (₹) <span class="text-gray-400">(if applicable)</span></label>
-                                <input type="number" id="sDailyWage" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                <input type="number" id="sBasicSalary" placeholder="0.00" min="0" step="0.01" oninput="sAutoCalcWages()" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Daily Wage (₹) <span class="text-teal-600 text-xs">auto = (Basic+Fixed+Var)÷30</span></label>
+                                <input type="number" id="sDailyWage" placeholder="auto" readonly class="w-full px-3 py-2 border rounded-lg text-sm bg-gray-50 text-gray-500 cursor-not-allowed"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Standby Wage (₹) <span class="text-teal-600 text-xs">auto = (Basic+Fixed)÷30</span></label>
+                                <input type="number" id="sStandbyWage" placeholder="auto" readonly class="w-full px-3 py-2 border rounded-lg text-sm bg-gray-50 text-gray-500 cursor-not-allowed"/></div>
                             <div><label class="block text-xs font-semibold text-gray-600 mb-1">Status</label>
                                 <select id="sStatus" class="w-full px-3 py-2 border rounded-lg text-sm">
                                     <option value="Active">Active</option>
@@ -5481,10 +5483,10 @@
                                 <h4 class="text-sm font-bold text-blue-700 mb-1">⚙️ Wage Structure</h4>
                                 <p class="text-xs text-blue-600 mb-3">Fixed Allow = HRA% + DA% + GP% of Basic (auto-computed). Daily Wage = (Basic + Fixed + Variable) ÷ days in month. Standby Wage = (Basic + Fixed) ÷ days.</p>
                                 <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">HRA % of Basic <span class="text-gray-400">(default 50)</span></label><input type="number" id="sTechHRAPct" value="50" min="0" max="100" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
-                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">DA % of Basic <span class="text-gray-400">(default 65)</span></label><input type="number" id="sTechDAPct" value="65" min="0" max="200" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
-                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Grade Pay % of Basic <span class="text-gray-400">(default 30)</span></label><input type="number" id="sTechGPPct" value="30" min="0" max="100" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
-                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Variable Allow. (₹/month) <span class="text-gray-400">editable monthly</span></label><input type="number" id="sTechVariable" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">HRA % of Basic <span class="text-gray-400">(default 50)</span></label><input type="number" id="sTechHRAPct" value="50" min="0" max="100" step="0.01" oninput="sAutoCalcWages()" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">DA % of Basic <span class="text-gray-400">(default 65)</span></label><input type="number" id="sTechDAPct" value="65" min="0" max="200" step="0.01" oninput="sAutoCalcWages()" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Grade Pay % of Basic <span class="text-gray-400">(default 30)</span></label><input type="number" id="sTechGPPct" value="30" min="0" max="100" step="0.01" oninput="sAutoCalcWages()" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Variable Allow. (₹/month) <span class="text-gray-400">editable monthly</span></label><input type="number" id="sTechVariable" placeholder="0.00" min="0" step="0.01" oninput="sAutoCalcWages()" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
                                     <div><label class="block text-xs font-semibold text-gray-600 mb-1">Stand By % <span class="text-gray-400">(of Standby Wage)</span></label><input type="number" id="sStandbyPct" value="50" min="0" max="100" step="1" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
                                     <div><label class="block text-xs font-semibold text-gray-600 mb-1">Outstation Allow % <span class="text-gray-400">(of Daily Wage)</span></label><input type="number" id="sOutstationPct" value="20" min="0" max="100" step="1" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
                                     <div><label class="block text-xs font-semibold text-gray-600 mb-1">Sailing Allow % <span class="text-gray-400">(of Daily Wage)</span></label><input type="number" id="sSailingPct" value="30" min="0" max="100" step="1" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
@@ -5607,7 +5609,7 @@
                         <td class="px-3 py-2">${s.designation||'—'}</td>
                         <td class="px-3 py-2">${s.doj||'—'}</td>
                         <td class="px-3 py-2 text-right">${s.basicSalary ? '₹'+parseFloat(s.basicSalary).toLocaleString('en-IN') : '—'}</td>
-                        <td class="px-3 py-2 text-right">${s.dailyWage ? '₹'+parseFloat(s.dailyWage).toLocaleString('en-IN') : '—'}</td>
+                        <td class="px-3 py-2 text-right">${(()=>{if(s.staffType==='Technician'){const b=parseFloat(s.basicSalary)||0,hP=s.techHRAPct??50,dP=s.techDAPct??65,gP=s.techGPPct??30,v=parseFloat(s.techVariable)||0;const dw=+((b+b*(hP+dP+gP)/100+v)/30).toFixed(2);return dw?'₹'+dw.toLocaleString('en-IN',{minimumFractionDigits:2}):'—';}return s.dailyWage?'₹'+parseFloat(s.dailyWage).toLocaleString('en-IN'):'—';})()}</td>
                         <td class="px-3 py-2 text-center"><span class="px-2 py-0.5 rounded-full text-xs ${s.status==='Active' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">${s.status||'Active'}</span></td>
                         <td class="px-3 py-2 text-right whitespace-nowrap">
                             <button onclick="editStaff('${s.staffID}')" class="text-indigo-600 hover:text-indigo-800 text-xs font-medium mr-2">Edit</button>
@@ -5888,9 +5890,6 @@
                 <div id="twRatesWrap" class="${isTech?'':'hidden'}">
                     <div class="border border-purple-200 rounded-xl p-3 mb-3 bg-purple-50 grid grid-cols-2 md:grid-cols-4 gap-3">
                         <div><label class="block text-xs font-semibold text-gray-600 mb-1">Variable Allow. (₹)</label><input type="number" id="twVariableAllow" value="${techWageState.variableAllow||0}" min="0" step="1" oninput="onTechWageFieldChange('variableAllow',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
-                        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Travel Allow. (₹) <span class="text-teal-600 text-xs">outside gross</span></label><input type="number" id="twTravelAllowTop" value="${techWageState.travelAllow||0}" min="0" step="1" oninput="onTechWageFieldChange('travelAllow',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white border-teal-300"/></div>
-                        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Ex-Gratia (₹)</label><input type="number" id="twExgratiaTop" value="${techWageState.exgratia||0}" min="0" step="1" oninput="onTechWageFieldChange('exgratia',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white border-yellow-400"/></div>
-                        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Ex-Gratia Remark</label><input type="text" id="twExgratiaRemarkTop" value="${techWageState.exgratiaRemark||''}" placeholder="Reason" oninput="onTechWageFieldChange('exgratiaRemark',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
                     </div>
                     <div class="border border-red-200 rounded-xl p-4 mb-3 bg-red-50">
                         <p class="text-xs font-bold text-red-700 mb-1">📋 Statutory Deductions (auto-computed)</p>
@@ -5943,6 +5942,7 @@
                 document.getElementById('sEmail').value      = s.email||'';
                 document.getElementById('sBasicSalary').value= s.basicSalary||'';
                 document.getElementById('sDailyWage').value  = s.dailyWage||'';
+                document.getElementById('sStandbyWage').value= s.standbyWage||'';
                 document.getElementById('sStatus').value     = s.status||'Active';
                 document.getElementById('sPAN').value        = s.pan||'';
                 document.getElementById('sAadhar').value     = s.aadhar||'';
@@ -5980,15 +5980,34 @@
                 fv2('sTechPFPct',s.techPFPct!==undefined?s.techPFPct:12);
                 fv2('sTechESICPct',s.techESICPct!==undefined?s.techESICPct:0.75);
                 fv2('sTechTDS',s.techTDS||'');
+                // Compute and display auto-calculated wages
+                setTimeout(sAutoCalcWages,0);
             }
             toggleStaffDocFields();
             document.getElementById('staffModal').classList.add('show');
         }
 
+        function sAutoCalcWages(){
+            // Only meaningful for technicians — reads current form values
+            const isTech=document.getElementById('sType')?.value==='Technician';
+            const basic=parseFloat(document.getElementById('sBasicSalary')?.value)||0;
+            const hraPct=parseFloat(document.getElementById('sTechHRAPct')?.value)??50;
+            const daPct=parseFloat(document.getElementById('sTechDAPct')?.value)??65;
+            const gpPct=parseFloat(document.getElementById('sTechGPPct')?.value)??30;
+            const variable=parseFloat(document.getElementById('sTechVariable')?.value)||0;
+            const fixedAllow=basic*(hraPct+daPct+gpPct)/100;
+            const dailyWage=+((basic+fixedAllow+variable)/30).toFixed(2);
+            const standbyWage=+((basic+fixedAllow)/30).toFixed(2);
+            const dw=document.getElementById('sDailyWage');
+            const sw=document.getElementById('sStandbyWage');
+            if(dw)dw.value=isTech&&basic>0?dailyWage:'';
+            if(sw)sw.value=isTech&&basic>0?standbyWage:'';
+        }
         function toggleStaffDocFields() {
             const isTech = document.getElementById('sType')?.value === 'Technician';
             document.getElementById('techDocFields')?.classList.toggle('hidden', !isTech);
             document.getElementById('officePayFields')?.classList.toggle('hidden', isTech);
+            sAutoCalcWages();
         }
 
         function closeStaffModal() { document.getElementById('staffModal').classList.remove('show'); currentStaff = null; }
@@ -6005,7 +6024,9 @@
                 mobile:         document.getElementById('sMobile').value,
                 email:          document.getElementById('sEmail').value,
                 basicSalary:    parseFloat(document.getElementById('sBasicSalary').value)||0,
-                dailyWage:      parseFloat(document.getElementById('sDailyWage').value)||0,
+                // dailyWage and standbyWage auto-computed for technicians
+                dailyWage: (()=>{const b=parseFloat(document.getElementById('sBasicSalary').value)||0,hP=parseFloat(document.getElementById('sTechHRAPct')?.value)??50,dP=parseFloat(document.getElementById('sTechDAPct')?.value)??65,gP=parseFloat(document.getElementById('sTechGPPct')?.value)??30,v=parseFloat(document.getElementById('sTechVariable')?.value)||0;return+((b+b*(hP+dP+gP)/100+v)/30).toFixed(2);})(),
+                standbyWage: (()=>{const b=parseFloat(document.getElementById('sBasicSalary').value)||0,hP=parseFloat(document.getElementById('sTechHRAPct')?.value)??50,dP=parseFloat(document.getElementById('sTechDAPct')?.value)??65,gP=parseFloat(document.getElementById('sTechGPPct')?.value)??30;return+((b+b*(hP+dP+gP)/100)/30).toFixed(2);})(),
                 status:         document.getElementById('sStatus').value,
                 pan:            document.getElementById('sPAN').value.toUpperCase(),
                 aadhar:         document.getElementById('sAadhar').value,
