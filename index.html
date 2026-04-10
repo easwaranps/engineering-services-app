@@ -1030,7 +1030,7 @@
             const da=+(basic*(+dPct||65)/100).toFixed(2);
             const gp=+(basic*(+gpPct||30)/100).toFixed(2);
             const fixedAllow=+(hra+da+gp).toFixed(2);
-            const daysInMonth=getDaysInMonth(periodYear,periodMonth);
+            const daysInMonth=30; // Fixed 30-day basis per wage rule
             // Daily wage = (Basic + Fixed + Variable) / daysInMonth
             const dailyWage=daysInMonth>0?+((basic+fixedAllow+(+varA||0))/daysInMonth).toFixed(4):0;
             // Standby wage = (Basic + Fixed) / daysInMonth
