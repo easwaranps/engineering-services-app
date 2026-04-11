@@ -848,28 +848,34 @@
         //   accrued = leavePerMonth (default 2)
         //   prevBalance = sum of all attendance-based leave data prior months + carriedLeave
         //   leaveTaken = days marked as 'Leave' (not Sunday/Holiday)  this month
+        // ── OFFICE PAY PERIOD: 26th prev month → 25th current month ─────────
+        function getOfficePeriodDates(year, month) {
+            const pm=month===1?12:month-1, py=month===1?year-1:year;
+            const start=new Date(py,pm-1,26), end=new Date(year,month-1,25);
+            const d=[];
+            for(let x=new Date(start);x<=end;x.setDate(x.getDate()+1))d.push(new Date(x));
+            return d;
+        }
+
         //   available = prevBalance + accrued
         //   lopDays = max(0, leaveTaken - available)  — excess = LOP
         //   nextBalance = max(0, available - leaveTaken)  — negative resets to 0
         function computeLeaveForMonth(st, year, month) {
             const lpM = +(st.leavePerMonth ?? 2);
             const carried = +(st.carriedLeave || 0);
-            // Count leave days in this month from attendance records
-            // Pay period 26th prev to 25th current
+            // Count Leave-status records in the 26th–25th pay period
             const pm = month===1?12:month-1, py = month===1?year-1:year;
-            const periodStart = new Date(py, pm-1, 26);
-            const periodEnd   = new Date(year, month-1, 25, 23, 59, 59);
+            // Use local midnight timestamps — avoid UTC shift from new Date("YYYY-MM-DD")
+            const periodStart = new Date(py, pm-1, 26).getTime();
+            const periodEnd   = new Date(year, month-1, 25, 23, 59, 59).getTime();
             let leaveTaken = 0;
             (st.attendance||[]).forEach(a => {
                 if(!a.date) return;
-                const d = new Date(a.date);
-                if(d >= periodStart && d <= periodEnd && a.status === 'Leave') leaveTaken++;
+                // Parse "YYYY-MM-DD" as local date (split to avoid UTC interpretation)
+                const [ay,am,ad]=a.date.split('-').map(Number);
+                const t=new Date(ay,am-1,ad).getTime();
+                if(t >= periodStart && t <= periodEnd && a.status === 'Leave') leaveTaken++;
             });
-            // prevBalance: sum leave from all prior attendance records
-            // We approximate: accrued per completed month up to this one = lpM × monthsWorked
-            // Simple approach: use carriedLeave as starting balance, then count all leave taken
-            // prior to this period and all prior accruals
-            // For simplicity, treat carriedLeave as the manual override for prior periods
             const available = carried + lpM;
             const lopDays = Math.max(0, leaveTaken - available);
             const nextBalance = Math.max(0, available - leaveTaken);
@@ -890,19 +896,22 @@
             const esicAmt=_calcESIC(grossExclVar,esicPct),esicWaived=grossExclVar>20000;
             const gender=st.gender||'Male';
             const ptAmt=_calcPT(op.periodMonth,gross,gender),ptApplies=ptAmt>0,isFebruary=op.periodMonth===2,isMarchFY=op.periodMonth===3;
-            // Leave-based LOP: use computeLeaveForMonth for the leaveTaken (manual override via opLeaveTaken if set)
+            // Period: 26th prev → 25th current — use actual day count for LOP divisor
+            const periodDates=getOfficePeriodDates(op.periodYear||new Date().getFullYear(), op.periodMonth);
+            const periodDays=periodDates.length;
+            const periodLabel=periodDates[0].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})+' – '+periodDates[periodDates.length-1].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
+            // Leave calculation using 26th–25th window
             const leaveResult = computeLeaveForMonth(st, op.periodYear||new Date().getFullYear(), op.periodMonth);
-            const manualLeave = +op.leaveTaken || 0;  // manual override if user entered
-            // if user manually entered leaveTaken use it, else use attendance-derived
+            const manualLeave = +op.leaveTaken || 0;
             const leaveTakenFinal = op._useManualLeave ? manualLeave : (manualLeave > 0 ? manualLeave : leaveResult.leaveTaken);
             const lpM=+(st.leavePerMonth??2),carried=+(st.carriedLeave||0);
             const available=carried+lpM;
-            const lopDays=Math.max(0,leaveTakenFinal-available),lbal=available-leaveTakenFinal;
-            // LOP = (basic+hra+da+med+gp+cv+bonus) / 26 × lopDays  (Variable excluded from LOP base)
+            const lopDays=Math.max(0,leaveTakenFinal-available),lbal=Math.max(0,available-leaveTakenFinal);
+            // LOP = lopBase / periodDays × lopDays  (actual period days, not hardcoded 26)
             const lopBase=basic+hra+da+med+gp+cv+bonus;
-            const lopA=+(lopDays*(lopBase/26)).toFixed(2);
+            const lopA=+(lopDays*(lopBase/periodDays)).toFixed(2);
             const addlD=+op.addlDeduction||0,totD=pf.pfAmt+esicAmt+ptAmt+tds+lopA+addlD,net=gross-totD;
-            return{basic,hra,hraPct,da,daPct,gradePay:gp,conveyance:cv,medical:med,bonus,variable:vr,addlAllow:addlA,gross,grossExclVar,pfPct,pfGross:pf.pfGross,pfAmt:pf.pfAmt,pfCapped:pf.pfCapped,esicPct,esicAmt,esicWaived,ptAmt,ptApplies,isFebruary,isMarchFY,gender,tdsAmt:tds,leavePerMonth:lpM,carriedLeave:carried,available,leaveTaken:leaveTakenFinal,lopDays,lopAmt:lopA,leaveBalance:lbal,addlDed:addlD,totalDed:totD,netPay:net};
+            return{basic,hra,hraPct,da,daPct,gradePay:gp,conveyance:cv,medical:med,bonus,variable:vr,addlAllow:addlA,gross,grossExclVar,pfPct,pfGross:pf.pfGross,pfAmt:pf.pfAmt,pfCapped:pf.pfCapped,esicPct,esicAmt,esicWaived,ptAmt,ptApplies,isFebruary,isMarchFY,gender,tdsAmt:tds,leavePerMonth:lpM,carriedLeave:carried,available,leaveTaken:leaveTakenFinal,lopDays,lopAmt:lopA,leaveBalance:lbal,addlDed:addlD,totalDed:totD,netPay:net,periodDays,periodLabel};
         }
 
         function onPaySlipStaffChange(staffID){
@@ -934,7 +943,7 @@
                 techWageState.esicPct=+(st.techESICPct??0.75);
                 techWageState.tdsAmt=+(st.techTDS||0);
                 const dates=getTechWagePeriodDates(techWageState.periodYear,techWageState.periodMonth);
-                techWageState.att=dates.map(d=>{const key=d.toISOString().split('T')[0],rec=(st.attendance||[]).find(a=>a.date===key);return rec&&ATT_ORDER.includes(rec.status)?rec.status:'';});
+                techWageState.att=dates.map(d=>{const key=_localDateKey(d),rec=(st.attendance||[]).find(a=>a.date===key);return rec&&ATT_ORDER.includes(rec.status)?rec.status:'';});
                 const twBasic=document.getElementById('twBasic');if(twBasic)twBasic.value=techWageState.basic;
                 const va=document.getElementById('twVariableAllow');if(va)va.value=techWageState.variableAllow;
                 ['twPFPct','twESICPct','twTDSAmt'].forEach(id=>{const el=document.getElementById(id);if(!el)return;if(id==='twPFPct')el.value=techWageState.pfPct;else if(id==='twESICPct')el.value=techWageState.esicPct;else if(id==='twTDSAmt')el.value=techWageState.tdsAmt;});
@@ -961,7 +970,7 @@
             if(!st)return;
             const dates=getTechWagePeriodDates(techWageState.periodYear,techWageState.periodMonth);
             techWageState.att=dates.map(d=>{
-                const key=d.toISOString().split('T')[0];
+                const key=_localDateKey(d);
                 const rec=(st.attendance||[]).find(a=>a.date===key);
                 return rec&&ATT_ORDER.includes(rec.status)?rec.status:'';
             });
@@ -978,7 +987,7 @@
                 if(st){
                     const dates=getTechWagePeriodDates(techWageState.periodYear,techWageState.periodMonth);
                     techWageState.att=dates.map(d=>{
-                        const key=d.toISOString().split('T')[0];
+                        const key=_localDateKey(d);
                         const rec=(st.attendance||[]).find(a=>a.date===key);
                         return rec&&ATT_ORDER.includes(rec.status)?rec.status:'';
                     });
@@ -995,15 +1004,16 @@
             const c=computeOfficeSalary(st,op);
             const INR=n=>'₹'+Math.max(0,+n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
             const MN=['January','February','March','April','May','June','July','August','September','October','November','December'];
-            const pl=MN[op.periodMonth-1]+' '+op.periodYear;
+            const monthName=MN[op.periodMonth-1]+' '+op.periodYear;
+            const pl=c.periodLabel; // "26-MMM-YYYY – 25-MMM-YYYY"
             const lc=c.leaveBalance<0?'#dc2626':c.leaveBalance===0?'#b45309':'#15803d';
             const lb=c.leaveBalance<0?'#fee2e2':c.leaveBalance===0?'#fef3c7':'#dcfce7';
             const er=[{n:'Basic Salary',a:c.basic,s:true},{n:`HRA (${c.hraPct}%)`,a:c.hra,s:c.hra>0},{n:`DA (${c.daPct}%)`,a:c.da,s:c.da>0},{n:'Grade Pay',a:c.gradePay,s:c.gradePay>0},{n:'Conveyance',a:c.conveyance,s:c.conveyance>0},{n:'Medical',a:c.medical,s:c.medical>0},{n:'Annual Bonus (Basic÷10)',a:c.bonus,s:true},{n:'Variable (excl. PF)',a:c.variable,s:c.variable>0},{n:op.addlAllowanceRemark?'Add: '+op.addlAllowanceRemark:'Add. Allow.',a:c.addlAllow,s:c.addlAllow>0}].filter(r=>r.s);
             const pfLbl=`PF ${c.pfPct}% `+(c.pfCapped?`(PF Gross ₹${Math.round(c.pfGross).toLocaleString('en-IN')} → cap ₹15k)`:`(PF Gross ₹${Math.round(c.pfGross).toLocaleString('en-IN')})`);
             const esicThresh=c.gender==='Female'?25000:20000,esicNote=c.esicWaived?`ESIC – NIL (Gross excl. Var ₹${Math.round(c.grossExclVar).toLocaleString('en-IN')} > ₹20,000)`:`ESIC – 0.75% of Gross excl. Var ₹${Math.round(c.grossExclVar).toLocaleString('en-IN')}`;
             const ptNote=c.ptApplies?`PT`+(c.isFebruary?' (Feb ₹300)':'')+' – ₹'+c.ptAmt+` (${c.gender}, gross incl. Var ₹${Math.round(c.gross).toLocaleString('en-IN')})`:(`PT – NIL (${c.gender}: gross incl. Var ₹${Math.round(c.gross).toLocaleString('en-IN')} ≤ ${c.gender==='Female'?'₹25,000':'₹10,000'})`);
-            const dr=[{n:pfLbl,a:c.pfAmt,s:true,col:'#1d4ed8',nil:false},{n:esicNote,a:c.esicAmt,s:true,col:c.esicWaived?'#9ca3af':'#0e7490',nil:c.esicWaived},{n:ptNote,a:c.ptAmt,s:true,col:c.ptApplies?'#7c3aed':'#9ca3af',nil:!c.ptApplies},{n:'TDS',a:c.tdsAmt,s:c.tdsAmt>0,col:'#b45309',nil:false},{n:`Loss of Pay – ${c.lopDays}d (LOP Base÷26)`,a:c.lopAmt,s:c.lopDays>0,col:'#dc2626',nil:false},{n:op.addlDeductionRemark?'Other: '+op.addlDeductionRemark:'Other Ded.',a:c.addlDed,s:c.addlDed>0,col:'#4b5563',nil:false}].filter(r=>r.s||r.nil);
-            return `<div style="font-size:12px;color:#374151;margin-bottom:10px;padding:8px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;font-weight:500"><strong>${st.name}</strong> · ${st.designation||'Staff'} · <strong style="color:#1d4ed8">${pl}</strong>${c.isFebruary&&c.ptApplies?' <span style="background:#fef3c7;color:#78350f;padding:2px 6px;border-radius:99px;font-size:10px;font-weight:600">Feb PT ₹'+c.ptAmt+'</span>':''}${!c.ptApplies?' <span style="background:#f3f4f6;color:#6b7280;padding:2px 6px;border-radius:99px;font-size:10px">PT NIL</span>':''}</div>
+            const dr=[{n:pfLbl,a:c.pfAmt,s:true,col:'#1d4ed8',nil:false},{n:esicNote,a:c.esicAmt,s:true,col:c.esicWaived?'#9ca3af':'#0e7490',nil:c.esicWaived},{n:ptNote,a:c.ptAmt,s:true,col:c.ptApplies?'#7c3aed':'#9ca3af',nil:!c.ptApplies},{n:'TDS',a:c.tdsAmt,s:c.tdsAmt>0,col:'#b45309',nil:false},{n:`Loss of Pay – ${c.lopDays}d (LOP Base÷${c.periodDays} period days)`,a:c.lopAmt,s:c.lopDays>0,col:'#dc2626',nil:false},{n:op.addlDeductionRemark?'Other: '+op.addlDeductionRemark:'Other Ded.',a:c.addlDed,s:c.addlDed>0,col:'#4b5563',nil:false}].filter(r=>r.s||r.nil);
+            return `<div style="font-size:12px;color:#374151;margin-bottom:10px;padding:8px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;font-weight:500"><strong>${st.name}</strong> · ${st.designation||'Staff'} · <strong style="color:#1d4ed8">${monthName}</strong> <span style="font-size:11px;color:#6b7280;font-weight:400">(${pl} · ${c.periodDays} days)</span>${c.isFebruary&&c.ptApplies?' <span style="background:#fef3c7;color:#78350f;padding:2px 6px;border-radius:99px;font-size:10px;font-weight:600">Feb PT ₹'+c.ptAmt+'</span>':''}${!c.ptApplies?' <span style="background:#f3f4f6;color:#6b7280;padding:2px 6px;border-radius:99px;font-size:10px">PT NIL</span>':''}</div>
             <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:12px">
                 <div style="background:#f0fdf4;border:1px solid #15803d55;border-radius:10px;padding:10px;text-align:center"><div style="font-size:10px;color:#6b7280;font-weight:500;margin-bottom:4px">CARRIED FWD</div><div style="font-size:18px;font-weight:600;color:#15803d">${c.carriedLeave}</div></div>
                 <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:10px;text-align:center"><div style="font-size:10px;color:#6b7280;font-weight:500;margin-bottom:4px">ACCRUED</div><div style="font-size:18px;font-weight:600;color:#374151">${c.leavePerMonth}</div></div>
@@ -1011,9 +1021,9 @@
                 <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:10px;text-align:center"><div style="font-size:10px;color:#6b7280;font-weight:500;margin-bottom:4px">TAKEN</div><div style="font-size:18px;font-weight:600;color:#374151">${c.leaveTaken}</div></div>
                 <div style="background:${lb};border:1px solid ${lc}55;border-radius:10px;padding:10px;text-align:center"><div style="font-size:10px;color:#6b7280;font-weight:500;margin-bottom:4px">${c.lopDays>0?'LOP DAYS':'BALANCE'}</div><div style="font-size:18px;font-weight:600;color:${lc}">${c.lopDays>0?c.lopDays+' LOP':c.leaveBalance+' left'}</div></div>
             </div>
-            ${c.lopDays>0?`<div style="background:#fef2f2;border:1px solid #dc262644;border-radius:10px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:#dc2626"><strong>⚠️ Loss of Pay:</strong> ${c.leaveTaken} days taken − ${c.available} available = ${c.lopDays} LOP days. LOP deduction = ₹${c.lopAmt.toLocaleString('en-IN',{minimumFractionDigits:2})} (LOP Base: Basic+HRA+DA+Med+Conv+GP+Bonus ÷ 26 × ${c.lopDays} days). Next month carry-forward: 0 days.</div>`:''}
+            ${c.lopDays>0?`<div style="background:#fef2f2;border:1px solid #dc262644;border-radius:10px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:#dc2626"><strong>⚠️ Loss of Pay:</strong> ${c.leaveTaken} days taken − ${c.available} available = ${c.lopDays} LOP days. LOP deduction = ₹${c.lopAmt.toLocaleString('en-IN',{minimumFractionDigits:2})} (LOP Base ÷ ${c.periodDays} period days × ${c.lopDays} LOP days). Next month carry-forward: 0 days.</div>`:''}
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:10px"><div class="bg-white border border-gray-200 rounded-xl overflow-hidden"><div style="background:#1d4ed8;padding:8px 14px;font-weight:700;font-size:12px;color:#fff">EARNINGS</div><table style="width:100%;border-collapse:collapse;font-size:12px">${er.map(r=>`<tr style="border-bottom:0.5px solid #f3f4f6"><td style="padding:7px 12px;color:#374151">${r.n}</td><td style="padding:7px 12px;text-align:right;font-weight:500">${INR(r.a)}</td></tr>`).join('')}<tr style="background:#eff6ff"><td style="padding:8px 12px;font-weight:700;color:#1d4ed8">GROSS</td><td style="padding:8px 12px;text-align:right;font-weight:700;color:#1d4ed8">${INR(c.gross)}</td></tr></table></div><div class="bg-white border border-gray-200 rounded-xl overflow-hidden"><div style="background:#dc2626;padding:8px 14px;font-weight:700;font-size:12px;color:#fff">DEDUCTIONS</div><table style="width:100%;border-collapse:collapse;font-size:12px">${dr.map(r=>`<tr style="border-bottom:0.5px solid #f3f4f6;${r.nil?'opacity:0.55':''}"><td style="padding:7px 12px;color:#374151;font-size:11px">${r.n}</td><td style="padding:7px 12px;text-align:right;font-weight:500;color:${r.col}">${r.nil?'NIL':INR(r.a)}</td></tr>`).join('')}<tr style="background:#fef2f2"><td style="padding:8px 12px;font-weight:700;color:#dc2626">TOTAL</td><td style="padding:8px 12px;text-align:right;font-weight:700;color:#dc2626">${INR(c.totalDed)}</td></tr></table></div></div>
-            <div style="background:linear-gradient(135deg,#0f766e,#0891b2);border-radius:12px;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div><div style="color:#ccfbf1;font-size:12px;font-weight:500">${st.name} · ${pl}</div><div style="color:#99f6e4;font-size:11px;margin-top:3px">Gross ${INR(c.gross)} − ${INR(c.totalDed)}</div></div><div><span style="color:#99f6e4;font-size:11px;margin-right:6px">NET PAY</span><span style="color:#f0fdfa;font-size:22px;font-weight:700">${INR(c.netPay)}</span></div></div>
+            <div style="background:linear-gradient(135deg,#0f766e,#0891b2);border-radius:12px;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div><div style="color:#ccfbf1;font-size:12px;font-weight:500">${st.name} · ${monthName}</div><div style="color:#99f6e4;font-size:11px;margin-top:3px">Gross ${INR(c.gross)} − ${INR(c.totalDed)}</div></div><div><span style="color:#99f6e4;font-size:11px;margin-right:6px">NET PAY</span><span style="color:#f0fdfa;font-size:22px;font-weight:700">${INR(c.netPay)}</span></div></div>
             <div class="flex gap-3">
                 <button onclick="openApprovePayslipModal('office')" class="px-5 py-2 bg-green-600 text-white rounded-xl hover:bg-green-700 font-semibold text-sm">✅ Approve & Save Record</button>
                 <button onclick="generatePaySlipPDF()" class="px-5 py-2 bg-teal-600 text-white rounded-xl hover:bg-teal-700 font-semibold text-sm">🖨️ Generate PDF</button>
@@ -1021,7 +1031,14 @@
         }
 
         function getDaysInMonth(year,month){return new Date(year,month,0).getDate();}
-        function getTechWagePeriodDates(year,month){const pm=month===1?12:month-1,py=month===1?year-1:year,d=[],s=new Date(py,pm-1,26);for(let i=0;i<30;i++){const x=new Date(s);x.setDate(s.getDate()+i);d.push(x);}return d;}
+        function getTechWagePeriodDates(year,month){
+            // Pay period: 26th of previous month → 25th of current month (inclusive, variable length)
+            const pm=month===1?12:month-1,py=month===1?year-1:year;
+            const start=new Date(py,pm-1,26),end=new Date(year,month-1,25);
+            const d=[];
+            for(let x=new Date(start);x<=end;x.setDate(x.getDate()+1))d.push(new Date(x));
+            return d;
+        }
         function calcTechWage(state){
             const{att,basic:basicRaw,hraPct:hPct,daPct:dPct,gradePay:gpPct,variableAllow:varA=0,periodYear,periodMonth}=state;
             const basic=+basicRaw||0;
@@ -1123,7 +1140,7 @@
             // Net = Gross + Exgratia − Deductions + Travel Allowance (travel is outside gross, added to net)
             const netPay=+(cal.gross+exgratiaAmt-ded.totalDed+travelAmt).toFixed(2);
             const dates=getTechWagePeriodDates(s.periodYear,s.periodMonth);
-            const pl=dates[0].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})+' – '+dates[29].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
+            const pl=dates[0].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})+' – '+dates[dates.length-1].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})+' ('+dates.length+' days)';
             const INR=n=>'₹'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
             const RT=n=>(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
             // Wage structure summary
@@ -2774,8 +2791,6 @@
                             <button onclick="switchView('transactions')" class="px-4 py-2 rounded-lg ${currentView === 'transactions' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Transactions</button>
                             <button onclick="switchView('expenses')" class="px-4 py-2 rounded-lg ${currentView === 'expenses' ? 'bg-orange-100 text-orange-700' : 'text-gray-600 hover:bg-gray-100'}">💸 Expenses</button>
                             <button onclick="switchView('staff')" class="px-4 py-2 rounded-lg ${currentView === 'staff' ? 'bg-teal-100 text-teal-700' : 'text-gray-600 hover:bg-gray-100'}">👥 Staff</button>
-                            <button onclick="switchView('projexp')" class="px-4 py-2 rounded-lg ${currentView === 'projexp' ? 'bg-yellow-100 text-yellow-700' : 'text-gray-600 hover:bg-gray-100'}">🧳 Project Expenses</button>
-                            <button onclick="switchView('worklogs')" class="px-4 py-2 rounded-lg ${currentView === 'worklogs' ? 'bg-purple-100 text-purple-700' : 'text-gray-600 hover:bg-gray-100'}">📋 Work Logs</button>
                             <button onclick="switchView('mis')" class="px-4 py-2 rounded-lg ${currentView === 'mis' ? 'bg-green-100 text-green-700' : 'text-gray-600 hover:bg-gray-100'}">📊 MIS Report</button>
                             <button onclick="switchView('parties')" class="px-4 py-2 rounded-lg ${currentView === 'parties' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Parties</button>
                             <button onclick="switchView('settings')" class="px-4 py-2 rounded-lg ${currentView === 'settings' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Settings</button>
@@ -5641,8 +5656,21 @@
         };
         const ATT_CYCLE=['','Working','StandBy','Outstation','Anchorage','Sailing','ApprovedLeave','UnApprovedLeave'];
 
-        function _attPeriodDates(year,month){const pm=month===1?12:month-1,py=month===1?year-1:year,d=[],s=new Date(py,pm-1,26);for(let i=0;i<30;i++){const x=new Date(s);x.setDate(s.getDate()+i);d.push(x);}return d;}
-        function _attDayKey(date){return date.toISOString().split('T')[0];}
+        function _attPeriodDates(year,month){
+            // Pay period: 26th prev month → 25th current month (inclusive, variable length)
+            const pm=month===1?12:month-1,py=month===1?year-1:year;
+            const start=new Date(py,pm-1,26),end=new Date(year,month-1,25);
+            const d=[];
+            for(let x=new Date(start);x<=end;x.setDate(x.getDate()+1))d.push(new Date(x));
+            return d;
+        }
+        // _localDateKey: formats YYYY-MM-DD from LOCAL calendar date — never uses UTC.
+        // date.toISOString() shifts date back 1 day in IST (UTC+5:30), causing off-by-one bugs.
+        function _localDateKey(date){
+            const y=date.getFullYear(),m=String(date.getMonth()+1).padStart(2,'0'),d=String(date.getDate()).padStart(2,'0');
+            return `${y}-${m}-${d}`;
+        }
+        function _attDayKey(date){return _localDateKey(date);}
         function _attLookup(staffID,dates){const st=staff.find(x=>x.staffID===staffID);if(!st)return{};const keys=new Set(dates.map(_attDayKey)),lookup={};(st.attendance||[]).forEach(a=>{if(keys.has(a.date))lookup[a.date]=a;});return lookup;}
 
         function renderAttendanceTab() {
@@ -5655,13 +5683,13 @@
             let gridHTML='';
             if(selID&&isTech){
                 const dates=_attPeriodDates(shY,shM),lookup=_attLookup(selID,dates);
-                const pl=dates[0].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})+' – '+dates[29].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
+                const pl=dates[0].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})+' – '+dates[dates.length-1].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})+' ('+dates.length+' days)';
                 const cells=dates.map(date=>{const key=_attDayKey(date),rec=lookup[key],t=rec?rec.status:'',tp=ATT_TYPES_MAP[t]||ATT_TYPES_MAP[''],isWE=date.getDay()===0||date.getDay()===6,bg=t?tp.bg:isWE?'#f3f4f6':'#fff',bord=t?tp.color+'88':isWE?'#d1d5db':'#e5e7eb',dayN=date.toLocaleDateString('en-IN',{day:'2-digit'}),dayW=date.toLocaleDateString('en-IN',{weekday:'narrow'});return `<button class="att-day-btn" onclick="attGridCycleDay('${key}')" style="background:${bg};border-color:${bord}"><div style="font-size:10px;color:#9ca3af;line-height:1">${dayN}<span style="opacity:.7">${dayW}</span></div><div style="font-size:11px;font-weight:${t?700:400};color:${t?tp.text:'#9ca3af'};margin-top:2px;line-height:1">${t?ATT_TYPES_MAP[t]?.short||t:'—'}</div></button>`;}).join('');
                 const cnt={};ATT_CYCLE.filter(t=>t).forEach(t=>{cnt[t]=0;});dates.forEach(d=>{const r=lookup[_attDayKey(d)];if(r&&cnt[r.status]!==undefined)cnt[r.status]++;});
                 const pills=ATT_CYCLE.filter(t=>t&&cnt[t]>0).map(t=>`<span style="background:${ATT_TYPES_MAP[t].bg};color:${ATT_TYPES_MAP[t].text};border:1px solid ${ATT_TYPES_MAP[t].color}55;border-radius:99px;padding:3px 10px;font-size:11px;font-weight:500">${ATT_TYPES_MAP[t].label}: ${cnt[t]}</span>`).join('');
                 gridHTML=`<div class="bg-white border border-gray-200 rounded-xl p-4 mb-4">
                     <div class="flex justify-between items-center mb-2 flex-wrap gap-2"><div class="text-sm font-semibold text-gray-700">📅 Technician Grid — <span class="text-blue-600">${pl}</span></div>
-                    <div class="flex gap-2"><button onclick="attGridFill('Working')" style="font-size:11px;padding:3px 8px;color:#14532d;background:#dcfce7;border:1px solid #15803d44;border-radius:6px">All Working</button><button onclick="attGridFill('StandBy')" style="font-size:11px;padding:3px 8px;color:#78350f;background:#fef3c7;border:1px solid #b4530944;border-radius:6px">All StandBy</button><button onclick="attGridFill('')" style="font-size:11px;padding:3px 8px;border:1px solid #e5e7eb;border-radius:6px;background:#fff">Clear</button><button onclick="attGridSave()" class="px-3 py-1 bg-blue-600 text-white rounded-lg text-xs font-semibold">💾 Save Month</button></div></div>
+                    <div class="flex gap-2"><button onclick="attGridFill('Working')" style="font-size:11px;padding:3px 8px;color:#14532d;background:#dcfce7;border:1px solid #15803d44;border-radius:6px">All Working</button><button onclick="attGridFill('StandBy')" style="font-size:11px;padding:3px 8px;color:#78350f;background:#fef3c7;border:1px solid #b4530944;border-radius:6px">All StandBy</button><button onclick="attGridFill('')" style="font-size:11px;padding:3px 8px;border:1px solid #e5e7eb;border-radius:6px;background:#fff">Clear</button><button onclick="attGridSave(this)" class="px-3 py-1 bg-blue-600 text-white rounded-lg text-xs font-semibold">💾 Save Month</button></div></div>
                     <div class="flex flex-wrap gap-1.5 mb-2">${Object.entries(ATT_TYPES_MAP).filter(([t])=>t).map(([t,tp])=>`<span style="background:${tp.bg};color:${tp.text};border:1px solid ${tp.color}44;border-radius:99px;padding:2px 8px;font-size:11px;font-weight:500">${tp.short} ${tp.label}</span>`).join('')}</div>
                     <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:4px;margin-bottom:8px">${cells}</div>
                     ${pills?`<div style="display:flex;gap:6px;flex-wrap:wrap">${pills}</div>`:''}
@@ -5685,7 +5713,7 @@
                         </select></div>
                     <div><label class="block text-xs font-semibold text-gray-600 mb-1">Year</label>
                         <select onchange="attGridChangePeriod('periodYear',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm">
-                            ${[2024,2025,2026,2027].map(y=>`<option value="${y}" ${y===shY?'selected':''}>${y}</option>`).join('')}
+                            ${[2024,2025,2026,2027,2028].map(y=>`<option value="${y}" ${y===shY?'selected':''}>${y}</option>`).join('')}
                         </select></div>
                 </div>
                 ${selID&&isTech?'<p class="text-xs text-blue-600 mt-2">⬇ Click any day to cycle through attendance types. 💾 Save Month to record.</p>':''}
@@ -5694,8 +5722,8 @@
             <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
                 <div class="px-4 py-3 border-b border-gray-100 font-semibold text-sm text-gray-700">Records ${selID&&selSt?'— '+selSt.name:'(All)'} (${showingAtt.length})</div>
                 ${!showingAtt.length?'<p class="text-center text-gray-400 py-10 text-sm">No attendance records.</p>':
-                `<div class="overflow-x-auto"><table class="w-full text-sm"><thead class="bg-blue-50 text-xs text-gray-500 uppercase"><tr><th class="px-3 py-2 text-left">Date</th><th class="px-3 py-2 text-left">Staff</th><th class="px-3 py-2 text-left">Type</th><th class="px-3 py-2 text-left">Project</th><th class="px-3 py-2 text-left">Remarks</th><th class="px-3 py-2 text-right">Del</th></tr></thead>
-                <tbody>${showingAtt.slice(0,150).map(a=>`<tr class="border-b hover:bg-blue-50"><td class="px-3 py-2 text-xs">${a.date}</td><td class="px-3 py-2 font-medium">${a.staffName}</td><td class="px-3 py-2">${_attBadge(a.status)}</td><td class="px-3 py-2 text-xs">${a.project||'—'}</td><td class="px-3 py-2 text-xs text-gray-500">${a.remarks||'—'}</td><td class="px-3 py-2 text-right"><button onclick="deleteAttendance('${a.staffID}','${a.attID}')" class="text-red-400 hover:text-red-600 text-xs">✕</button></td></tr>`).join('')}</tbody>
+                `<div class="overflow-x-auto"><table class="w-full text-sm"><thead class="bg-blue-50 text-xs text-gray-500 uppercase"><tr><th class="px-3 py-2 text-left">Date</th><th class="px-3 py-2 text-left">Staff</th><th class="px-3 py-2 text-left">Type</th><th class="px-3 py-2 text-left">Project</th><th class="px-3 py-2 text-left">Remarks</th><th class="px-3 py-2 text-center">Actions</th></tr></thead>
+                <tbody>${showingAtt.slice(0,150).map(a=>`<tr class="border-b hover:bg-blue-50"><td class="px-3 py-2 text-xs">${a.date}</td><td class="px-3 py-2 font-medium">${a.staffName}</td><td class="px-3 py-2">${_attBadge(a.status)}</td><td class="px-3 py-2 text-xs">${a.project||'—'}</td><td class="px-3 py-2 text-xs text-gray-500">${a.remarks||'—'}</td><td class="px-3 py-2 text-center whitespace-nowrap"><button onclick="editAttendance('${a.staffID}','${a.attID}')" class="text-indigo-500 hover:text-indigo-700 text-xs font-medium mr-2">✏️ Edit</button><button onclick="deleteAttendance('${a.staffID}','${a.attID}')" class="text-red-400 hover:text-red-600 text-xs">✕</button></td></tr>`).join('')}</tbody>
                 </table></div>`}
             </div>`;
         }
@@ -5716,7 +5744,7 @@
             const dates=_attPeriodDates(attGridState.periodYear,attGridState.periodMonth);
             dates.forEach(date=>{const key=_attDayKey(date),idx=st.attendance.findIndex(a=>a.date===key);if(!type){if(idx>=0)st.attendance.splice(idx,1);}else if(idx>=0)st.attendance[idx].status=type;else st.attendance.push({attID:'ATT'+Date.now()+'_'+Math.random().toString(36).slice(2),staffID:st.staffID,date:key,status:type,project:'',remarks:''});});renderView();
         }
-        async function attGridSave(){
+        async function attGridSave(btn){
             await saveData('staff',staff);
             // If a technician is currently loaded in the payslip tab, sync their attendance
             if(techWageState.staffID){
@@ -5724,14 +5752,14 @@
                 if(st){
                     const dates=getTechWagePeriodDates(techWageState.periodYear,techWageState.periodMonth);
                     techWageState.att=dates.map(d=>{
-                        const key=d.toISOString().split('T')[0];
+                        const key=_localDateKey(d);
                         const rec=(st.attendance||[]).find(a=>a.date===key);
                         return rec&&ATT_ORDER.includes(rec.status)?rec.status:'';
                     });
                     renderTechWageCalc();
                 }
             }
-            const btn=event?.target;if(btn){btn.textContent='✅ Saved!';setTimeout(()=>btn.textContent='💾 Save Month',2000);}
+            if(btn){const orig=btn.textContent;btn.textContent='✅ Saved!';btn.disabled=true;setTimeout(()=>{btn.textContent=orig;btn.disabled=false;},2000);}
         }
 
         function renderWagesTab() {
@@ -5828,7 +5856,7 @@
             if(isTech&&selID){
                 const dates=getTechWagePeriodDates(techWageState.periodYear,techWageState.periodMonth);
                 techWageState.att=dates.map(d=>{
-                    const key=d.toISOString().split('T')[0];
+                    const key=_localDateKey(d);
                     const rec=(selSt.attendance||[]).find(a=>a.date===key);
                     return rec&&ATT_ORDER.includes(rec.status)?rec.status:'';
                 });
@@ -5878,7 +5906,7 @@
                         </select></div>
                     <div><label class="block text-xs font-semibold text-gray-600 mb-1">Year</label>
                         <select onchange="onPaySlipPeriodChange('periodYear',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm">
-                            ${[2024,2025,2026,2027].map(y=>`<option value="${y}" ${y===shY?'selected':''}>${y}</option>`).join('')}
+                            ${[2024,2025,2026,2027,2028].map(y=>`<option value="${y}" ${y===shY?'selected':''}>${y}</option>`).join('')}
                         </select></div>
                     <div class="${isTech?'':'hidden'}"><label class="block text-xs font-semibold text-gray-600 mb-1">Basic Salary (₹)</label>
                         <input type="number" id="twBasicTop" value="${techWageState.basic||0}" oninput="onTechWageFieldChange('basic',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm" min="0" step="1"/></div>
@@ -6088,18 +6116,69 @@
             const projSel=document.getElementById('attProject');if(projSel){projSel.innerHTML='<option value="">— Select Project —</option>'+projectExpenses.map(p=>`<option value="${p.projectName}">${p.projectName}${p.projectRef?' ('+p.projectRef+')':''}</option>`).join('');}
         }
         function openAttendanceModal(prefillSID){
+            const modal=document.getElementById('attendanceModal');
+            modal.dataset.editAttID='';
+            document.getElementById('attDate').readOnly=false;
+            document.getElementById('attStaff').disabled=false;
             document.getElementById('attDate').value=new Date().toISOString().split('T')[0];
-            const sel=document.getElementById('attStaff');sel.innerHTML=staff.filter(s=>s.status==='Active').map(s=>`<option value="${s.staffID}">${s.name} (${s.staffType||'Staff'})</option>`).join('');
-            if(prefillSID)sel.value=prefillSID;onAttStaffChange(sel.value);
-            document.getElementById('attRemarks').value='';document.getElementById('attendanceModal').classList.add('show');
+            const sel=document.getElementById('attStaff');
+            sel.innerHTML=staff.filter(s=>s.status==='Active').map(s=>`<option value="${s.staffID}">${s.name} (${s.staffType||'Staff'})</option>`).join('');
+            if(prefillSID)sel.value=prefillSID;
+            onAttStaffChange(sel.value);
+            document.getElementById('attRemarks').value='';
+            modal.classList.add('show');
         }
-        function closeAttendanceModal(){document.getElementById('attendanceModal').classList.remove('show');}
+        function closeAttendanceModal(){
+            const modal=document.getElementById('attendanceModal');
+            modal.dataset.editAttID='';
+            document.getElementById('attDate').readOnly=false;
+            document.getElementById('attStaff').disabled=false;
+            modal.classList.remove('show');
+        }
+        function editAttendance(staffID,attID){
+            const st=staff.find(x=>x.staffID===staffID);
+            const rec=(st?.attendance||[]).find(a=>a.attID===attID);
+            if(!rec)return;
+            const sel=document.getElementById('attStaff');
+            sel.innerHTML=staff.filter(s=>s.status==='Active').map(s=>`<option value="${s.staffID}">${s.name} (${s.staffType||'Staff'})</option>`).join('');
+            sel.value=staffID; sel.disabled=true;
+            onAttStaffChange(staffID);
+            document.getElementById('attDate').value=rec.date;
+            document.getElementById('attDate').readOnly=true;
+            document.getElementById('attStatus').value=rec.status;
+            const projSel=document.getElementById('attProject');if(projSel)projSel.value=rec.project||'';
+            document.getElementById('attRemarks').value=rec.remarks||'';
+            const modal=document.getElementById('attendanceModal');
+            modal.dataset.editAttID=attID;
+            modal.classList.add('show');
+        }
         async function saveAttendance(e){
-            e.preventDefault();const sid=document.getElementById('attStaff').value;const idx=staff.findIndex(x=>x.staffID===sid);if(idx<0)return;if(!staff[idx].attendance)staff[idx].attendance=[];
+            e.preventDefault();
+            const sid=document.getElementById('attStaff').value;
+            const idx=staff.findIndex(x=>x.staffID===sid);if(idx<0)return;
+            if(!staff[idx].attendance)staff[idx].attendance=[];
             const dateVal=document.getElementById('attDate').value;
-            const newRec={attID:'ATT'+Date.now(),staffID:sid,date:dateVal,status:document.getElementById('attStatus').value,project:document.getElementById('attProject').value||'',remarks:document.getElementById('attRemarks').value||''};
-            const ei=staff[idx].attendance.findIndex(a=>a.date===dateVal);if(ei>=0)staff[idx].attendance[ei]=newRec;else staff[idx].attendance.push(newRec);
-            await saveData('staff',staff);closeAttendanceModal();renderView();
+            const editAttID=document.getElementById('attendanceModal').dataset.editAttID||'';
+            const newRec={
+                attID:editAttID||('ATT'+Date.now()),
+                staffID:sid,date:dateVal,
+                status:document.getElementById('attStatus').value,
+                project:document.getElementById('attProject').value||'',
+                remarks:document.getElementById('attRemarks').value||''
+            };
+            if(editAttID){
+                const ei=staff[idx].attendance.findIndex(a=>a.attID===editAttID);
+                if(ei>=0)staff[idx].attendance[ei]=newRec;else staff[idx].attendance.push(newRec);
+            } else {
+                const ei=staff[idx].attendance.findIndex(a=>a.date===dateVal);
+                if(ei>=0)staff[idx].attendance[ei]=newRec;else staff[idx].attendance.push(newRec);
+            }
+            await saveData('staff',staff);
+            // reset modal state
+            document.getElementById('attendanceModal').dataset.editAttID='';
+            document.getElementById('attDate').readOnly=false;
+            document.getElementById('attStaff').disabled=false;
+            closeAttendanceModal();renderView();
         }
         async function deleteAttendance(staffID,attID){
             const idx=staff.findIndex(x=>x.staffID===staffID);if(idx<0)return;
@@ -6137,6 +6216,7 @@
         function closePayslipApproveModal(){document.getElementById('payslipApproveModal').classList.remove('show');_pendingPayslip=null;}
         async function confirmApprovePayslip(){
             if(!_pendingPayslip)return;
+            _pendingPayslip.approved=true;
             payslips.push(_pendingPayslip);await saveData('payslips',payslips);_pendingPayslip=null;
             closePayslipApproveModal();renderView();
         }
@@ -6150,7 +6230,21 @@
             if(!confirm('Delete this payslip record?'))return;
             payslips=payslips.filter(x=>x.psID!==psID);await saveData('payslips',payslips);renderView();
         }
-        function viewPayslipPDF(psID){const ps=payslips.find(x=>x.psID===psID);if(!ps){alert('Payslip not found.');return;}if(ps.type==='tech'){const saved=techWageState;Object.assign(techWageState,ps.snapshot);_pdfTech();Object.assign(techWageState,saved);}else{const saved=officePayState;Object.assign(officePayState,ps.snapshot);_pdfOffice();Object.assign(officePayState,saved);}}
+        function viewPayslipPDF(psID){
+            const ps=payslips.find(x=>x.psID===psID);
+            if(!ps){alert('Payslip not found.');return;}
+            if(ps.type==='tech'){
+                const saved=JSON.parse(JSON.stringify(techWageState));
+                Object.assign(techWageState,JSON.parse(JSON.stringify(ps.snapshot)));
+                _pdfTech();
+                Object.assign(techWageState,saved);
+            } else {
+                const saved=JSON.parse(JSON.stringify(officePayState));
+                Object.assign(officePayState,JSON.parse(JSON.stringify(ps.snapshot)));
+                _pdfOffice();
+                Object.assign(officePayState,saved);
+            }
+        }
         async function togglePayslipEditLock(){settings.payslipEditUnlocked=!settings.payslipEditUnlocked;await saveData('settings',settings);renderView();}
 
         function generatePaySlipPDF(){const techV=!document.getElementById('twSection')?.classList.contains('hidden'),offV=!document.getElementById('opSection')?.classList.contains('hidden');if(techV)_pdfTech();else if(offV)_pdfOffice();else alert('Please select a staff member first.');}
@@ -6164,7 +6258,7 @@
             const travelAmt=+s.travelAllow||0;
             const ded=calcTechDeductions(cal.gross,cal.basic,cal.fixedAllow,exgratiaAmt,s);
             const netPay=+(cal.gross+exgratiaAmt-ded.totalDed+travelAmt).toFixed(2);
-            const dates=getTechWagePeriodDates(s.periodYear,s.periodMonth),pl=dates[0].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})+' to '+dates[29].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
+            const dates=getTechWagePeriodDates(s.periodYear,s.periodMonth),pl=dates[0].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})+' to '+dates[dates.length-1].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})+'  ('+dates.length+' days)';
             const mL=new Date(s.periodYear,s.periodMonth-1,1).toLocaleString('en-IN',{month:'long',year:'numeric'}),doc=new jsPDF();
             const INR=n=>'INR '+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
             const RT=n=>(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -6239,20 +6333,50 @@
         }
         function _pdfOffice(){
             const{jsPDF}=window.jspdf,op=officePayState,st=staff.find(x=>x.staffID===op.staffID);if(!st){alert('Please select a staff member.');return;}
-            const c=computeOfficeSalary(st,op),MN=['January','February','March','April','May','June','July','August','September','October','November','December'],mL=MN[op.periodMonth-1]+' '+op.periodYear,doc=new jsPDF();
+            const c=computeOfficeSalary(st,op);
+            const MN=['January','February','March','April','May','June','July','August','September','October','November','December'];
+            const mL=MN[op.periodMonth-1]+' '+op.periodYear;
+            const pl=c.periodLabel; // "26-MMM-YYYY – 25-MMM-YYYY"
+            const doc=new jsPDF();
             const INR=n=>'INR '+Math.max(0,+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
-            _pdfHdr(doc,(settings.companyName||'EASY EMS').toUpperCase(),'OFFICE STAFF PAY SLIP — '+mL.toUpperCase(),'Salary for the month of '+mL);let y=48;
-            doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:9},headStyles:{fillColor:[186,230,253],textColor:[15,23,72],fontStyle:'bold'},head:[['Field','Details','Field','Details']],body:[['Employee',st.name,'Designation',st.designation||'—'],['PAN',st.pan||'—','PF Number',st.pfNumber||'—'],['ESIC',st.esicNumber||'—','Pay Month',mL],['Leave Accrual/Month',String(c.leavePerMonth),'Carried Forward',String(c.carriedLeave)],['Available Leave',String(c.available),'Leave Taken',String(c.leaveTaken)],['LOP Days',String(c.lopDays),'Next Month Balance','0 (resets if LOP)']],columnStyles:{0:{cellWidth:38,fontStyle:'bold'},2:{cellWidth:38,fontStyle:'bold'}}});y=doc.lastAutoTable.finalY+6;
-            const earRows=[['Basic Salary',INR(c.basic)]];if(c.hra>0)earRows.push([`HRA (${c.hraPct}%)`,INR(c.hra)]);if(c.da>0)earRows.push([`DA (${c.daPct}%)`,INR(c.da)]);if(c.gradePay>0)earRows.push(['Grade Pay',INR(c.gradePay)]);if(c.conveyance>0)earRows.push(['Conveyance',INR(c.conveyance)]);if(c.medical>0)earRows.push(['Medical Allow.',INR(c.medical)]);earRows.push(['Annual Bonus (Basic÷10)',INR(c.bonus)]);if(c.variable>0)earRows.push(['Variable Allow. (excl. PF)',INR(c.variable)]);if(c.addlAllow>0)earRows.push([(op.addlAllowanceRemark?'Additional: '+op.addlAllowanceRemark:'Additional Allow.'),INR(c.addlAllow)]);earRows.push([{content:'GROSS EARNINGS',styles:{fontStyle:'bold',fillColor:[224,242,254],textColor:[15,23,72]}},{content:INR(c.gross),styles:{fontStyle:'bold',fillColor:[186,230,253],textColor:[15,23,72]}}]);
-            const dedRows=[];const pfLbl=c.pfCapped?`PF – ${c.pfPct}% (PF Gross INR ${Math.round(c.pfGross).toLocaleString('en-IN')} → cap INR 15,000)`:`PF – ${c.pfPct}% of PF Gross INR ${Math.round(c.pfGross).toLocaleString('en-IN')}`;if(c.pfAmt>0)dedRows.push([pfLbl,INR(c.pfAmt)]);if(c.esicWaived)dedRows.push([`ESIC – NIL (Gross excl. Variable INR ${Math.round(c.grossExclVar).toLocaleString('en-IN')} > INR 20,000)`,'—']);
+            _pdfHdr(doc,(settings.companyName||'EASY EMS').toUpperCase(),'OFFICE STAFF PAY SLIP — '+mL.toUpperCase(),'Pay Period: '+pl+' ('+c.periodDays+' days)');let y=48;
+            doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:9},headStyles:{fillColor:[186,230,253],textColor:[15,23,72],fontStyle:'bold'},head:[['Field','Details','Field','Details']],body:[
+                ['Employee',st.name,'Designation',st.designation||'—'],
+                ['PAN',st.pan||'—','PF Number',st.pfNumber||'—'],
+                ['ESIC',st.esicNumber||'—','Pay Period',pl],
+                ['Leave Accrual/Month',String(c.leavePerMonth),'Carried Forward',String(c.carriedLeave)],
+                ['Available Leave',String(c.available),'Leave Taken',String(c.leaveTaken)],
+                ['LOP Days',String(c.lopDays),'Next Month Balance',c.lopDays>0?'0 (reset after LOP)':String(c.leaveBalance)]
+            ],columnStyles:{0:{cellWidth:38,fontStyle:'bold'},2:{cellWidth:38,fontStyle:'bold'}}});y=doc.lastAutoTable.finalY+6;
+            const earRows=[['Basic Salary',INR(c.basic)]];
+            if(c.hra>0)earRows.push([`HRA (${c.hraPct}%)`,INR(c.hra)]);
+            if(c.da>0)earRows.push([`DA (${c.daPct}%)`,INR(c.da)]);
+            if(c.gradePay>0)earRows.push(['Grade Pay',INR(c.gradePay)]);
+            if(c.conveyance>0)earRows.push(['Conveyance',INR(c.conveyance)]);
+            if(c.medical>0)earRows.push(['Medical Allow.',INR(c.medical)]);
+            earRows.push(['Annual Bonus (Basic÷10)',INR(c.bonus)]);
+            if(c.variable>0)earRows.push(['Variable Allow. (excl. PF)',INR(c.variable)]);
+            if(c.addlAllow>0)earRows.push([(op.addlAllowanceRemark?'Additional: '+op.addlAllowanceRemark:'Additional Allow.'),INR(c.addlAllow)]);
+            earRows.push([{content:'GROSS EARNINGS',styles:{fontStyle:'bold',fillColor:[224,242,254],textColor:[15,23,72]}},{content:INR(c.gross),styles:{fontStyle:'bold',fillColor:[186,230,253],textColor:[15,23,72]}}]);
+            const dedRows=[];
+            const pfLbl=c.pfCapped?`PF – ${c.pfPct}% (PF Gross INR ${Math.round(c.pfGross).toLocaleString('en-IN')} → cap INR 15,000)`:`PF – ${c.pfPct}% of PF Gross INR ${Math.round(c.pfGross).toLocaleString('en-IN')}`;
+            if(c.pfAmt>0)dedRows.push([pfLbl,INR(c.pfAmt)]);
+            if(c.esicWaived)dedRows.push([`ESIC – NIL (Gross excl. Variable INR ${Math.round(c.grossExclVar).toLocaleString('en-IN')} > INR 20,000)`,'—']);
             else if(c.esicAmt>0)dedRows.push([`ESIC – 0.75% of Gross excl. Variable INR ${Math.round(c.grossExclVar).toLocaleString('en-IN')}`,INR(c.esicAmt)]);
-            const ptDescOff=c.ptApplies?`Prof. Tax (PT)`+(c.isFebruary?' — February (₹300)':'')+` — ${c.gender}, Gross INR ${Math.round(c.gross).toLocaleString('en-IN')} > ${c.gender==='Female'?'INR 25,000':'INR 10,000'}`:`Prof. Tax – NIL (${c.gender}: Gross INR ${Math.round(c.gross).toLocaleString('en-IN')} ≤ ${c.gender==='Female'?'INR 25,000':'INR 10,000'})`;
-            dedRows.push([ptDescOff,c.ptApplies?INR(c.ptAmt):'—']);if(c.tdsAmt>0)dedRows.push(['Income Tax TDS',INR(c.tdsAmt)]);if(c.lopDays>0)dedRows.push([`Loss of Pay – ${c.lopDays} day${c.lopDays===1?'':'s'} (LOP Base÷26)`,INR(c.lopAmt)]);if(c.addlDed>0)dedRows.push([(op.addlDeductionRemark?'Other: '+op.addlDeductionRemark:'Other Deduction'),INR(c.addlDed)]);if(!dedRows.length)dedRows.push(['No deductions this period','—']);dedRows.push([{content:'TOTAL DEDUCTIONS',styles:{fontStyle:'bold',fillColor:[254,226,226],textColor:[153,27,27]}},{content:INR(c.totalDed),styles:{fontStyle:'bold',fillColor:[254,202,202],textColor:[153,27,27]}}]);
-            const maxR=Math.max(earRows.length,dedRows.length);while(earRows.length<maxR)earRows.splice(earRows.length-1,0,['','']);while(dedRows.length<maxR)dedRows.splice(dedRows.length-1,0,['','']);
+            const ptDescOff=c.ptApplies?`Prof. Tax (PT)`+(c.isFebruary?' — February (INR 300)':'')+` — ${c.gender}, Gross INR ${Math.round(c.gross).toLocaleString('en-IN')} > ${c.gender==='Female'?'INR 25,000':'INR 10,000'}`:`Prof. Tax – NIL (${c.gender}: Gross INR ${Math.round(c.gross).toLocaleString('en-IN')} <= ${c.gender==='Female'?'INR 25,000':'INR 10,000'})`;
+            dedRows.push([ptDescOff,c.ptApplies?INR(c.ptAmt):'—']);
+            if(c.tdsAmt>0)dedRows.push(['Income Tax TDS',INR(c.tdsAmt)]);
+            if(c.lopDays>0)dedRows.push([`Loss of Pay – ${c.lopDays} day${c.lopDays===1?'':'s'} (LOP Base / ${c.periodDays} period days)`,INR(c.lopAmt)]);
+            if(c.addlDed>0)dedRows.push([(op.addlDeductionRemark?'Other: '+op.addlDeductionRemark:'Other Deduction'),INR(c.addlDed)]);
+            if(!dedRows.length)dedRows.push(['No deductions this period','—']);
+            dedRows.push([{content:'TOTAL DEDUCTIONS',styles:{fontStyle:'bold',fillColor:[254,226,226],textColor:[153,27,27]}},{content:INR(c.totalDed),styles:{fontStyle:'bold',fillColor:[254,202,202],textColor:[153,27,27]}}]);
+            const maxR=Math.max(earRows.length,dedRows.length);
+            while(earRows.length<maxR)earRows.splice(earRows.length-1,0,['','']);
+            while(dedRows.length<maxR)dedRows.splice(dedRows.length-1,0,['','']);
             const combined=earRows.map((er,i)=>[er[0],er[1],dedRows[i][0],dedRows[i][1]]);
             doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:8},headStyles:{fillColor:[186,230,253],textColor:[15,23,72],fontStyle:'bold',fontSize:9},head:[['EARNINGS','Amount (INR)','DEDUCTIONS','Amount (INR)']],body:combined,columnStyles:{0:{cellWidth:55},1:{halign:'right',cellWidth:34},2:{cellWidth:65},3:{halign:'right',cellWidth:30}}});y=doc.lastAutoTable.finalY+4;
             doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:12,fontStyle:'bold'},body:[['NET PAY — '+st.name.toUpperCase()+' — '+mL,INR(c.netPay)]],columnStyles:{0:{cellWidth:150,fillColor:[224,242,254],textColor:[15,23,72]},1:{halign:'right',fillColor:[186,230,253],textColor:[15,23,72],cellWidth:34}}});y=doc.lastAutoTable.finalY+8;
-            if(c.lopDays>0){doc.setFontSize(8);doc.setFont('helvetica','italic');doc.setTextColor(180,0,0);doc.text(`* LOP: ${c.leaveTaken} leave days taken, ${c.available} available (Carried ${c.carriedLeave} + Accrued ${c.leavePerMonth}). LOP base = Basic+HRA+DA+Med+Conv+GP+Bonus.`,14,y);doc.setFont('helvetica','normal');doc.setTextColor(0,0,0);y+=6;}
+            if(c.lopDays>0){doc.setFontSize(8);doc.setFont('helvetica','italic');doc.setTextColor(180,0,0);doc.text(`* LOP: ${c.leaveTaken} leave days taken, ${c.available} available (Carried ${c.carriedLeave} + Accrued ${c.leavePerMonth}). LOP base = Basic+HRA+DA+Med+Conv+GP+Bonus / ${c.periodDays} days.`,14,y);doc.setFont('helvetica','normal');doc.setTextColor(0,0,0);y+=6;}
             doc.setFontSize(8);doc.setFont('helvetica','italic');doc.setTextColor(100,100,100);doc.text('This is a computer generated payslip and does not require any signature.',105,282,{align:'center'});doc.setFont('helvetica','normal');doc.setFontSize(7);doc.setTextColor(150,150,150);doc.text('Generated by EASY EMS · '+new Date().toLocaleDateString('en-IN'),105,289,{align:'center'});
             doc.save('PaySlip_'+st.name.replace(/\s+/g,'_')+'_'+mL.replace(/\s+/g,'_')+'.pdf');
         }
