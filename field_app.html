@@ -344,7 +344,7 @@
     const CLIENT_ID = '807569986194-feca4li2k0t96tbbutlpu2ko64obe95k.apps.googleusercontent.com';
     const APP_FOLDER_NAME = 'Engineering Service App'; // must match main app
     const DISCOVERY_DOCS = ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"];
-    const SCOPES = 'https://www.googleapis.com/auth/drive';
+    const SCOPES = 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/userinfo.email openid';
 
     // ── STATE ─────────────────────────────────────────────────────
     let tokenClient, accessToken = null, appFolderId = null;
@@ -375,37 +375,58 @@
                 if (resp.error) { alert('Sign-in failed. Please try again.'); return; }
                 if (resp.access_token) {
                     accessToken = resp.access_token;
+                    // Set token on gapi client FIRST before any API calls
+                    gapi.client.setToken({ access_token: accessToken });
+
+                    // Show checking screen
+                    document.getElementById('app').innerHTML = `
+                    <div class="min-h-screen flex items-center justify-center">
+                        <div class="text-center">
+                            <div class="w-10 h-10 border-4 border-teal-500 border-t-transparent rounded-full spin mx-auto mb-3"></div>
+                            <p class="text-sm font-medium text-gray-500">Verifying access…</p>
+                        </div>
+                    </div>`;
+
                     // ── Verify email is authorised ──────────────────
+                    let emailVerified = false;
+                    let userEmail = '';
                     try {
                         const userResp = await fetch(
                             'https://www.googleapis.com/oauth2/v3/userinfo',
                             { headers: { Authorization: `Bearer ${accessToken}` } }
                         );
-                        const userInfo = await userResp.json();
-                        if (!ALLOWED_EMAILS.includes((userInfo.email||'').toLowerCase())) {
-                            // Not authorised — revoke token and show error
-                            google.accounts.oauth2.revoke(accessToken, ()=>{});
-                            accessToken = null;
-                            gapi.client.setToken(null);
-                            document.getElementById('app').innerHTML = `
-                            <div class="min-h-screen flex flex-col items-center justify-center p-6" style="background:linear-gradient(160deg,#0f2b4c 0%,#164e63 60%,#0d7c66 100%)">
-                                <div class="card p-8 w-full max-w-sm text-center shadow-2xl">
-                                    <div style="font-size:52px;margin-bottom:8px">🚫</div>
-                                    <h2 class="text-xl font-bold mb-2" style="color:#dc2626">Access Denied</h2>
-                                    <p class="text-sm mb-1" style="color:#374151"><strong>${userInfo.email}</strong></p>
-                                    <p class="text-sm mb-6" style="color:#6b7280">This account is not authorised to use the IMSE Field App.</p>
-                                    <p class="text-xs mb-4" style="color:#9ca3af">Please sign in with the authorised field account.<br/>Contact your administrator if you need access.</p>
-                                    <button onclick="renderLogin()" class="btn-primary w-full">↩ Try Again</button>
-                                </div>
-                            </div>`;
-                            return;
+                        if (userResp.ok) {
+                            const userInfo = await userResp.json();
+                            userEmail = (userInfo.email || '').toLowerCase();
+                            emailVerified = true;
+                            if (!ALLOWED_EMAILS.includes(userEmail)) {
+                                // Not authorised — revoke and show error
+                                google.accounts.oauth2.revoke(accessToken, ()=>{});
+                                accessToken = null;
+                                gapi.client.setToken(null);
+                                document.getElementById('app').innerHTML = `
+                                <div class="min-h-screen flex flex-col items-center justify-center p-6" style="background:linear-gradient(160deg,#0f2b4c 0%,#164e63 60%,#0d7c66 100%)">
+                                    <div class="card p-8 w-full max-w-sm text-center shadow-2xl">
+                                        <div style="font-size:52px;margin-bottom:8px">🚫</div>
+                                        <h2 class="text-xl font-bold mb-2" style="color:#dc2626">Access Denied</h2>
+                                        <p class="text-sm mb-1" style="color:#374151"><strong>${userEmail}</strong></p>
+                                        <p class="text-sm mb-6" style="color:#6b7280">This account is not authorised to use the IMSE Field App.</p>
+                                        <p class="text-xs mb-4" style="color:#9ca3af">Please sign in with the authorised field account.<br/>Contact your administrator if you need access.</p>
+                                        <button onclick="renderLogin()" class="btn-primary w-full">↩ Try Again</button>
+                                    </div>
+                                </div>`;
+                                return;
+                            }
+                        } else {
+                            // userinfo returned error — log and allow through
+                            console.warn('userinfo status:', userResp.status, '— skipping email check');
                         }
                     } catch(err) {
-                        console.warn('Could not verify email:', err);
-                        // Allow through if userinfo call fails (e.g. network issue)
+                        console.warn('Could not verify email (network issue):', err);
+                        // Allow through if network fails — Drive access still protected by OAuth
                     }
+
                     // ── Authorised — load app ───────────────────────
-                    gapi.client.setToken({ access_token: accessToken });
                     startTokenRefresh();
                     await loadData();
                 }
