@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+    <title>IMSE Field App</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script src="https://apis.google.com/js/api.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
+
+        :root {
+            --navy:   #0f2b4c;
+            --teal:   #0d7c66;
+            --teal2:  #0a6355;
+            --amber:  #d97706;
+            --amber2: #b45309;
+            --red:    #dc2626;
+            --slate:  #f1f5f9;
+            --card:   #ffffff;
+            --border: #e2e8f0;
+            --text:   #1e293b;
+            --muted:  #64748b;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'DM Sans', sans-serif;
+            background: var(--slate);
+            color: var(--text);
+            min-height: 100vh;
+        }
+
+        /* ── MODALS ─────────────────────────────────────────────── */
+        .modal {
+            display: none; position: fixed; z-index: 50;
+            inset: 0; background: rgba(15,43,76,0.55);
+            backdrop-filter: blur(2px);
+        }
+        .modal.show { display: flex; align-items: flex-end; justify-content: center; }
+        @media(min-width:640px){ .modal.show { align-items: center; } }
+
+        .modal-box {
+            background: var(--card); border-radius: 20px 20px 0 0;
+            width: 100%; max-width: 540px; max-height: 92vh;
+            overflow-y: auto; animation: slideUp .22s ease;
+        }
+        @media(min-width:640px){ .modal-box { border-radius: 20px; } }
+
+        @keyframes slideUp {
+            from { transform: translateY(40px); opacity: 0; }
+            to   { transform: translateY(0);    opacity: 1; }
+        }
+
+        .modal-hdr {
+            position: sticky; top: 0; z-index: 10;
+            padding: 18px 20px;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+
+        /* ── CARDS ──────────────────────────────────────────────── */
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            overflow: hidden;
+        }
+
+        /* ── NAV ────────────────────────────────────────────────── */
+        .nav-pill {
+            flex: 1; padding: 10px 4px; border-radius: 10px;
+            font-size: 13px; font-weight: 600; text-align: center;
+            cursor: pointer; transition: all .15s; border: none;
+            background: transparent; color: var(--muted);
+        }
+        .nav-pill.active {
+            background: var(--navy); color: #fff;
+            box-shadow: 0 2px 8px rgba(15,43,76,.25);
+        }
+
+        /* ── FORM CONTROLS ──────────────────────────────────────── */
+        .field-label {
+            display: block; font-size: 11px; font-weight: 600;
+            color: var(--muted); text-transform: uppercase;
+            letter-spacing: .05em; margin-bottom: 5px;
+        }
+        .field-input {
+            width: 100%; padding: 10px 14px;
+            border: 1.5px solid var(--border); border-radius: 10px;
+            font-family: inherit; font-size: 14px; color: var(--text);
+            background: #fff; outline: none; transition: border-color .15s;
+        }
+        .field-input:focus { border-color: var(--teal); }
+
+        /* ── BUTTONS ────────────────────────────────────────────── */
+        .btn-primary {
+            padding: 11px 22px; border-radius: 10px; border: none;
+            font-family: inherit; font-size: 14px; font-weight: 600;
+            cursor: pointer; transition: all .15s;
+            background: var(--teal); color: #fff;
+        }
+        .btn-primary:hover { background: var(--teal2); }
+        .btn-secondary {
+            padding: 11px 18px; border-radius: 10px;
+            border: 1.5px solid var(--border); background: #fff;
+            font-family: inherit; font-size: 14px; font-weight: 500;
+            cursor: pointer; color: var(--muted); transition: all .15s;
+        }
+        .btn-secondary:hover { background: var(--slate); }
+
+        /* ── BADGE ──────────────────────────────────────────────── */
+        .badge {
+            display: inline-block; padding: 3px 10px;
+            border-radius: 99px; font-size: 11px; font-weight: 600;
+        }
+
+        /* ── PROGRESS BAR ───────────────────────────────────────── */
+        .prog-track { background: #e2e8f0; border-radius: 99px; height: 6px; }
+        .prog-fill   { border-radius: 99px; height: 6px; transition: width .3s; }
+
+        /* ── SPINNER ────────────────────────────────────────────── */
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .spin { animation: spin 1s linear infinite; }
+
+        /* ── TOAST ──────────────────────────────────────────────── */
+        #toast {
+            position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%);
+            background: var(--navy); color: #fff;
+            padding: 10px 20px; border-radius: 99px; font-size: 13px;
+            font-weight: 500; box-shadow: 0 4px 16px rgba(0,0,0,.2);
+            opacity: 0; transition: opacity .25s; pointer-events: none; z-index: 999;
+            white-space: nowrap;
+        }
+        #toast.show { opacity: 1; }
+
+        /* ── BOTTOM NAV ─────────────────────────────────────────── */
+        #bottomNav {
+            position: fixed; bottom: 0; left: 0; right: 0;
+            background: #fff; border-top: 1px solid var(--border);
+            padding: 8px 16px 12px; z-index: 40;
+            display: flex; gap: 6px;
+        }
+        #mainContent { padding-bottom: 90px; }
+
+        /* ── PHOTO GRID ─────────────────────────────────────────── */
+        .photo-thumb {
+            width: 64px; height: 64px; border-radius: 8px;
+            object-fit: cover; border: 1.5px solid var(--border);
+            cursor: pointer;
+        }
+        .photo-add {
+            width: 64px; height: 64px; border-radius: 8px;
+            border: 2px dashed var(--border);
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; font-size: 22px; color: var(--muted);
+            background: var(--slate);
+        }
+        .photo-add:hover { border-color: var(--teal); color: var(--teal); }
+    </style>
+</head>
+<body>
+<div id="app"></div>
+<div id="toast"></div>
+
+<!-- ═══ MODALS ════════════════════════════════════════════════════ -->
+
+<!-- Project Modal -->
+<div id="projModal" class="modal">
+    <div class="modal-box">
+        <div class="modal-hdr" style="background:linear-gradient(135deg,#d97706,#b45309)">
+            <span class="font-bold text-white text-lg" id="projModalTitle">New Project</span>
+            <button onclick="closeProjModal()" class="text-white text-2xl font-bold leading-none">✕</button>
+        </div>
+        <form id="projForm" onsubmit="saveProject(event)" class="p-5 space-y-4">
+            <div>
+                <label class="field-label">Project Name <span class="text-red-500">*</span></label>
+                <input type="text" id="pName" class="field-input" required placeholder="e.g. MV Vessel Inspection"/>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="field-label">Project Ref / PO</label>
+                    <input type="text" id="pRef" class="field-input" placeholder="Optional"/>
+                </div>
+                <div>
+                    <label class="field-label">Total Funds (₹)</label>
+                    <input type="number" id="pFunds" class="field-input" placeholder="0.00" min="0" step="0.01"/>
+                </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="field-label">Start Date</label>
+                    <input type="date" id="pStart" class="field-input"/>
+                </div>
+                <div>
+                    <label class="field-label">End Date</label>
+                    <input type="date" id="pEnd" class="field-input"/>
+                </div>
+            </div>
+            <div>
+                <label class="field-label">Description</label>
+                <textarea id="pDesc" class="field-input" rows="2" placeholder="Brief description"></textarea>
+            </div>
+            <div class="flex gap-3 pt-2">
+                <button type="button" onclick="closeProjModal()" class="btn-secondary flex-1">Cancel</button>
+                <button type="submit" class="btn-primary flex-1">Save Project</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Expense Item Modal -->
+<div id="expItemModal" class="modal">
+    <div class="modal-box">
+        <div class="modal-hdr" style="background:linear-gradient(135deg,#0d7c66,#0a6355)">
+            <span class="font-bold text-white text-lg">Add Expense</span>
+            <button onclick="closeExpItemModal()" class="text-white text-2xl font-bold leading-none">✕</button>
+        </div>
+        <form id="expItemForm" onsubmit="saveExpItem(event)" class="p-5 space-y-4">
+            <input type="hidden" id="eiProjID"/>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="field-label">Date <span class="text-red-500">*</span></label>
+                    <input type="date" id="eiDate" class="field-input" required/>
+                </div>
+                <div>
+                    <label class="field-label">Category <span class="text-red-500">*</span></label>
+                    <select id="eiCat" class="field-input" required>
+                        <option value="Food">Food / Meals</option>
+                        <option value="Travel">Travel / Transport</option>
+                        <option value="Accommodation">Accommodation</option>
+                        <option value="Communication">Communication</option>
+                        <option value="Tools">Tools / Equipment</option>
+                        <option value="Misc">Miscellaneous</option>
+                    </select>
+                </div>
+            </div>
+            <div>
+                <label class="field-label">Description <span class="text-red-500">*</span></label>
+                <input type="text" id="eiDesc" class="field-input" required placeholder="What was purchased?"/>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="field-label">Amount (₹) <span class="text-red-500">*</span></label>
+                    <input type="number" id="eiAmt" class="field-input" required min="0" step="0.01" placeholder="0.00"/>
+                </div>
+                <div>
+                    <label class="field-label">Staff Name</label>
+                    <input type="text" id="eiStaff" class="field-input" placeholder="Who spent?"/>
+                </div>
+            </div>
+            <div>
+                <label class="field-label">Attach Bill / Photo</label>
+                <input type="file" id="eiBill" accept="image/*,application/pdf" capture="environment" class="field-input" style="padding:6px"/>
+                <p id="eiBillName" class="text-xs text-teal-600 mt-1"></p>
+            </div>
+            <div class="flex gap-3 pt-2">
+                <button type="button" onclick="closeExpItemModal()" class="btn-secondary flex-1">Cancel</button>
+                <button type="submit" class="btn-primary flex-1">Add Expense</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Work Log Modal -->
+<div id="wlModal" class="modal">
+    <div class="modal-box" style="max-width:600px">
+        <div class="modal-hdr" style="background:linear-gradient(135deg,#4338ca,#6d28d9)">
+            <span class="font-bold text-white text-lg" id="wlModalTitle">New Work Log</span>
+            <button onclick="closeWlModal()" class="text-white text-2xl font-bold leading-none">✕</button>
+        </div>
+        <form id="wlForm" onsubmit="saveWorkLog(event)" class="p-5 space-y-4">
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="field-label">Date <span class="text-red-500">*</span></label>
+                    <input type="date" id="wlDate" class="field-input" required/>
+                </div>
+                <div>
+                    <label class="field-label">Your Name <span class="text-red-500">*</span></label>
+                    <input type="text" id="wlStaff" class="field-input" required placeholder="Technician name"/>
+                </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="field-label">Project / Vessel <span class="text-red-500">*</span></label>
+                    <input type="text" id="wlProject" class="field-input" required placeholder="Project name"/>
+                </div>
+                <div>
+                    <label class="field-label">Location</label>
+                    <input type="text" id="wlLocation" class="field-input" placeholder="Site / Vessel"/>
+                </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="field-label">Work Category</label>
+                    <select id="wlCat" class="field-input">
+                        <option value="Inspection">Inspection</option>
+                        <option value="Maintenance">Maintenance / Repair</option>
+                        <option value="Installation">Installation</option>
+                        <option value="Survey">Survey</option>
+                        <option value="Testing">Testing / Commissioning</option>
+                        <option value="Calibration">Calibration</option>
+                        <option value="Other">Other</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="field-label">Status</label>
+                    <select id="wlStatus" class="field-input">
+                        <option value="In Progress">In Progress</option>
+                        <option value="Completed">Completed</option>
+                        <option value="Pending">Pending</option>
+                        <option value="On Hold">On Hold</option>
+                    </select>
+                </div>
+            </div>
+            <div>
+                <label class="field-label">Work Description <span class="text-red-500">*</span></label>
+                <textarea id="wlDesc" class="field-input" rows="3" required placeholder="Describe the work done..."></textarea>
+            </div>
+            <div>
+                <label class="field-label">Findings / Observations</label>
+                <textarea id="wlObs" class="field-input" rows="2" placeholder="Any issues found..."></textarea>
+            </div>
+            <div>
+                <label class="field-label">Recommendations</label>
+                <textarea id="wlRec" class="field-input" rows="2" placeholder="Actions recommended..."></textarea>
+            </div>
+            <div>
+                <label class="field-label">Photos</label>
+                <div id="wlPhotoGrid" class="flex flex-wrap gap-2 mt-1"></div>
+                <input type="file" id="wlPhotoFile" accept="image/*" capture="environment" class="hidden" onchange="handleWlPhoto(this)"/>
+            </div>
+            <div class="flex gap-3 pt-2">
+                <button type="button" onclick="closeWlModal()" class="btn-secondary flex-1">Cancel</button>
+                <button type="submit" class="btn-primary flex-1">Save Log</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ═══ SCRIPT ════════════════════════════════════════════════════ -->
+<script>
+    // ── CONFIG ────────────────────────────────────────────────────
+    const CLIENT_ID = '807569986194-feca4li2k0t96tbbutlpu2ko64obe95k.apps.googleusercontent.com';
+    const APP_FOLDER_NAME = 'Engineering Service App'; // must match main app
+    const DISCOVERY_DOCS = ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"];
+    const SCOPES = 'https://www.googleapis.com/auth/drive';
+
+    // ── STATE ─────────────────────────────────────────────────────
+    let tokenClient, accessToken = null, appFolderId = null;
+    let projectExpenses = [], workLogs = [], tokenRefreshTimer = null;
+    let currentView = 'projexp';  // 'projexp' | 'worklogs'
+    let _editProjID = null, _wlPhotos = [], _editWlID = null;
+
+    // ── ALLOWED EMAILS — only these accounts can access the Field App ──
+    const ALLOWED_EMAILS = [
+        'imsetechnician@gmail.com'
+        // Add more emails here if needed, e.g.:
+        // 'anothertechnician@gmail.com',
+    ];
+
+    // ── GOOGLE AUTH ───────────────────────────────────────────────
+    function gapiLoaded() {
+        gapi.load('client', async () => {
+            await gapi.client.init({ discoveryDocs: DISCOVERY_DOCS });
+            renderLogin();
+        });
+    }
+
+    function gisLoaded() {
+        tokenClient = google.accounts.oauth2.initTokenClient({
+            client_id: CLIENT_ID,
+            scope: SCOPES,
+            callback: async (resp) => {
+                if (resp.error) { alert('Sign-in failed. Please try again.'); return; }
+                if (resp.access_token) {
+                    accessToken = resp.access_token;
+                    // ── Verify email is authorised ──────────────────
+                    try {
+                        const userResp = await fetch(
+                            'https://www.googleapis.com/oauth2/v3/userinfo',
+                            { headers: { Authorization: `Bearer ${accessToken}` } }
+                        );
+                        const userInfo = await userResp.json();
+                        if (!ALLOWED_EMAILS.includes((userInfo.email||'').toLowerCase())) {
+                            // Not authorised — revoke token and show error
+                            google.accounts.oauth2.revoke(accessToken, ()=>{});
+                            accessToken = null;
+                            gapi.client.setToken(null);
+                            document.getElementById('app').innerHTML = `
+                            <div class="min-h-screen flex flex-col items-center justify-center p-6" style="background:linear-gradient(160deg,#0f2b4c 0%,#164e63 60%,#0d7c66 100%)">
+                                <div class="card p-8 w-full max-w-sm text-center shadow-2xl">
+                                    <div style="font-size:52px;margin-bottom:8px">🚫</div>
+                                    <h2 class="text-xl font-bold mb-2" style="color:#dc2626">Access Denied</h2>
+                                    <p class="text-sm mb-1" style="color:#374151"><strong>${userInfo.email}</strong></p>
+                                    <p class="text-sm mb-6" style="color:#6b7280">This account is not authorised to use the IMSE Field App.</p>
+                                    <p class="text-xs mb-4" style="color:#9ca3af">Please sign in with the authorised field account.<br/>Contact your administrator if you need access.</p>
+                                    <button onclick="renderLogin()" class="btn-primary w-full">↩ Try Again</button>
+                                </div>
+                            </div>`;
+                            return;
+                        }
+                    } catch(err) {
+                        console.warn('Could not verify email:', err);
+                        // Allow through if userinfo call fails (e.g. network issue)
+                    }
+                    // ── Authorised — load app ───────────────────────
+                    gapi.client.setToken({ access_token: accessToken });
+                    startTokenRefresh();
+                    await loadData();
+                }
+            }
+        });
+    }
+
+    function handleSignIn() { tokenClient.requestAccessToken({ prompt: 'consent' }); }
+
+    function handleSignOut() {
+        stopTokenRefresh();
+        const t = accessToken; accessToken = null;
+        gapi.client.setToken(null);
+        if (t) google.accounts.oauth2.revoke(t, () => {});
+        projectExpenses = []; workLogs = []; appFolderId = null;
+        renderLogin();
+    }
+
+    function startTokenRefresh() {
+        if (tokenRefreshTimer) clearInterval(tokenRefreshTimer);
+        tokenRefreshTimer = setInterval(() => {
+            if (!tokenClient) return;
+            tokenClient.requestAccessToken({ prompt: 'none', callback: (r) => {
+                if (r.access_token) { accessToken = r.access_token; gapi.client.setToken({ access_token: accessToken }); }
+            }});
+        }, 50 * 60 * 1000);
+    }
+    function stopTokenRefresh() { if (tokenRefreshTimer) { clearInterval(tokenRefreshTimer); tokenRefreshTimer = null; } }
+
+    // ── GOOGLE DRIVE ──────────────────────────────────────────────
+    async function getOrCreateFolder() {
+        if (appFolderId) return appFolderId;
+        const names = ['Engineering Service App','Engineering Services App','EngineeringServicesApp'];
+        for (const n of names) {
+            const r = await fetch(
+                `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name='${n}' and mimeType='application/vnd.google-apps.folder' and trashed=false`)}&fields=files(id,name)&spaces=drive`,
+                { headers: { Authorization: `Bearer ${accessToken}` } }
+            );
+            if (r.ok) {
+                const d = await r.json();
+                if (d.files?.length) { appFolderId = d.files[0].id; return appFolderId; }
+            }
+        }
+        // Create if not found
+        const cr = await fetch('https://www.googleapis.com/drive/v3/files', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: APP_FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder' })
+        });
+        const f = await cr.json();
+        appFolderId = f.id;
+        return appFolderId;
+    }
+
+    async function saveFile(name, data) {
+        const folderId = await getOrCreateFolder();
+        const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+        const q = encodeURIComponent(`name='${name}' and '${folderId}' in parents and trashed=false`);
+        const lr = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)&spaces=drive`, { headers: { Authorization: `Bearer ${accessToken}` } });
+        const ld = await lr.json();
+        const existId = ld.files?.[0]?.id || null;
+        const form = new FormData();
+        form.append('metadata', new Blob([JSON.stringify(existId ? { name } : { name, parents: [folderId] })], { type: 'application/json' }));
+        form.append('file', blob);
+        const url = existId
+            ? `https://www.googleapis.com/upload/drive/v3/files/${existId}?uploadType=multipart`
+            : `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`;
+        const method = existId ? 'PATCH' : 'POST';
+        await fetch(url, { method, headers: { Authorization: `Bearer ${accessToken}` }, body: form });
+    }
+
+    async function loadFile(name) {
+        try {
+            const folderId = await getOrCreateFolder();
+            const q = encodeURIComponent(`name='${name}' and '${folderId}' in parents and trashed=false`);
+            const lr = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)&spaces=drive&orderBy=modifiedTime+desc`, { headers: { Authorization: `Bearer ${accessToken}` } });
+            const ld = await lr.json();
+            if (!ld.files?.length) return null;
+            const dr = await fetch(`https://www.googleapis.com/drive/v3/files/${ld.files[0].id}?alt=media`, { headers: { Authorization: `Bearer ${accessToken}` } });
+            const txt = await dr.text();
+            return txt ? JSON.parse(txt) : null;
+        } catch { return null; }
+    }
+
+    // ── LOAD / SAVE ───────────────────────────────────────────────
+    async function loadData() {
+        renderLoading();
+        try {
+            const [pe, wl] = await Promise.all([loadFile('projectExpenses.json'), loadFile('workLogs.json')]);
+            projectExpenses = Array.isArray(pe) ? pe : [];
+            workLogs        = Array.isArray(wl) ? wl : [];
+            renderApp();
+        } catch(e) {
+            document.getElementById('app').innerHTML = `<div class="min-h-screen flex items-center justify-center p-6"><div class="card p-8 text-center max-w-sm"><div class="text-5xl mb-4">⚠️</div><p class="font-bold text-red-600 mb-2">Could not load data</p><p class="text-sm text-gray-500 mb-4">${e.message||'Drive connection failed.'}</p><button onclick="handleSignOut()" class="btn-primary w-full">↩ Sign Out &amp; Retry</button></div></div>`;
+        }
+    }
+
+    async function saveData(type, data) {
+        if (!accessToken) { showToast('Session expired — please sign in again'); handleSignOut(); return; }
+        await saveFile(`${type}.json`, data);
+    }
+
+    // ── TOAST ─────────────────────────────────────────────────────
+    function showToast(msg, duration = 2500) {
+        const t = document.getElementById('toast');
+        t.textContent = msg; t.classList.add('show');
+        setTimeout(() => t.classList.remove('show'), duration);
+    }
+
+    // ── RENDER SCREENS ────────────────────────────────────────────
+    function renderLogin() {
+        document.getElementById('app').innerHTML = `
+        <div class="min-h-screen flex flex-col items-center justify-center p-6" style="background:linear-gradient(160deg,#0f2b4c 0%,#164e63 60%,#0d7c66 100%)">
+            <div class="card p-8 w-full max-w-sm text-center shadow-2xl">
+                <div style="font-size:52px;margin-bottom:8px">🛠️</div>
+                <h1 class="text-2xl font-bold mb-1" style="color:var(--navy)">IMSE Field App</h1>
+                <p class="text-sm mb-6" style="color:var(--muted)">Project Expenses &amp; Work Logs</p>
+                <button onclick="handleSignIn()" class="btn-primary w-full flex items-center justify-center gap-2">
+                    <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+                    Sign in with Google
+                </button>
+                <p class="text-xs mt-4" style="color:var(--muted)">Field personnel access only</p>
+            </div>
+        </div>`;
+    }
+
+    function renderLoading() {
+        document.getElementById('app').innerHTML = `
+        <div class="min-h-screen flex items-center justify-center">
+            <div class="text-center">
+                <div class="w-10 h-10 border-4 border-teal-500 border-t-transparent rounded-full spin mx-auto mb-3"></div>
+                <p class="text-sm font-medium text-gray-500">Loading from Drive…</p>
+            </div>
+        </div>`;
+    }
+
+    function renderApp() {
+        document.getElementById('app').innerHTML = `
+        <!-- Header -->
+        <header style="background:var(--navy);padding:14px 16px 10px;position:sticky;top:0;z-index:30;">
+            <div class="flex items-center justify-between max-w-2xl mx-auto">
+                <div class="flex items-center gap-2">
+                    <span style="font-size:22px">🛠️</span>
+                    <div>
+                        <p class="font-bold text-white text-base leading-tight">IMSE Field App</p>
+                        <p style="font-size:10px;color:#94a3b8">Field Staff Portal</p>
+                    </div>
+                </div>
+                <button onclick="syncData(this)" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold" style="background:rgba(255,255,255,.12);color:#e2e8f0">
+                    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0019.49 15"/></svg>
+                    Sync
+                </button>
+            </div>
+        </header>
+
+        <!-- Main content -->
+        <main id="mainContent" class="max-w-2xl mx-auto px-4 pt-4"></main>
+
+        <!-- Bottom Nav -->
+        <nav id="bottomNav">
+            <button class="nav-pill ${currentView==='projexp'?'active':''}" onclick="switchView('projexp')">🧳 Project Expenses</button>
+            <button class="nav-pill ${currentView==='worklogs'?'active':''}" onclick="switchView('worklogs')">📋 Work Logs</button>
+            <button class="nav-pill" onclick="handleSignOut()" style="flex:0;padding:10px 12px">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+            </button>
+        </nav>`;
+        renderView();
+    }
+
+    function switchView(v) { currentView = v; renderApp(); }
+
+    function renderView() {
+        const el = document.getElementById('mainContent');
+        if (!el) return;
+        if (currentView === 'projexp') renderProjExp(el);
+        else renderWorkLogs(el);
+    }
+
+    async function syncData(btn) {
+        const orig = btn.innerHTML;
+        btn.innerHTML = '<svg class="spin" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0019.49 15"/></svg> Syncing…';
+        btn.disabled = true;
+        try {
+            const [pe, wl] = await Promise.all([loadFile('projectExpenses.json'), loadFile('workLogs.json')]);
+            projectExpenses = Array.isArray(pe) ? pe : projectExpenses;
+            workLogs        = Array.isArray(wl) ? wl : workLogs;
+            renderView();
+            showToast('✅ Synced with Drive');
+        } catch { showToast('⚠️ Sync failed'); }
+        btn.innerHTML = orig; btn.disabled = false;
+    }
+
+    // ── PROJECT EXPENSES VIEW ─────────────────────────────────────
+    function renderProjExp(el) {
+        const fmt = n => '₹' + (+n||0).toLocaleString('en-IN', { minimumFractionDigits:2 });
+        const totalFunds = projectExpenses.reduce((s,p) => s+(parseFloat(p.totalFunds)||0), 0);
+        const totalSpent = projectExpenses.reduce((s,p) => s+(p.items||[]).reduce((a,i)=>a+(parseFloat(i.amount)||0),0), 0);
+
+        el.innerHTML = `
+        <!-- Summary -->
+        <div class="grid grid-cols-2 gap-3 mb-4">
+            <div class="card p-4" style="background:linear-gradient(135deg,#d97706,#b45309)">
+                <p class="text-xs font-semibold text-amber-100 mb-1">TOTAL FUNDS</p>
+                <p class="text-xl font-bold text-white">${fmt(totalFunds)}</p>
+            </div>
+            <div class="card p-4" style="background:linear-gradient(135deg,#0d7c66,#0a6355)">
+                <p class="text-xs font-semibold text-teal-100 mb-1">TOTAL SPENT</p>
+                <p class="text-xl font-bold text-white">${fmt(totalSpent)}</p>
+                <p class="text-xs text-teal-200 mt-0.5">Bal: ${fmt(totalFunds-totalSpent)}</p>
+            </div>
+        </div>
+
+        <!-- Add Project button -->
+        <button onclick="openProjModal()" class="btn-primary w-full mb-4 flex items-center justify-center gap-2">
+            <span style="font-size:18px">+</span> New Project
+        </button>
+
+        <!-- Project cards -->
+        ${!projectExpenses.length ? `<div class="card p-10 text-center"><div style="font-size:48px;margin-bottom:8px">🧳</div><p class="font-medium text-gray-400">No projects yet</p><p class="text-sm text-gray-400 mt-1">Tap "+ New Project" to get started</p></div>` :
+        projectExpenses.map(p => {
+            const spent = (p.items||[]).reduce((a,i)=>a+(parseFloat(i.amount)||0),0);
+            const bal   = (parseFloat(p.totalFunds)||0) - spent;
+            const pct   = p.totalFunds > 0 ? Math.min(100, (spent/p.totalFunds)*100) : 0;
+            const barCol= pct > 90 ? '#dc2626' : pct > 70 ? '#d97706' : '#0d7c66';
+            return `
+            <div class="card mb-4">
+                <div class="p-4">
+                    <div class="flex justify-between items-start mb-3">
+                        <div class="flex-1 min-w-0 mr-3">
+                            <p class="font-bold text-gray-800 leading-tight">${p.projectName}</p>
+                            ${p.projectRef ? `<p class="text-xs text-gray-400 mt-0.5">${p.projectRef}</p>` : ''}
+                            ${p.startDate ? `<p class="text-xs text-gray-400">${p.startDate}${p.endDate?' → '+p.endDate:''}</p>` : ''}
+                        </div>
+                        <div class="flex gap-1.5 flex-shrink-0">
+                            <button onclick="openExpItemModal('${p.projExpID}')" class="btn-primary" style="padding:7px 12px;font-size:12px">+ Expense</button>
+                            <button onclick="editProj('${p.projExpID}')" style="padding:7px 10px;border-radius:10px;border:1.5px solid var(--border);background:#fff;cursor:pointer;font-size:12px;color:var(--muted)">✏️</button>
+                            <button onclick="deleteProj('${p.projExpID}')" style="padding:7px 10px;border-radius:10px;border:1.5px solid #fecaca;background:#fff;cursor:pointer;font-size:12px;color:#dc2626">✕</button>
+                        </div>
+                    </div>
+                    <!-- Fund bar -->
+                    <div class="flex justify-between text-xs mb-1.5" style="color:var(--muted)">
+                        <span>Spent: <strong>${fmt(spent)}</strong></span>
+                        <span>Balance: <strong style="color:${bal>=0?'#0d7c66':'#dc2626'}">${fmt(bal)}</strong></span>
+                        <span>Fund: ${fmt(p.totalFunds||0)}</span>
+                    </div>
+                    <div class="prog-track"><div class="prog-fill" style="width:${pct}%;background:${barCol}"></div></div>
+                </div>
+
+                <!-- Expense items -->
+                ${(p.items||[]).length ? `
+                <div style="border-top:1px solid var(--border)">
+                    ${(p.items||[]).map(it => `
+                    <div style="padding:10px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+                        <div class="min-w-0 flex-1 mr-2">
+                            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                                <span class="badge" style="background:#f0fdf4;color:#0d7c66;border:1px solid #bbf7d0">${it.category}</span>
+                                <span style="font-size:13px;font-weight:500;color:var(--text)">${it.description}</span>
+                            </div>
+                            <p style="font-size:11px;color:var(--muted);margin-top:2px">${it.date}${it.staffName ? ' · '+it.staffName : ''}</p>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+                            <span style="font-size:14px;font-weight:700;color:var(--navy)">${fmt(it.amount)}</span>
+                            ${it.billData ? `<button onclick="viewBill('${p.projExpID}','${it.itemID}')" style="font-size:16px;background:none;border:none;cursor:pointer">📎</button>` : ''}
+                            <button onclick="deleteExpItem('${p.projExpID}','${it.itemID}')" style="font-size:12px;color:#dc2626;background:none;border:none;cursor:pointer;padding:4px">✕</button>
+                        </div>
+                    </div>`).join('')}
+                </div>` : `<p style="padding:10px 14px;font-size:12px;color:var(--muted)">No expenses yet — tap "+ Expense"</p>`}
+            </div>`;
+        }).join('')}`;
+    }
+
+    // ── WORK LOGS VIEW ────────────────────────────────────────────
+    function renderWorkLogs(el) {
+        const catColors = {
+            Inspection:'#eff6ff:#1d4ed8', Maintenance:'#fef3c7:#b45309',
+            Installation:'#f0fdf4:#0d7c66', Survey:'#f5f3ff:#6d28d9',
+            Testing:'#ecfeff:#0e7490', Calibration:'#fdf4ff:#7e22ce', Other:'#f3f4f6:#374151'
+        };
+        const statusColors = { 'Completed':'#0d7c66:#dcfce7', 'In Progress':'#d97706:#fef3c7', 'Pending':'#64748b:#f1f5f9', 'On Hold':'#dc2626:#fee2e2' };
+
+        el.innerHTML = `
+        <button onclick="openWlModal()" class="btn-primary w-full mb-4 flex items-center justify-center gap-2">
+            <span style="font-size:18px">+</span> New Work Log
+        </button>
+
+        ${!workLogs.length ? `<div class="card p-10 text-center"><div style="font-size:48px;margin-bottom:8px">📋</div><p class="font-medium text-gray-400">No work logs yet</p><p class="text-sm text-gray-400 mt-1">Tap "+ New Work Log" to add your first entry</p></div>` :
+        [...workLogs].sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(w => {
+            const [catBg, catTxt] = (catColors[w.category]||'#f3f4f6:#374151').split(':');
+            const [stCol, stBg]   = (statusColors[w.status]||'#64748b:#f1f5f9').split(':');
+            return `
+            <div class="card mb-3">
+                <div class="p-4">
+                    <div class="flex justify-between items-start mb-2">
+                        <div class="flex-1 min-w-0 mr-2">
+                            <p class="font-bold text-gray-800">${w.project}</p>
+                            <p style="font-size:12px;color:var(--muted)">${w.date} · ${w.staffName||''}</p>
+                            ${w.location ? `<p style="font-size:12px;color:var(--muted)">📍 ${w.location}</p>` : ''}
+                        </div>
+                        <div class="flex gap-1.5 flex-shrink-0">
+                            <button onclick="editWorkLog('${w.wlID}')" style="padding:6px 10px;border-radius:8px;border:1.5px solid var(--border);background:#fff;cursor:pointer;font-size:12px;color:var(--muted)">✏️</button>
+                            <button onclick="deleteWorkLog('${w.wlID}')" style="padding:6px 10px;border-radius:8px;border:1.5px solid #fecaca;background:#fff;cursor:pointer;font-size:12px;color:#dc2626">✕</button>
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+                        <span class="badge" style="background:${catBg};color:${catTxt}">${w.category||'—'}</span>
+                        <span class="badge" style="background:${stBg};color:${stCol}">${w.status||'—'}</span>
+                    </div>
+                    <p style="font-size:13px;color:var(--text);line-height:1.5">${w.description||''}</p>
+                    ${w.observations ? `<p style="font-size:12px;color:var(--muted);margin-top:6px"><strong>Findings:</strong> ${w.observations}</p>` : ''}
+                    ${w.recommendations ? `<p style="font-size:12px;color:var(--muted);margin-top:4px"><strong>Recommendations:</strong> ${w.recommendations}</p>` : ''}
+                    ${(w.photos||[]).length ? `
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+                        ${w.photos.map((ph,i)=>`<img src="${ph}" class="photo-thumb" onclick="viewPhoto('${w.wlID}',${i})" alt="Photo"/>`).join('')}
+                    </div>` : ''}
+                </div>
+            </div>`;
+        }).join('')}`;
+    }
+
+    // ── PROJECT CRUD ──────────────────────────────────────────────
+    function openProjModal(id=null) {
+        _editProjID = id;
+        const p = id ? projectExpenses.find(x=>x.projExpID===id) : null;
+        document.getElementById('projModalTitle').textContent = p ? 'Edit Project' : 'New Project';
+        document.getElementById('pName').value  = p?.projectName || '';
+        document.getElementById('pRef').value   = p?.projectRef  || '';
+        document.getElementById('pFunds').value = p?.totalFunds  || '';
+        document.getElementById('pStart').value = p?.startDate   || '';
+        document.getElementById('pEnd').value   = p?.endDate     || '';
+        document.getElementById('pDesc').value  = p?.description || '';
+        document.getElementById('projModal').classList.add('show');
+    }
+    function closeProjModal() { document.getElementById('projModal').classList.remove('show'); _editProjID=null; }
+    function editProj(id) { openProjModal(id); }
+
+    async function saveProject(e) {
+        e.preventDefault();
+        const obj = {
+            projExpID:   _editProjID || ('PE'+Date.now()),
+            projectName: document.getElementById('pName').value,
+            projectRef:  document.getElementById('pRef').value,
+            totalFunds:  parseFloat(document.getElementById('pFunds').value)||0,
+            startDate:   document.getElementById('pStart').value,
+            endDate:     document.getElementById('pEnd').value,
+            description: document.getElementById('pDesc').value,
+            items:       _editProjID ? (projectExpenses.find(x=>x.projExpID===_editProjID)?.items||[]) : [],
+            createdAt:   _editProjID ? (projectExpenses.find(x=>x.projExpID===_editProjID)?.createdAt||new Date().toISOString()) : new Date().toISOString()
+        };
+        if (_editProjID) {
+            const i = projectExpenses.findIndex(x=>x.projExpID===_editProjID);
+            if (i>=0) projectExpenses[i] = obj;
+        } else { projectExpenses.push(obj); }
+        await saveData('projectExpenses', projectExpenses);
+        closeProjModal(); renderView(); showToast('✅ Project saved');
+    }
+
+    async function deleteProj(id) {
+        if (!confirm('Delete this project and all its expense entries?')) return;
+        projectExpenses = projectExpenses.filter(x=>x.projExpID!==id);
+        await saveData('projectExpenses', projectExpenses);
+        renderView(); showToast('🗑️ Project deleted');
+    }
+
+    // ── EXPENSE ITEM CRUD ─────────────────────────────────────────
+    function openExpItemModal(projID) {
+        document.getElementById('eiProjID').value = projID;
+        document.getElementById('eiDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('eiDesc').value = '';
+        document.getElementById('eiAmt').value  = '';
+        document.getElementById('eiStaff').value = '';
+        document.getElementById('eiBillName').textContent = '';
+        document.getElementById('eiBill').value = '';
+        document.getElementById('expItemModal').classList.add('show');
+    }
+    function closeExpItemModal() { document.getElementById('expItemModal').classList.remove('show'); }
+
+    document.getElementById('eiBill').addEventListener('change', function() {
+        document.getElementById('eiBillName').textContent = this.files[0] ? '📎 ' + this.files[0].name : '';
+    });
+
+    async function saveExpItem(e) {
+        e.preventDefault();
+        const projID = document.getElementById('eiProjID').value;
+        const idx = projectExpenses.findIndex(x=>x.projExpID===projID);
+        if (idx<0) return;
+        let billData=null, billName=null;
+        const file = document.getElementById('eiBill').files[0];
+        if (file) {
+            if (file.size > 3*1024*1024) { alert('File too large. Max 3MB.'); return; }
+            billData = await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=()=>rej(new Error('Read failed')); r.readAsDataURL(file); });
+            billName = file.name;
+        }
+        if (!projectExpenses[idx].items) projectExpenses[idx].items=[];
+        projectExpenses[idx].items.push({
+            itemID:    'PEI'+Date.now(),
+            date:      document.getElementById('eiDate').value,
+            category:  document.getElementById('eiCat').value,
+            description: document.getElementById('eiDesc').value,
+            staffName: document.getElementById('eiStaff').value,
+            staffID:   '',
+            amount:    parseFloat(document.getElementById('eiAmt').value)||0,
+            billData, billName
+        });
+        await saveData('projectExpenses', projectExpenses);
+        closeExpItemModal(); renderView(); showToast('✅ Expense added');
+    }
+
+    async function deleteExpItem(projID, itemID) {
+        if (!confirm('Delete this expense entry?')) return;
+        const idx = projectExpenses.findIndex(x=>x.projExpID===projID);
+        if (idx<0) return;
+        projectExpenses[idx].items = (projectExpenses[idx].items||[]).filter(i=>i.itemID!==itemID);
+        await saveData('projectExpenses', projectExpenses);
+        renderView(); showToast('🗑️ Entry deleted');
+    }
+
+    function viewBill(projID, itemID) {
+        const p = projectExpenses.find(x=>x.projExpID===projID);
+        const item = (p?.items||[]).find(i=>i.itemID===itemID);
+        if (!item?.billData) return;
+        const w = window.open();
+        if (item.billData.startsWith('data:application/pdf')) {
+            w.document.write(`<html><body style="margin:0"><embed src="${item.billData}" type="application/pdf" width="100%" height="100%"/></body></html>`);
+        } else {
+            w.document.write(`<html><body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${item.billData}" style="max-width:100%;max-height:100vh;object-fit:contain"/></body></html>`);
+        }
+    }
+
+    // ── WORK LOG CRUD ─────────────────────────────────────────────
+    function openWlModal(id=null) {
+        _editWlID = id;
+        _wlPhotos = [];
+        const w = id ? workLogs.find(x=>x.wlID===id) : null;
+        document.getElementById('wlModalTitle').textContent = w ? 'Edit Work Log' : 'New Work Log';
+        document.getElementById('wlDate').value     = w?.date        || new Date().toISOString().split('T')[0];
+        document.getElementById('wlStaff').value    = w?.staffName   || '';
+        document.getElementById('wlProject').value  = w?.project     || '';
+        document.getElementById('wlLocation').value = w?.location    || '';
+        document.getElementById('wlCat').value      = w?.category    || 'Inspection';
+        document.getElementById('wlStatus').value   = w?.status      || 'In Progress';
+        document.getElementById('wlDesc').value     = w?.description || '';
+        document.getElementById('wlObs').value      = w?.observations|| '';
+        document.getElementById('wlRec').value      = w?.recommendations||'';
+        if (w?.photos) _wlPhotos = [...w.photos];
+        renderWlPhotoGrid();
+        document.getElementById('wlModal').classList.add('show');
+    }
+    function closeWlModal() { document.getElementById('wlModal').classList.remove('show'); _editWlID=null; _wlPhotos=[]; }
+    function editWorkLog(id) { openWlModal(id); }
+
+    function renderWlPhotoGrid() {
+        const grid = document.getElementById('wlPhotoGrid');
+        if (!grid) return;
+        grid.innerHTML = _wlPhotos.map((ph,i)=>`
+            <div style="position:relative">
+                <img src="${ph}" class="photo-thumb"/>
+                <button onclick="removeWlPhoto(${i})" style="position:absolute;top:-4px;right:-4px;background:#dc2626;color:#fff;border:none;border-radius:99px;width:18px;height:18px;font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1">✕</button>
+            </div>`).join('') +
+            (_wlPhotos.length < 5 ? `<div class="photo-add" onclick="document.getElementById('wlPhotoFile').click()">📷</div>` : '');
+    }
+
+    function removeWlPhoto(i) { _wlPhotos.splice(i,1); renderWlPhotoGrid(); }
+
+    function handleWlPhoto(input) {
+        const file = input.files[0];
+        if (!file) return;
+        if (file.size > 3*1024*1024) { alert('Photo too large. Max 3MB.'); return; }
+        const r = new FileReader();
+        r.onload = e => { _wlPhotos.push(e.target.result); renderWlPhotoGrid(); };
+        r.readAsDataURL(file);
+        input.value = '';
+    }
+
+    async function saveWorkLog(e) {
+        e.preventDefault();
+        const obj = {
+            wlID:            _editWlID || ('WL'+Date.now()),
+            date:            document.getElementById('wlDate').value,
+            staffName:       document.getElementById('wlStaff').value,
+            staffID:         '',
+            project:         document.getElementById('wlProject').value,
+            location:        document.getElementById('wlLocation').value,
+            category:        document.getElementById('wlCat').value,
+            status:          document.getElementById('wlStatus').value,
+            description:     document.getElementById('wlDesc').value,
+            observations:    document.getElementById('wlObs').value,
+            recommendations: document.getElementById('wlRec').value,
+            photos:          [..._wlPhotos],
+            createdAt:       _editWlID ? (workLogs.find(x=>x.wlID===_editWlID)?.createdAt||new Date().toISOString()) : new Date().toISOString()
+        };
+        if (_editWlID) {
+            const i = workLogs.findIndex(x=>x.wlID===_editWlID);
+            if (i>=0) workLogs[i]=obj; else workLogs.push(obj);
+        } else { workLogs.push(obj); }
+        await saveData('workLogs', workLogs);
+        closeWlModal(); renderView(); showToast('✅ Work log saved');
+    }
+
+    async function deleteWorkLog(id) {
+        if (!confirm('Delete this work log?')) return;
+        workLogs = workLogs.filter(x=>x.wlID!==id);
+        await saveData('workLogs', workLogs);
+        renderView(); showToast('🗑️ Log deleted');
+    }
+
+    function viewPhoto(wlID, idx) {
+        const w = workLogs.find(x=>x.wlID===wlID);
+        if (!w?.photos?.[idx]) return;
+        const win = window.open();
+        win.document.write(`<html><body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${w.photos[idx]}" style="max-width:100%;max-height:100vh;object-fit:contain"/></body></html>`);
+    }
+
+    // ── INITIAL RENDER ────────────────────────────────────────────
+    window.gapiLoaded = gapiLoaded;
+    window.gisLoaded  = gisLoaded;
+    renderLogin();
+</script>
+<script src="https://accounts.google.com/gsi/client" onload="gisLoaded()" async></script>
+<script src="https://apis.google.com/js/api.js" onload="gapiLoaded()" async></script>
+</body>
+</html>
