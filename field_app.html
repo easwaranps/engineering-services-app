@@ -304,12 +304,24 @@
 <script>
     // ── CONFIG ────────────────────────────────────────────────────
     const CLIENT_ID = '807569986194-feca4li2k0t96tbbutlpu2ko64obe95k.apps.googleusercontent.com';
-    const APP_FOLDER_NAME = 'Engineering Service App'; // must match main app
     const DISCOVERY_DOCS = ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"];
-    const SCOPES = 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/userinfo.email openid';
+    // Only read/write scope needed — no full Drive access
+    const SCOPES = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email openid';
+
+    // ── SHARED FILE IDs ───────────────────────────────────────────
+    // ADMIN: Paste the Google Drive file IDs for each shared file below.
+    // How to get the ID: Right-click file in Drive → Get link → copy the
+    // long string between /d/ and /view in the URL.
+    // Share projectExpenses.json and workLogs.json as EDITOR,
+    // staff.json as VIEWER with imsetechnician@gmail.com.
+    const SHARED_FILE_IDS = {
+        projectExpenses: '1OwJc4CdczowDWeHpCtSmfR0pYqhS49s0',
+        workLogs:        '1P1sZh77q7w33eY2B9P20sYpT92Cb1FuK',
+        staff:           '1JFS8ZZNkCXx8sIx6ssZzCbtbciRUrK3v'
+    };
 
     // ── STATE ─────────────────────────────────────────────────────
-    let tokenClient, accessToken = null, appFolderId = null;
+    let tokenClient, accessToken = null;
     let projectExpenses = [], workLogs = [], staffList = [], tokenRefreshTimer = null;
     let currentView = 'projexp';  // 'projexp' | 'worklogs'
     let _wlPhotos = [], _editWlID = null;
@@ -403,7 +415,7 @@
         const t = accessToken; accessToken = null;
         gapi.client.setToken(null);
         if (t) google.accounts.oauth2.revoke(t, () => {});
-        projectExpenses = []; workLogs = []; appFolderId = null;
+        projectExpenses = []; workLogs = []; staffList = [];
         renderLogin();
     }
 
@@ -418,82 +430,102 @@
     }
     function stopTokenRefresh() { if (tokenRefreshTimer) { clearInterval(tokenRefreshTimer); tokenRefreshTimer = null; } }
 
-    // ── GOOGLE DRIVE ──────────────────────────────────────────────
-    async function getOrCreateFolder() {
-        if (appFolderId) return appFolderId;
-        const names = ['Engineering Service App','Engineering Services App','EngineeringServicesApp'];
-        for (const n of names) {
-            const r = await fetch(
-                `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name='${n}' and mimeType='application/vnd.google-apps.folder' and trashed=false`)}&fields=files(id,name)&spaces=drive`,
-                { headers: { Authorization: `Bearer ${accessToken}` } }
-            );
-            if (r.ok) {
-                const d = await r.json();
-                if (d.files?.length) { appFolderId = d.files[0].id; return appFolderId; }
-            }
+    // ── GOOGLE DRIVE — Direct File ID Access ─────────────────────
+    // Reads and writes specific shared files by their Drive file ID.
+    // The field account only has access to the 3 files shared with it —
+    // nothing else in the admin's Drive is visible.
+
+    function _checkFileIDs() {
+        const missing = Object.entries(SHARED_FILE_IDS)
+            .filter(([,v]) => v.startsWith('PASTE_'))
+            .map(([k]) => k);
+        if (missing.length) {
+            throw new Error('FILE_IDS_NOT_SET:' + missing.join(','));
         }
-        // Create if not found
-        const cr = await fetch('https://www.googleapis.com/drive/v3/files', {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: APP_FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder' })
-        });
-        const f = await cr.json();
-        appFolderId = f.id;
-        return appFolderId;
     }
 
-    async function saveFile(name, data) {
-        const folderId = await getOrCreateFolder();
+    async function readFile(fileId) {
+        const r = await fetch(
+            `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`,
+            { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+        if (!r.ok) {
+            if (r.status === 403 || r.status === 404) throw new Error('PERMISSION_DENIED:' + fileId);
+            return null;
+        }
+        const txt = await r.text();
+        return txt ? JSON.parse(txt) : null;
+    }
+
+    async function writeFile(fileId, data) {
         const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
-        const q = encodeURIComponent(`name='${name}' and '${folderId}' in parents and trashed=false`);
-        const lr = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)&spaces=drive`, { headers: { Authorization: `Bearer ${accessToken}` } });
-        const ld = await lr.json();
-        const existId = ld.files?.[0]?.id || null;
         const form = new FormData();
-        form.append('metadata', new Blob([JSON.stringify(existId ? { name } : { name, parents: [folderId] })], { type: 'application/json' }));
+        form.append('metadata', new Blob([JSON.stringify({})], { type: 'application/json' }));
         form.append('file', blob);
-        const url = existId
-            ? `https://www.googleapis.com/upload/drive/v3/files/${existId}?uploadType=multipart`
-            : `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`;
-        const method = existId ? 'PATCH' : 'POST';
-        await fetch(url, { method, headers: { Authorization: `Bearer ${accessToken}` }, body: form });
-    }
-
-    async function loadFile(name) {
-        try {
-            const folderId = await getOrCreateFolder();
-            const q = encodeURIComponent(`name='${name}' and '${folderId}' in parents and trashed=false`);
-            const lr = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)&spaces=drive&orderBy=modifiedTime+desc`, { headers: { Authorization: `Bearer ${accessToken}` } });
-            const ld = await lr.json();
-            if (!ld.files?.length) return null;
-            const dr = await fetch(`https://www.googleapis.com/drive/v3/files/${ld.files[0].id}?alt=media`, { headers: { Authorization: `Bearer ${accessToken}` } });
-            const txt = await dr.text();
-            return txt ? JSON.parse(txt) : null;
-        } catch { return null; }
+        const r = await fetch(
+            `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart&supportsAllDrives=true`,
+            { method: 'PATCH', headers: { Authorization: `Bearer ${accessToken}` }, body: form }
+        );
+        if (!r.ok) {
+            const err = await r.json().catch(()=>({}));
+            throw new Error('Save failed: ' + (err.error?.message || r.statusText));
+        }
     }
 
     // ── LOAD / SAVE ───────────────────────────────────────────────
     async function loadData() {
         renderLoading();
         try {
+            _checkFileIDs();
             const [pe, wl, sf] = await Promise.all([
-                loadFile('projectExpenses.json'),
-                loadFile('workLogs.json'),
-                loadFile('staff.json')
+                readFile(SHARED_FILE_IDS.projectExpenses),
+                readFile(SHARED_FILE_IDS.workLogs),
+                readFile(SHARED_FILE_IDS.staff)
             ]);
             projectExpenses = Array.isArray(pe) ? pe : [];
             workLogs        = Array.isArray(wl) ? wl : [];
             staffList       = Array.isArray(sf) ? sf.filter(s=>s.status==='Active') : [];
             renderApp();
         } catch(e) {
-            document.getElementById('app').innerHTML = `<div class="min-h-screen flex items-center justify-center p-6"><div class="card p-8 text-center max-w-sm"><div class="text-5xl mb-4">⚠️</div><p class="font-bold text-red-600 mb-2">Could not load data</p><p class="text-sm text-gray-500 mb-4">${e.message||'Drive connection failed.'}</p><button onclick="handleSignOut()" class="btn-primary w-full">↩ Sign Out &amp; Retry</button></div></div>`;
+            const msg = e.message || '';
+            let title = 'Could not load data', body = msg, icon = '⚠️';
+
+            if (msg.startsWith('FILE_IDS_NOT_SET:')) {
+                icon  = '🔧';
+                title = 'Setup Required';
+                const missing = msg.replace('FILE_IDS_NOT_SET:','').split(',');
+                body  = `Admin needs to paste the Drive file IDs into field_app.html for: <strong>${missing.join(', ')}</strong>.<br><br>See the setup instructions in the file.`;
+            } else if (msg.startsWith('PERMISSION_DENIED:')) {
+                icon  = '🔒';
+                title = 'File Not Shared';
+                body  = `A required file has not been shared with this account.<br><br>
+                         Admin: right-click each of these files in Google Drive and share with
+                         <strong>imsetechnician@gmail.com</strong>:<br>
+                         • projectExpenses.json → Editor<br>
+                         • workLogs.json → Editor<br>
+                         • staff.json → Viewer`;
+            }
+            document.getElementById('app').innerHTML = `
+            <div class="min-h-screen flex items-center justify-center p-6" style="background:linear-gradient(160deg,#0f2b4c,#0d7c66)">
+                <div class="card p-8 w-full max-w-sm text-center shadow-2xl">
+                    <div style="font-size:48px;margin-bottom:10px">${icon}</div>
+                    <p class="font-bold mb-3" style="font-size:17px;color:#1e293b">${title}</p>
+                    <p class="text-sm mb-5" style="color:#475569;line-height:1.6">${body}</p>
+                    <button onclick="handleSignOut()" class="btn-primary w-full">↩ Sign Out &amp; Retry</button>
+                </div>
+            </div>`;
         }
     }
 
     async function saveData(type, data) {
         if (!accessToken) { showToast('Session expired — please sign in again'); handleSignOut(); return; }
-        await saveFile(`${type}.json`, data);
+        const idMap = {
+            projectExpenses: SHARED_FILE_IDS.projectExpenses,
+            workLogs:        SHARED_FILE_IDS.workLogs
+        };
+        const fileId = idMap[type];
+        if (!fileId || fileId.startsWith('PASTE_')) { showToast('⚠️ File ID not configured'); return; }
+        await writeFile(fileId, data);
     }
 
     // ── TOAST ─────────────────────────────────────────────────────
@@ -578,16 +610,16 @@
         btn.disabled = true;
         try {
             const [pe, wl, sf] = await Promise.all([
-                loadFile('projectExpenses.json'),
-                loadFile('workLogs.json'),
-                loadFile('staff.json')
+                readFile(SHARED_FILE_IDS.projectExpenses),
+                readFile(SHARED_FILE_IDS.workLogs),
+                readFile(SHARED_FILE_IDS.staff)
             ]);
             projectExpenses = Array.isArray(pe) ? pe : projectExpenses;
             workLogs        = Array.isArray(wl) ? wl : workLogs;
             staffList       = Array.isArray(sf) ? sf.filter(s=>s.status==='Active') : staffList;
             renderView();
             showToast('✅ Synced with Drive');
-        } catch { showToast('⚠️ Sync failed'); }
+        } catch { showToast('⚠️ Sync failed — check connection'); }
         btn.innerHTML = orig; btn.disabled = false;
     }
 
