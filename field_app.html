@@ -165,50 +165,6 @@
 
 <!-- ═══ MODALS ════════════════════════════════════════════════════ -->
 
-<!-- Project Modal -->
-<div id="projModal" class="modal">
-    <div class="modal-box">
-        <div class="modal-hdr" style="background:linear-gradient(135deg,#d97706,#b45309)">
-            <span class="font-bold text-white text-lg" id="projModalTitle">New Project</span>
-            <button onclick="closeProjModal()" class="text-white text-2xl font-bold leading-none">✕</button>
-        </div>
-        <form id="projForm" onsubmit="saveProject(event)" class="p-5 space-y-4">
-            <div>
-                <label class="field-label">Project Name <span class="text-red-500">*</span></label>
-                <input type="text" id="pName" class="field-input" required placeholder="e.g. MV Vessel Inspection"/>
-            </div>
-            <div class="grid grid-cols-2 gap-3">
-                <div>
-                    <label class="field-label">Project Ref / PO</label>
-                    <input type="text" id="pRef" class="field-input" placeholder="Optional"/>
-                </div>
-                <div>
-                    <label class="field-label">Total Funds (₹)</label>
-                    <input type="number" id="pFunds" class="field-input" placeholder="0.00" min="0" step="0.01"/>
-                </div>
-            </div>
-            <div class="grid grid-cols-2 gap-3">
-                <div>
-                    <label class="field-label">Start Date</label>
-                    <input type="date" id="pStart" class="field-input"/>
-                </div>
-                <div>
-                    <label class="field-label">End Date</label>
-                    <input type="date" id="pEnd" class="field-input"/>
-                </div>
-            </div>
-            <div>
-                <label class="field-label">Description</label>
-                <textarea id="pDesc" class="field-input" rows="2" placeholder="Brief description"></textarea>
-            </div>
-            <div class="flex gap-3 pt-2">
-                <button type="button" onclick="closeProjModal()" class="btn-secondary flex-1">Cancel</button>
-                <button type="submit" class="btn-primary flex-1">Save Project</button>
-            </div>
-        </form>
-    </div>
-</div>
-
 <!-- Expense Item Modal -->
 <div id="expItemModal" class="modal">
     <div class="modal-box">
@@ -245,8 +201,10 @@
                     <input type="number" id="eiAmt" class="field-input" required min="0" step="0.01" placeholder="0.00"/>
                 </div>
                 <div>
-                    <label class="field-label">Staff Name</label>
-                    <input type="text" id="eiStaff" class="field-input" placeholder="Who spent?"/>
+                    <label class="field-label">Staff Member</label>
+                    <select id="eiStaff" class="field-input">
+                        <option value="">— Select —</option>
+                    </select>
                 </div>
             </div>
             <div>
@@ -276,17 +234,21 @@
                     <input type="date" id="wlDate" class="field-input" required/>
                 </div>
                 <div>
-                    <label class="field-label">Your Name <span class="text-red-500">*</span></label>
-                    <input type="text" id="wlStaff" class="field-input" required placeholder="Technician name"/>
+                    <label class="field-label">Staff Member <span class="text-red-500">*</span></label>
+                    <select id="wlStaff" class="field-input" required>
+                        <option value="">— Select —</option>
+                    </select>
                 </div>
             </div>
             <div class="grid grid-cols-2 gap-3">
                 <div>
-                    <label class="field-label">Project / Vessel <span class="text-red-500">*</span></label>
-                    <input type="text" id="wlProject" class="field-input" required placeholder="Project name"/>
+                    <label class="field-label">Project <span class="text-red-500">*</span></label>
+                    <select id="wlProject" class="field-input" required>
+                        <option value="">— Select Project —</option>
+                    </select>
                 </div>
                 <div>
-                    <label class="field-label">Location</label>
+                    <label class="field-label">Location / Vessel</label>
                     <input type="text" id="wlLocation" class="field-input" placeholder="Site / Vessel"/>
                 </div>
             </div>
@@ -348,9 +310,9 @@
 
     // ── STATE ─────────────────────────────────────────────────────
     let tokenClient, accessToken = null, appFolderId = null;
-    let projectExpenses = [], workLogs = [], tokenRefreshTimer = null;
+    let projectExpenses = [], workLogs = [], staffList = [], tokenRefreshTimer = null;
     let currentView = 'projexp';  // 'projexp' | 'worklogs'
-    let _editProjID = null, _wlPhotos = [], _editWlID = null;
+    let _wlPhotos = [], _editWlID = null;
 
     // ── ALLOWED EMAILS — only these accounts can access the Field App ──
     const ALLOWED_EMAILS = [
@@ -515,9 +477,14 @@
     async function loadData() {
         renderLoading();
         try {
-            const [pe, wl] = await Promise.all([loadFile('projectExpenses.json'), loadFile('workLogs.json')]);
+            const [pe, wl, sf] = await Promise.all([
+                loadFile('projectExpenses.json'),
+                loadFile('workLogs.json'),
+                loadFile('staff.json')
+            ]);
             projectExpenses = Array.isArray(pe) ? pe : [];
             workLogs        = Array.isArray(wl) ? wl : [];
+            staffList       = Array.isArray(sf) ? sf.filter(s=>s.status==='Active') : [];
             renderApp();
         } catch(e) {
             document.getElementById('app').innerHTML = `<div class="min-h-screen flex items-center justify-center p-6"><div class="card p-8 text-center max-w-sm"><div class="text-5xl mb-4">⚠️</div><p class="font-bold text-red-600 mb-2">Could not load data</p><p class="text-sm text-gray-500 mb-4">${e.message||'Drive connection failed.'}</p><button onclick="handleSignOut()" class="btn-primary w-full">↩ Sign Out &amp; Retry</button></div></div>`;
@@ -610,9 +577,14 @@
         btn.innerHTML = '<svg class="spin" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0019.49 15"/></svg> Syncing…';
         btn.disabled = true;
         try {
-            const [pe, wl] = await Promise.all([loadFile('projectExpenses.json'), loadFile('workLogs.json')]);
+            const [pe, wl, sf] = await Promise.all([
+                loadFile('projectExpenses.json'),
+                loadFile('workLogs.json'),
+                loadFile('staff.json')
+            ]);
             projectExpenses = Array.isArray(pe) ? pe : projectExpenses;
             workLogs        = Array.isArray(wl) ? wl : workLogs;
+            staffList       = Array.isArray(sf) ? sf.filter(s=>s.status==='Active') : staffList;
             renderView();
             showToast('✅ Synced with Drive');
         } catch { showToast('⚠️ Sync failed'); }
@@ -639,13 +611,14 @@
             </div>
         </div>
 
-        <!-- Add Project button -->
-        <button onclick="openProjModal()" class="btn-primary w-full mb-4 flex items-center justify-center gap-2">
-            <span style="font-size:18px">+</span> New Project
-        </button>
+        <div class="card p-3 mb-4 flex items-center gap-2" style="background:#eff6ff;border-color:#bfdbfe">
+            <span style="font-size:16px">ℹ️</span>
+            <p class="text-xs" style="color:#1d4ed8">Projects are created by the office. Tap <strong>+ Expense</strong> on any project to add your expenses.</p>
+        </div>
 
         <!-- Project cards -->
-        ${!projectExpenses.length ? `<div class="card p-10 text-center"><div style="font-size:48px;margin-bottom:8px">🧳</div><p class="font-medium text-gray-400">No projects yet</p><p class="text-sm text-gray-400 mt-1">Tap "+ New Project" to get started</p></div>` :
+        ${!projectExpenses.length ?
+            `<div class="card p-10 text-center"><div style="font-size:48px;margin-bottom:8px">🧳</div><p class="font-medium text-gray-400">No projects yet</p><p class="text-sm text-gray-400 mt-1">Projects will appear here once created by the office team.</p></div>` :
         projectExpenses.map(p => {
             const spent = (p.items||[]).reduce((a,i)=>a+(parseFloat(i.amount)||0),0);
             const bal   = (parseFloat(p.totalFunds)||0) - spent;
@@ -657,14 +630,10 @@
                     <div class="flex justify-between items-start mb-3">
                         <div class="flex-1 min-w-0 mr-3">
                             <p class="font-bold text-gray-800 leading-tight">${p.projectName}</p>
-                            ${p.projectRef ? `<p class="text-xs text-gray-400 mt-0.5">${p.projectRef}</p>` : ''}
+                            ${p.projectRef ? `<p class="text-xs text-gray-400 mt-0.5">Ref: ${p.projectRef}</p>` : ''}
                             ${p.startDate ? `<p class="text-xs text-gray-400">${p.startDate}${p.endDate?' → '+p.endDate:''}</p>` : ''}
                         </div>
-                        <div class="flex gap-1.5 flex-shrink-0">
-                            <button onclick="openExpItemModal('${p.projExpID}')" class="btn-primary" style="padding:7px 12px;font-size:12px">+ Expense</button>
-                            <button onclick="editProj('${p.projExpID}')" style="padding:7px 10px;border-radius:10px;border:1.5px solid var(--border);background:#fff;cursor:pointer;font-size:12px;color:var(--muted)">✏️</button>
-                            <button onclick="deleteProj('${p.projExpID}')" style="padding:7px 10px;border-radius:10px;border:1.5px solid #fecaca;background:#fff;cursor:pointer;font-size:12px;color:#dc2626">✕</button>
-                        </div>
+                        <button onclick="openExpItemModal('${p.projExpID}')" class="btn-primary flex-shrink-0" style="padding:8px 14px;font-size:13px">+ Add Expense</button>
                     </div>
                     <!-- Fund bar -->
                     <div class="flex justify-between text-xs mb-1.5" style="color:var(--muted)">
@@ -693,7 +662,7 @@
                             <button onclick="deleteExpItem('${p.projExpID}','${it.itemID}')" style="font-size:12px;color:#dc2626;background:none;border:none;cursor:pointer;padding:4px">✕</button>
                         </div>
                     </div>`).join('')}
-                </div>` : `<p style="padding:10px 14px;font-size:12px;color:var(--muted)">No expenses yet — tap "+ Expense"</p>`}
+                </div>` : `<p style="padding:10px 14px;font-size:12px;color:var(--muted)">No expenses yet — tap "+ Add Expense"</p>`}
             </div>`;
         }).join('')}`;
     }
@@ -746,59 +715,19 @@
         }).join('')}`;
     }
 
-    // ── PROJECT CRUD ──────────────────────────────────────────────
-    function openProjModal(id=null) {
-        _editProjID = id;
-        const p = id ? projectExpenses.find(x=>x.projExpID===id) : null;
-        document.getElementById('projModalTitle').textContent = p ? 'Edit Project' : 'New Project';
-        document.getElementById('pName').value  = p?.projectName || '';
-        document.getElementById('pRef').value   = p?.projectRef  || '';
-        document.getElementById('pFunds').value = p?.totalFunds  || '';
-        document.getElementById('pStart').value = p?.startDate   || '';
-        document.getElementById('pEnd').value   = p?.endDate     || '';
-        document.getElementById('pDesc').value  = p?.description || '';
-        document.getElementById('projModal').classList.add('show');
-    }
-    function closeProjModal() { document.getElementById('projModal').classList.remove('show'); _editProjID=null; }
-    function editProj(id) { openProjModal(id); }
-
-    async function saveProject(e) {
-        e.preventDefault();
-        const obj = {
-            projExpID:   _editProjID || ('PE'+Date.now()),
-            projectName: document.getElementById('pName').value,
-            projectRef:  document.getElementById('pRef').value,
-            totalFunds:  parseFloat(document.getElementById('pFunds').value)||0,
-            startDate:   document.getElementById('pStart').value,
-            endDate:     document.getElementById('pEnd').value,
-            description: document.getElementById('pDesc').value,
-            items:       _editProjID ? (projectExpenses.find(x=>x.projExpID===_editProjID)?.items||[]) : [],
-            createdAt:   _editProjID ? (projectExpenses.find(x=>x.projExpID===_editProjID)?.createdAt||new Date().toISOString()) : new Date().toISOString()
-        };
-        if (_editProjID) {
-            const i = projectExpenses.findIndex(x=>x.projExpID===_editProjID);
-            if (i>=0) projectExpenses[i] = obj;
-        } else { projectExpenses.push(obj); }
-        await saveData('projectExpenses', projectExpenses);
-        closeProjModal(); renderView(); showToast('✅ Project saved');
-    }
-
-    async function deleteProj(id) {
-        if (!confirm('Delete this project and all its expense entries?')) return;
-        projectExpenses = projectExpenses.filter(x=>x.projExpID!==id);
-        await saveData('projectExpenses', projectExpenses);
-        renderView(); showToast('🗑️ Project deleted');
-    }
-
     // ── EXPENSE ITEM CRUD ─────────────────────────────────────────
     function openExpItemModal(projID) {
         document.getElementById('eiProjID').value = projID;
         document.getElementById('eiDate').value = new Date().toISOString().split('T')[0];
         document.getElementById('eiDesc').value = '';
         document.getElementById('eiAmt').value  = '';
-        document.getElementById('eiStaff').value = '';
         document.getElementById('eiBillName').textContent = '';
         document.getElementById('eiBill').value = '';
+        // Populate staff dropdown
+        const staffSel = document.getElementById('eiStaff');
+        staffSel.innerHTML = '<option value="">— Select —</option>' +
+            staffList.map(s=>`<option value="${s.name}">${s.name} (${s.staffType||'Staff'})</option>`).join('');
+        staffSel.value = '';
         document.getElementById('expItemModal').classList.add('show');
     }
     function closeExpItemModal() { document.getElementById('expItemModal').classList.remove('show'); }
@@ -825,8 +754,8 @@
             date:      document.getElementById('eiDate').value,
             category:  document.getElementById('eiCat').value,
             description: document.getElementById('eiDesc').value,
-            staffName: document.getElementById('eiStaff').value,
-            staffID:   '',
+            staffName: document.getElementById('eiStaff').value || '',
+            staffID:   staffList.find(s=>s.name===document.getElementById('eiStaff').value)?.staffID || '',
             amount:    parseFloat(document.getElementById('eiAmt').value)||0,
             billData, billName
         });
@@ -862,14 +791,22 @@
         const w = id ? workLogs.find(x=>x.wlID===id) : null;
         document.getElementById('wlModalTitle').textContent = w ? 'Edit Work Log' : 'New Work Log';
         document.getElementById('wlDate').value     = w?.date        || new Date().toISOString().split('T')[0];
-        document.getElementById('wlStaff').value    = w?.staffName   || '';
-        document.getElementById('wlProject').value  = w?.project     || '';
         document.getElementById('wlLocation').value = w?.location    || '';
         document.getElementById('wlCat').value      = w?.category    || 'Inspection';
         document.getElementById('wlStatus').value   = w?.status      || 'In Progress';
         document.getElementById('wlDesc').value     = w?.description || '';
         document.getElementById('wlObs').value      = w?.observations|| '';
         document.getElementById('wlRec').value      = w?.recommendations||'';
+        // Populate staff dropdown
+        const staffSel = document.getElementById('wlStaff');
+        staffSel.innerHTML = '<option value="">— Select Staff —</option>' +
+            staffList.map(s=>`<option value="${s.name}">${s.name} (${s.staffType||'Staff'})</option>`).join('');
+        staffSel.value = w?.staffName || '';
+        // Populate project dropdown
+        const projSel = document.getElementById('wlProject');
+        projSel.innerHTML = '<option value="">— Select Project —</option>' +
+            projectExpenses.map(p=>`<option value="${p.projectName}">${p.projectName}${p.projectRef?' ('+p.projectRef+')':''}</option>`).join('');
+        projSel.value = w?.project || '';
         if (w?.photos) _wlPhotos = [...w.photos];
         renderWlPhotoGrid();
         document.getElementById('wlModal').classList.add('show');
@@ -906,7 +843,7 @@
             wlID:            _editWlID || ('WL'+Date.now()),
             date:            document.getElementById('wlDate').value,
             staffName:       document.getElementById('wlStaff').value,
-            staffID:         '',
+            staffID:         staffList.find(s=>s.name===document.getElementById('wlStaff').value)?.staffID || '',
             project:         document.getElementById('wlProject').value,
             location:        document.getElementById('wlLocation').value,
             category:        document.getElementById('wlCat').value,
