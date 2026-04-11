@@ -220,29 +220,22 @@
     </div>
 </div>
 
-<!-- Work Log Modal -->
+<!-- Work Log Modal — PROJECT HEADER -->
 <div id="wlModal" class="modal">
-    <div class="modal-box" style="max-width:640px">
+    <div class="modal-box" style="max-width:600px">
         <div class="modal-hdr" style="background:linear-gradient(135deg,#1e3a5f,#1d4ed8)">
             <span class="font-bold text-white text-lg" id="wlModalTitle">New Work Log</span>
             <button onclick="closeWlModal()" class="text-white text-2xl font-bold leading-none">✕</button>
         </div>
         <form id="wlForm" onsubmit="saveWorkLog(event)" class="p-5 space-y-4">
-
-            <!-- Section: Project & Date -->
+            <!-- Project -->
             <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:12px;padding:12px 14px">
-                <p class="field-label" style="color:#0369a1;margin-bottom:8px">📋 PROJECT & DATE</p>
-                <div class="grid grid-cols-2 gap-3">
-                    <div>
-                        <label class="field-label">Project <span class="text-red-500">*</span></label>
-                        <select id="wlProject" class="field-input" required onchange="onWlProjectChange(this.value)">
-                            <option value="">— Select Project —</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="field-label">Date <span class="text-red-500">*</span></label>
-                        <input type="date" id="wlDate" class="field-input" required/>
-                    </div>
+                <p class="field-label" style="color:#0369a1;margin-bottom:8px">📋 PROJECT DETAILS</p>
+                <div>
+                    <label class="field-label">Project <span class="text-red-500">*</span></label>
+                    <select id="wlProject" class="field-input" required onchange="onWlProjectChange(this.value)">
+                        <option value="">— Select Project —</option>
+                    </select>
                 </div>
                 <div class="grid grid-cols-2 gap-3 mt-3">
                     <div>
@@ -255,28 +248,55 @@
                     </div>
                 </div>
                 <div class="mt-3">
-                    <label class="field-label">Location / Vessel / Site</label>
-                    <input type="text" id="wlLocation" class="field-input" placeholder="e.g. MV Vessel Name, Port, Dry Dock"/>
+                    <label class="field-label">Location / Vessel / Site <span class="text-red-500">*</span></label>
+                    <input type="text" id="wlLocation" class="field-input" required placeholder="e.g. MV Vessel Name, Port, Dry Dock"/>
                 </div>
             </div>
+            <!-- Technicians -->
+            <div style="background:#faf5ff;border:1px solid #e9d5ff;border-radius:12px;padding:12px 14px">
+                <p class="field-label" style="color:#7c3aed;margin-bottom:8px">👷 FIELD TECHNICIANS ASSIGNED</p>
+                <div id="wlStaffList" class="space-y-2"></div>
+                <button type="button" onclick="addWlStaffRow()" class="mt-2 text-xs px-3 py-1.5 rounded-lg font-semibold" style="background:#ede9fe;color:#7c3aed;border:1px solid #c4b5fd">+ Add Technician</button>
+            </div>
+            <!-- Status -->
+            <div>
+                <label class="field-label">Overall Status</label>
+                <select id="wlStatus" class="field-input">
+                    <option value="In Progress">In Progress</option>
+                    <option value="Completed">Completed</option>
+                    <option value="Pending">Pending</option>
+                    <option value="On Hold">On Hold</option>
+                </select>
+            </div>
+            <div class="flex gap-3 pt-2">
+                <button type="button" onclick="closeWlModal()" class="btn-secondary flex-1">Cancel</button>
+                <button type="submit" class="btn-primary flex-1">💾 Save Work Log</button>
+            </div>
+        </form>
+    </div>
+</div>
 
-            <!-- Section: Work Time -->
+<!-- Daily Entry Modal -->
+<div id="dayModal" class="modal">
+    <div class="modal-box" style="max-width:640px">
+        <div class="modal-hdr" style="background:linear-gradient(135deg,#065f46,#0d9488)">
+            <span class="font-bold text-white text-lg" id="dayModalTitle">Add Daily Update</span>
+            <button onclick="closeDayModal()" class="text-white text-2xl font-bold leading-none">✕</button>
+        </div>
+        <form id="dayForm" onsubmit="saveDayEntry(event)" class="p-5 space-y-4">
+            <input type="hidden" id="dayWlID"/>
+            <input type="hidden" id="dayEntryID"/>
+            <!-- Date & Time -->
             <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:12px 14px">
-                <p class="field-label" style="color:#15803d;margin-bottom:8px">⏱️ WORK TIME</p>
+                <p class="field-label" style="color:#15803d;margin-bottom:8px">📅 DATE & TIME</p>
                 <div class="grid grid-cols-2 gap-3">
                     <div>
-                        <label class="field-label">Start Time <span class="text-red-500">*</span></label>
-                        <input type="time" id="wlStartTime" class="field-input" required/>
+                        <label class="field-label">Date <span class="text-red-500">*</span></label>
+                        <input type="date" id="dayDate" class="field-input" required/>
                     </div>
-                    <div>
-                        <label class="field-label">End Time <span class="text-red-500">*</span></label>
-                        <input type="time" id="wlEndTime" class="field-input" required/>
-                    </div>
-                </div>
-                <div class="grid grid-cols-2 gap-3 mt-3">
                     <div>
                         <label class="field-label">Work Category</label>
-                        <select id="wlCat" class="field-input">
+                        <select id="dayCat" class="field-input">
                             <option value="Inspection">Inspection</option>
                             <option value="Maintenance">Maintenance / Repair</option>
                             <option value="Installation">Installation</option>
@@ -286,79 +306,76 @@
                             <option value="Other">Other</option>
                         </select>
                     </div>
+                </div>
+                <div class="grid grid-cols-2 gap-3 mt-3">
                     <div>
-                        <label class="field-label">Status</label>
-                        <select id="wlStatus" class="field-input">
-                            <option value="In Progress">In Progress</option>
-                            <option value="Completed">Completed</option>
-                            <option value="Pending">Pending</option>
-                            <option value="On Hold">On Hold</option>
-                        </select>
+                        <label class="field-label">Start Time <span class="text-red-500">*</span></label>
+                        <input type="time" id="dayStartTime" class="field-input" required/>
+                    </div>
+                    <div>
+                        <label class="field-label">End Time <span class="text-red-500">*</span></label>
+                        <input type="time" id="dayEndTime" class="field-input" required/>
                     </div>
                 </div>
             </div>
-
-            <!-- Section: Field Technicians Assigned -->
+            <!-- Technicians for this day -->
             <div style="background:#faf5ff;border:1px solid #e9d5ff;border-radius:12px;padding:12px 14px">
-                <p class="field-label" style="color:#7c3aed;margin-bottom:8px">👷 FIELD TECHNICIANS ASSIGNED</p>
-                <div id="wlStaffList" class="space-y-2"></div>
-                <button type="button" onclick="addWlStaffRow()" class="mt-2 text-xs px-3 py-1.5 rounded-lg font-semibold" style="background:#ede9fe;color:#7c3aed;border:1px solid #c4b5fd">+ Add Technician</button>
+                <p class="field-label" style="color:#7c3aed;margin-bottom:8px">👷 TECHNICIANS ON SITE TODAY</p>
+                <div id="dayStaffList" class="space-y-2"></div>
+                <button type="button" onclick="addDayStaffRow()" class="mt-2 text-xs px-3 py-1.5 rounded-lg font-semibold" style="background:#ede9fe;color:#7c3aed;border:1px solid #c4b5fd">+ Add Technician</button>
             </div>
-
-            <!-- Section: Work Details -->
+            <!-- Work Details -->
             <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:12px 14px">
                 <p class="field-label" style="color:#b45309;margin-bottom:8px">🔧 WORK DETAILS</p>
                 <div>
                     <label class="field-label">Details of Work Carried Out <span class="text-red-500">*</span></label>
-                    <textarea id="wlDesc" class="field-input" rows="4" required placeholder="Describe in detail the work performed, equipment worked on, methods used..."></textarea>
+                    <textarea id="dayDesc" class="field-input" rows="4" required placeholder="Describe in detail the work performed today..."></textarea>
                 </div>
                 <div class="mt-3">
                     <label class="field-label">Observations / Findings</label>
-                    <textarea id="wlObs" class="field-input" rows="3" placeholder="Issues found, equipment condition, measurements, test results..."></textarea>
+                    <textarea id="dayObs" class="field-input" rows="2" placeholder="Issues found, test results, measurements..."></textarea>
                 </div>
                 <div class="mt-3">
                     <label class="field-label">Exclusions / Remarks</label>
-                    <textarea id="wlExclusions" class="field-input" rows="2" placeholder="Work excluded from scope, deferred items, conditions beyond scope..."></textarea>
+                    <textarea id="dayExclusions" class="field-input" rows="2" placeholder="Work excluded, deferred items, scope limits..."></textarea>
                 </div>
                 <div class="mt-3">
                     <label class="field-label">Recommendations</label>
-                    <textarea id="wlRec" class="field-input" rows="2" placeholder="Follow-up actions recommended..."></textarea>
+                    <textarea id="dayRec" class="field-input" rows="2" placeholder="Follow-up actions for tomorrow or next visit..."></textarea>
                 </div>
             </div>
-
-            <!-- Section: Photos -->
+            <!-- Photos -->
             <div style="background:#f8fafc;border:1px solid var(--border);border-radius:12px;padding:12px 14px">
-                <p class="field-label" style="margin-bottom:8px">📷 PHOTOS <span style="font-weight:400;text-transform:none;font-size:11px;color:var(--muted)">(up to 10 photos)</span></p>
-                <div id="wlPhotoGrid" class="flex flex-wrap gap-2"></div>
-                <input type="file" id="wlPhotoFile" accept="image/*" capture="environment" class="hidden" onchange="handleWlPhoto(this)" multiple/>
+                <p class="field-label" style="margin-bottom:8px">📷 PHOTOS <span style="font-weight:400;text-transform:none;font-size:11px;color:var(--muted)">(up to 10 per day)</span></p>
+                <div id="dayPhotoGrid" class="flex flex-wrap gap-2"></div>
+                <input type="file" id="dayPhotoFile" accept="image/*" capture="environment" class="hidden" onchange="handleDayPhoto(this)" multiple/>
             </div>
-
-            <!-- Section: Witness -->
+            <!-- Witness -->
             <div style="background:#fff1f2;border:1px solid #fecdd3;border-radius:12px;padding:12px 14px">
                 <p class="field-label" style="color:#be123c;margin-bottom:8px">✍️ WITNESSED BY (SHIP ENGINEER / CLIENT)</p>
                 <div class="grid grid-cols-2 gap-3">
                     <div>
                         <label class="field-label">Name</label>
-                        <input type="text" id="wlWitnessName" class="field-input" placeholder="Engineer's name"/>
+                        <input type="text" id="dayWitnessName" class="field-input" placeholder="Engineer's name"/>
                     </div>
                     <div>
                         <label class="field-label">Designation / Rank</label>
-                        <input type="text" id="wlWitnessDesig" class="field-input" placeholder="e.g. Chief Engineer"/>
+                        <input type="text" id="dayWitnessDesig" class="field-input" placeholder="e.g. Chief Engineer"/>
                     </div>
                 </div>
                 <div class="mt-3">
                     <label class="field-label">Remarks by Witness</label>
-                    <textarea id="wlWitnessRemarks" class="field-input" rows="2" placeholder="Any comments or confirmation by the witness..."></textarea>
+                    <textarea id="dayWitnessRemarks" class="field-input" rows="2" placeholder="Comments or confirmation by the witness..."></textarea>
                 </div>
             </div>
-
             <div class="flex gap-3 pt-2">
-                <button type="button" onclick="closeWlModal()" class="btn-secondary flex-1">Cancel</button>
-                <button type="submit" class="btn-primary flex-1">💾 Save Work Log</button>
+                <button type="button" onclick="closeDayModal()" class="btn-secondary flex-1">Cancel</button>
+                <button type="submit" class="btn-primary flex-1">💾 Save Daily Entry</button>
             </div>
         </form>
     </div>
 </div>
+
 
 <!-- ═══ SCRIPT ════════════════════════════════════════════════════ -->
 <script>
@@ -760,310 +777,411 @@
     }
 
     // ── WORK LOGS VIEW ────────────────────────────────────────────
+    // Structure: workLogs = array of Project Work Logs
+    // Each log has: wlID, project, location, workStartDate, workEndDate,
+    //   technicians[], status, createdAt
+    //   dailyEntries[]: [{entryID, date, startTime, endTime, category,
+    //     technicians[], description, observations, exclusions,
+    //     recommendations, witnessName, witnessDesig, witnessRemarks,
+    //     photos[]}]
+
     function renderWorkLogs(el) {
-        const statusColors = {
-            'Completed':  {bg:'#dcfce7',col:'#15803d'},
-            'In Progress':{bg:'#fef3c7',col:'#b45309'},
-            'Pending':    {bg:'#f1f5f9',col:'#475569'},
-            'On Hold':    {bg:'#fee2e2',col:'#dc2626'}
+        const statusSty = {
+            'Completed':  {bg:'#dcfce7',col:'#15803d',dot:'#16a34a'},
+            'In Progress':{bg:'#fef3c7',col:'#b45309',dot:'#d97706'},
+            'Pending':    {bg:'#f1f5f9',col:'#475569',dot:'#94a3b8'},
+            'On Hold':    {bg:'#fee2e2',col:'#dc2626',dot:'#ef4444'}
         };
-        const catColors = {
-            Inspection:'#eff6ff:#1d4ed8', Maintenance:'#fef3c7:#b45309',
-            Installation:'#f0fdf4:#0d7c66', Survey:'#f5f3ff:#6d28d9',
-            Testing:'#ecfeff:#0e7490', Calibration:'#fdf4ff:#7e22ce', Other:'#f3f4f6:#374151'
-        };
-        const sorted = [...workLogs].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
-        el.innerHTML = `
+        const sorted=[...workLogs].sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
+
+        el.innerHTML=`
         <button onclick="openWlModal()" class="btn-primary w-full mb-4 flex items-center justify-center gap-2" style="background:linear-gradient(135deg,#1e3a5f,#1d4ed8)">
-            <span style="font-size:18px">+</span> New Work Log
+            <span style="font-size:18px">+</span> New Project Work Log
         </button>
-        ${!sorted.length ? `
-        <div class="card p-10 text-center">
-            <div style="font-size:48px;margin-bottom:8px">📋</div>
-            <p class="font-medium text-gray-400">No work logs yet</p>
-            <p class="text-sm text-gray-400 mt-1">Tap "+ New Work Log" to add your first entry</p>
-        </div>` :
-        sorted.map(w => {
-            const sc = statusColors[w.status]||{bg:'#f1f5f9',col:'#475569'};
-            const [catBg,catTxt] = (catColors[w.category]||'#f3f4f6:#374151').split(':');
-            const techNames = (w.technicians||[]).map(t=>t.name).join(', ') || w.staffName || '—';
-            const duration = (w.startTime&&w.endTime) ? calcDuration(w.startTime,w.endTime) : '';
+        ${!sorted.length?`<div class="card p-10 text-center"><div style="font-size:48px;margin-bottom:8px">📋</div><p class="font-medium text-gray-400">No work logs yet</p><p class="text-sm text-gray-400 mt-1">Create a Project Work Log, then add daily entries</p></div>`
+        :sorted.map(w=>{
+            const ss=statusSty[w.status]||statusSty['Pending'];
+            const techNames=(w.technicians||[]).map(t=>t.name).join(', ')||'—';
+            const days=(w.dailyEntries||[]).length;
+            const lastEntry=days?[...w.dailyEntries].sort((a,b)=>(b.date||'').localeCompare(a.date||''))[0]:null;
             return `
-            <div class="card mb-4" style="border-left:4px solid ${sc.col}">
+            <div class="card mb-4" style="border-left:4px solid ${ss.dot}">
+                <!-- Project header -->
                 <div class="p-4">
                     <div class="flex justify-between items-start mb-2">
                         <div class="flex-1 min-w-0 mr-2">
                             <p class="font-bold" style="color:var(--navy);font-size:15px">${w.project||'—'}</p>
-                            <p style="font-size:12px;color:var(--muted)">${w.date}${w.location?' · 📍'+w.location:''}</p>
+                            <p style="font-size:12px;color:var(--muted)">📍 ${w.location||'—'}${w.workStartDate?' · '+w.workStartDate+(w.workEndDate?' → '+w.workEndDate:''):''}</p>
+                            <p style="font-size:12px;color:var(--muted)">👷 ${techNames}</p>
                         </div>
-                        <div class="flex gap-1.5 flex-shrink-0">
-                            <button onclick="wlPDF('${w.wlID}')" style="padding:6px 10px;border-radius:8px;background:#1e3a5f;color:#fff;border:none;cursor:pointer;font-size:11px;font-weight:600">📄 PDF</button>
-                            <button onclick="editWorkLog('${w.wlID}')" style="padding:6px 10px;border-radius:8px;border:1.5px solid var(--border);background:#fff;cursor:pointer;font-size:12px;color:var(--muted)">✏️</button>
-                            <button onclick="deleteWorkLog('${w.wlID}')" style="padding:6px 10px;border-radius:8px;border:1.5px solid #fecaca;background:#fff;cursor:pointer;font-size:12px;color:#dc2626">✕</button>
+                        <div style="display:flex;flex-direction:column;gap:5px;align-items:flex-end">
+                            <span class="badge" style="background:${ss.bg};color:${ss.col}">${w.status||'—'}</span>
+                            <span class="badge" style="background:#f0f9ff;color:#0369a1">${days} day${days!==1?'s':''}</span>
                         </div>
                     </div>
-                    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
-                        <span class="badge" style="background:${sc.bg};color:${sc.col}">${w.status||'—'}</span>
-                        <span class="badge" style="background:${catBg};color:${catTxt}">${w.category||'—'}</span>
-                        ${duration?`<span class="badge" style="background:#f0f9ff;color:#0369a1">⏱ ${duration}</span>`:''}
-                        ${w.startTime?`<span class="badge" style="background:#f8fafc;color:#475569">${w.startTime}${w.endTime?' – '+w.endTime:''}</span>`:''}
+                    <!-- Action buttons -->
+                    <div class="flex gap-2 mt-3">
+                        <button onclick="openDayModal('${w.wlID}')" class="btn-primary flex-1" style="font-size:12px;padding:8px 10px;background:linear-gradient(135deg,#065f46,#0d9488)">
+                            + Add Daily Update
+                        </button>
+                        <button onclick="wlPDF('${w.wlID}')" style="padding:8px 12px;border-radius:10px;background:#1e3a5f;color:#fff;border:none;cursor:pointer;font-size:12px;font-weight:600">📄 Report</button>
+                        <button onclick="editWorkLog('${w.wlID}')" style="padding:8px 10px;border-radius:10px;border:1.5px solid var(--border);background:#fff;cursor:pointer;font-size:12px;color:var(--muted)">✏️</button>
+                        <button onclick="deleteWorkLog('${w.wlID}')" style="padding:8px 10px;border-radius:10px;border:1.5px solid #fecaca;background:#fff;cursor:pointer;font-size:12px;color:#dc2626">✕</button>
                     </div>
-                    <div style="font-size:12px;color:var(--muted);margin-bottom:6px">
-                        <strong style="color:var(--text)">👷 Technicians:</strong> ${techNames}
-                    </div>
-                    ${(w.workStartDate||w.workEndDate)?`<div style="font-size:12px;color:var(--muted);margin-bottom:6px"><strong style="color:var(--text)">📅 Work Period:</strong> ${w.workStartDate||''}${w.workEndDate?' → '+w.workEndDate:''}</div>`:''}
-                    <p style="font-size:13px;color:var(--text);line-height:1.6;margin-bottom:6px">${w.description||''}</p>
-                    ${w.observations?`<p style="font-size:12px;color:#0369a1;margin-bottom:4px"><strong>🔍 Observations:</strong> ${w.observations}</p>`:''}
-                    ${w.exclusions?`<p style="font-size:12px;color:#b45309;margin-bottom:4px"><strong>⚠️ Exclusions:</strong> ${w.exclusions}</p>`:''}
-                    ${w.recommendations?`<p style="font-size:12px;color:#15803d;margin-bottom:4px"><strong>💡 Recommendations:</strong> ${w.recommendations}</p>`:''}
-                    ${w.witnessName?`<div style="margin-top:8px;padding:8px 10px;background:#fff1f2;border-radius:8px;font-size:12px;color:#be123c"><strong>✍️ Witnessed by:</strong> ${w.witnessName}${w.witnessDesig?' ('+w.witnessDesig+')':''}${w.witnessRemarks?' — '+w.witnessRemarks:''}</div>`:''}
-                    ${(w.photos||[]).length?`
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
-                        ${w.photos.map((ph,i)=>`<img src="${ph}" class="photo-thumb" onclick="viewPhoto('${w.wlID}',${i})" alt="Photo ${i+1}" title="Tap to view"/>`).join('')}
-                    </div>`:''}
                 </div>
+                <!-- Daily entries -->
+                ${!days?`<div style="padding:10px 16px;border-top:1px solid var(--border);font-size:12px;color:var(--muted)">No daily entries yet — tap "+ Add Daily Update" to begin.</div>`:`
+                <div style="border-top:1px solid var(--border)">
+                    ${[...w.dailyEntries].sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map((d,idx)=>{
+                        const dur=(d.startTime&&d.endTime)?calcDuration(d.startTime,d.endTime):'';
+                        const dayTechs=(d.technicians||[]).map(t=>t.name).join(', ')||(w.technicians||[]).map(t=>t.name).join(', ')||'—';
+                        return `
+                        <div style="padding:12px 16px;border-bottom:1px solid var(--border);background:${idx%2===0?'#fff':'#f8fafc'}">
+                            <div class="flex justify-between items-start mb-1">
+                                <div>
+                                    <span class="font-semibold" style="font-size:13px;color:var(--navy)">Day ${days-idx} — ${d.date||'—'}</span>
+                                    ${d.startTime?`<span style="font-size:11px;color:var(--muted);margin-left:8px">⏱ ${d.startTime}–${d.endTime}${dur?' ('+dur+')':''}</span>`:''}
+                                    ${d.category?`<span class="badge" style="margin-left:6px;background:#eff6ff;color:#1d4ed8;font-size:10px">${d.category}</span>`:''}
+                                </div>
+                                <div class="flex gap-1.5">
+                                    <button onclick="editDayEntry('${w.wlID}','${d.entryID}')" style="padding:4px 8px;border-radius:6px;border:1.5px solid var(--border);background:#fff;cursor:pointer;font-size:11px;color:var(--muted)">✏️</button>
+                                    <button onclick="deleteDayEntry('${w.wlID}','${d.entryID}')" style="padding:4px 8px;border-radius:6px;border:1.5px solid #fecaca;background:#fff;cursor:pointer;font-size:11px;color:#dc2626">✕</button>
+                                </div>
+                            </div>
+                            <p style="font-size:12px;color:var(--muted);margin-bottom:3px">👷 ${dayTechs}</p>
+                            <p style="font-size:12px;color:var(--text);line-height:1.6">${d.description||''}</p>
+                            ${d.observations?`<p style="font-size:11px;color:#0369a1;margin-top:4px"><strong>🔍 Obs:</strong> ${d.observations}</p>`:''}
+                            ${d.exclusions?`<p style="font-size:11px;color:#b45309;margin-top:2px"><strong>⚠️ Excl:</strong> ${d.exclusions}</p>`:''}
+                            ${d.witnessName?`<p style="font-size:11px;color:#be123c;margin-top:4px">✍️ Witnessed: ${d.witnessName}${d.witnessDesig?' ('+d.witnessDesig+')':''}</p>`:''}
+                            ${(d.photos||[]).length?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${d.photos.map((ph,i)=>`<img src="${ph}" class="photo-thumb" onclick="viewDayPhoto('${w.wlID}','${d.entryID}',${i})" style="width:52px;height:52px"/>`).join('')}</div>`:''}
+                        </div>`;
+                    }).join('')}
+                </div>`}
             </div>`;
         }).join('')}`;
     }
 
-    function calcDuration(start, end) {
-        try {
-            const [sh,sm]=start.split(':').map(Number),[eh,em]=end.split(':').map(Number);
-            let mins=(eh*60+em)-(sh*60+sm);if(mins<0)mins+=24*60;
-            const h=Math.floor(mins/60),m=mins%60;
-            return h>0?`${h}h ${m>0?m+'m':''}`:m+'m';
-        } catch{return '';}
+    function calcDuration(start,end){
+        try{const[sh,sm]=start.split(':').map(Number),[eh,em]=end.split(':').map(Number);
+        let m=(eh*60+em)-(sh*60+sm);if(m<0)m+=1440;
+        const h=Math.floor(m/60);return h?`${h}h ${m%60?m%60+'m':''}`:m%60+'m';}catch{return '';}
     }
 
-    // ── WORK LOG CRUD ─────────────────────────────────────────────
-    let _wlStaffRows = [];
+    // ── WORK LOG (PROJECT) CRUD ───────────────────────────────────
+    let _wlStaffRows=[], _dayStaffRows=[], _dayPhotos=[];
 
-    function onWlProjectChange(projName) {
-        const p = projectExpenses.find(x=>x.projectName===projName);
-        if (!p) return;
-        if (p.startDate && !document.getElementById('wlWorkStart').value) document.getElementById('wlWorkStart').value=p.startDate;
-        if (p.endDate   && !document.getElementById('wlWorkEnd').value)   document.getElementById('wlWorkEnd').value=p.endDate;
+    function onWlProjectChange(projName){
+        const p=projectExpenses.find(x=>x.projectName===projName);if(!p)return;
+        if(p.startDate&&!document.getElementById('wlWorkStart').value)document.getElementById('wlWorkStart').value=p.startDate;
+        if(p.endDate&&!document.getElementById('wlWorkEnd').value)document.getElementById('wlWorkEnd').value=p.endDate;
     }
 
-    function renderWlStaffRows() {
-        const el = document.getElementById('wlStaffList'); if (!el) return;
-        el.innerHTML = _wlStaffRows.map((row,i) => `
+    function renderWlStaffRows(){
+        const el=document.getElementById('wlStaffList');if(!el)return;
+        el.innerHTML=_wlStaffRows.map((r,i)=>`
         <div style="display:flex;gap:8px;align-items:center">
-            <select onchange="_wlStaffRows[${i}].name=this.value" class="field-input flex-1" style="font-size:13px">
+            <select onchange="_wlStaffRows[${i}].name=this.value;_wlStaffRows[${i}].staffID=staffList.find(s=>s.name===this.value)?.staffID||''" class="field-input flex-1" style="font-size:13px">
                 <option value="">— Select —</option>
-                ${staffList.map(s=>`<option value="${s.name}" ${s.name===row.name?'selected':''}>${s.name} (${s.staffType||'Staff'})</option>`).join('')}
+                ${staffList.map(s=>`<option value="${s.name}"${s.name===r.name?' selected':''}>${s.name} (${s.staffType||'Staff'})</option>`).join('')}
             </select>
-            <button type="button" onclick="removeWlStaffRow(${i})" style="color:#dc2626;background:none;border:none;font-size:18px;cursor:pointer;padding:4px">✕</button>
+            <button type="button" onclick="_wlStaffRows.splice(${i},1);renderWlStaffRows()" style="color:#dc2626;background:none;border:none;font-size:18px;cursor:pointer;padding:4px">✕</button>
         </div>`).join('');
     }
 
-    function addWlStaffRow() { _wlStaffRows.push({name:''}); renderWlStaffRows(); }
-    function removeWlStaffRow(i) { _wlStaffRows.splice(i,1); renderWlStaffRows(); }
+    function addWlStaffRow(){_wlStaffRows.push({name:'',staffID:''});renderWlStaffRows();}
 
-    function openWlModal(id=null) {
-        _editWlID=id; _wlPhotos=[]; _wlStaffRows=[];
+    function openWlModal(id=null){
+        _editWlID=id;_wlStaffRows=[];
         const w=id?workLogs.find(x=>x.wlID===id):null;
-        document.getElementById('wlModalTitle').textContent=w?'Edit Work Log':'New Work Log';
-        document.getElementById('wlDate').value        =w?.date          ||new Date().toISOString().split('T')[0];
-        document.getElementById('wlWorkStart').value   =w?.workStartDate ||'';
-        document.getElementById('wlWorkEnd').value     =w?.workEndDate   ||'';
-        document.getElementById('wlLocation').value    =w?.location      ||'';
-        document.getElementById('wlStartTime').value   =w?.startTime     ||'';
-        document.getElementById('wlEndTime').value     =w?.endTime       ||'';
-        document.getElementById('wlCat').value         =w?.category      ||'Inspection';
-        document.getElementById('wlStatus').value      =w?.status        ||'In Progress';
-        document.getElementById('wlDesc').value        =w?.description   ||'';
-        document.getElementById('wlObs').value         =w?.observations  ||'';
-        document.getElementById('wlExclusions').value  =w?.exclusions    ||'';
-        document.getElementById('wlRec').value         =w?.recommendations||'';
-        document.getElementById('wlWitnessName').value =w?.witnessName   ||'';
-        document.getElementById('wlWitnessDesig').value=w?.witnessDesig  ||'';
-        document.getElementById('wlWitnessRemarks').value=w?.witnessRemarks||'';
+        document.getElementById('wlModalTitle').textContent=w?'Edit Work Log':'New Project Work Log';
         const projSel=document.getElementById('wlProject');
         projSel.innerHTML='<option value="">— Select Project —</option>'+
             projectExpenses.map(p=>`<option value="${p.projectName}">${p.projectName}${p.projectRef?' ('+p.projectRef+')':''}</option>`).join('');
         projSel.value=w?.project||'';
-        if(w?.technicians?.length) _wlStaffRows=w.technicians.map(t=>({name:t.name}));
-        else if(w?.staffName)      _wlStaffRows=[{name:w.staffName}];
-        else                        _wlStaffRows=[{name:''}];
+        document.getElementById('wlWorkStart').value=w?.workStartDate||'';
+        document.getElementById('wlWorkEnd').value=w?.workEndDate||'';
+        document.getElementById('wlLocation').value=w?.location||'';
+        document.getElementById('wlStatus').value=w?.status||'In Progress';
+        if(w?.technicians?.length)_wlStaffRows=w.technicians.map(t=>({name:t.name,staffID:t.staffID||''}));
+        else _wlStaffRows=[{name:'',staffID:''}];
         renderWlStaffRows();
-        if(w?.photos) _wlPhotos=[...w.photos];
-        renderWlPhotoGrid();
         document.getElementById('wlModal').classList.add('show');
     }
+    function closeWlModal(){document.getElementById('wlModal').classList.remove('show');_editWlID=null;_wlStaffRows=[];}
+    function editWorkLog(id){openWlModal(id);}
 
-    function closeWlModal() {
-        document.getElementById('wlModal').classList.remove('show');
-        _editWlID=null; _wlPhotos=[]; _wlStaffRows=[];
+    async function saveWorkLog(e){
+        e.preventDefault();
+        const techs=_wlStaffRows.filter(r=>r.name).map(r=>({name:r.name,staffID:r.staffID||staffList.find(s=>s.name===r.name)?.staffID||''}));
+        const existing=_editWlID?workLogs.find(x=>x.wlID===_editWlID):null;
+        const obj={
+            wlID:         _editWlID||('WL'+Date.now()),
+            project:      document.getElementById('wlProject').value,
+            workStartDate:document.getElementById('wlWorkStart').value,
+            workEndDate:  document.getElementById('wlWorkEnd').value,
+            location:     document.getElementById('wlLocation').value,
+            status:       document.getElementById('wlStatus').value,
+            technicians:  techs,
+            staffName:    techs.map(t=>t.name).join(', '),
+            dailyEntries: existing?.dailyEntries||[],
+            createdAt:    existing?.createdAt||new Date().toISOString()
+        };
+        if(_editWlID){const i=workLogs.findIndex(x=>x.wlID===_editWlID);if(i>=0)workLogs[i]=obj;else workLogs.push(obj);}
+        else workLogs.push(obj);
+        await saveData('workLogs',workLogs);
+        closeWlModal();renderView();showToast('✅ Work log saved');
     }
-    function editWorkLog(id) { openWlModal(id); }
 
-    function renderWlPhotoGrid() {
-        const grid=document.getElementById('wlPhotoGrid'); if(!grid) return;
-        grid.innerHTML=_wlPhotos.map((ph,i)=>`
+    async function deleteWorkLog(id){
+        if(!confirm('Delete this project work log and ALL daily entries? This cannot be undone.'))return;
+        workLogs=workLogs.filter(x=>x.wlID!==id);
+        await saveData('workLogs',workLogs);renderView();showToast('🗑️ Work log deleted');
+    }
+
+    // ── DAILY ENTRY CRUD ─────────────────────────────────────────
+    let _editEntryID=null;
+
+    function renderDayStaffRows(wlID){
+        const el=document.getElementById('dayStaffList');if(!el)return;
+        const wl=workLogs.find(x=>x.wlID===wlID);
+        el.innerHTML=_dayStaffRows.map((r,i)=>`
+        <div style="display:flex;gap:8px;align-items:center">
+            <select onchange="_dayStaffRows[${i}].name=this.value;_dayStaffRows[${i}].staffID=staffList.find(s=>s.name===this.value)?.staffID||''" class="field-input flex-1" style="font-size:13px">
+                <option value="">— Select —</option>
+                ${staffList.map(s=>`<option value="${s.name}"${s.name===r.name?' selected':''}>${s.name} (${s.staffType||'Staff'})</option>`).join('')}
+            </select>
+            <button type="button" onclick="_dayStaffRows.splice(${i},1);renderDayStaffRows('${wlID}')" style="color:#dc2626;background:none;border:none;font-size:18px;cursor:pointer;padding:4px">✕</button>
+        </div>`).join('');
+    }
+    function addDayStaffRow(){
+        const wlID=document.getElementById('dayWlID').value;
+        _dayStaffRows.push({name:'',staffID:''});renderDayStaffRows(wlID);
+    }
+
+    function renderDayPhotoGrid(){
+        const grid=document.getElementById('dayPhotoGrid');if(!grid)return;
+        grid.innerHTML=_dayPhotos.map((ph,i)=>`
             <div style="position:relative">
                 <img src="${ph}" class="photo-thumb"/>
-                <button type="button" onclick="removeWlPhoto(${i})" style="position:absolute;top:-4px;right:-4px;background:#dc2626;color:#fff;border:none;border-radius:99px;width:18px;height:18px;font-size:10px;cursor:pointer;line-height:1">✕</button>
+                <button type="button" onclick="_dayPhotos.splice(${i},1);renderDayPhotoGrid()" style="position:absolute;top:-4px;right:-4px;background:#dc2626;color:#fff;border:none;border-radius:99px;width:18px;height:18px;font-size:10px;cursor:pointer;line-height:1">✕</button>
             </div>`).join('')+
-            (_wlPhotos.length<10?`<div class="photo-add" onclick="document.getElementById('wlPhotoFile').click()">📷<br><span style="font-size:9px">Add</span></div>`:'');
+            (_dayPhotos.length<10?`<div class="photo-add" onclick="document.getElementById('dayPhotoFile').click()">📷<br><span style="font-size:9px">Add</span></div>`:'');
     }
 
-    function removeWlPhoto(i) { _wlPhotos.splice(i,1); renderWlPhotoGrid(); }
-
-    function handleWlPhoto(input) {
+    function handleDayPhoto(input){
         Array.from(input.files||[]).forEach(file=>{
-            if(_wlPhotos.length>=10) return;
+            if(_dayPhotos.length>=10)return;
             if(file.size>4*1024*1024){showToast('⚠️ '+file.name+' too large (max 4MB)');return;}
             const r=new FileReader();
-            r.onload=e=>{_wlPhotos.push(e.target.result);renderWlPhotoGrid();};
+            r.onload=e=>{_dayPhotos.push(e.target.result);renderDayPhotoGrid();};
             r.readAsDataURL(file);
         });
         input.value='';
     }
 
-    async function saveWorkLog(e) {
+    function openDayModal(wlID, entryID=null){
+        _editEntryID=entryID;_dayPhotos=[];_dayStaffRows=[];
+        document.getElementById('dayWlID').value=wlID;
+        document.getElementById('dayEntryID').value=entryID||'';
+        const wl=workLogs.find(x=>x.wlID===wlID);
+        const entry=entryID?(wl?.dailyEntries||[]).find(e=>e.entryID===entryID):null;
+        document.getElementById('dayModalTitle').textContent=entry?'Edit Daily Entry':'Add Daily Update';
+        document.getElementById('dayDate').value=entry?.date||new Date().toISOString().split('T')[0];
+        document.getElementById('dayCat').value=entry?.category||'Inspection';
+        document.getElementById('dayStartTime').value=entry?.startTime||'';
+        document.getElementById('dayEndTime').value=entry?.endTime||'';
+        document.getElementById('dayDesc').value=entry?.description||'';
+        document.getElementById('dayObs').value=entry?.observations||'';
+        document.getElementById('dayExclusions').value=entry?.exclusions||'';
+        document.getElementById('dayRec').value=entry?.recommendations||'';
+        document.getElementById('dayWitnessName').value=entry?.witnessName||'';
+        document.getElementById('dayWitnessDesig').value=entry?.witnessDesig||'';
+        document.getElementById('dayWitnessRemarks').value=entry?.witnessRemarks||'';
+        // Pre-fill technicians from entry or from project
+        if(entry?.technicians?.length) _dayStaffRows=entry.technicians.map(t=>({name:t.name,staffID:t.staffID||''}));
+        else if(wl?.technicians?.length) _dayStaffRows=wl.technicians.map(t=>({name:t.name,staffID:t.staffID||''}));
+        else _dayStaffRows=[{name:'',staffID:''}];
+        renderDayStaffRows(wlID);
+        if(entry?.photos)_dayPhotos=[...entry.photos];
+        renderDayPhotoGrid();
+        document.getElementById('dayModal').classList.add('show');
+    }
+
+    function closeDayModal(){
+        document.getElementById('dayModal').classList.remove('show');
+        _editEntryID=null;_dayPhotos=[];_dayStaffRows=[];
+    }
+
+    function editDayEntry(wlID,entryID){openDayModal(wlID,entryID);}
+
+    async function saveDayEntry(e){
         e.preventDefault();
-        const techs=_wlStaffRows.filter(r=>r.name).map(r=>({name:r.name,staffID:staffList.find(s=>s.name===r.name)?.staffID||''}));
-        const obj={
-            wlID:           _editWlID||('WL'+Date.now()),
-            date:           document.getElementById('wlDate').value,
-            workStartDate:  document.getElementById('wlWorkStart').value,
-            workEndDate:    document.getElementById('wlWorkEnd').value,
-            startTime:      document.getElementById('wlStartTime').value,
-            endTime:        document.getElementById('wlEndTime').value,
-            project:        document.getElementById('wlProject').value,
-            location:       document.getElementById('wlLocation').value,
-            category:       document.getElementById('wlCat').value,
-            status:         document.getElementById('wlStatus').value,
-            technicians:    techs,
-            staffName:      techs.map(t=>t.name).join(', '),
-            description:    document.getElementById('wlDesc').value,
-            observations:   document.getElementById('wlObs').value,
-            exclusions:     document.getElementById('wlExclusions').value,
-            recommendations:document.getElementById('wlRec').value,
-            witnessName:    document.getElementById('wlWitnessName').value,
-            witnessDesig:   document.getElementById('wlWitnessDesig').value,
-            witnessRemarks: document.getElementById('wlWitnessRemarks').value,
-            photos:         [..._wlPhotos],
-            createdAt:      _editWlID?(workLogs.find(x=>x.wlID===_editWlID)?.createdAt||new Date().toISOString()):new Date().toISOString()
+        const wlID=document.getElementById('dayWlID').value;
+        const entryID=document.getElementById('dayEntryID').value;
+        const wlIdx=workLogs.findIndex(x=>x.wlID===wlID);if(wlIdx<0)return;
+        if(!workLogs[wlIdx].dailyEntries)workLogs[wlIdx].dailyEntries=[];
+        const techs=_dayStaffRows.filter(r=>r.name).map(r=>({name:r.name,staffID:r.staffID||staffList.find(s=>s.name===r.name)?.staffID||''}));
+        const entry={
+            entryID:       entryID||('DE'+Date.now()),
+            date:          document.getElementById('dayDate').value,
+            category:      document.getElementById('dayCat').value,
+            startTime:     document.getElementById('dayStartTime').value,
+            endTime:       document.getElementById('dayEndTime').value,
+            technicians:   techs,
+            description:   document.getElementById('dayDesc').value,
+            observations:  document.getElementById('dayObs').value,
+            exclusions:    document.getElementById('dayExclusions').value,
+            recommendations:document.getElementById('dayRec').value,
+            witnessName:   document.getElementById('dayWitnessName').value,
+            witnessDesig:  document.getElementById('dayWitnessDesig').value,
+            witnessRemarks:document.getElementById('dayWitnessRemarks').value,
+            photos:        [..._dayPhotos]
         };
-        if(_editWlID){const i=workLogs.findIndex(x=>x.wlID===_editWlID);if(i>=0)workLogs[i]=obj;else workLogs.push(obj);}
-        else workLogs.push(obj);
+        if(entryID){
+            const ei=workLogs[wlIdx].dailyEntries.findIndex(x=>x.entryID===entryID);
+            if(ei>=0)workLogs[wlIdx].dailyEntries[ei]=entry;else workLogs[wlIdx].dailyEntries.push(entry);
+        } else {
+            workLogs[wlIdx].dailyEntries.push(entry);
+        }
+        // Auto-update project status if all days have a last entry with Completed
         await saveData('workLogs',workLogs);
-        closeWlModal(); renderView(); showToast('✅ Work log saved');
+        closeDayModal();renderView();showToast('✅ Daily entry saved');
     }
 
-    async function deleteWorkLog(id) {
-        if(!confirm('Delete this work log? This cannot be undone.')) return;
-        workLogs=workLogs.filter(x=>x.wlID!==id);
-        await saveData('workLogs',workLogs);
-        renderView(); showToast('🗑️ Work log deleted');
+    async function deleteDayEntry(wlID,entryID){
+        if(!confirm('Delete this daily entry?'))return;
+        const i=workLogs.findIndex(x=>x.wlID===wlID);if(i<0)return;
+        workLogs[i].dailyEntries=(workLogs[i].dailyEntries||[]).filter(e=>e.entryID!==entryID);
+        await saveData('workLogs',workLogs);renderView();showToast('🗑️ Entry deleted');
     }
 
-    function viewPhoto(wlID, idx) {
-        const w=workLogs.find(x=>x.wlID===wlID);if(!w?.photos?.[idx]) return;
+    function viewDayPhoto(wlID,entryID,idx){
+        const wl=workLogs.find(x=>x.wlID===wlID);
+        const entry=(wl?.dailyEntries||[]).find(e=>e.entryID===entryID);
+        if(!entry?.photos?.[idx])return;
         const win=window.open();
-        win.document.write(`<html><body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${w.photos[idx]}" style="max-width:100%;max-height:100vh;object-fit:contain"/></body></html>`);
+        win.document.write(`<html><body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${entry.photos[idx]}" style="max-width:100%;max-height:100vh;object-fit:contain"/></body></html>`);
     }
 
-    // ── WORK LOG PDF ──────────────────────────────────────────────
-    async function wlPDF(wlID) {
-        const w=workLogs.find(x=>x.wlID===wlID); if(!w) return;
-        showToast('⏳ Generating PDF…', 4000);
-        if(!window.jspdf) {
+    // ── WORK LOG PDF — Full Project Report ───────────────────────
+    async function wlPDF(wlID){
+        const wl=workLogs.find(x=>x.wlID===wlID);if(!wl)return;
+        const days=[...( wl.dailyEntries||[])].sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+        showToast('⏳ Generating PDF…',6000);
+        if(!window.jspdf){
             await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
             await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
         }
         const {jsPDF}=window.jspdf;
         const doc=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
-        const ML=14,MR=14,CW=210-ML-MR; let y=0;
-        // Header
-        doc.setFillColor(15,58,95);doc.rect(0,0,210,38,'F');
-        doc.setFontSize(18);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);doc.text('WORK LOG REPORT',105,14,{align:'center'});
-        doc.setFontSize(10);doc.setFont('helvetica','normal');doc.setTextColor(147,197,253);doc.text('IMSE Tech India — Field Service Report',105,22,{align:'center'});
-        doc.setFontSize(9);doc.setTextColor(203,213,225);doc.text('Report Date: '+new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})+'   |   ID: '+w.wlID,105,29,{align:'center'});
-        doc.setFillColor(29,78,216);doc.rect(0,36,210,3,'F');y=46;
-        // Project Info
-        const sc={'Completed':[21,128,61],'In Progress':[180,83,9],'Pending':[71,85,105],'On Hold':[220,38,38]}[w.status]||[71,85,105];
+        const ML=14,MR=14,CW=210-ML-MR;let y=0;
+
+        const drawHeader=()=>{
+            doc.setFillColor(15,58,95);doc.rect(0,0,210,42,'F');
+            doc.setFontSize(17);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
+            doc.text('FIELD SERVICE WORK REPORT',105,13,{align:'center'});
+            doc.setFontSize(10);doc.setFont('helvetica','normal');doc.setTextColor(147,197,253);
+            doc.text('IMSE Tech India — Project Field Report',105,21,{align:'center'});
+            doc.setFontSize(9);doc.setTextColor(203,213,225);
+            doc.text('Project: '+(wl.project||'—')+'   |   Report Date: '+new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}),105,29,{align:'center'});
+            doc.text('ID: '+wl.wlID+'   |   Total Days: '+days.length,105,36,{align:'center'});
+            doc.setFillColor(29,78,216);doc.rect(0,41,210,3,'F');
+        };
+        drawHeader();y=50;
+
+        // Project summary
+        const sc={'Completed':[21,128,61],'In Progress':[180,83,9],'Pending':[71,85,105],'On Hold':[220,38,38]}[wl.status]||[71,85,105];
+        const allTechs=(wl.technicians||[]).map(t=>t.name).join(', ')||'—';
         doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',styles:{fontSize:9,cellPadding:3},
             headStyles:{fillColor:[30,58,138],textColor:[255,255,255],fontStyle:'bold'},
-            head:[['PROJECT DETAILS','','','']],
+            head:[['PROJECT SUMMARY','','','']],
             body:[
-                ['Project',{content:w.project||'—',styles:{fontStyle:'bold'}},'Date',w.date||'—'],
-                ['Location / Vessel',w.location||'—','Category',w.category||'—'],
-                ['Work Start',w.workStartDate||'—','Work End',w.workEndDate||'—'],
-                ['Work Time',(w.startTime||'—')+' – '+(w.endTime||'—'),'Duration',calcDuration(w.startTime,w.endTime)||'—'],
-                ['Status',{content:w.status||'—',styles:{textColor:sc,fontStyle:'bold'}},'Report Generated',new Date().toLocaleDateString('en-IN')]
-            ],columnStyles:{0:{cellWidth:38,fontStyle:'bold',fillColor:[241,245,249]},2:{cellWidth:35,fontStyle:'bold',fillColor:[241,245,249]}}});
-        y=doc.lastAutoTable.finalY+5;
-        // Technicians
-        const techs=w.technicians?.length?w.technicians:(w.staffName?[{name:w.staffName,staffID:''}]:[]);
-        if(techs.length){
-            doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',styles:{fontSize:9,cellPadding:3},
-                headStyles:{fillColor:[88,28,135],textColor:[255,255,255],fontStyle:'bold'},
-                head:[['#','FIELD TECHNICIANS ASSIGNED','STAFF ID']],
-                body:techs.map((t,i)=>[String(i+1),t.name||'—',t.staffID||'—']),
-                columnStyles:{0:{cellWidth:10,halign:'center'},2:{cellWidth:35}}});
-            y=doc.lastAutoTable.finalY+5;
-        }
-        // Work detail sections
-        [{title:'DETAILS OF WORK CARRIED OUT',content:w.description,color:[29,78,216]},
-         {title:'OBSERVATIONS / FINDINGS',content:w.observations,color:[3,105,161]},
-         {title:'EXCLUSIONS / REMARKS',content:w.exclusions,color:[180,83,9]},
-         {title:'RECOMMENDATIONS',content:w.recommendations,color:[21,128,61]}
-        ].filter(s=>s.content?.trim()).forEach(s=>{
-            doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',styles:{fontSize:9,cellPadding:4},
-                headStyles:{fillColor:s.color,textColor:[255,255,255],fontStyle:'bold'},
-                head:[[s.title]],body:[[s.content]],columnStyles:{0:{cellWidth:CW}}});
-            y=doc.lastAutoTable.finalY+5;
-        });
-        // Witness
-        if(w.witnessName){
-            doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',styles:{fontSize:9,cellPadding:3},
-                headStyles:{fillColor:[157,23,77],textColor:[255,255,255],fontStyle:'bold'},
-                head:[['WITNESSED BY (SHIP ENGINEER / CLIENT)']],
-                body:[['Name: '+w.witnessName+(w.witnessDesig?' | Rank: '+w.witnessDesig:'')],
-                      ['Remarks: '+(w.witnessRemarks||'—')]],
-                columnStyles:{0:{cellWidth:CW}}});
-            y=doc.lastAutoTable.finalY+5;
-        }
-        // Photos
-        if((w.photos||[]).length){
-            if(y>220){doc.addPage();y=15;}
-            doc.setFillColor(30,58,138);doc.rect(ML,y,CW,8,'F');
-            doc.setFontSize(9);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
-            doc.text('SITE PHOTOS ('+w.photos.length+')',ML+3,y+5.5);y+=12;
-            const imgW=(CW-5)/2; let col=0;
-            for(let i=0;i<w.photos.length;i++){
-                const imgH=55,xPos=ML+col*(imgW+5);
-                if(y+imgH>275){doc.addPage();y=15;col=0;}
-                try{
-                    const fmt=w.photos[i].startsWith('data:image/png')?'PNG':'JPEG';
-                    doc.addImage(w.photos[i],fmt,xPos,y,imgW,imgH,'','MEDIUM');
-                    doc.setFontSize(7);doc.setFont('helvetica','normal');doc.setTextColor(100,100,100);
-                    doc.text('Photo '+(i+1),xPos+imgW/2,y+imgH+3.5,{align:'center'});
-                }catch(e){doc.setFontSize(8);doc.setTextColor(180,0,0);doc.text('[Photo '+(i+1)+' error]',xPos,y+imgH/2);}
-                col++;if(col===2){col=0;y+=imgH+8;}
+                ['Project',{content:wl.project||'—',styles:{fontStyle:'bold'}},'Status',{content:wl.status||'—',styles:{textColor:sc,fontStyle:'bold'}}],
+                ['Location / Vessel',wl.location||'—','Total Days',String(days.length)],
+                ['Work Start',wl.workStartDate||'—','Work End',wl.workEndDate||'—'],
+                ['Assigned Technicians',{content:allTechs,colSpan:3,styles:{}},'','']
+            ],columnStyles:{0:{cellWidth:40,fontStyle:'bold',fillColor:[241,245,249]},2:{cellWidth:35,fontStyle:'bold',fillColor:[241,245,249]}}});
+        y=doc.lastAutoTable.finalY+8;
+
+        // Daily entries
+        days.forEach((d,idx)=>{
+            const dur=calcDuration(d.startTime,d.endTime);
+            const dayTechs=(d.technicians||[]).map(t=>t.name).join(', ')||(wl.technicians||[]).map(t=>t.name).join(', ')||'—';
+
+            // Check page space
+            if(y>240){doc.addPage();y=15;}
+
+            // Day header bar
+            doc.setFillColor(30,58,138);doc.rect(ML,y,CW,9,'F');
+            doc.setFontSize(10);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
+            doc.text(`DAY ${idx+1}  —  ${d.date||'—'}  |  ${d.category||''}  |  ${d.startTime||'—'} – ${d.endTime||'—'}${dur?' ('+dur+')':''}`,ML+3,y+6);
+            y+=13;
+
+            // Day details table
+            const rows=[['Technicians on Site',dayTechs,'','']];
+            if(d.witnessName)rows.push(['Witnessed By',d.witnessName+(d.witnessDesig?' ('+d.witnessDesig+')':''),'Remarks',d.witnessRemarks||'—']);
+            doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',styles:{fontSize:8,cellPadding:2.5},
+                body:rows,columnStyles:{0:{cellWidth:40,fontStyle:'bold',fillColor:[241,245,249]},2:{cellWidth:30,fontStyle:'bold',fillColor:[241,245,249]}}});
+            y=doc.lastAutoTable.finalY+2;
+
+            // Work sections
+            [{title:'DETAILS OF WORK CARRIED OUT',text:d.description,col:[29,78,216]},
+             {title:'OBSERVATIONS / FINDINGS',text:d.observations,col:[3,105,161]},
+             {title:'EXCLUSIONS / REMARKS',text:d.exclusions,col:[180,83,9]},
+             {title:'RECOMMENDATIONS',text:d.recommendations,col:[21,128,61]}
+            ].filter(s=>s.text?.trim()).forEach(s=>{
+                if(y>255){doc.addPage();y=15;}
+                doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',styles:{fontSize:8.5,cellPadding:3.5},
+                    headStyles:{fillColor:s.col,textColor:[255,255,255],fontStyle:'bold',fontSize:8},
+                    head:[[s.title]],body:[[s.text]],columnStyles:{0:{cellWidth:CW}}});
+                y=doc.lastAutoTable.finalY+3;
+            });
+
+            // Photos for this day
+            if((d.photos||[]).length){
+                if(y>220){doc.addPage();y=15;}
+                doc.setFillColor(55,65,81);doc.rect(ML,y,CW,7,'F');
+                doc.setFontSize(8);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
+                doc.text(`SITE PHOTOS — DAY ${idx+1} (${d.photos.length} photo${d.photos.length>1?'s':''})`,ML+3,y+5);y+=10;
+                const imgW=(CW-6)/3;let col=0;
+                for(let pi=0;pi<d.photos.length;pi++){
+                    const imgH=45,xPos=ML+col*(imgW+3);
+                    if(y+imgH>275){doc.addPage();y=15;col=0;}
+                    try{
+                        const fmt=d.photos[pi].startsWith('data:image/png')?'PNG':'JPEG';
+                        doc.addImage(d.photos[pi],fmt,xPos,y,imgW,imgH,'','MEDIUM');
+                        doc.setFontSize(6.5);doc.setFont('helvetica','normal');doc.setTextColor(100,100,100);
+                        doc.text(`Day ${idx+1} · Photo ${pi+1}`,xPos+imgW/2,y+imgH+3,{align:'center'});
+                    }catch(err){doc.setFontSize(7);doc.setTextColor(180,0,0);doc.text('[Photo error]',xPos+2,y+imgH/2);}
+                    col++;if(col===3){col=0;y+=imgH+6;}
+                }
+                if(col>0)y+=45+6;y+=4;
             }
-            if(col===1)y+=55+8; y+=5;
+
+            // Signature row per day
+            if(y>245){doc.addPage();y=15;}
+            doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+                styles:{fontSize:8,cellPadding:5,minCellHeight:16},
+                headStyles:{fillColor:[30,41,59],textColor:[255,255,255],fontStyle:'bold',fontSize:7.5},
+                head:[['TECHNICIAN SIGN — DAY '+(idx+1),'CLIENT / WITNESS SIGN','IMSE AUTHORISED SIGN']],
+                body:[
+                    ['Name: '+(d.technicians||[]).map(t=>t.name).join(', ')||'_____','Name: '+(d.witnessName||'_____'),'Name: _____'],
+                    ['Signature:','Signature:','Signature:'],['Date:','Date:','Date:']
+                ],columnStyles:{0:{cellWidth:CW/3},1:{cellWidth:CW/3},2:{cellWidth:CW/3}}});
+            y=doc.lastAutoTable.finalY+10;
+        });
+
+        // Footer
+        if(!days.length){
+            doc.setFontSize(11);doc.setTextColor(150,150,150);
+            doc.text('No daily entries recorded yet.',105,140,{align:'center'});
         }
-        // Signature block
-        if(y>240){doc.addPage();y=15;}
-        doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',styles:{fontSize:9,cellPadding:5,minCellHeight:18},
-            headStyles:{fillColor:[30,41,59],textColor:[255,255,255],fontStyle:'bold'},
-            head:[['TECHNICIAN SIGNATURE','CLIENT / WITNESS SIGNATURE','IMSE AUTHORISED SIGNATORY']],
-            body:[
-                ['Name: '+(techs.map(t=>t.name).join(', ')||'_____________'),'Name: '+(w.witnessName||'_____________'),'Name: _____________'],
-                ['Date: _____________','Date: _____________','Date: _____________'],
-                ['Signature:','Signature:','Signature:']
-            ],columnStyles:{0:{cellWidth:CW/3},1:{cellWidth:CW/3},2:{cellWidth:CW/3}}});
-        // Footer on all pages
         const pc=doc.getNumberOfPages();
         for(let p=1;p<=pc;p++){
             doc.setPage(p);doc.setFontSize(7);doc.setFont('helvetica','italic');doc.setTextColor(150,150,150);
-            doc.text('IMSE Tech India — Field Service Report — Page '+p+' of '+pc,105,290,{align:'center'});
+            doc.text('IMSE Tech India — Field Service Report   Page '+p+' of '+pc,105,290,{align:'center'});
         }
-        doc.save('WorkLog_'+(w.project||'Report').replace(/\s+/g,'_')+'_'+(w.date||'nodate')+'.pdf');
+        doc.save('WorkReport_'+(wl.project||'Report').replace(/\s+/g,'_')+'_'+(wl.workStartDate||'nodate')+'.pdf');
         showToast('✅ PDF downloaded');
     }
 
