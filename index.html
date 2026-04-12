@@ -818,21 +818,6 @@
             addlDeduction:0,addlDeductionRemark:'',exgratia:0,exgratiaRemark:'',
             travelAllow:0,
             showRates:false};
-            // Wage structure
-            basic:0,hraPct:50,daPct:65,gradePay:30,variableAllow:0,
-            // Legacy daily wage override (if set manually; computed from basic otherwise)
-            dailyWageOverride:0,
-            showRates:false,
-            att:Array(30).fill(''),
-            // Rates (percentages of daily wage; allowances as % of daily wage)
-            rates:{standbyPct:50,alPct:50,ulPct:100,
-                   outstationPct:20,sailingPct:30,anchoragePct:30,
-                   t15extra:50,t20extra:30},
-            pfPct:12,esicPct:0.75,ptBase:200,tdsAmt:0,
-            addlDeduction:0,addlDeductionRemark:'',
-            travelAllow:0,
-            exgratia:0,exgratiaRemark:''
-        };
         let officePayState={staffID:'',periodMonth:new Date().getMonth()+1,periodYear:new Date().getFullYear(),leaveTaken:0,addlAllowance:0,addlAllowanceRemark:'',addlDeduction:0,addlDeductionRemark:'',pfPct:null,esicPct:null,ptBase:null,tdsAmt:null};
         let _pendingPayslip=null; // pending payslip object awaiting approval confirmation
 
