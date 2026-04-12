@@ -811,6 +811,13 @@
         const ENGAGED_TYPES=['Working','Outstation','Anchorage','Sailing'];
 
         let techWageState={staffID:'',periodMonth:new Date().getMonth()+1,periodYear:new Date().getFullYear(),
+            att:Array(30).fill(''),basic:0,hraPct:50,daPct:65,gradePay:30,variableAllow:0,
+            rates:{standbyPct:50,alPct:50,ulPct:100,outstationPct:20,sailingPct:30,anchoragePct:30,t15extra:50,t20extra:30},
+            pfPct:12,esicPct:0.75,ptBase:200,tdsAmt:0,
+            pfOverride:'auto', ptOverride:'',
+            addlDeduction:0,addlDeductionRemark:'',exgratia:0,exgratiaRemark:'',
+            travelAllow:0,
+            showRates:false};
             // Wage structure
             basic:0,hraPct:50,daPct:65,gradePay:30,variableAllow:0,
             // Legacy daily wage override (if set manually; computed from basic otherwise)
@@ -927,6 +934,8 @@
                 techWageState.gradePay=+(st.techGPPct??30);
                 techWageState.variableAllow=+st.techVariable||0;
                 techWageState.travelAllow=0;
+                techWageState.pfOverride='auto';
+                techWageState.ptOverride='';
                 techWageState.exgratia=0;techWageState.exgratiaRemark='';
                 techWageState.addlDeduction=0;techWageState.addlDeductionRemark='';
                 techWageState.rates={
@@ -1066,13 +1075,18 @@
             const outA=+(c.Outstation*dailyWage*outstPct).toFixed(2);
             const ancA=+(c.Anchorage*dailyWage*ancPct).toFixed(2);
             const salA=+(c.Sailing*dailyWage*sailPct).toFixed(2);
-            // Threshold allowances:
-            // 15+ days: additional 50% of daily wage for each of those engaged days
+            // Threshold allowances (correct formula):
+            // Above 15 days: for each day ABOVE 15, pay 50% of daily wage
+            //   daysAbove15 = max(0, eng - 15)
+            //   t15 = daysAbove15 × (dailyWage × 50%)
+            // Above 20 days: for each day ABOVE 20, pay 30% of (dailyWage + 50% dailyWage)
+            //   = daysAbove20 × dailyWage × 1.5 × 30%
             const t15Rate=(+r.t15extra||50)/100;
-            const t15=eng>=15?+(eng*dailyWage*t15Rate).toFixed(2):0;
-            // 20+ days: additional 30% of the 15-day allowance rate, for those days
+            const daysAbove15=Math.max(0,eng-15);
+            const t15=daysAbove15>0?+(daysAbove15*dailyWage*t15Rate).toFixed(2):0;
             const t20Rate=(+r.t20extra||30)/100;
-            const t20=eng>=20?+(eng*dailyWage*t15Rate*t20Rate).toFixed(2):0;
+            const daysAbove20=Math.max(0,eng-20);
+            const t20=daysAbove20>0?+(daysAbove20*dailyWage*(1+t15Rate)*t20Rate).toFixed(2):0;
             // Leave deductions
             // Approved leave: 50% of daily wage per day deducted
             const alDeduct=+((c.ApprovedLeave||0)*dailyWage*0.5).toFixed(2);
@@ -1091,28 +1105,37 @@
                 {sec:'Allowance',name:`Outstation Allow (${+r.outstationPct||20}% of Daily Wage)`,days:c.Outstation,rate:+(dailyWage*outstPct).toFixed(2),amt:outA,show:c.Outstation>0},
                 {sec:'Allowance',name:`Sailing Allow (${+r.sailingPct||30}% of Daily Wage)`,days:c.Sailing,rate:+(dailyWage*sailPct).toFixed(2),amt:salA,show:c.Sailing>0},
                 {sec:'Allowance',name:`Anchorage Allow (${+r.anchoragePct||30}% of Daily Wage)`,days:c.Anchorage,rate:+(dailyWage*ancPct).toFixed(2),amt:ancA,show:c.Anchorage>0},
-                {sec:'Threshold',name:`15+ days bonus (${+r.t15extra||50}% of Daily Wage × ${eng} days)`,days:eng,rate:+(dailyWage*t15Rate).toFixed(2),amt:t15,show:eng>=15},
-                {sec:'Threshold',name:`20+ days bonus (${+r.t20extra||30}% of 15-day rate × ${eng} days)`,days:eng,rate:+(dailyWage*t15Rate*t20Rate).toFixed(2),amt:t20,show:eng>=20},
+                {sec:'Threshold',name:`15+ days allow (${+r.t15extra||50}% × DW × ${daysAbove15} days above 15)`,days:daysAbove15,rate:+(dailyWage*t15Rate).toFixed(2),amt:t15,show:daysAbove15>0},
+                {sec:'Threshold',name:`20+ days allow (DW×1.5×${+r.t20extra||30}% × ${daysAbove20} days above 20)`,days:daysAbove20,rate:+(dailyWage*(1+t15Rate)*t20Rate).toFixed(2),amt:t20,show:daysAbove20>0},
                 {sec:'Deduct',name:`Approved Leave Deduction (50% × ${c.ApprovedLeave||0} days)`,days:c.ApprovedLeave||0,rate:+(dailyWage*0.5).toFixed(2),amt:-alDeduct,show:(c.ApprovedLeave||0)>0},
                 {sec:'Deduct',name:`Unapproved Leave Deduction (100% × ${c.UnApprovedLeave||0} days)`,days:c.UnApprovedLeave||0,rate:+dailyWage.toFixed(2),amt:-ulDeduct,show:(c.UnApprovedLeave||0)>0},
             ].filter(r=>r.show);
-            return{c,eng,sbd,basic,hra,da,gp,fixedAllow,daysInMonth,dailyWage,standbyWage,rows,gross,varA:+varA||0};
+            return{c,eng,sbd,basic,hra,da,gp,fixedAllow,daysInMonth,dailyWage,standbyWage,rows,gross,varA:+varA||0,daysAbove15,daysAbove20,t15,t20};
         }
         function calcTechDeductions(gross,basic,fixedAllowance,exgratia,state){
             const pfPct=state.pfPct!=null?+state.pfPct:12;
             const esicPct=state.esicPct!=null?+state.esicPct:0.75;
             const tdsAmt=+state.tdsAmt||0;
             const addlDed=+state.addlDeduction||0;
-            // PF = (Basic + Fixed Allowance) × pfPct%
-            const pf=_calcTechPF(basic,fixedAllowance,pfPct);
-            // ESIC = 0.75% of (Basic + Fixed) if ≤ 21,000; else NIL
+            // PF: only deduct if UAN is present (checked via staff record or manual override)
+            const st=staff.find(x=>x.staffID===state.staffID);
+            const hasUAN=state.pfOverride==='yes'||(state.pfOverride!=='no'&&!!(st?.uanNumber?.trim()));
+            const pf=hasUAN?_calcTechPF(basic,fixedAllowance,pfPct):{pfGross:basic+fixedAllowance,pfAmt:0,pfCapped:false};
+            // ESIC
             const basisForESIC=basic+fixedAllowance;
             const esicAmt=_calcESIC(basisForESIC,esicPct),esicWaived=basisForESIC>21000;
-            // PT: (Basic + Fixed) > 15,000 → ₹200; Feb → ₹300
-            const ptAmt=_calcPT(state.periodMonth,basisForESIC,'Male');
-            const ptApplies=ptAmt>0,isFebruary=state.periodMonth===2;
+            // PT: use manual override if set, else auto-calculate
+            let ptAmt=0,ptApplies=false;
+            if(state.ptOverride!=null&&state.ptOverride!==''){
+                ptAmt=+state.ptOverride||0;
+                ptApplies=ptAmt>0;
+            } else {
+                ptAmt=_calcPT(state.periodMonth,basisForESIC,'Male');
+                ptApplies=ptAmt>0;
+            }
+            const isFebruary=state.periodMonth===2;
             const totalDed=+(pf.pfAmt+esicAmt+ptAmt+tdsAmt+addlDed).toFixed(2);
-            return{pfPct,pfGross:pf.pfGross,pfAmt:pf.pfAmt,pfCapped:pf.pfCapped,
+            return{pfPct,pfGross:pf.pfGross,pfAmt:pf.pfAmt,pfCapped:pf.pfCapped,hasUAN,
                 esicPct,esicAmt,esicWaived,basisForESIC,
                 ptAmt,ptApplies,isFebruary,
                 tdsAmt,addlDed,
@@ -1120,10 +1143,18 @@
         }
 
         function cycleAttDay(idx){const ci=ATT_ORDER.indexOf(techWageState.att[idx]);techWageState.att[idx]=ATT_ORDER[(ci+1)%ATT_ORDER.length];renderTechWageCalc();}
-        function fillAttDays(type){techWageState.att=Array(30).fill(type);renderTechWageCalc();}
-        function clearAttDays(){techWageState.att=Array(30).fill('');renderTechWageCalc();}
+        function fillAttDays(type){
+            const dates=getTechWagePeriodDates(techWageState.periodYear,techWageState.periodMonth);
+            techWageState.att=Array(dates.length).fill(type);
+            renderTechWageCalc();
+        }
+        function clearAttDays(){
+            const dates=getTechWagePeriodDates(techWageState.periodYear,techWageState.periodMonth);
+            techWageState.att=Array(dates.length).fill('');
+            renderTechWageCalc();
+        }
         function onTechWageFieldChange(f,v){
-            const strFields=['addlDeductionRemark','exgratiaRemark'];
+            const strFields=['addlDeductionRemark','exgratiaRemark','pfOverride','ptOverride'];
             if(strFields.includes(f))techWageState[f]=v;
             else techWageState[f]=+v||0;
             renderTechWageCalc();
@@ -1164,14 +1195,20 @@
                         <td style="padding:8px 12px;text-align:right;font-weight:500;color:${rowColor}">${INR(r.amt)}</td></tr>`;
                 }).join('');
             if(exgratiaAmt>0){/* exgratia shown separately below gross */}
-            // Deduction rows
-            const pfLbl=`PF ${ded.pfPct}% (Basic ₹${Math.round(cal.basic).toLocaleString('en-IN')} + Fixed Allow ₹${Math.round(cal.fixedAllow).toLocaleString('en-IN')})`;
+            const st=staff.find(x=>x.staffID===s.staffID);
+            const uanStatus=s.pfOverride==='yes'?'Manual ON':s.pfOverride==='no'?'Manual OFF':(st?.uanNumber?.trim()?'UAN: '+st.uanNumber:'No UAN — PF skipped');
+            const pfLbl=ded.hasUAN
+                ?`PF ${ded.pfPct}% (Basic ₹${Math.round(cal.basic).toLocaleString('en-IN')} + Fixed ₹${Math.round(cal.fixedAllow).toLocaleString('en-IN')}) · ${uanStatus}`
+                :`PF – NIL (${uanStatus})`;
             const esicNote=ded.esicWaived
                 ?`ESIC – NIL (Basic+Fixed ₹${Math.round(ded.basisForESIC).toLocaleString('en-IN')} > ₹21,000)`
                 :`ESIC 0.75% (Basic+Fixed ₹${Math.round(ded.basisForESIC).toLocaleString('en-IN')} ≤ ₹21,000)`;
-            const ptNote=ded.ptApplies
-                ?`PT${ded.isFebruary?' (Feb)':''} – Basic+Fixed ₹${Math.round(ded.basisForESIC).toLocaleString('en-IN')} > ₹15,000`
-                :`PT – NIL (Basic+Fixed ₹${Math.round(ded.basisForESIC).toLocaleString('en-IN')} ≤ ₹15,000)`;
+            const ptOverrideVal=s.ptOverride!=null&&s.ptOverride!==''?s.ptOverride:'';
+            const ptNote=ptOverrideVal!==''
+                ?`PT – Manual override: ₹${ptOverrideVal}`
+                :ded.ptApplies
+                    ?`PT${ded.isFebruary?' (Feb)':''} – Basic+Fixed ₹${Math.round(ded.basisForESIC).toLocaleString('en-IN')} > ₹15,000`
+                    :`PT – NIL (Basic+Fixed ₹${Math.round(ded.basisForESIC).toLocaleString('en-IN')} ≤ ₹15,000)`;
             const dedRowsArr=[
                 {n:pfLbl,a:ded.pfAmt,col:'#1d4ed8',nil:false,show:true},
                 {n:esicNote,a:ded.esicAmt,col:ded.esicWaived?'#9ca3af':'#0e7490',nil:ded.esicWaived,show:true},
@@ -1202,30 +1239,48 @@
             ${wageInfo}
             <!-- Wage inputs -->
             <div class="bg-white border border-gray-200 rounded-xl p-4 mb-3">
-                <div class="text-sm font-semibold text-gray-700 mb-3">Wage Inputs</div>
+                <div class="text-sm font-semibold text-gray-700 mb-3">💰 Wage Inputs</div>
                 <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:8px">
                     <div><label class="block text-xs font-semibold text-gray-500 mb-1">Basic Salary (₹)</label>
-                    <input type="number" id="twBasic" value="${s.basic||0}" min="0" step="1" oninput="onTechWageFieldChange('basic',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                    <input type="number" id="twBasic" value="${s.basic||''}" min="0" step="1" placeholder="e.g. 15000" oninput="onTechWageFieldChange('basic',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                     <div><label class="block text-xs font-semibold text-gray-500 mb-1">Variable Allowance (₹)</label>
-                    <input type="number" id="twVariableAllow" value="${s.variableAllow||0}" min="0" step="1" oninput="onTechWageFieldChange('variableAllow',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                    <input type="number" id="twVariableAllow" value="${s.variableAllow||''}" min="0" step="1" placeholder="e.g. 2000" oninput="onTechWageFieldChange('variableAllow',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                     <div><label class="block text-xs font-semibold text-gray-500 mb-1">Travel Allowance (₹) <span style="color:#0e7490;font-size:10px">outside gross</span></label>
-                    <input type="number" id="twTravelAllow" value="${s.travelAllow||0}" min="0" step="1" oninput="onTechWageFieldChange('travelAllow',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm border-teal-300"/></div>
+                    <input type="number" id="twTravelAllow" value="${s.travelAllow||''}" min="0" step="1" placeholder="e.g. 4000" oninput="onTechWageFieldChange('travelAllow',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm border-teal-400"/></div>
                 </div>
-                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:8px">
                     <div><label class="block text-xs font-semibold text-gray-500 mb-1">Ex-Gratia (₹)</label>
-                    <input type="number" id="twExgratia" value="${s.exgratia||0}" min="0" step="1" oninput="onTechWageFieldChange('exgratia',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm border-yellow-400"/></div>
+                    <input type="number" id="twExgratia" value="${s.exgratia||''}" min="0" step="1" placeholder="e.g. 1000" oninput="onTechWageFieldChange('exgratia',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm border-yellow-400"/></div>
                     <div><label class="block text-xs font-semibold text-gray-500 mb-1">Ex-Gratia Remark</label>
                     <input type="text" id="twExgratiaRemark" value="${s.exgratiaRemark||''}" placeholder="Reason / note" oninput="onTechWageFieldChange('exgratiaRemark',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                     <div><label class="block text-xs font-semibold text-gray-500 mb-1">Additional Deduction (₹)</label>
-                    <input type="number" id="twAddlDed" value="${s.addlDeduction||0}" min="0" step="1" oninput="updateTechDeductState('addlDeduction',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm border-red-300"/></div>
+                    <input type="number" id="twAddlDed" value="${s.addlDeduction||''}" min="0" step="1" placeholder="e.g. 500" oninput="updateTechDeductState('addlDeduction',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm border-red-300"/></div>
                 </div>
-                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:8px">
+                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:8px">
                     <div><label class="block text-xs font-semibold text-gray-500 mb-1">Add. Deduction Remark</label>
                     <input type="text" id="twAddlDedRemark" value="${s.addlDeductionRemark||''}" placeholder="Loan recovery / other" oninput="updateTechDeductState('addlDeductionRemark',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                     <div><label class="block text-xs font-semibold text-gray-500 mb-1">PF %</label>
                     <input type="number" id="twPFPct" value="${s.pfPct||12}" min="0" max="30" step="0.01" oninput="onTechWageFieldChange('pfPct',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                     <div><label class="block text-xs font-semibold text-gray-500 mb-1">ESIC %</label>
                     <input type="number" id="twESICPct" value="${s.esicPct||0.75}" min="0" max="5" step="0.01" oninput="onTechWageFieldChange('esicPct',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                    <div><label class="block text-xs font-semibold text-gray-500 mb-1">PT (₹) <span style="color:#7c3aed;font-size:10px">manual override</span></label>
+                    <input type="number" id="twPTOverride" value="${s.ptOverride!=null&&s.ptOverride!==''?s.ptOverride:''}" min="0" step="1" placeholder="blank = auto" oninput="onTechWageFieldChange('ptOverride',this.value)" class="w-full px-3 py-2 border border-purple-300 rounded-lg text-sm"/></div>
+                </div>
+                <!-- PF Override toggle — shown when UAN status is relevant -->
+                <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:10px 14px">
+                    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+                        <div>
+                            <p style="font-size:12px;font-weight:600;color:#0369a1">PF Deduction Control</p>
+                            <p style="font-size:11px;color:#64748b">UAN: <strong>${st?.uanNumber?.trim()||'<span style="color:#dc2626">Not set — PF will be skipped</span>'}</strong>
+                            ${!st?.uanNumber?.trim()?` · <a href="#" onclick="switchView('staff');return false" style="color:#2563eb;font-size:11px">Add UAN in Staff record</a>`:''}
+                            </p>
+                        </div>
+                        <div style="display:flex;gap:6px">
+                            <button type="button" onclick="onTechWageFieldChange('pfOverride','yes');renderTechWageCalc()" style="padding:5px 12px;border-radius:8px;font-size:11px;font-weight:600;border:1.5px solid ${s.pfOverride==='yes'?'#15803d':'#e2e8f0'};background:${s.pfOverride==='yes'?'#dcfce7':'#fff'};color:${s.pfOverride==='yes'?'#15803d':'#64748b'};cursor:pointer">Force ON</button>
+                            <button type="button" onclick="onTechWageFieldChange('pfOverride','auto');renderTechWageCalc()" style="padding:5px 12px;border-radius:8px;font-size:11px;font-weight:600;border:1.5px solid ${!s.pfOverride||s.pfOverride==='auto'?'#1d4ed8':'#e2e8f0'};background:${!s.pfOverride||s.pfOverride==='auto'?'#dbeafe':'#fff'};color:${!s.pfOverride||s.pfOverride==='auto'?'#1d4ed8':'#64748b'};cursor:pointer">Auto (UAN)</button>
+                            <button type="button" onclick="onTechWageFieldChange('pfOverride','no');renderTechWageCalc()" style="padding:5px 12px;border-radius:8px;font-size:11px;font-weight:600;border:1.5px solid ${s.pfOverride==='no'?'#dc2626':'#e2e8f0'};background:${s.pfOverride==='no'?'#fee2e2':'#fff'};color:${s.pfOverride==='no'?'#dc2626':'#64748b'};cursor:pointer">Force OFF</button>
+                        </div>
+                    </div>
                 </div>
             </div>
             <!-- Attendance grid -->
@@ -5455,6 +5510,8 @@
                                     <input type="text" id="sAadhar" class="w-full px-3 py-2 border rounded-lg text-sm" maxlength="12"/></div>
                                 <div><label class="block text-xs font-semibold text-gray-600 mb-1">PF Number</label>
                                     <input type="text" id="sPF" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">UAN Number <span class="text-gray-400 font-normal">(leave blank = no PF deduction)</span></label>
+                                    <input type="text" id="sUAN" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="UAN — if blank PF will not be deducted"/></div>
                                 <div><label class="block text-xs font-semibold text-gray-600 mb-1">ESIC Number</label>
                                     <input type="text" id="sESIC" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                                 <div><label class="block text-xs font-semibold text-gray-600 mb-1">Professional Certificate</label>
@@ -5700,7 +5757,11 @@
             <div class="bg-white border border-gray-200 rounded-xl p-4 mb-4">
                 <div class="flex justify-between items-center flex-wrap gap-3 mb-3">
                     <h3 class="font-bold text-gray-700">📅 Attendance</h3>
-                    <button onclick="openAttendanceModal()" class="px-4 py-2 bg-blue-600 text-white rounded-xl text-sm hover:bg-blue-700 font-semibold">+ Mark Single Day</button>
+                    <div class="flex gap-2 flex-wrap">
+                        <button onclick="attExportPDF()" class="px-3 py-2 bg-red-600 text-white rounded-xl text-sm hover:bg-red-700 font-semibold">📄 Export PDF</button>
+                        <button onclick="attExportCSV()" class="px-3 py-2 bg-green-600 text-white rounded-xl text-sm hover:bg-green-700 font-semibold">📊 Export CSV</button>
+                        <button onclick="openAttendanceModal()" class="px-4 py-2 bg-blue-600 text-white rounded-xl text-sm hover:bg-blue-700 font-semibold">+ Mark Single Day</button>
+                    </div>
                 </div>
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
                     <div class="md:col-span-1"><label class="block text-xs font-semibold text-gray-600 mb-1">Staff Member</label>
@@ -5731,6 +5792,100 @@
 
         function attGridChangeStaff(sid){attGridState.staffID=sid;renderView();}
         function attGridChangePeriod(f,v){attGridState[f]=+v;renderView();}
+
+        // ── ATTENDANCE EXPORT ──────────────────────────────────────
+        async function attExportPDF(){
+            const {jsPDF}=window.jspdf;
+            const doc=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
+            const MN=['January','February','March','April','May','June','July','August','September','October','November','December'];
+            const shM=attGridState.periodMonth,shY=attGridState.periodYear;
+            const selID=attGridState.staffID;
+            const staffToExport=selID?staff.filter(s=>s.staffID===selID):staff.filter(s=>s.status==='Active');
+            if(!staffToExport.length){alert('No staff to export.');return;}
+            const dates=_attPeriodDates(shY,shM);
+            const pl=dates[0].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})+' – '+dates[dates.length-1].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
+            const PW=297,ML=10,MR=10;
+
+            // Header
+            doc.setFillColor(15,58,95);doc.rect(0,0,PW,20,'F');
+            doc.setFontSize(14);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
+            doc.text('ATTENDANCE REGISTER — '+(MN[shM-1]+' '+shY).toUpperCase(),PW/2,9,{align:'center'});
+            doc.setFontSize(9);doc.setFont('helvetica','normal');doc.setTextColor(203,213,225);
+            doc.text('Period: '+pl+'  |  '+staffToExport.length+' Staff  |  '+dates.length+' Days  |  Generated: '+new Date().toLocaleDateString('en-IN'),PW/2,15,{align:'center'});
+            doc.setFillColor(29,78,216);doc.rect(0,19,PW,2,'F');
+
+            // Build table
+            const dayHeaders=dates.map(d=>d.toLocaleDateString('en-IN',{day:'2-digit'}));
+            const head=[['#','Staff Name','Type',...dayHeaders,'WRK','SBY','OUT','ANC','SAL','A/L','U/L','Eng']];
+            const ATT_SHORT={Working:'W',StandBy:'S',Outstation:'O',Anchorage:'A',Sailing:'SA',ApprovedLeave:'AL',UnApprovedLeave:'UL'};
+            const ATT_COL={Working:[21,128,61],StandBy:[180,83,9],Outstation:[29,78,216],Anchorage:[14,116,144],Sailing:[67,56,202],ApprovedLeave:[124,58,237],UnApprovedLeave:[220,38,38]};
+            const body=staffToExport.map((s,i)=>{
+                const lookup=_attLookup(s.staffID,dates);
+                const cnt={Working:0,StandBy:0,Outstation:0,Anchorage:0,Sailing:0,ApprovedLeave:0,UnApprovedLeave:0};
+                const dayCells=dates.map(d=>{const k=_attDayKey(d),r=lookup[k];if(r&&cnt[r.status]!==undefined)cnt[r.status]++;return r?ATT_SHORT[r.status]||r.status.slice(0,2):'';});
+                const eng=[cnt.Working,cnt.Outstation,cnt.Anchorage,cnt.Sailing].reduce((a,b)=>a+b,0);
+                return [String(i+1),s.name,s.staffType==='Technician'?'Tech':'Office',...dayCells,
+                    cnt.Working||'',cnt.StandBy||'',cnt.Outstation||'',cnt.Anchorage||'',cnt.Sailing||'',cnt.ApprovedLeave||'',cnt.UnApprovedLeave||'',eng];
+            });
+
+            const dayW=Math.min(5,(PW-ML-MR-55-40)/dates.length);
+            doc.autoTable({startY:24,margin:{left:ML,right:MR},theme:'grid',
+                styles:{fontSize:6.5,cellPadding:1.5,halign:'center'},
+                headStyles:{fillColor:[30,58,138],textColor:[255,255,255],fontStyle:'bold',fontSize:6.5},
+                head,body,
+                columnStyles:{
+                    0:{cellWidth:6},1:{cellWidth:28,halign:'left'},2:{cellWidth:12},
+                    ...Object.fromEntries(dates.map((_,i)=>[i+3,{cellWidth:dayW}])),
+                    [dates.length+3]:{cellWidth:7,fontStyle:'bold'},
+                    [dates.length+4]:{cellWidth:7},
+                    [dates.length+5]:{cellWidth:7},
+                    [dates.length+6]:{cellWidth:7},
+                    [dates.length+7]:{cellWidth:7},
+                    [dates.length+8]:{cellWidth:7},
+                    [dates.length+9]:{cellWidth:7},
+                    [dates.length+10]:{cellWidth:8,fontStyle:'bold'}
+                },
+                didParseCell:(d)=>{
+                    if(d.section==='body'&&d.column.index>=3&&d.column.index<=dates.length+2){
+                        const val=d.cell.raw;
+                        const key=Object.entries(ATT_SHORT).find(([,v])=>v===val)?.[0];
+                        if(key&&ATT_COL[key]){d.cell.styles.textColor=ATT_COL[key];d.cell.styles.fontStyle='bold';}
+                    }
+                }
+            });
+
+            // Legend
+            let ly=doc.lastAutoTable.finalY+4;
+            doc.setFontSize(7);doc.setFont('helvetica','bold');doc.setTextColor(50,50,50);
+            doc.text('Legend: W=Working  S=StandBy  O=Outstation  A=Anchorage  SA=Sailing  AL=Approved Leave  UL=Unapproved Leave | WRK/SBY/OUT/ANC/SAL/A/L/U/L=Day counts  Eng=Engaged days',ML,ly);
+
+            const pc=doc.getNumberOfPages();for(let p=1;p<=pc;p++){doc.setPage(p);doc.setFontSize(6.5);doc.setFont('helvetica','italic');doc.setTextColor(160,160,160);doc.text('IMSE Tech India — Attendance Register — Page '+p+' of '+pc,PW/2,208,{align:'center'});}
+            doc.save('Attendance_'+(selID?(staffToExport[0]?.name?.replace(/\s+/g,'_')||'Staff'):'All_Staff')+'_'+MN[shM-1]+'_'+shY+'.pdf');
+        }
+
+        function attExportCSV(){
+            const MN=['January','February','March','April','May','June','July','August','September','October','November','December'];
+            const shM=attGridState.periodMonth,shY=attGridState.periodYear;
+            const selID=attGridState.staffID;
+            const staffToExport=selID?staff.filter(s=>s.staffID===selID):staff.filter(s=>s.status==='Active');
+            if(!staffToExport.length){alert('No staff to export.');return;}
+            const dates=_attPeriodDates(shY,shM);
+            const ATT_SHORT={Working:'Working',StandBy:'StandBy',Outstation:'Outstation',Anchorage:'Anchorage',Sailing:'Sailing',ApprovedLeave:'Appr.Leave',UnApprovedLeave:'Unappr.Leave'};
+            const dayHeaders=dates.map(d=>d.toLocaleDateString('en-IN',{day:'2-digit',month:'2-digit'}));
+            const rows=[['#','Staff Name','Staff Type','Staff ID',...dayHeaders,'Working','StandBy','Outstation','Anchorage','Sailing','Appr.Leave','Unappr.Leave','Engaged Total']];
+            staffToExport.forEach((s,i)=>{
+                const lookup=_attLookup(s.staffID,dates);
+                const cnt={Working:0,StandBy:0,Outstation:0,Anchorage:0,Sailing:0,ApprovedLeave:0,UnApprovedLeave:0};
+                const dayCells=dates.map(d=>{const k=_attDayKey(d),r=lookup[k];if(r&&cnt[r.status]!==undefined)cnt[r.status]++;return r?(ATT_SHORT[r.status]||r.status):'';});
+                const eng=cnt.Working+cnt.Outstation+cnt.Anchorage+cnt.Sailing;
+                rows.push([i+1,s.name,s.staffType,s.staffID,...dayCells,cnt.Working,cnt.StandBy,cnt.Outstation,cnt.Anchorage,cnt.Sailing,cnt.ApprovedLeave,cnt.UnApprovedLeave,eng]);
+            });
+            const csv=rows.map(r=>r.map(c=>'"'+(String(c||'').replace(/"/g,'""'))+'"').join(',')).join('\n');
+            const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'});
+            const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+            a.download='Attendance_'+(selID?(staffToExport[0]?.name?.replace(/\s+/g,'_')||'Staff'):'All_Staff')+'_'+MN[shM-1]+'_'+shY+'.csv';
+            a.click();URL.revokeObjectURL(a.href);
+        }
         function attGridCycleDay(dateKey){
             const st=staff.find(x=>x.staffID===attGridState.staffID);if(!st)return;
             if(!st.attendance)st.attendance=[];
@@ -5972,6 +6127,7 @@
                 document.getElementById('sPAN').value        = s.pan||'';
                 document.getElementById('sAadhar').value     = s.aadhar||'';
                 document.getElementById('sPF').value         = s.pfNumber||'';
+                document.getElementById('sUAN').value        = s.uanNumber||'';
                 document.getElementById('sESIC').value       = s.esicNumber||'';
                 document.getElementById('sProfCert').value   = s.profCert||'';
                 document.getElementById('sPassport').value   = s.passport||'';
@@ -6056,6 +6212,7 @@
                 pan:            document.getElementById('sPAN').value.toUpperCase(),
                 aadhar:         document.getElementById('sAadhar').value,
                 pfNumber:       document.getElementById('sPF').value,
+                uanNumber:      document.getElementById('sUAN').value,
                 esicNumber:     document.getElementById('sESIC').value,
                 profCert:       document.getElementById('sProfCert').value,
                 passport:       document.getElementById('sPassport').value,
