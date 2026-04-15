@@ -4396,6 +4396,20 @@
                     </div>
                 </div>
 
+                <!-- Project Delete Control -->
+                <div class="bg-white rounded-2xl shadow-lg p-6 mt-6">
+                    <div class="flex justify-between items-center">
+                        <div>
+                            <h3 class="text-xl font-bold text-red-700">🗑️ Project Delete Control</h3>
+                            <p class="text-xs text-gray-500 mt-1">When locked, the delete button is hidden on all projects. Enable only when you need to remove a project.</p>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <span class="text-xs px-3 py-1 rounded-full font-medium ${settings.allowProjectDelete?'bg-red-100 text-red-700':'bg-green-100 text-green-700'}">${settings.allowProjectDelete?'🔓 Delete Enabled':'🔒 Delete Locked'}</span>
+                            <button onclick="toggleProjectDeleteLock()" class="px-3 py-1.5 text-sm border border-red-300 text-red-600 rounded-lg hover:bg-red-50">${settings.allowProjectDelete?'Lock (Disable Delete)':'Unlock (Enable Delete)'}</button>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Wage Revisions -->
                 <div class="bg-white rounded-2xl shadow-lg p-6 mt-6">
                     <div class="flex justify-between items-center mb-4">
@@ -6524,6 +6538,7 @@
                 Object.assign(officePayState,saved);
             }
         }
+        async function toggleProjectDeleteLock(){settings.allowProjectDelete=!settings.allowProjectDelete;await saveData('settings',settings);renderView();}
         async function togglePayslipEditLock(){settings.payslipEditUnlocked=!settings.payslipEditUnlocked;await saveData('settings',settings);renderView();}
 
         function generatePaySlipPDF(){const techV=!document.getElementById('twSection')?.classList.contains('hidden'),offV=!document.getElementById('opSection')?.classList.contains('hidden');if(techV)_pdfTech();else if(offV)_pdfOffice();else alert('Please select a staff member first.');}
@@ -6729,7 +6744,11 @@
                     <h2 class="text-3xl font-bold text-gray-800">🧳 Projects & Field Expenses</h2>
                     <p class="text-gray-500 text-sm mt-1">Manage projects, approve fund requests and view field expenses</p>
                 </div>
-                <button onclick="openProjExpModal()" class="px-5 py-2 bg-yellow-600 text-white rounded-xl hover:bg-yellow-700 font-medium">+ New Project</button>
+                <div class="flex gap-2">
+                    <button onclick="exportAllProjExpCSV()" class="px-4 py-2 bg-green-600 text-white rounded-xl hover:bg-green-700 font-medium text-sm">📊 Export CSV</button>
+                    <button onclick="exportAllProjExpPDF()" class="px-4 py-2 bg-purple-600 text-white rounded-xl hover:bg-purple-700 font-medium text-sm">📄 Export PDF</button>
+                    <button onclick="openProjExpModal()" class="px-5 py-2 bg-yellow-600 text-white rounded-xl hover:bg-yellow-700 font-medium">+ New Project</button>
+                </div>
             </div>
 
             <!-- Summary -->
@@ -6840,7 +6859,7 @@
                             <div class="flex gap-2 items-start">
                                 ${projPending>0?`<span class="px-2 py-1 bg-amber-100 text-amber-700 rounded-lg text-xs font-bold">⏳ ${projPending} pending</span>`:''}
                                 <button onclick="editProjExp('${p.projExpID}')" class="px-3 py-1.5 border text-gray-600 rounded-lg text-xs hover:bg-gray-50">Edit</button>
-                                <button onclick="deleteProjExp('${p.projExpID}')" class="text-red-500 hover:text-red-700 text-xs px-2">✕</button>
+                                ${settings.allowProjectDelete?`<button onclick="deleteProjExp('${p.projExpID}')" class="text-red-500 hover:text-red-700 text-xs px-2" title="Delete Project">🗑️</button>`:''}
                             </div>
                         </div>
                         <div class="flex justify-between text-xs text-gray-500 mb-1">
@@ -6920,7 +6939,7 @@
                                 <th class="px-3 py-1.5 text-left">Mode</th>
                                 <th class="px-3 py-1.5 text-right">Amount</th>
                                 <th class="px-3 py-1.5 text-center">Bills</th>
-                                <th class="px-3 py-1.5">Del</th>
+                                <th class="px-3 py-1.5 text-center">Tally / Del</th>
                             </tr></thead>
                             <tbody>${(p.items||[]).map(item=>{
                                 const techs=(item.technicians||[]).map(t=>t.name).join(', ')||item.staffName||'—';
@@ -6928,13 +6947,16 @@
                                 return `<tr class="border-t hover:bg-yellow-50">
                                     <td class="px-3 py-1.5">${item.date||'—'}</td>
                                     <td class="px-3 py-1.5"><span class="px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-800">${item.category||'—'}</span></td>
-                                    <td class="px-3 py-1.5">${item.description||'—'}${item.vendor?`<br><span class="text-gray-400">${item.vendor}</span>`:''}</td>
+                                    <td class="px-3 py-1.5 ${item.tallyUpdated?'text-teal-700 font-semibold':''}">${item.description||'—'}${item.vendor?`<br><span class="text-gray-400">${item.vendor}</span>`:''} ${item.tallyUpdated?'<span style="font-size:10px;background:#ccfbf1;color:#0d9488;padding:1px 5px;border-radius:4px;margin-left:4px">✓ Tally</span>':''}</td>
                                     <td class="px-3 py-1.5 text-gray-600">${techs}</td>
                                     <td class="px-3 py-1.5 text-gray-400">${item.addedBy||'—'}</td>
                                     <td class="px-3 py-1.5 text-gray-500">${item.payMode||'—'}</td>
                                     <td class="px-3 py-1.5 text-right font-medium">${fmt(parseFloat(item.amount)||0)}</td>
                                     <td class="px-3 py-1.5 text-center">${attCount>0?`<button onclick="viewProjExpBills('${p.projExpID}','${item.itemID}')" class="text-blue-500 hover:text-blue-700">📎 ${attCount}</button>`:'—'}</td>
-                                    <td class="px-3 py-1.5 text-center"><button onclick="deleteProjExpItem('${p.projExpID}','${item.itemID}')" class="text-red-500 hover:text-red-700">✕</button></td>
+                                    <td class="px-3 py-1.5 text-center whitespace-nowrap">
+                                        <button onclick="toggleTallyStatus('${p.projExpID}','${item.itemID}')" class="text-xs px-1.5 py-0.5 rounded border ${item.tallyUpdated?'bg-teal-100 border-teal-300 text-teal-700':'bg-gray-100 border-gray-300 text-gray-500'} hover:bg-teal-100" title="${item.tallyUpdated?'Mark as NOT updated in Tally':'Mark as updated in Tally'}">${item.tallyUpdated?'✓ Tally':'+ Tally'}</button>
+                                        <button onclick="deleteProjExpItem('${p.projExpID}','${item.itemID}')" class="text-red-500 hover:text-red-700 ml-1">✕</button>
+                                    </td>
                                 </tr>`;
                             }).join('')}</tbody>
                         </table>
@@ -7151,6 +7173,18 @@
             renderView();
         }
 
+
+        async function toggleTallyStatus(projID, itemID) {
+            const idx = projectExpenses.findIndex(x=>x.projExpID===projID);
+            if (idx<0) return;
+            const ii = (projectExpenses[idx].items||[]).findIndex(i=>i.itemID===itemID);
+            if (ii<0) return;
+            projectExpenses[idx].items[ii].tallyUpdated = !projectExpenses[idx].items[ii].tallyUpdated;
+            projectExpenses[idx].items[ii].tallyUpdatedAt = projectExpenses[idx].items[ii].tallyUpdated ? new Date().toISOString() : null;
+            await saveData('projectExpenses', projectExpenses);
+            renderView();
+        }
+
         async function deleteProjExpItem(projID, itemID) {
             const idx = projectExpenses.findIndex(x => x.projExpID === projID);
             if (idx < 0) return;
@@ -7326,6 +7360,51 @@
             alert('\u2705 '+_arReceipts.length+' receipt(s) saved successfully.');
         }
 
+        // ── Receipt delete / manage ───────────────────────────────
+        async function deleteReceiptByIndex(projID, frID) {
+            const p   = projectExpenses.find(x=>x.projExpID===projID);
+            const req = (p?.fundRequests||[]).find(r=>r.frID===frID);
+            const atts = req?.paymentReceipts||[];
+            if (!atts.length) { alert('No receipts to delete.'); return; }
+            // If only one receipt, confirm and delete all
+            if (atts.length===1) {
+                if (!confirm('Delete this receipt?')) return;
+                const idx = projectExpenses.findIndex(x=>x.projExpID===projID);
+                const ri  = projectExpenses[idx].fundRequests.findIndex(r=>r.frID===frID);
+                projectExpenses[idx].fundRequests[ri].paymentReceipts = [];
+                await saveData('projectExpenses', projectExpenses);
+                renderView(); return;
+            }
+            // Multiple — show picker window
+            const w = window.open('','_blank','width=500,height=600');
+            w.document.write(`<html><head><title>Delete Receipts</title>
+            <style>body{font-family:sans-serif;padding:16px;background:#f8fafc}
+            .item{display:flex;align-items:center;gap:10px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:8px;background:#fff}
+            img{width:64px;height:64px;object-fit:cover;border-radius:6px;border:1px solid #e2e8f0}
+            .thumb{width:64px;height:64px;border-radius:6px;background:#f0fdf4;border:1px solid #bbf7d0;display:flex;align-items:center;justify-content:center;font-size:24px}
+            button{padding:6px 14px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-weight:600}
+            .del{background:#fee2e2;color:#dc2626}.del:hover{background:#fca5a5}
+            h2{margin:0 0 12px;font-size:16px;color:#1e3a5f}p{color:#64748b;font-size:12px;margin:0 0 12px}</style></head><body>
+            <h2>Manage Receipts (${atts.length})</h2>
+            <p>Click Delete on the receipt you want to remove.</p>`+
+            atts.map((a,i)=>`<div class="item">
+                ${a.data.startsWith('data:image')?`<img src="${a.data}"/>`:`<div class="thumb">📄</div>`}
+                <div style="flex:1"><b>Receipt ${i+1}</b><br><span style="color:#94a3b8;font-size:11px">${a.name}</span></div>
+                <button class="del" onclick="window.opener.deleteSingleReceipt('${projID}','${frID}',${i});window.close()">Delete</button>
+            </div>`).join('')+
+            `</body></html>`);
+        }
+
+        async function deleteSingleReceipt(projID, frID, index) {
+            const idx = projectExpenses.findIndex(x=>x.projExpID===projID);
+            if (idx<0) return;
+            const ri = projectExpenses[idx].fundRequests.findIndex(r=>r.frID===frID);
+            if (ri<0) return;
+            projectExpenses[idx].fundRequests[ri].paymentReceipts.splice(index,1);
+            await saveData('projectExpenses', projectExpenses);
+            renderView();
+        }
+
         function viewPaymentReceipts(projID, frID) {
             const p   = projectExpenses.find(x=>x.projExpID===projID);
             const req = (p?.fundRequests||[]).find(r=>r.frID===frID);
@@ -7349,6 +7428,117 @@
                 ?`<img src="${a.data}" title="Receipt ${i+1}: ${a.name}" onclick="window.open('${a.data}')"/>`
                 :`<embed src="${a.data}" type="application/pdf" class="pdf"/>`).join('')
             +`</body></html>`);
+        }
+
+
+        // ── PROJECT EXPENSES EXPORT ───────────────────────────────
+        async function exportAllProjExpPDF() {
+            const fmt = n => '₹'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
+            const INR = n => 'INR '+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
+            if (!window.jspdf) {
+                await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+                await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+            }
+            const {jsPDF} = window.jspdf;
+            const doc = new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+            const ML=14,MR=14,CW=210-ML-MR,PW=210;
+            // Header
+            doc.setFillColor(15,58,95);doc.rect(0,0,210,32,'F');
+            doc.setFontSize(15);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
+            doc.text('PROJECT EXPENSES SUMMARY',PW/2,12,{align:'center'});
+            doc.setFontSize(9);doc.setFont('helvetica','normal');doc.setTextColor(147,197,253);
+            doc.text((settings.companyName||'IMSE Tech India')+'  |  Generated: '+new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}),PW/2,20,{align:'center'});
+            doc.text('Total Projects: '+projectExpenses.length,PW/2,27,{align:'center'});
+            doc.setFillColor(29,78,216);doc.rect(0,31,210,2,'F');
+            let y=38;
+
+            // Grand summary
+            const gFunds = projectExpenses.reduce((s,p)=>s+(parseFloat(p.totalFunds)||0),0);
+            const gSpent = projectExpenses.reduce((s,p)=>s+(p.items||[]).reduce((a,i)=>a+(parseFloat(i.amount)||0),0),0);
+            const gTfIn  = projectExpenses.reduce((s,p)=>s+(p.fundTransfers||[]).filter(t=>t.direction==='in').reduce((a,t)=>a+(parseFloat(t.amount)||0),0),0);
+            const gTfOut = projectExpenses.reduce((s,p)=>s+(p.fundTransfers||[]).filter(t=>t.direction==='out').reduce((a,t)=>a+(parseFloat(t.amount)||0),0),0);
+            doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',styles:{fontSize:9,cellPadding:3},
+                headStyles:{fillColor:[30,58,138],textColor:[255,255,255],fontStyle:'bold'},
+                head:[[{content:'GRAND SUMMARY',colSpan:2,styles:{halign:'center'}}]],
+                body:[
+                    [{content:'Total Office Funds Released',styles:{fontStyle:'bold',fillColor:[241,245,249]}},{content:INR(gFunds),styles:{halign:'right'}}],
+                    [{content:'Total Field Expenses Claimed',styles:{fontStyle:'bold',fillColor:[241,245,249]}},{content:INR(gSpent),styles:{halign:'right'}}],
+                    [{content:'Net Balance Remaining',styles:{fontStyle:'bold',fillColor:(gFunds-gSpent)>=0?[240,253,244]:[254,242,242],textColor:(gFunds-gSpent)>=0?[21,128,61]:[220,38,38]}},{content:INR(gFunds-gSpent),styles:{halign:'right',fontStyle:'bold',textColor:(gFunds-gSpent)>=0?[21,128,61]:[220,38,38]}}]
+                ],columnStyles:{0:{cellWidth:CW-45},1:{cellWidth:45}}});
+            y = doc.lastAutoTable.finalY+6;
+
+            // Per-project table
+            doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',styles:{fontSize:8,cellPadding:2.5},
+                headStyles:{fillColor:[88,28,135],textColor:[255,255,255],fontStyle:'bold'},
+                head:[[
+                    {content:'Project',styles:{cellWidth:CW-14-18-20-22-20-18}},
+                    {content:'Ref',styles:{cellWidth:28}},
+                    {content:'Fund (INR)',styles:{cellWidth:25,halign:'right'}},
+                    {content:'Spent (INR)',styles:{cellWidth:25,halign:'right'}},
+                    {content:'Balance',styles:{cellWidth:25,halign:'right'}},
+                    {content:'Status',styles:{cellWidth:20,halign:'center'}}
+                ]],
+                body:projectExpenses.map(p=>{
+                    const funds=parseFloat(p.totalFunds)||0;
+                    const spent=(p.items||[]).reduce((a,i)=>a+(parseFloat(i.amount)||0),0);
+                    const tfIn=(p.fundTransfers||[]).filter(t=>t.direction==='in').reduce((a,t)=>a+(parseFloat(t.amount)||0),0);
+                    const tfOut=(p.fundTransfers||[]).filter(t=>t.direction==='out').reduce((a,t)=>a+(parseFloat(t.amount)||0),0);
+                    const bal=funds+tfIn-spent-tfOut;
+                    return [
+                        {content:p.projectName+(p.startDate?'\n'+p.startDate+(p.endDate?' to '+p.endDate:''):''),styles:{fontSize:7.5}},
+                        {content:p.projectRef||'—',styles:{fontSize:7,textColor:[100,116,139]}},
+                        {content:INR(funds),styles:{halign:'right'}},
+                        {content:INR(spent),styles:{halign:'right',textColor:[180,83,9]}},
+                        {content:INR(Math.abs(bal)),styles:{halign:'right',fontStyle:'bold',textColor:bal>=0?[21,128,61]:[220,38,38]}},
+                        {content:bal>=0?'OK':'OVER',styles:{halign:'center',fontStyle:'bold',textColor:bal>=0?[21,128,61]:[220,38,38]}}
+                    ];
+                }),
+                columnStyles:{0:{cellWidth:CW-28-25-25-25-20},1:{cellWidth:28},2:{cellWidth:25},3:{cellWidth:25},4:{cellWidth:25},5:{cellWidth:20}}
+            });
+
+            const pc=doc.getNumberOfPages();
+            for(let pg=1;pg<=pc;pg++){doc.setPage(pg);doc.setFontSize(7);doc.setFont('helvetica','italic');doc.setTextColor(150,150,150);doc.text((settings.companyName||'IMSE Tech India')+' — Project Expenses — Page '+pg+' of '+pc,PW/2,291,{align:'center'});}
+            doc.save('ProjectExpenses_Summary_'+new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'2-digit',year:'numeric'}).replace(/\//g,'-')+'.pdf');
+        }
+
+        function exportAllProjExpCSV() {
+            const rows = [];
+            rows.push(['PROJECT EXPENSES EXPORT — '+(settings.companyName||'IMSE Tech India')]);
+            rows.push(['Generated', new Date().toLocaleDateString('en-IN')]);
+            rows.push([]);
+            rows.push(['PROJECT SUMMARY']);
+            rows.push(['Project','Ref','Start Date','End Date','Total Fund','Total Spent','Transfers In','Transfers Out','Balance','Pending Requests']);
+            projectExpenses.forEach(p=>{
+                const funds=parseFloat(p.totalFunds)||0;
+                const spent=(p.items||[]).reduce((a,i)=>a+(parseFloat(i.amount)||0),0);
+                const tfIn=(p.fundTransfers||[]).filter(t=>t.direction==='in').reduce((a,t)=>a+(parseFloat(t.amount)||0),0);
+                const tfOut=(p.fundTransfers||[]).filter(t=>t.direction==='out').reduce((a,t)=>a+(parseFloat(t.amount)||0),0);
+                const pending=(p.fundRequests||[]).filter(r=>r.status==='Pending').length;
+                rows.push([p.projectName,p.projectRef||'',p.startDate||'',p.endDate||'',funds,spent,tfIn,tfOut,funds+tfIn-spent-tfOut,pending]);
+            });
+            rows.push([]);
+            rows.push(['ALL EXPENSE ENTRIES']);
+            rows.push(['Project','Ref','Date','Category','Description','Vendor','Technicians','Entered By','Payment Mode','Amount','Tally Status','Bills']);
+            projectExpenses.forEach(p=>{
+                (p.items||[]).forEach(it=>{
+                    const techs=(it.technicians||[]).map(t=>t.name).join(' / ')||it.staffName||'';
+                    const attCount=(it.billAttachments||[]).length+(it.billData?1:0);
+                    rows.push([p.projectName,p.projectRef||'',it.date,it.category,it.description,it.vendor||'',techs,it.addedBy||'',it.payMode||'',it.amount,it.tallyUpdated?'Updated':'Pending',attCount]);
+                });
+            });
+            rows.push([]);
+            rows.push(['ALL FUND REQUESTS']);
+            rows.push(['Project','Date','Purpose','Requested By','Requested Amount','Released Amount','Release Date','Mode','Status']);
+            projectExpenses.forEach(p=>{
+                (p.fundRequests||[]).forEach(r=>{
+                    rows.push([p.projectName,r.date,r.purpose,r.addedBy||'',r.amount,r.releasedAmount||'',r.releasedDate||'',r.releaseMode||'',r.status]);
+                });
+            });
+            const csv=rows.map(r=>r.map(c=>'"'+(String(c||'').replace(/"/g,'""'))+'"').join(',')).join('\n');
+            const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'});
+            const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+            a.download='ProjectExpenses_'+new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'2-digit',year:'numeric'}).replace(/\//g,'-')+'.csv';
+            a.click();URL.revokeObjectURL(a.href);
         }
 
         function viewProjExpBills(projID, itemID) {
