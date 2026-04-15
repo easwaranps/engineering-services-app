@@ -189,12 +189,23 @@
                 <div class="mt-3">
                     <label class="field-label">Purpose <span class="text-red-500">*</span></label>
                     <select id="frPurpose" class="field-input" required>
-                        <option value="Local Transport">Local Transport</option>
-                        <option value="Food / Meals">Food / Meals</option>
-                        <option value="Accommodation">Accommodation</option>
-                        <option value="Communication">Communication</option>
-                        <option value="Tools / Materials">Tools / Materials</option>
-                        <option value="Miscellaneous">Miscellaneous</option>
+                        <option value="AC001 - Food Expenses">AC001 - Food Expenses</option>
+                        <option value="AC002 - Traveling Expenses">AC002 - Traveling Expenses</option>
+                        <option value="AC003 - Staff Welfare">AC003 - Staff Welfare</option>
+                        <option value="AC004 - Telephone Expenses">AC004 - Telephone Expenses</option>
+                        <option value="AC005 - Consumables">AC005 - Consumables</option>
+                        <option value="AC006 - Petrol and Fuel Charges">AC006 - Petrol and Fuel Charges</option>
+                        <option value="AC007 - Printing & Stationery">AC007 - Printing & Stationery</option>
+                        <option value="AC008 - Transportation Expenses">AC008 - Transportation Expenses</option>
+                        <option value="AC009 - Accommodation Expenses">AC009 - Accommodation Expenses</option>
+                        <option value="AC010 - Repairs & Maintenance">AC010 - Repairs & Maintenance</option>
+                        <option value="AC011 - Business Promotion">AC011 - Business Promotion</option>
+                        <option value="AC012 - Immigration Charges">AC012 - Immigration Charges</option>
+                        <option value="AC013 - Miscellaneous Expenses">AC013 - Miscellaneous Expenses</option>
+                        <option value="AC014 - Hiring Charges">AC014 - Hiring Charges</option>
+                        <option value="AC015 - Electricity Charges">AC015 - Electricity Charges</option>
+                        <option value="AC016 - Postage & Courier">AC016 - Postage & Courier</option>
+                        <option value="AC017 - Office Expenses">AC017 - Office Expenses</option>
                     </select>
                 </div>
                 <div class="mt-3">
@@ -232,12 +243,23 @@
                     <div>
                         <label class="field-label">Category <span class="text-red-500">*</span></label>
                         <select id="eiCat" class="field-input" required>
-                            <option value="Local Transport">Local Transport</option>
-                            <option value="Food / Meals">Food / Meals</option>
-                            <option value="Accommodation">Accommodation</option>
-                            <option value="Communication">Communication</option>
-                            <option value="Tools / Materials">Tools / Materials</option>
-                            <option value="Miscellaneous">Miscellaneous</option>
+                            <option value="AC001 - Food Expenses">AC001 - Food Expenses</option>
+                            <option value="AC002 - Traveling Expenses">AC002 - Traveling Expenses</option>
+                            <option value="AC003 - Staff Welfare">AC003 - Staff Welfare</option>
+                            <option value="AC004 - Telephone Expenses">AC004 - Telephone Expenses</option>
+                            <option value="AC005 - Consumables">AC005 - Consumables</option>
+                            <option value="AC006 - Petrol and Fuel Charges">AC006 - Petrol and Fuel Charges</option>
+                            <option value="AC007 - Printing & Stationery">AC007 - Printing & Stationery</option>
+                            <option value="AC008 - Transportation Expenses">AC008 - Transportation Expenses</option>
+                            <option value="AC009 - Accommodation Expenses">AC009 - Accommodation Expenses</option>
+                            <option value="AC010 - Repairs & Maintenance">AC010 - Repairs & Maintenance</option>
+                            <option value="AC011 - Business Promotion">AC011 - Business Promotion</option>
+                            <option value="AC012 - Immigration Charges">AC012 - Immigration Charges</option>
+                            <option value="AC013 - Miscellaneous Expenses">AC013 - Miscellaneous Expenses</option>
+                            <option value="AC014 - Hiring Charges">AC014 - Hiring Charges</option>
+                            <option value="AC015 - Electricity Charges">AC015 - Electricity Charges</option>
+                            <option value="AC016 - Postage & Courier">AC016 - Postage & Courier</option>
+                            <option value="AC017 - Office Expenses">AC017 - Office Expenses</option>
                         </select>
                     </div>
                 </div>
@@ -1177,7 +1199,7 @@
         const item = itemID ? (p?.items||[]).find(i=>i.itemID===itemID) : null;
         document.getElementById('expItemTitle').textContent = item ? 'Edit Expense' : 'Add Expense';
         document.getElementById('eiDate').value    = item?.date    || new Date().toISOString().split('T')[0];
-        document.getElementById('eiCat').value     = item?.category|| 'Local Transport';
+        document.getElementById('eiCat').value     = item?.category|| 'AC001 - Food Expenses';
         document.getElementById('eiDesc').value    = item?.description||'';
         document.getElementById('eiAmt').value     = item?.amount  || '';
         document.getElementById('eiPayMode').value = item?.payMode || 'Cash';
