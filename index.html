@@ -1060,18 +1060,21 @@
             const outA=+(c.Outstation*dailyWage*outstPct).toFixed(2);
             const ancA=+(c.Anchorage*dailyWage*ancPct).toFixed(2);
             const salA=+(c.Sailing*dailyWage*sailPct).toFixed(2);
-            // Threshold allowances (correct formula):
-            // Above 15 days: for each day ABOVE 15, pay 50% of daily wage
-            //   daysAbove15 = max(0, eng - 15)
-            //   t15 = daysAbove15 × (dailyWage × 50%)
-            // Above 20 days: for each day ABOVE 20, pay 30% of (dailyWage + 50% dailyWage)
-            //   = daysAbove20 × dailyWage × 1.5 × 30%
-            const t15Rate=(+r.t15extra||50)/100;
-            const daysAbove15=Math.max(0,eng-15);
-            const t15=daysAbove15>0?+(daysAbove15*dailyWage*t15Rate).toFixed(2):0;
-            const t20Rate=(+r.t20extra||30)/100;
-            const daysAbove20=Math.max(0,eng-20);
-            const t20=daysAbove20>0?+(daysAbove20*dailyWage*(1+t15Rate)*t20Rate).toFixed(2):0;
+            // ── THRESHOLD ALLOWANCES (correct formula per rule) ────────────
+            // Days 1–15  : paid at dailyWage (already in wP/outP/ancP/salP above)
+            // Days 16–20 : paid at dailyWage × 1.5  → extra = dailyWage × 0.5 per day
+            //              daysIn1520 = min(eng,20) - 15  (0 if eng≤15)
+            // Days 21+   : paid at dailyWage × 1.5 × 1.3  → extra on top = dailyWage × (1.5×1.3 - 1.5) = dailyWage×0.45 per day
+            //              daysAbove20 = max(0, eng - 20)
+            const daysIn1520 = Math.max(0, Math.min(eng, 20) - 15);   // days 16 to 20
+            const daysAbove20 = Math.max(0, eng - 20);                  // days beyond 20
+            // Extra payment for days 16–20 = days × DW × 0.5
+            const t15 = daysIn1520 > 0 ? +(daysIn1520 * dailyWage * 0.5).toFixed(2) : 0;
+            // Extra payment for days 21+ = days × DW × (1.5×1.3 − 1.5) = days × DW × 0.45
+            // (they already got 1.5× rate from the 16–20 rule; now 1.3× that = 1.95× total → extra above 1.5× = 0.45×)
+            const t20 = daysAbove20 > 0 ? +(daysAbove20 * dailyWage * 0.45).toFixed(2) : 0;
+            // For row labels keep daysAbove15 as total extra-rate days (16 onward) for display clarity
+            const daysAbove15 = daysIn1520 + daysAbove20;
             // Leave deductions
             // Approved leave: 50% of daily wage per day deducted
             const alDeduct=+((c.ApprovedLeave||0)*dailyWage*0.5).toFixed(2);
@@ -1090,12 +1093,12 @@
                 {sec:'Allowance',name:`Outstation Allow (${+r.outstationPct||20}% of Daily Wage)`,days:c.Outstation,rate:+(dailyWage*outstPct).toFixed(2),amt:outA,show:c.Outstation>0},
                 {sec:'Allowance',name:`Sailing Allow (${+r.sailingPct||30}% of Daily Wage)`,days:c.Sailing,rate:+(dailyWage*sailPct).toFixed(2),amt:salA,show:c.Sailing>0},
                 {sec:'Allowance',name:`Anchorage Allow (${+r.anchoragePct||30}% of Daily Wage)`,days:c.Anchorage,rate:+(dailyWage*ancPct).toFixed(2),amt:ancA,show:c.Anchorage>0},
-                {sec:'Threshold',name:`15+ days allow (${+r.t15extra||50}% × DW × ${daysAbove15} days above 15)`,days:daysAbove15,rate:+(dailyWage*t15Rate).toFixed(2),amt:t15,show:daysAbove15>0},
-                {sec:'Threshold',name:`20+ days allow (DW×1.5×${+r.t20extra||30}% × ${daysAbove20} days above 20)`,days:daysAbove20,rate:+(dailyWage*(1+t15Rate)*t20Rate).toFixed(2),amt:t20,show:daysAbove20>0},
+                {sec:'Threshold',name:`Days 16–20 extra (DW×1.5 rate — ${daysIn1520} days × DW×0.5)`,days:daysIn1520,rate:+(dailyWage*0.5).toFixed(2),amt:t15,show:daysIn1520>0},
+                {sec:'Threshold',name:`Days 21+ extra (DW×1.5×1.3 rate — ${daysAbove20} days × DW×0.45)`,days:daysAbove20,rate:+(dailyWage*0.45).toFixed(2),amt:t20,show:daysAbove20>0},
                 {sec:'Deduct',name:`Approved Leave Deduction (50% × ${c.ApprovedLeave||0} days)`,days:c.ApprovedLeave||0,rate:+(dailyWage*0.5).toFixed(2),amt:-alDeduct,show:(c.ApprovedLeave||0)>0},
                 {sec:'Deduct',name:`Unapproved Leave Deduction (100% × ${c.UnApprovedLeave||0} days)`,days:c.UnApprovedLeave||0,rate:+dailyWage.toFixed(2),amt:-ulDeduct,show:(c.UnApprovedLeave||0)>0},
             ].filter(r=>r.show);
-            return{c,eng,sbd,basic,hra,da,gp,fixedAllow,daysInMonth,dailyWage,standbyWage,rows,gross,varA:+varA||0,daysAbove15,daysAbove20,t15,t20};
+            return{c,eng,sbd,basic,hra,da,gp,fixedAllow,daysInMonth,dailyWage,standbyWage,rows,gross,varA:+varA||0,daysAbove15,daysIn1520,daysAbove20,t15,t20};
         }
         function calcTechDeductions(gross,basic,fixedAllowance,exgratia,state){
             const pfPct=state.pfPct!=null?+state.pfPct:12;
@@ -1227,29 +1230,29 @@
                 <div class="text-sm font-semibold text-gray-700 mb-3">💰 Wage Inputs</div>
                 <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:8px">
                     <div><label class="block text-xs font-semibold text-gray-500 mb-1">Basic Salary (₹)</label>
-                    <input type="number" id="twBasic" value="${s.basic||''}" min="0" step="1" placeholder="e.g. 15000" oninput="onTechWageFieldChange('basic',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                    <input type="number" id="twBasic" value="${s.basic||''}" min="0" step="1" placeholder="e.g. 15000" onchange="onTechWageFieldChange('basic',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                     <div><label class="block text-xs font-semibold text-gray-500 mb-1">Variable Allowance (₹)</label>
-                    <input type="number" id="twVariableAllow" value="${s.variableAllow||''}" min="0" step="1" placeholder="e.g. 2000" oninput="onTechWageFieldChange('variableAllow',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                    <input type="number" id="twVariableAllow" value="${s.variableAllow||''}" min="0" step="1" placeholder="e.g. 2000" onchange="onTechWageFieldChange('variableAllow',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                     <div><label class="block text-xs font-semibold text-gray-500 mb-1">Travel Allowance (₹) <span style="color:#0e7490;font-size:10px">outside gross</span></label>
-                    <input type="number" id="twTravelAllow" value="${s.travelAllow||''}" min="0" step="1" placeholder="e.g. 4000" oninput="onTechWageFieldChange('travelAllow',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm border-teal-400"/></div>
+                    <input type="number" id="twTravelAllow" value="${s.travelAllow||''}" min="0" step="1" placeholder="e.g. 4000" onchange="onTechWageFieldChange('travelAllow',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm border-teal-400"/></div>
                 </div>
                 <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:8px">
                     <div><label class="block text-xs font-semibold text-gray-500 mb-1">Ex-Gratia (₹)</label>
-                    <input type="number" id="twExgratia" value="${s.exgratia||''}" min="0" step="1" placeholder="e.g. 1000" oninput="onTechWageFieldChange('exgratia',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm border-yellow-400"/></div>
+                    <input type="number" id="twExgratia" value="${s.exgratia||''}" min="0" step="1" placeholder="e.g. 1000" onchange="onTechWageFieldChange('exgratia',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm border-yellow-400"/></div>
                     <div><label class="block text-xs font-semibold text-gray-500 mb-1">Ex-Gratia Remark</label>
-                    <input type="text" id="twExgratiaRemark" value="${s.exgratiaRemark||''}" placeholder="Reason / note" oninput="onTechWageFieldChange('exgratiaRemark',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                    <input type="text" id="twExgratiaRemark" value="${s.exgratiaRemark||''}" placeholder="Reason / note" onchange="onTechWageFieldChange('exgratiaRemark',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                     <div><label class="block text-xs font-semibold text-gray-500 mb-1">Additional Deduction (₹)</label>
-                    <input type="number" id="twAddlDed" value="${s.addlDeduction||''}" min="0" step="1" placeholder="e.g. 500" oninput="updateTechDeductState('addlDeduction',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm border-red-300"/></div>
+                    <input type="number" id="twAddlDed" value="${s.addlDeduction||''}" min="0" step="1" placeholder="e.g. 500" onchange="updateTechDeductState('addlDeduction',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm border-red-300"/></div>
                 </div>
                 <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:8px">
                     <div><label class="block text-xs font-semibold text-gray-500 mb-1">Add. Deduction Remark</label>
-                    <input type="text" id="twAddlDedRemark" value="${s.addlDeductionRemark||''}" placeholder="Loan recovery / other" oninput="updateTechDeductState('addlDeductionRemark',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                    <input type="text" id="twAddlDedRemark" value="${s.addlDeductionRemark||''}" placeholder="Loan recovery / other" onchange="updateTechDeductState('addlDeductionRemark',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                     <div><label class="block text-xs font-semibold text-gray-500 mb-1">PF %</label>
-                    <input type="number" id="twPFPct" value="${s.pfPct||12}" min="0" max="30" step="0.01" oninput="onTechWageFieldChange('pfPct',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                    <input type="number" id="twPFPct" value="${s.pfPct||12}" min="0" max="30" step="0.01" onchange="onTechWageFieldChange('pfPct',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                     <div><label class="block text-xs font-semibold text-gray-500 mb-1">ESIC %</label>
-                    <input type="number" id="twESICPct" value="${s.esicPct||0.75}" min="0" max="5" step="0.01" oninput="onTechWageFieldChange('esicPct',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                    <input type="number" id="twESICPct" value="${s.esicPct||0.75}" min="0" max="5" step="0.01" onchange="onTechWageFieldChange('esicPct',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                     <div><label class="block text-xs font-semibold text-gray-500 mb-1">PT (₹) <span style="color:#7c3aed;font-size:10px">manual override</span></label>
-                    <input type="number" id="twPTOverride" value="${s.ptOverride!=null&&s.ptOverride!==''?s.ptOverride:''}" min="0" step="1" placeholder="blank = auto" oninput="onTechWageFieldChange('ptOverride',this.value)" class="w-full px-3 py-2 border border-purple-300 rounded-lg text-sm"/></div>
+                    <input type="number" id="twPTOverride" value="${s.ptOverride!=null&&s.ptOverride!==''?s.ptOverride:''}" min="0" step="1" placeholder="blank = auto" onchange="onTechWageFieldChange('ptOverride',this.value)" class="w-full px-3 py-2 border border-purple-300 rounded-lg text-sm"/></div>
                 </div>
                 <!-- PF Override toggle — shown when UAN status is relevant -->
                 <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:10px 14px">
@@ -5781,70 +5784,142 @@
         // ── ATTENDANCE EXPORT ──────────────────────────────────────
         async function attExportPDF(){
             const {jsPDF}=window.jspdf;
-            const doc=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
+            // ── PORTRAIT A4 ────────────────────────────────────────
+            const doc=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
             const MN=['January','February','March','April','May','June','July','August','September','October','November','December'];
             const shM=attGridState.periodMonth,shY=attGridState.periodYear;
             const selID=attGridState.staffID;
             const staffToExport=selID?staff.filter(s=>s.staffID===selID):staff.filter(s=>s.status==='Active');
             if(!staffToExport.length){alert('No staff to export.');return;}
             const dates=_attPeriodDates(shY,shM);
-            const pl=dates[0].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})+' – '+dates[dates.length-1].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
-            const PW=297,ML=10,MR=10;
+            const pl=dates[0].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})+
+                     ' – '+dates[dates.length-1].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
+            const ML=12,MR=12,PW=210,CW=PW-ML-MR;
 
-            // Header
-            doc.setFillColor(15,58,95);doc.rect(0,0,PW,20,'F');
-            doc.setFontSize(14);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
-            doc.text('ATTENDANCE REGISTER — '+(MN[shM-1]+' '+shY).toUpperCase(),PW/2,9,{align:'center'});
-            doc.setFontSize(9);doc.setFont('helvetica','normal');doc.setTextColor(203,213,225);
-            doc.text('Period: '+pl+'  |  '+staffToExport.length+' Staff  |  '+dates.length+' Days  |  Generated: '+new Date().toLocaleDateString('en-IN'),PW/2,15,{align:'center'});
-            doc.setFillColor(29,78,216);doc.rect(0,19,PW,2,'F');
+            const ATT_FULL={Working:'Working',StandBy:'Stand By',Outstation:'Outstation',
+                            Anchorage:'Anchorage',Sailing:'Sailing',
+                            ApprovedLeave:'Approved Leave',UnApprovedLeave:'Unapproved Leave'};
+            const ATT_COL={Working:[21,128,61],StandBy:[180,83,9],Outstation:[29,78,216],
+                           Anchorage:[14,116,144],Sailing:[67,56,202],
+                           ApprovedLeave:[124,58,237],UnApprovedLeave:[220,38,38]};
 
-            // Build table
-            const dayHeaders=dates.map(d=>d.toLocaleDateString('en-IN',{day:'2-digit'}));
-            const head=[['#','Staff Name','Type',...dayHeaders,'WRK','SBY','OUT','ANC','SAL','A/L','U/L','Eng']];
-            const ATT_SHORT={Working:'W',StandBy:'S',Outstation:'O',Anchorage:'A',Sailing:'SA',ApprovedLeave:'AL',UnApprovedLeave:'UL'};
-            const ATT_COL={Working:[21,128,61],StandBy:[180,83,9],Outstation:[29,78,216],Anchorage:[14,116,144],Sailing:[67,56,202],ApprovedLeave:[124,58,237],UnApprovedLeave:[220,38,38]};
-            const body=staffToExport.map((s,i)=>{
+            const drawPageHeader=(pageNum,totalPages)=>{
+                doc.setFillColor(15,58,95);doc.rect(0,0,PW,22,'F');
+                doc.setFontSize(14);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
+                doc.text('ATTENDANCE REGISTER',PW/2,10,{align:'center'});
+                doc.setFontSize(9);doc.setFont('helvetica','normal');doc.setTextColor(203,213,225);
+                doc.text(MN[shM-1].toUpperCase()+' '+shY+'  |  Period: '+pl+'  |  '+staffToExport.length+' Staff  |  '+dates.length+' Days',PW/2,17,{align:'center'});
+                doc.setFillColor(29,78,216);doc.rect(0,21,PW,2,'F');
+            };
+
+            let firstPage=true;
+            staffToExport.forEach((s,si)=>{
+                if(!firstPage){doc.addPage();}
+                firstPage=false;
+                const pageStart=doc.getNumberOfPages();
+                drawPageHeader(pageStart,pageStart);
+                let y=28;
+
+                // ── Staff info card ──────────────────────────────
+                doc.setFillColor(241,245,249);doc.rect(ML,y,CW,14,'F');
+                doc.setDrawColor(203,213,225);doc.rect(ML,y,CW,14);
+                doc.setFontSize(11);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
+                doc.text(s.name,ML+4,y+6);
+                doc.setFontSize(8.5);doc.setFont('helvetica','normal');doc.setTextColor(71,85,105);
+                doc.text('Emp Code: '+(s.staffID||'—'),ML+4,y+11);
+                doc.text('Type: '+(s.staffType||'—'),ML+60,y+11);
+                doc.text('Designation: '+(s.designation||'—'),ML+100,y+11);
+                doc.text('Status: '+(s.status||'Active'),ML+155,y+11);
+                y+=18;
+
+                // ── Daily attendance table ───────────────────────
                 const lookup=_attLookup(s.staffID,dates);
                 const cnt={Working:0,StandBy:0,Outstation:0,Anchorage:0,Sailing:0,ApprovedLeave:0,UnApprovedLeave:0};
-                const dayCells=dates.map(d=>{const k=_attDayKey(d),r=lookup[k];if(r&&cnt[r.status]!==undefined)cnt[r.status]++;return r?ATT_SHORT[r.status]||r.status.slice(0,2):'';});
-                const eng=[cnt.Working,cnt.Outstation,cnt.Anchorage,cnt.Sailing].reduce((a,b)=>a+b,0);
-                return [String(i+1),s.name,s.staffType==='Technician'?'Tech':'Office',...dayCells,
-                    cnt.Working||'',cnt.StandBy||'',cnt.Outstation||'',cnt.Anchorage||'',cnt.Sailing||'',cnt.ApprovedLeave||'',cnt.UnApprovedLeave||'',eng];
-            });
+                const rows=[];
+                dates.forEach((date,i)=>{
+                    const key=_attDayKey(date);
+                    const rec=lookup[key];
+                    if(rec&&cnt[rec.status]!==undefined)cnt[rec.status]++;
+                    const dayName=date.toLocaleDateString('en-IN',{weekday:'short'});
+                    const dayDate=date.toLocaleDateString('en-IN',{day:'2-digit',month:'short'});
+                    const isWE=date.getDay()===0||date.getDay()===6;
+                    rows.push([
+                        String(i+1),
+                        dayDate+' '+dayName,
+                        rec?(ATT_FULL[rec.status]||rec.status):(isWE?'Weekend':'—'),
+                        rec?.project||'—',
+                        rec?.remarks||'—'
+                    ]);
+                });
 
-            const dayW=Math.min(5,(PW-ML-MR-55-40)/dates.length);
-            doc.autoTable({startY:24,margin:{left:ML,right:MR},theme:'grid',
-                styles:{fontSize:6.5,cellPadding:1.5,halign:'center'},
-                headStyles:{fillColor:[30,58,138],textColor:[255,255,255],fontStyle:'bold',fontSize:6.5},
-                head,body,
-                columnStyles:{
-                    0:{cellWidth:6},1:{cellWidth:28,halign:'left'},2:{cellWidth:12},
-                    ...Object.fromEntries(dates.map((_,i)=>[i+3,{cellWidth:dayW}])),
-                    [dates.length+3]:{cellWidth:7,fontStyle:'bold'},
-                    [dates.length+4]:{cellWidth:7},
-                    [dates.length+5]:{cellWidth:7},
-                    [dates.length+6]:{cellWidth:7},
-                    [dates.length+7]:{cellWidth:7},
-                    [dates.length+8]:{cellWidth:7},
-                    [dates.length+9]:{cellWidth:7},
-                    [dates.length+10]:{cellWidth:8,fontStyle:'bold'}
-                },
-                didParseCell:(d)=>{
-                    if(d.section==='body'&&d.column.index>=3&&d.column.index<=dates.length+2){
-                        const val=d.cell.raw;
-                        const key=Object.entries(ATT_SHORT).find(([,v])=>v===val)?.[0];
-                        if(key&&ATT_COL[key]){d.cell.styles.textColor=ATT_COL[key];d.cell.styles.fontStyle='bold';}
+                doc.autoTable({
+                    startY:y,margin:{left:ML,right:MR},theme:'grid',
+                    styles:{fontSize:8,cellPadding:2.5},
+                    headStyles:{fillColor:[30,58,138],textColor:[255,255,255],fontStyle:'bold',fontSize:8},
+                    head:[['#','Date','Attendance Status','Project','Remarks']],
+                    body:rows,
+                    columnStyles:{
+                        0:{cellWidth:8,halign:'center'},
+                        1:{cellWidth:26},
+                        2:{cellWidth:36},
+                        3:{cellWidth:55},
+                        4:{cellWidth:CW-8-26-36-55}
+                    },
+                    didParseCell:(d)=>{
+                        if(d.section==='body'&&d.column.index===2){
+                            const val=d.cell.raw;
+                            const key=Object.entries(ATT_FULL).find(([,v])=>v===val)?.[0];
+                            if(key&&ATT_COL[key]){
+                                d.cell.styles.textColor=ATT_COL[key];
+                                d.cell.styles.fontStyle='bold';
+                            }
+                            if(val==='Weekend'){d.cell.styles.textColor=[156,163,175];}
+                            if(val==='—'){d.cell.styles.textColor=[156,163,175];}
+                        }
                     }
-                }
+                });
+                y=doc.lastAutoTable.finalY+5;
+
+                // ── Monthly summary bar ──────────────────────────
+                const eng=cnt.Working+cnt.Outstation+cnt.Anchorage+cnt.Sailing;
+                const summaryData=[
+                    ['Working',cnt.Working,[21,128,61]],
+                    ['Stand By',cnt.StandBy,[180,83,9]],
+                    ['Outstation',cnt.Outstation,[29,78,216]],
+                    ['Anchorage',cnt.Anchorage,[14,116,144]],
+                    ['Sailing',cnt.Sailing,[67,56,202]],
+                    ['Appr. Leave',cnt.ApprovedLeave,[124,58,237]],
+                    ['Unappr. Leave',cnt.UnApprovedLeave,[220,38,38]],
+                    ['ENGAGED TOTAL',eng,[15,58,95]]
+                ];
+                const sw=CW/summaryData.length;
+                if(y+16>280){doc.addPage();drawPageHeader(doc.getNumberOfPages(),doc.getNumberOfPages());y=28;}
+                summaryData.forEach(([label,val,col],i)=>{
+                    const x=ML+i*sw;
+                    doc.setFillColor(...col);doc.rect(x,y,sw,10,'F');
+                    doc.setFontSize(7);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
+                    doc.text(label,x+sw/2,y+4,{align:'center'});
+                    doc.setFontSize(10);doc.text(String(val),x+sw/2,y+9,{align:'center'});
+                });
+                y+=14;
+                // Signature line
+                if(y+20>280){doc.addPage();drawPageHeader(doc.getNumberOfPages(),doc.getNumberOfPages());y=28;}
+                doc.setDrawColor(203,213,225);
+                doc.line(ML,y+12,ML+50,y+12);doc.line(ML+80,y+12,ML+130,y+12);doc.line(ML+160,y+12,PW-MR,y+12);
+                doc.setFontSize(7.5);doc.setFont('helvetica','normal');doc.setTextColor(100,100,100);
+                doc.text('Staff Signature',ML+25,y+16,{align:'center'});
+                doc.text('Supervisor Signature',ML+105,y+16,{align:'center'});
+                doc.text('HR / Admin Signature',ML+175,y+16,{align:'center'});
             });
 
-            // Legend
-            let ly=doc.lastAutoTable.finalY+4;
-            doc.setFontSize(7);doc.setFont('helvetica','bold');doc.setTextColor(50,50,50);
-            doc.text('Legend: W=Working  S=StandBy  O=Outstation  A=Anchorage  SA=Sailing  AL=Approved Leave  UL=Unapproved Leave | WRK/SBY/OUT/ANC/SAL/A/L/U/L=Day counts  Eng=Engaged days',ML,ly);
+            // Footer on all pages
+            const pc=doc.getNumberOfPages();
+            for(let p=1;p<=pc;p++){
+                doc.setPage(p);
+                doc.setFontSize(7);doc.setFont('helvetica','italic');doc.setTextColor(160,160,160);
+                doc.text('IMSE Tech India — Attendance Register — '+MN[shM-1]+' '+shY+' — Page '+p+' of '+pc,PW/2,291,{align:'center'});
+            }
 
-            const pc=doc.getNumberOfPages();for(let p=1;p<=pc;p++){doc.setPage(p);doc.setFontSize(6.5);doc.setFont('helvetica','italic');doc.setTextColor(160,160,160);doc.text('IMSE Tech India — Attendance Register — Page '+p+' of '+pc,PW/2,208,{align:'center'});}
             doc.save('Attendance_'+(selID?(staffToExport[0]?.name?.replace(/\s+/g,'_')||'Staff'):'All_Staff')+'_'+MN[shM-1]+'_'+shY+'.pdf');
         }
 
@@ -5855,15 +5930,28 @@
             const staffToExport=selID?staff.filter(s=>s.staffID===selID):staff.filter(s=>s.status==='Active');
             if(!staffToExport.length){alert('No staff to export.');return;}
             const dates=_attPeriodDates(shY,shM);
-            const ATT_SHORT={Working:'Working',StandBy:'StandBy',Outstation:'Outstation',Anchorage:'Anchorage',Sailing:'Sailing',ApprovedLeave:'Appr.Leave',UnApprovedLeave:'Unappr.Leave'};
-            const dayHeaders=dates.map(d=>d.toLocaleDateString('en-IN',{day:'2-digit',month:'2-digit'}));
-            const rows=[['#','Staff Name','Staff Type','Staff ID',...dayHeaders,'Working','StandBy','Outstation','Anchorage','Sailing','Appr.Leave','Unappr.Leave','Engaged Total']];
-            staffToExport.forEach((s,i)=>{
+            // One row per day per staff
+            const rows=[['Employee Code','Staff Name','Staff Type','Designation','Staff Status','Date','Day','Attendance Status','Project','Remarks']];
+            staffToExport.forEach(s=>{
                 const lookup=_attLookup(s.staffID,dates);
-                const cnt={Working:0,StandBy:0,Outstation:0,Anchorage:0,Sailing:0,ApprovedLeave:0,UnApprovedLeave:0};
-                const dayCells=dates.map(d=>{const k=_attDayKey(d),r=lookup[k];if(r&&cnt[r.status]!==undefined)cnt[r.status]++;return r?(ATT_SHORT[r.status]||r.status):'';});
-                const eng=cnt.Working+cnt.Outstation+cnt.Anchorage+cnt.Sailing;
-                rows.push([i+1,s.name,s.staffType,s.staffID,...dayCells,cnt.Working,cnt.StandBy,cnt.Outstation,cnt.Anchorage,cnt.Sailing,cnt.ApprovedLeave,cnt.UnApprovedLeave,eng]);
+                dates.forEach(date=>{
+                    const key=_attDayKey(date);
+                    const rec=lookup[key];
+                    const dayName=date.toLocaleDateString('en-IN',{weekday:'long'});
+                    const isWE=date.getDay()===0||date.getDay()===6;
+                    rows.push([
+                        s.staffID||'',
+                        s.name,
+                        s.staffType||'',
+                        s.designation||'',
+                        s.status||'Active',
+                        key,
+                        dayName,
+                        rec?rec.status:(isWE?'Weekend':''),
+                        rec?.project||'',
+                        rec?.remarks||''
+                    ]);
+                });
             });
             const csv=rows.map(r=>r.map(c=>'"'+(String(c||'').replace(/"/g,'""'))+'"').join(',')).join('\n');
             const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'});
@@ -6050,22 +6138,22 @@
                             ${[2024,2025,2026,2027,2028].map(y=>`<option value="${y}" ${y===shY?'selected':''}>${y}</option>`).join('')}
                         </select></div>
                     <div class="${isTech?'':'hidden'}"><label class="block text-xs font-semibold text-gray-600 mb-1">Basic Salary (₹)</label>
-                        <input type="number" id="twBasicTop" value="${techWageState.basic||0}" oninput="onTechWageFieldChange('basic',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm" min="0" step="1"/></div>
+                        <input type="number" id="twBasicTop" value="${techWageState.basic||0}" onchange="onTechWageFieldChange('basic',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm" min="0" step="1"/></div>
                 </div>
                 <div id="twRatesWrap" class="${isTech?'':'hidden'}">
                     <div class="border border-purple-200 rounded-xl p-3 mb-3 bg-purple-50 grid grid-cols-2 md:grid-cols-4 gap-3">
-                        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Variable Allow. (₹)</label><input type="number" id="twVariableAllow" value="${techWageState.variableAllow||0}" min="0" step="1" oninput="onTechWageFieldChange('variableAllow',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Variable Allow. (₹)</label><input type="number" id="twVariableAllow" value="${techWageState.variableAllow||0}" min="0" step="1" onchange="onTechWageFieldChange('variableAllow',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
                     </div>
                     <div class="border border-red-200 rounded-xl p-4 mb-3 bg-red-50">
                         <p class="text-xs font-bold text-red-700 mb-1">📋 Statutory Deductions (auto-computed)</p>
                         <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">PF % (of Basic+Fixed)</label><input type="number" id="twPFPct" value="${techWageState.pfPct??12}" min="0" max="30" step="0.01" oninput="onTechWageFieldChange('pfPct',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
-                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">ESIC % (≤₹21,000 Basic+Fixed)</label><input type="number" id="twESICPct" value="${techWageState.esicPct??0.75}" min="0" max="5" step="0.01" oninput="onTechWageFieldChange('esicPct',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
-                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">TDS /month (₹)</label><input type="number" id="twTDSAmt" value="${techWageState.tdsAmt||0}" min="0" step="0.01" oninput="onTechWageFieldChange('tdsAmt',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">PF % (of Basic+Fixed)</label><input type="number" id="twPFPct" value="${techWageState.pfPct??12}" min="0" max="30" step="0.01" onchange="onTechWageFieldChange('pfPct',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">ESIC % (≤₹21,000 Basic+Fixed)</label><input type="number" id="twESICPct" value="${techWageState.esicPct??0.75}" min="0" max="5" step="0.01" onchange="onTechWageFieldChange('esicPct',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">TDS /month (₹)</label><input type="number" id="twTDSAmt" value="${techWageState.tdsAmt||0}" min="0" step="0.01" onchange="onTechWageFieldChange('tdsAmt',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
                         </div>
                         <div class="grid grid-cols-2 gap-3">
-                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Additional Deduction (₹) <span class="text-gray-400">loan/recovery</span></label><input type="number" id="twAddlDed" value="${techWageState.addlDeduction||0}" min="0" step="0.01" oninput="updateTechDeductState('addlDeduction',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
-                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Ded. Remark</label><input type="text" id="twAddlDedRemark" value="${techWageState.addlDeductionRemark||''}" oninput="updateTechDeductState('addlDeductionRemark',this.value)" placeholder="e.g. Loan recovery" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Additional Deduction (₹) <span class="text-gray-400">loan/recovery</span></label><input type="number" id="twAddlDed" value="${techWageState.addlDeduction||0}" min="0" step="0.01" onchange="updateTechDeductState('addlDeduction',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Ded. Remark</label><input type="text" id="twAddlDedRemark" value="${techWageState.addlDeductionRemark||''}" onchange="updateTechDeductState('addlDeductionRemark',this.value)" placeholder="e.g. Loan recovery" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
                         </div>
                     </div>
                 </div>
