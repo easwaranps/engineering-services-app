@@ -7053,8 +7053,13 @@
                                         <button onclick="openReleaseFundsModal('${p.projExpID}','${r.frID}',${r.amount})" class="px-2 py-0.5 bg-green-600 text-white rounded text-xs hover:bg-green-700">💸 Release</button>`
                                         :r.status==='Received'?`
                                         <div class="flex gap-1 justify-center flex-wrap">
-                                            <button onclick="openAttachReceiptModal('${p.projExpID}','${r.frID}')" class="px-2 py-0.5 ${r.paymentReceipts?.length?'bg-indigo-100 text-indigo-700':'bg-gray-100 text-gray-600'} rounded text-xs hover:bg-indigo-200">📎 ${r.paymentReceipts?.length?r.paymentReceipts.length+' receipt'+(r.paymentReceipts.length>1?'s':''):'Attach Receipt'}</button>
-                                            ${r.paymentReceipts?.length?`<button onclick="viewPaymentReceipts('${p.projExpID}','${r.frID}')" class="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs hover:bg-blue-200">👁 View</button>`:''}
+                                            <button onclick="openAttachReceiptModal('${p.projExpID}','${r.frID}')" class="px-2 py-0.5 ${r.paymentReceipts?.length?'bg-indigo-100 text-indigo-700':'bg-amber-100 text-amber-700'} rounded text-xs hover:bg-indigo-200 font-medium">
+                                                📎 ${r.paymentReceipts?.length ? r.paymentReceipts.length+' receipt'+(r.paymentReceipts.length>1?'s':'') : 'Attach Receipt'}
+                                            </button>
+                                            ${r.paymentReceipts?.length ? `
+                                            <button onclick="viewPaymentReceipts('${p.projExpID}','${r.frID}')" class="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs hover:bg-blue-200 font-medium">👁 View</button>
+                                            <button onclick="deleteReceiptByIndex('${p.projExpID}','${r.frID}')" class="px-2 py-0.5 bg-red-100 text-red-600 rounded text-xs hover:bg-red-200 font-medium" title="Delete receipt(s)">🗑 Del</button>
+                                            ` : ''}
                                         </div>`
                                         :`<span class="text-gray-300">—</span>`}
                                     </td>
