@@ -1089,21 +1089,21 @@
         doc.text('IMSE Tech India — Field Expense Report',PW/2,20,{align:'center'});
         doc.setFontSize(8.5);doc.setTextColor(203,213,225);
         doc.text('Project: '+p.projectName+(p.projectRef?' | Ref: '+p.projectRef:'')+'  |  Generated: '+new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}),PW/2,27,{align:'center'});
-        doc.text(p.startDate?'Period: '+p.startDate+(p.endDate?' → '+p.endDate:''):'',PW/2,33,{align:'center'});
+        doc.text(p.startDate?'Period: '+p.startDate+(p.endDate?' to '+p.endDate:''):'',PW/2,33,{align:'center'});
         doc.setFillColor(29,78,216);doc.rect(0,37,210,2,'F');
         let y=44;
 
         // ── Summary box ─────────────────────────────────────────
         doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',styles:{fontSize:9,cellPadding:3},
             headStyles:{fillColor:[30,58,138],textColor:[255,255,255],fontStyle:'bold'},
-            head:[['RECONCILIATION SUMMARY','','']],
+            head:[[{content:'RECONCILIATION SUMMARY',colSpan:3,styles:{halign:'center'}}]],
             body:[
-                ['Office Fund Provided',INR(funds),''],
-                ['Total Fund Requested',INR(totalReq),'('+reqs.length+' request'+(reqs.length!==1?'s':'')+'  |  Pending: '+reqs.filter(r=>r.status==='Pending').length+')'],
-                ['Total Expenses Claimed',INR(spent),'('+items.length+' entr'+(items.length!==1?'ies':'y')+')'],
-                [{content:bal>=0?'BALANCE REMAINING':'OVER-SPENT',styles:{fontStyle:'bold',textColor:bal>=0?[21,128,61]:[220,38,38]}},{content:INR(Math.abs(bal)),styles:{fontStyle:'bold',textColor:bal>=0?[21,128,61]:[220,38,38]}},'']
+                [{content:'Office Fund Provided',styles:{fontStyle:'bold',fillColor:[241,245,249]}},INR(funds),''],
+                [{content:'Total Fund Requested',styles:{fontStyle:'bold',fillColor:[241,245,249]}},INR(totalReq),'('+reqs.length+' request'+(reqs.length!==1?'s':'')+' | Pending: '+reqs.filter(r=>r.status==='Pending').length+')'],
+                [{content:'Total Expenses Claimed',styles:{fontStyle:'bold',fillColor:[241,245,249]}},INR(spent),'('+items.length+' entr'+(items.length!==1?'ies':'y')+')'],
+                [{content:bal>=0?'BALANCE REMAINING':'OVER-SPENT',styles:{fontStyle:'bold',textColor:bal>=0?[21,128,61]:[220,38,38],fillColor:bal>=0?[240,253,244]:[254,242,242]}},{content:INR(Math.abs(bal)),styles:{fontStyle:'bold',textColor:bal>=0?[21,128,61]:[220,38,38]}},'']
             ],
-            columnStyles:{0:{cellWidth:75,fontStyle:'bold',fillColor:[241,245,249]},1:{cellWidth:40,halign:'right'},2:{cellWidth:CW-115}}
+            columnStyles:{0:{cellWidth:75},1:{cellWidth:45,halign:'right'},2:{cellWidth:CW-120}}
         });
         y=doc.lastAutoTable.finalY+6;
 
@@ -1111,34 +1111,62 @@
         if (reqs.length) {
             doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',styles:{fontSize:8.5,cellPadding:2.5},
                 headStyles:{fillColor:[30,58,138],textColor:[255,255,255],fontStyle:'bold'},
-                head:[['FUND REQUESTS SUBMITTED','','','','']],
-                body:[
-                    ['#','Date','Purpose','Remarks','Amount','Status'].map(h=>({content:h,styles:{fontStyle:'bold'}})),
-                    ...reqs.map((r,i)=>[String(i+1),r.date,r.purpose,r.remarks||'—',INR(r.amount),{content:r.status,styles:{textColor:r.status==='Received'?[21,128,61]:r.status==='Approved'?[29,78,216]:[180,83,9],fontStyle:'bold'}}])
-                ],
-                columnStyles:{0:{cellWidth:8,halign:'center'},1:{cellWidth:22},2:{cellWidth:36},3:{cellWidth:CW-8-22-36-22-22},4:{cellWidth:22,halign:'right'},5:{cellWidth:22,halign:'center'}}
+                head:[[
+                    {content:'#',styles:{cellWidth:8,halign:'center'}},
+                    {content:'Date',styles:{cellWidth:24}},
+                    {content:'Purpose',styles:{cellWidth:38}},
+                    {content:'Remarks',styles:{cellWidth:CW-8-24-38-35-22}},
+                    {content:'Amount (INR)',styles:{cellWidth:35,halign:'right'}},
+                    {content:'Status',styles:{cellWidth:22,halign:'center'}}
+                ]],
+                body: reqs.map((r,i)=>[
+                    {content:String(i+1),styles:{halign:'center'}},
+                    r.date,r.purpose,r.remarks||'—',
+                    {content:INR(r.amount),styles:{halign:'right',fontStyle:'bold'}},
+                    {content:r.status,styles:{halign:'center',fontStyle:'bold',
+                        textColor:r.status==='Received'?[21,128,61]:r.status==='Approved'?[29,78,216]:[180,83,9]}}
+                ]),
+                columnStyles:{0:{cellWidth:8},1:{cellWidth:24},2:{cellWidth:38},3:{cellWidth:CW-8-24-38-35-22},4:{cellWidth:35,halign:'right'},5:{cellWidth:22,halign:'center'}}
             });
             y=doc.lastAutoTable.finalY+6;
         }
 
         // ── Expense entries table ────────────────────────────────
         if (items.length) {
-            doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',styles:{fontSize:8.5,cellPadding:2.5},
+            // Column widths that sum exactly to CW (182mm for ML=MR=14)
+            // #=8, Date=24, Category=28, Description=54, Technicians=28, Mode=16, Amount=24 → total=182
+            const C={n:8,dt:24,cat:28,desc:CW-8-24-28-28-16-24,tech:28,mode:16,amt:24};
+            doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+                styles:{fontSize:8.5,cellPadding:2.5,overflow:'linebreak'},
                 headStyles:{fillColor:[13,124,102],textColor:[255,255,255],fontStyle:'bold'},
-                head:[['EXPENSE ENTRIES','','','','','']],
+                head:[[
+                    {content:'#',styles:{cellWidth:C.n,halign:'center'}},
+                    {content:'Date',styles:{cellWidth:C.dt}},
+                    {content:'Category',styles:{cellWidth:C.cat}},
+                    {content:'Description / Vendor',styles:{cellWidth:C.desc}},
+                    {content:'Technicians',styles:{cellWidth:C.tech}},
+                    {content:'Mode',styles:{cellWidth:C.mode,halign:'center'}},
+                    {content:'Amount (INR)',styles:{cellWidth:C.amt,halign:'right'}}
+                ]],
                 body:[
-                    ['#','Date','Category','Description / Vendor','Technicians','Pay Mode','Amount'].map(h=>({content:h,styles:{fontStyle:'bold'}})),
                     ...items.map((it,i)=>{
                         const techs=(it.technicians||[]).map(t=>t.name).join(', ')||it.staffName||'—';
                         const attCount=(it.billAttachments||[]).length+(it.billData?1:0);
-                        return [String(i+1),it.date,it.category,(it.description||'—')+(it.vendor?' / '+it.vendor:'')+(attCount?' 📎'+attCount:''),techs,it.payMode||'Cash',{content:INR(it.amount),styles:{fontStyle:'bold'}}];
+                        const desc=(it.description||'—')+(it.vendor?' / '+it.vendor:'')+(attCount?' ['+attCount+' bill'+(attCount>1?'s':'')+']':'');
+                        return [
+                            {content:String(i+1),styles:{halign:'center'}},
+                            it.date, it.category, desc, techs,
+                            {content:it.payMode||'Cash',styles:{halign:'center',fontSize:7.5}},
+                            {content:INR(it.amount),styles:{halign:'right',fontStyle:'bold'}}
+                        ];
                     }),
-                    [{content:'TOTAL SPENT',styles:{fontStyle:'bold',fillColor:[224,242,254],textColor:[15,23,72]}},
-                     '','','','',
-                     {content:INR(spent),styles:{fontStyle:'bold',fillColor:[186,230,253],textColor:[15,23,72]}},
-                     '']
+                    // TOTAL row — correct colspan usage
+                    [
+                        {content:'TOTAL SPENT',colSpan:6,styles:{fontStyle:'bold',fillColor:[224,242,254],textColor:[15,23,72],halign:'right'}},
+                        {content:INR(spent),styles:{fontStyle:'bold',fillColor:[186,230,253],textColor:[15,23,72],halign:'right'}}
+                    ]
                 ],
-                columnStyles:{0:{cellWidth:8,halign:'center'},1:{cellWidth:22},2:{cellWidth:28},3:{cellWidth:CW-8-22-28-30-18-22},4:{cellWidth:30},5:{cellWidth:18},6:{cellWidth:22,halign:'right'}}
+                columnStyles:{0:{cellWidth:C.n},1:{cellWidth:C.dt},2:{cellWidth:C.cat},3:{cellWidth:C.desc},4:{cellWidth:C.tech},5:{cellWidth:C.mode},6:{cellWidth:C.amt}}
             });
             y=doc.lastAutoTable.finalY+6;
         }
@@ -1147,12 +1175,14 @@
         if (y>240){doc.addPage();y=15;}
         doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',styles:{fontSize:9,cellPadding:3},
             headStyles:{fillColor:[88,28,135],textColor:[255,255,255],fontStyle:'bold'},
-            head:[['FUND RECONCILIATION']],
+            head:[[{content:'FUND RECONCILIATION',colSpan:2,styles:{halign:'center'}}]],
             body:[
-                [`Fund Provided by Office: ${INR(funds)}`],
-                [`Less: Total Expenses Claimed: ${INR(spent)}`],
-                [{content:`Balance ${bal>=0?'to be Returned':'Over-Spent'}: ${INR(Math.abs(bal))}`,styles:{fontStyle:'bold',textColor:bal>=0?[21,128,61]:[220,38,38]}}]
-            ],columnStyles:{0:{cellWidth:CW}}
+                [{content:'Fund Provided by Office',styles:{fontStyle:'bold',fillColor:[241,245,249],cellWidth:100}},{content:INR(funds),styles:{halign:'right'}}],
+                [{content:'Less: Total Expenses Claimed',styles:{fontStyle:'bold',fillColor:[241,245,249]}},{content:INR(spent),styles:{halign:'right'}}],
+                [{content:bal>=0?'Balance to be Returned to Office':'Amount Over-Spent',styles:{fontStyle:'bold',fillColor:bal>=0?[240,253,244]:[254,242,242],textColor:bal>=0?[21,128,61]:[220,38,38]}},
+                 {content:INR(Math.abs(bal)),styles:{halign:'right',fontStyle:'bold',textColor:bal>=0?[21,128,61]:[220,38,38]}}]
+            ],
+            columnStyles:{0:{cellWidth:CW-45},1:{cellWidth:45,halign:'right'}}
         });
         y=doc.lastAutoTable.finalY+8;
 
