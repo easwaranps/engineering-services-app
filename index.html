@@ -354,6 +354,54 @@
         </div>
     </div>
 
+    <!-- Attach Payment Receipt Modal -->
+    <div id="attachReceiptModal" class="modal">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md m-4">
+            <div class="bg-gradient-to-r from-indigo-600 to-blue-600 p-5 text-white flex justify-between items-center">
+                <h2 class="text-lg font-bold">📎 Attach Payment Receipt</h2>
+                <button onclick="closeAttachReceiptModal()" class="text-white text-2xl font-bold leading-none">✕</button>
+            </div>
+            <div class="p-6 space-y-4">
+                <!-- Fund request summary -->
+                <div class="bg-indigo-50 border border-indigo-200 rounded-xl p-4">
+                    <p class="text-xs font-semibold text-indigo-700 mb-2">FUND REQUEST DETAILS</p>
+                    <div class="grid grid-cols-3 gap-3 text-center">
+                        <div>
+                            <p class="text-xs text-gray-500">Project</p>
+                            <p class="text-sm font-bold text-gray-800" id="arProjName">—</p>
+                        </div>
+                        <div>
+                            <p class="text-xs text-gray-500">Date</p>
+                            <p class="text-sm font-semibold text-gray-700" id="arReqDate">—</p>
+                        </div>
+                        <div>
+                            <p class="text-xs text-gray-500">Released</p>
+                            <p class="text-sm font-bold text-green-700" id="arReqAmt">—</p>
+                        </div>
+                    </div>
+                    <p class="text-xs text-gray-400 mt-2 text-center" id="arExistingCount"></p>
+                </div>
+
+                <!-- New receipts to attach -->
+                <div class="border border-dashed border-indigo-300 rounded-xl p-4 bg-gray-50">
+                    <p class="text-xs font-semibold text-gray-600 mb-2">Add New Receipt(s)</p>
+                    <div id="arNewGrid" class="flex flex-wrap gap-2 mb-3 min-h-8"></div>
+                    <input type="file" id="arFiles" accept="image/*,application/pdf" multiple class="hidden" onchange="handleArFiles(this)"/>
+                    <button type="button" onclick="document.getElementById('arFiles').click()"
+                        class="text-xs px-4 py-2 rounded-lg border border-indigo-300 bg-white text-indigo-600 hover:bg-indigo-50 font-medium">
+                        📷 Add Screenshot / PDF Receipt
+                    </button>
+                    <p class="text-xs text-gray-400 mt-2">Supported: images (JPG, PNG) and PDF. Max 5MB each.</p>
+                </div>
+
+                <div class="flex gap-3 pt-1">
+                    <button onclick="closeAttachReceiptModal()" class="flex-1 px-5 py-2 border rounded-xl text-gray-600 hover:bg-gray-50">Cancel</button>
+                    <button onclick="saveAttachedReceipts()" class="flex-1 px-5 py-2 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700">💾 Save Receipts</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Admin Unlock Modal -->
     <div id="unlockModal" class="modal">
         <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm m-4 overflow-hidden">
@@ -6656,80 +6704,299 @@
         let currentProjExp = null;
 
         function renderProjectExpenses(content) {
-            const totalFunds = projectExpenses.reduce((s,p) => s + (parseFloat(p.totalFunds)||0), 0);
-            const totalSpent = projectExpenses.reduce((s,p) => {
-                const spent = (p.items||[]).reduce((a,i) => a + (parseFloat(i.amount)||0), 0);
-                return s + spent;
-            }, 0);
-            const fmt = n => '₹' + n.toLocaleString('en-IN', {minimumFractionDigits:2});
+            const fmt = n => '₹' + (+n||0).toLocaleString('en-IN', {minimumFractionDigits:2});
+
+            // Collect all pending fund requests across all projects
+            const allPending = [];
+            projectExpenses.forEach(p => {
+                (p.fundRequests||[]).forEach(r => {
+                    if (r.status === 'Pending' || r.status === 'Approved') {
+                        allPending.push({...r, projExpID: p.projExpID, projectName: p.projectName, projectRef: p.projectRef||''});
+                    }
+                });
+            });
+            allPending.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+
+            // Summary totals
+            const totalFunds  = projectExpenses.reduce((s,p)=>s+(parseFloat(p.totalFunds)||0),0);
+            const totalSpent  = projectExpenses.reduce((s,p)=>s+(p.items||[]).reduce((a,i)=>a+(parseFloat(i.amount)||0),0),0);
+            const totalTfIn   = projectExpenses.reduce((s,p)=>s+(p.fundTransfers||[]).filter(t=>t.direction==='in').reduce((a,t)=>a+(parseFloat(t.amount)||0),0),0);
+            const totalTfOut  = projectExpenses.reduce((s,p)=>s+(p.fundTransfers||[]).filter(t=>t.direction==='out').reduce((a,t)=>a+(parseFloat(t.amount)||0),0),0);
+
             content.innerHTML = `
             <div class="flex items-center justify-between mb-6">
                 <div>
-                    <h2 class="text-3xl font-bold text-gray-800">🧳 Project Expenses</h2>
-                    <p class="text-gray-500 text-sm mt-1">Food, Travel & Reimbursements</p>
+                    <h2 class="text-3xl font-bold text-gray-800">🧳 Projects & Field Expenses</h2>
+                    <p class="text-gray-500 text-sm mt-1">Manage projects, approve fund requests and view field expenses</p>
                 </div>
                 <button onclick="openProjExpModal()" class="px-5 py-2 bg-yellow-600 text-white rounded-xl hover:bg-yellow-700 font-medium">+ New Project</button>
             </div>
 
-            <!-- Summary cards -->
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                <div class="bg-gradient-to-br from-yellow-400 to-orange-500 rounded-xl p-4 text-white shadow">
-                    <p class="text-xs opacity-80">Total Projects</p><p class="text-2xl font-bold">${projectExpenses.length}</p></div>
-                <div class="bg-gradient-to-br from-green-500 to-teal-600 rounded-xl p-4 text-white shadow">
-                    <p class="text-xs opacity-80">Total Funds Received</p><p class="text-2xl font-bold">${fmt(totalFunds)}</p></div>
+            <!-- Summary -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+                <div class="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-xl p-4 text-white shadow">
+                    <p class="text-xs opacity-80">Total Office Funds</p>
+                    <p class="text-2xl font-bold">${fmt(totalFunds)}</p>
+                </div>
                 <div class="bg-gradient-to-br from-red-500 to-pink-600 rounded-xl p-4 text-white shadow">
-                    <p class="text-xs opacity-80">Total Spent</p><p class="text-2xl font-bold">${fmt(totalSpent)}</p>
-                    <p class="text-xs opacity-80 mt-1">Balance: ${fmt(totalFunds - totalSpent)}</p></div>
+                    <p class="text-xs opacity-80">Total Spent by Field</p>
+                    <p class="text-2xl font-bold">${fmt(totalSpent)}</p>
+                    <p class="text-xs opacity-80 mt-1">Balance: ${fmt(totalFunds-totalSpent)}</p>
+                </div>
+                <div class="bg-gradient-to-br from-amber-500 to-orange-600 rounded-xl p-4 text-white shadow">
+                    <p class="text-xs opacity-80">Pending Fund Requests</p>
+                    <p class="text-2xl font-bold">${allPending.filter(r=>r.status==='Pending').length}</p>
+                    <p class="text-xs opacity-80 mt-1">${fmt(allPending.filter(r=>r.status==='Pending').reduce((a,r)=>a+(parseFloat(r.amount)||0),0))}</p>
+                </div>
+                <div class="bg-gradient-to-br from-green-500 to-teal-600 rounded-xl p-4 text-white shadow">
+                    <p class="text-xs opacity-80">Total Projects</p>
+                    <p class="text-2xl font-bold">${projectExpenses.length}</p>
+                </div>
             </div>
 
-            <!-- Project list -->
+            <!-- ── PENDING FUND REQUESTS PANEL ── -->
+            ${allPending.length ? `
+            <div class="bg-white border-2 border-amber-300 rounded-xl shadow-sm mb-6 overflow-hidden">
+                <div class="bg-amber-50 px-5 py-3 border-b border-amber-200 flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <span class="text-lg">💰</span>
+                        <h3 class="font-bold text-amber-800">Fund Requests Awaiting Action</h3>
+                        <span class="px-2 py-0.5 bg-amber-200 text-amber-800 rounded-full text-xs font-bold">${allPending.length}</span>
+                    </div>
+                </div>
+                <table class="w-full text-sm">
+                    <thead class="bg-amber-50 text-xs text-gray-500 uppercase">
+                        <tr>
+                            <th class="px-4 py-2 text-left">Project</th>
+                            <th class="px-4 py-2 text-left">Date</th>
+                            <th class="px-4 py-2 text-left">Purpose</th>
+                            <th class="px-4 py-2 text-left">Requested by</th>
+                            <th class="px-4 py-2 text-right">Amount</th>
+                            <th class="px-4 py-2 text-center">Status</th>
+                            <th class="px-4 py-2 text-center">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${allPending.map(r=>`
+                        <tr class="border-t hover:bg-amber-50">
+                            <td class="px-4 py-2">
+                                <p class="font-medium text-gray-800">${r.projectName}</p>
+                                ${r.projectRef?`<p class="text-xs text-gray-400">${r.projectRef}</p>`:''}
+                            </td>
+                            <td class="px-4 py-2 text-xs text-gray-500">${r.date}</td>
+                            <td class="px-4 py-2">
+                                <span class="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs">${r.purpose}</span>
+                                ${r.remarks?`<p class="text-xs text-gray-400 mt-0.5">${r.remarks}</p>`:''}
+                            </td>
+                            <td class="px-4 py-2 text-xs text-gray-500">${r.addedBy||'—'}</td>
+                            <td class="px-4 py-2 text-right font-bold text-gray-800">${fmt(r.amount)}</td>
+                            <td class="px-4 py-2 text-center">
+                                <span class="px-2 py-1 rounded-full text-xs font-semibold ${r.status==='Approved'?'bg-blue-100 text-blue-700':'bg-amber-100 text-amber-700'}">${r.status}</span>
+                            </td>
+                            <td class="px-4 py-2 text-center">
+                                <div class="flex gap-1 justify-center flex-wrap">
+                                    ${r.status==='Pending'?`
+                                    <button onclick="approveFundRequest('${r.projExpID}','${r.frID}')"
+                                        class="px-2 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 font-medium">✓ Approve</button>
+                                    <button onclick="rejectFundRequest('${r.projExpID}','${r.frID}')"
+                                        class="px-2 py-1 bg-red-100 text-red-600 rounded text-xs hover:bg-red-200 font-medium">✗ Reject</button>
+                                    `:`
+                                    <button onclick="openReleaseFundsModal('${r.projExpID}','${r.frID}',${r.amount})"
+                                        class="px-2 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700 font-medium">💸 Release Funds</button>
+                                    `}
+                                    ${r.paymentReceipts?.length?`<button onclick="viewPaymentReceipts('${r.projExpID}','${r.frID}')" class="px-2 py-1 bg-indigo-100 text-indigo-700 rounded text-xs hover:bg-indigo-200 font-medium">📎 Receipt</button>`:''}
+                                </div>
+                            </td>
+                        </tr>`).join('')}
+                    </tbody>
+                </table>
+            </div>` : `
+            <div class="bg-green-50 border border-green-200 rounded-xl p-4 mb-6 flex items-center gap-3">
+                <span class="text-2xl">✅</span>
+                <p class="text-green-700 font-medium">No pending fund requests — all requests have been actioned.</p>
+            </div>`}
+
+            <!-- ── PROJECT LIST ── -->
             ${!projectExpenses.length ? `<div class="text-center py-16 text-gray-400"><div class="text-5xl mb-4">🧳</div><p>No project expenses yet.</p></div>` :
             projectExpenses.map(p => {
-                const spent = (p.items||[]).reduce((a,i) => a + (parseFloat(i.amount)||0), 0);
-                const balance = (parseFloat(p.totalFunds)||0) - spent;
-                const pct = p.totalFunds > 0 ? Math.min(100, (spent/p.totalFunds)*100) : 0;
-                return `<div class="bg-white border border-gray-200 rounded-xl shadow-sm mb-4 overflow-hidden">
-                    <div class="p-4 flex justify-between items-start">
-                        <div>
-                            <p class="font-bold text-gray-800 text-lg">${p.projectName}</p>
-                            <p class="text-xs text-gray-500">${p.projectRef||''} · ${p.startDate||''} ${p.endDate ? '→ '+p.endDate : ''}</p>
-                            <p class="text-xs text-gray-400 mt-1">${p.description||''}</p>
+                const spent   = (p.items||[]).reduce((a,i)=>a+(parseFloat(i.amount)||0),0);
+                const tfIn    = (p.fundTransfers||[]).filter(t=>t.direction==='in').reduce((a,t)=>a+(parseFloat(t.amount)||0),0);
+                const tfOut   = (p.fundTransfers||[]).filter(t=>t.direction==='out').reduce((a,t)=>a+(parseFloat(t.amount)||0),0);
+                const funds   = parseFloat(p.totalFunds)||0;
+                const balance = funds + tfIn - spent - tfOut;
+                const pct     = (funds+tfIn)>0 ? Math.min(100,(spent+tfOut)/(funds+tfIn)*100) : 0;
+                const projPending = (p.fundRequests||[]).filter(r=>r.status==='Pending'||r.status==='Approved').length;
+                const projReqs    = (p.fundRequests||[]);
+                return `
+                <div class="bg-white border border-gray-200 rounded-xl shadow-sm mb-4 overflow-hidden">
+                    <!-- Project header -->
+                    <div class="p-4">
+                        <div class="flex justify-between items-start mb-3">
+                            <div>
+                                <p class="font-bold text-gray-800 text-lg">${p.projectName}</p>
+                                <p class="text-xs text-gray-500">${p.projectRef||''} · ${p.startDate||''} ${p.endDate?'→ '+p.endDate:''}</p>
+                                <p class="text-xs text-gray-400 mt-0.5">${p.description||''}</p>
+                            </div>
+                            <div class="flex gap-2 items-start">
+                                ${projPending>0?`<span class="px-2 py-1 bg-amber-100 text-amber-700 rounded-lg text-xs font-bold">⏳ ${projPending} pending</span>`:''}
+                                <button onclick="editProjExp('${p.projExpID}')" class="px-3 py-1.5 border text-gray-600 rounded-lg text-xs hover:bg-gray-50">Edit</button>
+                                <button onclick="deleteProjExp('${p.projExpID}')" class="text-red-500 hover:text-red-700 text-xs px-2">✕</button>
+                            </div>
                         </div>
-                        <div class="flex gap-2">
-                            <button onclick="openProjExpItemModal('${p.projExpID}')" class="px-3 py-1.5 bg-yellow-600 text-white rounded-lg text-xs hover:bg-yellow-700">+ Add Expense</button>
-                            <button onclick="editProjExp('${p.projExpID}')" class="px-3 py-1.5 border text-gray-600 rounded-lg text-xs hover:bg-gray-50">Edit</button>
-                            <button onclick="deleteProjExp('${p.projExpID}')" class="text-red-500 hover:text-red-700 text-xs px-2">✕</button>
-                        </div>
-                    </div>
-                    <!-- Fund summary bar -->
-                    <div class="px-4 pb-2">
                         <div class="flex justify-between text-xs text-gray-500 mb-1">
-                            <span>Spent: ${fmt(spent)}</span><span>Balance: <strong class="${balance>=0?'text-green-700':'text-red-700'}">${fmt(balance)}</strong></span><span>Fund: ${fmt(parseFloat(p.totalFunds)||0)}</span>
+                            <span>Fund: <strong>${fmt(funds)}</strong>${tfIn>0?` <span class="text-green-600">+${fmt(tfIn)} transferred in</span>`:''}</span>
+                            <span>Spent: <strong class="text-red-600">${fmt(spent)}</strong>${tfOut>0?` + ${fmt(tfOut)} out`:''}</span>
+                            <span>Balance: <strong class="${balance>=0?'text-green-700':'text-red-700'}">${fmt(balance)}</strong></span>
                         </div>
-                        <div class="w-full bg-gray-200 rounded-full h-2"><div class="bg-${pct>90?'red':pct>70?'yellow':'green'}-500 h-2 rounded-full" style="width:${pct}%"></div></div>
+                        <div class="w-full bg-gray-200 rounded-full h-2 mb-3">
+                            <div class="bg-${pct>90?'red':pct>70?'yellow':'green'}-500 h-2 rounded-full" style="width:${pct}%"></div>
+                        </div>
                     </div>
-                    <!-- Expense items -->
-                    ${(p.items||[]).length ? `<div class="border-t">
+
+                    <!-- Fund requests for this project -->
+                    ${projReqs.length ? `
+                    <div class="border-t">
+                        <div class="px-4 py-2 bg-blue-50 text-xs font-bold text-blue-700 uppercase tracking-wide">
+                            Fund Requests (${projReqs.length})
+                        </div>
+                        <table class="w-full text-xs">
+                            <thead class="bg-gray-50 text-gray-400 uppercase">
+                                <tr>
+                                    <th class="px-3 py-1.5 text-left">Date</th>
+                                    <th class="px-3 py-1.5 text-left">Purpose</th>
+                                    <th class="px-3 py-1.5 text-left">Requested By</th>
+                                    <th class="px-3 py-1.5 text-right">Requested</th>
+                                    <th class="px-3 py-1.5 text-right">Released</th>
+                                    <th class="px-3 py-1.5 text-center">Status</th>
+                                    <th class="px-3 py-1.5 text-center">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            ${projReqs.map(r=>`
+                                <tr class="border-t hover:bg-blue-50">
+                                    <td class="px-3 py-1.5">${r.date}</td>
+                                    <td class="px-3 py-1.5">${r.purpose}${r.remarks?`<br><span class="text-gray-400">${r.remarks}</span>`:''}</td>
+                                    <td class="px-3 py-1.5 text-gray-500">${r.addedBy||'—'}</td>
+                                    <td class="px-3 py-1.5 text-right font-medium">${fmt(r.amount)}</td>
+                                    <td class="px-3 py-1.5 text-right font-medium text-green-700">${r.releasedAmount?fmt(r.releasedAmount):'—'}</td>
+                                    <td class="px-3 py-1.5 text-center">
+                                        <span class="px-1.5 py-0.5 rounded text-xs font-semibold
+                                            ${r.status==='Received'?'bg-green-100 text-green-700':
+                                              r.status==='Approved'?'bg-blue-100 text-blue-700':
+                                              r.status==='Rejected'?'bg-red-100 text-red-700':
+                                              'bg-amber-100 text-amber-700'}">${r.status}</span>
+                                    </td>
+                                    <td class="px-3 py-1.5 text-center">
+                                        ${r.status==='Pending'?`
+                                        <button onclick="approveFundRequest('${p.projExpID}','${r.frID}')" class="text-blue-600 hover:text-blue-800 font-medium mr-1">✓</button>
+                                        <button onclick="rejectFundRequest('${p.projExpID}','${r.frID}')" class="text-red-500 hover:text-red-700">✗</button>`
+                                        :r.status==='Approved'?`
+                                        <button onclick="openReleaseFundsModal('${p.projExpID}','${r.frID}',${r.amount})" class="px-2 py-0.5 bg-green-600 text-white rounded text-xs hover:bg-green-700">💸 Release</button>`
+                                        :r.status==='Received'?`
+                                        <div class="flex gap-1 justify-center flex-wrap">
+                                            <button onclick="openAttachReceiptModal('${p.projExpID}','${r.frID}')" class="px-2 py-0.5 ${r.paymentReceipts?.length?'bg-indigo-100 text-indigo-700':'bg-gray-100 text-gray-600'} rounded text-xs hover:bg-indigo-200">📎 ${r.paymentReceipts?.length?r.paymentReceipts.length+' receipt'+(r.paymentReceipts.length>1?'s':''):'Attach Receipt'}</button>
+                                            ${r.paymentReceipts?.length?`<button onclick="viewPaymentReceipts('${p.projExpID}','${r.frID}')" class="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs hover:bg-blue-200">👁 View</button>`:''}
+                                        </div>`
+                                        :`<span class="text-gray-300">—</span>`}
+                                    </td>
+                                </tr>`).join('')}
+                            </tbody>
+                        </table>
+                    </div>` : ''}
+
+                    <!-- Field expense entries -->
+                    ${(p.items||[]).length ? `
+                    <div class="border-t">
+                        <div class="px-4 py-2 bg-yellow-50 text-xs font-bold text-yellow-700 uppercase tracking-wide">
+                            Field Expense Entries (${(p.items||[]).length})
+                        </div>
                         <table class="w-full text-xs">
                             <thead class="bg-yellow-50"><tr>
-                                <th class="px-3 py-1.5 text-left">Date</th><th class="px-3 py-1.5 text-left">Category</th>
-                                <th class="px-3 py-1.5 text-left">Description</th><th class="px-3 py-1.5 text-left">Staff</th>
-                                <th class="px-3 py-1.5 text-right">Amount</th><th class="px-3 py-1.5 text-center">Bill</th>
+                                <th class="px-3 py-1.5 text-left">Date</th>
+                                <th class="px-3 py-1.5 text-left">Category</th>
+                                <th class="px-3 py-1.5 text-left">Description</th>
+                                <th class="px-3 py-1.5 text-left">Technicians</th>
+                                <th class="px-3 py-1.5 text-left">Entered By</th>
+                                <th class="px-3 py-1.5 text-left">Mode</th>
+                                <th class="px-3 py-1.5 text-right">Amount</th>
+                                <th class="px-3 py-1.5 text-center">Bills</th>
                                 <th class="px-3 py-1.5">Del</th>
                             </tr></thead>
-                            <tbody>${(p.items||[]).map(item => `<tr class="border-t hover:bg-yellow-50">
-                                <td class="px-3 py-1.5">${item.date||'—'}</td>
-                                <td class="px-3 py-1.5"><span class="px-1.5 py-0.5 rounded text-xs bg-yellow-100 text-yellow-800">${item.category||'—'}</span></td>
-                                <td class="px-3 py-1.5">${item.description||'—'}</td>
-                                <td class="px-3 py-1.5">${item.staffName||'—'}</td>
-                                <td class="px-3 py-1.5 text-right font-medium">${fmt(parseFloat(item.amount)||0)}</td>
-                                <td class="px-3 py-1.5 text-center">${item.billData ? `<button onclick="viewProjExpBill('${p.projExpID}','${item.itemID}')" class="text-blue-500 hover:text-blue-700">📎</button>` : '—'}</td>
-                                <td class="px-3 py-1.5 text-center"><button onclick="deleteProjExpItem('${p.projExpID}','${item.itemID}')" class="text-red-500 hover:text-red-700">✕</button></td>
-                            </tr>`).join('')}</tbody>
+                            <tbody>${(p.items||[]).map(item=>{
+                                const techs=(item.technicians||[]).map(t=>t.name).join(', ')||item.staffName||'—';
+                                const attCount=(item.billAttachments||[]).length+(item.billData?1:0);
+                                return `<tr class="border-t hover:bg-yellow-50">
+                                    <td class="px-3 py-1.5">${item.date||'—'}</td>
+                                    <td class="px-3 py-1.5"><span class="px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-800">${item.category||'—'}</span></td>
+                                    <td class="px-3 py-1.5">${item.description||'—'}${item.vendor?`<br><span class="text-gray-400">${item.vendor}</span>`:''}</td>
+                                    <td class="px-3 py-1.5 text-gray-600">${techs}</td>
+                                    <td class="px-3 py-1.5 text-gray-400">${item.addedBy||'—'}</td>
+                                    <td class="px-3 py-1.5 text-gray-500">${item.payMode||'—'}</td>
+                                    <td class="px-3 py-1.5 text-right font-medium">${fmt(parseFloat(item.amount)||0)}</td>
+                                    <td class="px-3 py-1.5 text-center">${attCount>0?`<button onclick="viewProjExpBills('${p.projExpID}','${item.itemID}')" class="text-blue-500 hover:text-blue-700">📎 ${attCount}</button>`:'—'}</td>
+                                    <td class="px-3 py-1.5 text-center"><button onclick="deleteProjExpItem('${p.projExpID}','${item.itemID}')" class="text-red-500 hover:text-red-700">✕</button></td>
+                                </tr>`;
+                            }).join('')}</tbody>
                         </table>
-                    </div>` : '<p class="text-xs text-gray-400 px-4 py-2">No expense entries yet.</p>'}
+                    </div>` : '<p class="text-xs text-gray-400 px-4 py-2 border-t">No field expense entries yet.</p>'}
                 </div>`;
             }).join('')}
+
+            <!-- Release Funds Modal -->
+            <div id="releaseFundsModal" class="modal">
+                <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md m-4">
+                    <div class="bg-gradient-to-r from-green-600 to-teal-600 p-5 text-white flex justify-between items-center">
+                        <h2 class="text-lg font-bold">💸 Release Funds to Technician</h2>
+                        <button onclick="closeReleaseFundsModal()" class="text-white text-2xl font-bold">✕</button>
+                    </div>
+                    <div class="p-6 space-y-4">
+                        <input type="hidden" id="rfProjID"/>
+                        <input type="hidden" id="rfFrID"/>
+                        <div class="bg-green-50 border border-green-200 rounded-xl p-3 text-sm text-green-800">
+                            <strong>Releasing funds</strong> will mark this request as <strong>Received</strong> and add the released amount to the project's available fund balance. The technician will see the updated balance immediately after sync.
+                        </div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-600 mb-1">Amount Requested (₹)</label>
+                                <input type="number" id="rfRequestedAmt" readonly class="w-full px-3 py-2 border rounded-lg text-sm bg-gray-50 font-bold text-gray-600"/>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-600 mb-1">Amount Released (₹) <span class="text-red-500">*</span></label>
+                                <input type="number" id="rfReleasedAmt" class="w-full px-3 py-2 border border-green-400 rounded-lg text-sm font-bold" min="0" step="0.01" placeholder="Can differ from requested"/>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-600 mb-1">Release Date</label>
+                                <input type="date" id="rfDate" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-600 mb-1">Transfer Mode</label>
+                                <select id="rfMode" class="w-full px-3 py-2 border rounded-lg text-sm">
+                                    <option>Bank Transfer</option>
+                                    <option>UPI</option>
+                                    <option>Cash</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Transaction Reference / Remarks</label>
+                            <input type="text" id="rfRemarks" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="UTR number, cheque no., notes..."/>
+                        </div>
+                        <!-- Receipt attachments -->
+                        <div class="border border-dashed border-gray-300 rounded-xl p-4 bg-gray-50">
+                            <label class="block text-xs font-semibold text-gray-600 mb-2">📎 Attach Payment Receipt / Proof <span class="font-normal text-gray-400">(screenshot, PDF — multiple allowed)</span></label>
+                            <div id="rfReceiptGrid" class="flex flex-wrap gap-2 mb-2"></div>
+                            <input type="file" id="rfReceiptFiles" accept="image/*,application/pdf" multiple class="hidden" onchange="handleRfReceipts(this)"/>
+                            <button type="button" onclick="document.getElementById('rfReceiptFiles').click()" class="text-xs px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-gray-600 hover:bg-gray-100">+ Add Receipt / Screenshot</button>
+                        </div>
+                        <div class="flex gap-3">
+                            <button onclick="closeReleaseFundsModal()" class="flex-1 px-5 py-2 border rounded-xl text-gray-600">Cancel</button>
+                            <button onclick="releaseFunds()" class="flex-1 px-5 py-2 bg-green-600 text-white rounded-xl font-semibold hover:bg-green-700">💸 Confirm Release</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
             <!-- Project Modal -->
             <div id="projExpModal" class="modal">
@@ -6890,6 +7157,213 @@
             projectExpenses[idx].items = (projectExpenses[idx].items||[]).filter(i => i.itemID !== itemID);
             await saveData('projectExpenses', projectExpenses);
             renderView();
+        }
+        // ── FUND REQUEST APPROVAL ──────────────────────────────────
+        async function approveFundRequest(projID, frID) {
+            const idx = projectExpenses.findIndex(x=>x.projExpID===projID);
+            if (idx<0) return;
+            const ri = (projectExpenses[idx].fundRequests||[]).findIndex(r=>r.frID===frID);
+            if (ri<0) return;
+            projectExpenses[idx].fundRequests[ri].status = 'Approved';
+            projectExpenses[idx].fundRequests[ri].approvedAt = new Date().toISOString();
+            await saveData('projectExpenses', projectExpenses);
+            renderView();
+            alert('\u2705 Fund request approved!\n\nNext: Click "\ud83d\udcb8 Release Funds" when you have transferred the money to the technician.');
+        }
+
+        async function rejectFundRequest(projID, frID) {
+            const reason = prompt('Reason for rejection (optional):');
+            if (reason === null) return;
+            const idx = projectExpenses.findIndex(x=>x.projExpID===projID);
+            if (idx<0) return;
+            const ri = (projectExpenses[idx].fundRequests||[]).findIndex(r=>r.frID===frID);
+            if (ri<0) return;
+            projectExpenses[idx].fundRequests[ri].status = 'Rejected';
+            projectExpenses[idx].fundRequests[ri].rejectionReason = reason;
+            projectExpenses[idx].fundRequests[ri].rejectedAt = new Date().toISOString();
+            await saveData('projectExpenses', projectExpenses);
+            renderView();
+        }
+
+        // ── receipt attachment state ───────────────────────────────
+        let _rfReceipts = [];  // [{data, name}] for release funds modal
+
+        function handleRfReceipts(input) {
+            Array.from(input.files||[]).forEach(file => {
+                if (file.size > 5*1024*1024) { alert('File too large. Max 5MB per file.'); return; }
+                const r = new FileReader();
+                r.onload = e => { _rfReceipts.push({data:e.target.result, name:file.name}); renderRfReceiptGrid(); };
+                r.readAsDataURL(file);
+            });
+            input.value = '';
+        }
+
+        function renderRfReceiptGrid() {
+            const grid = document.getElementById('rfReceiptGrid');
+            if (!grid) return;
+            grid.innerHTML = _rfReceipts.map((b,i) => `
+            <div style="position:relative;display:inline-flex;flex-direction:column;align-items:center;gap:2px">
+                ${b.data.startsWith('data:image')
+                    ? `<img src="${b.data}" style="width:56px;height:56px;border-radius:6px;object-fit:cover;border:1.5px solid #d1d5db"/>`
+                    : `<div style="width:56px;height:56px;border-radius:6px;background:#f0fdf4;border:1.5px solid #bbf7d0;display:flex;align-items:center;justify-content:center;font-size:22px">📄</div>`}
+                <span style="font-size:9px;color:#6b7280;max-width:56px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${b.name}</span>
+                <button type="button" onclick="_rfReceipts.splice(${i},1);renderRfReceiptGrid()"
+                    style="position:absolute;top:-4px;right:-4px;background:#dc2626;color:#fff;border:none;border-radius:99px;width:16px;height:16px;font-size:9px;cursor:pointer;line-height:1">✕</button>
+            </div>`).join('');
+        }
+
+        function openReleaseFundsModal(projID, frID, requestedAmt) {
+            _rfReceipts = [];
+            document.getElementById('rfProjID').value       = projID;
+            document.getElementById('rfFrID').value         = frID;
+            document.getElementById('rfRequestedAmt').value = requestedAmt;
+            document.getElementById('rfReleasedAmt').value  = requestedAmt;
+            document.getElementById('rfDate').value         = new Date().toISOString().split('T')[0];
+            document.getElementById('rfRemarks').value      = '';
+            renderRfReceiptGrid();
+            document.getElementById('releaseFundsModal').classList.add('show');
+        }
+
+        function closeReleaseFundsModal() {
+            document.getElementById('releaseFundsModal').classList.remove('show');
+            _rfReceipts = [];
+        }
+
+        async function releaseFunds() {
+            const projID      = document.getElementById('rfProjID').value;
+            const frID        = document.getElementById('rfFrID').value;
+            const releasedAmt = parseFloat(document.getElementById('rfReleasedAmt').value)||0;
+            const date        = document.getElementById('rfDate').value;
+            const mode        = document.getElementById('rfMode').value;
+            const remarks     = document.getElementById('rfRemarks').value;
+            if (!releasedAmt || releasedAmt <= 0) { alert('Please enter the amount released.'); return; }
+            if (!date) { alert('Please enter the release date.'); return; }
+            const idx = projectExpenses.findIndex(x=>x.projExpID===projID);
+            if (idx<0) return;
+            const ri = (projectExpenses[idx].fundRequests||[]).findIndex(r=>r.frID===frID);
+            if (ri<0) return;
+            projectExpenses[idx].fundRequests[ri].status          = 'Received';
+            projectExpenses[idx].fundRequests[ri].releasedAmount  = releasedAmt;
+            projectExpenses[idx].fundRequests[ri].releasedDate    = date;
+            projectExpenses[idx].fundRequests[ri].releaseMode     = mode;
+            projectExpenses[idx].fundRequests[ri].officeRemarks   = remarks;
+            projectExpenses[idx].fundRequests[ri].receivedAt      = new Date().toISOString();
+            // Save payment receipts if attached
+            if (_rfReceipts.length) {
+                const existing = projectExpenses[idx].fundRequests[ri].paymentReceipts || [];
+                projectExpenses[idx].fundRequests[ri].paymentReceipts = [...existing, ..._rfReceipts];
+            }
+            // Add released amount to project totalFunds — field app sees updated balance after sync
+            const prevFunds = parseFloat(projectExpenses[idx].totalFunds)||0;
+            projectExpenses[idx].totalFunds = +(prevFunds + releasedAmt).toFixed(2);
+            await saveData('projectExpenses', projectExpenses);
+            closeReleaseFundsModal();
+            renderView();
+            alert('\u2705 \u20b9'+releasedAmt.toLocaleString('en-IN',{minimumFractionDigits:2})+' released!'
+                +(_rfReceipts.length ? '\n\ud83d\udcce '+_rfReceipts.length+' receipt(s) saved.' : '')
+                +'\n\nProject fund balance updated. Field technician sees new balance after Sync.');
+        }
+
+        // ── Attach Receipt separately (after release, if receipt comes later) ──
+        let _arProjID='', _arFrID='', _arReceipts=[];
+
+        function openAttachReceiptModal(projID, frID) {
+            _arProjID = projID; _arFrID = frID; _arReceipts = [];
+            const p   = projectExpenses.find(x=>x.projExpID===projID);
+            const req = (p?.fundRequests||[]).find(r=>r.frID===frID);
+            // Reuse the same modal — repurpose or use a small inline panel via prompt workaround
+            // Simple approach: show a dedicated modal if it exists, else build dynamically
+            const existing = req?.paymentReceipts||[];
+            const modal = document.getElementById('attachReceiptModal');
+            if (modal) {
+                document.getElementById('arProjName').textContent  = p?.projectName||'';
+                document.getElementById('arReqDate').textContent   = req?.date||'';
+                document.getElementById('arReqAmt').textContent    = '₹'+(req?.releasedAmount||req?.amount||0).toLocaleString('en-IN',{minimumFractionDigits:2});
+                document.getElementById('arExistingCount').textContent = existing.length ? existing.length+' receipt(s) already saved' : 'No receipts saved yet';
+                _arReceipts = [];
+                renderArGrid();
+                modal.classList.add('show');
+            }
+        }
+
+        function closeAttachReceiptModal() {
+            document.getElementById('attachReceiptModal')?.classList.remove('show');
+            _arProjID=''; _arFrID=''; _arReceipts=[];
+        }
+
+        function handleArFiles(input) {
+            Array.from(input.files||[]).forEach(file=>{
+                if (file.size>5*1024*1024){alert('File too large. Max 5MB.');return;}
+                const r=new FileReader();
+                r.onload=e=>{_arReceipts.push({data:e.target.result,name:file.name});renderArGrid();};
+                r.readAsDataURL(file);
+            });
+            input.value='';
+        }
+
+        function renderArGrid() {
+            const grid=document.getElementById('arNewGrid');if(!grid)return;
+            grid.innerHTML=_arReceipts.map((b,i)=>`
+            <div style="position:relative;display:inline-flex;flex-direction:column;align-items:center;gap:2px">
+                ${b.data.startsWith('data:image')?`<img src="${b.data}" style="width:56px;height:56px;border-radius:6px;object-fit:cover;border:1.5px solid #d1d5db"/>`:
+                `<div style="width:56px;height:56px;border-radius:6px;background:#f0fdf4;border:1.5px solid #bbf7d0;display:flex;align-items:center;justify-content:center;font-size:22px">📄</div>`}
+                <span style="font-size:9px;color:#6b7280;max-width:56px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${b.name}</span>
+                <button type="button" onclick="_arReceipts.splice(${i},1);renderArGrid()" style="position:absolute;top:-4px;right:-4px;background:#dc2626;color:#fff;border:none;border-radius:99px;width:16px;height:16px;font-size:9px;cursor:pointer;line-height:1">✕</button>
+            </div>`).join('');
+        }
+
+        async function saveAttachedReceipts() {
+            if (!_arReceipts.length) { alert('Please select at least one file to attach.'); return; }
+            const idx = projectExpenses.findIndex(x=>x.projExpID===_arProjID);
+            if (idx<0) return;
+            const ri  = (projectExpenses[idx].fundRequests||[]).findIndex(r=>r.frID===_arFrID);
+            if (ri<0) return;
+            const existing = projectExpenses[idx].fundRequests[ri].paymentReceipts||[];
+            projectExpenses[idx].fundRequests[ri].paymentReceipts = [...existing, ..._arReceipts];
+            await saveData('projectExpenses', projectExpenses);
+            closeAttachReceiptModal();
+            renderView();
+            alert('\u2705 '+_arReceipts.length+' receipt(s) saved successfully.');
+        }
+
+        function viewPaymentReceipts(projID, frID) {
+            const p   = projectExpenses.find(x=>x.projExpID===projID);
+            const req = (p?.fundRequests||[]).find(r=>r.frID===frID);
+            const atts = req?.paymentReceipts||[];
+            if (!atts.length) { alert('No receipts attached.'); return; }
+            if (atts.length===1) {
+                const a=atts[0]; const w=window.open();
+                w.document.write(a.data.startsWith('data:application/pdf')
+                    ?`<html><body style="margin:0"><embed src="${a.data}" type="application/pdf" width="100%" height="100%"/></body></html>`
+                    :`<html><body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${a.data}" style="max-width:100%;max-height:100vh;object-fit:contain"/></body></html>`);
+                return;
+            }
+            const w=window.open();
+            w.document.write(`<html><head><title>Payment Receipts (${atts.length})</title>
+            <style>body{margin:0;background:#111;padding:12px;display:flex;flex-wrap:wrap;gap:8px}
+            img{max-width:calc(50% - 4px);border-radius:6px;cursor:zoom-in}
+            h3{color:#fff;width:100%;margin:0 0 8px;font-family:sans-serif}
+            .pdf{width:100%;height:600px;border:none;border-radius:6px}</style></head>
+            <body><h3>Payment Receipts — ${p?.projectName||''} (${atts.length} file${atts.length>1?'s':''})</h3>`
+            + atts.map((a,i)=>a.data.startsWith('data:image')
+                ?`<img src="${a.data}" title="Receipt ${i+1}: ${a.name}" onclick="window.open('${a.data}')"/>`
+                :`<embed src="${a.data}" type="application/pdf" class="pdf"/>`).join('')
+            +`</body></html>`);
+        }
+
+        function viewProjExpBills(projID, itemID) {
+            const p    = projectExpenses.find(x=>x.projExpID===projID);
+            const item = (p?.items||[]).find(i=>i.itemID===itemID);
+            if (!item) return;
+            const atts = item.billAttachments?.length ? item.billAttachments : (item.billData?[{data:item.billData,name:'attachment'}]:[]);
+            if (!atts.length) return;
+            if (atts.length===1) {
+                const a=atts[0]; const w=window.open();
+                w.document.write(a.data.startsWith('data:application/pdf')?`<html><body style="margin:0"><embed src="${a.data}" type="application/pdf" width="100%" height="100%"/></body></html>`:`<html><body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${a.data}" style="max-width:100%;max-height:100vh;object-fit:contain"/></body></html>`);
+                return;
+            }
+            const w=window.open();
+            w.document.write(`<html><head><title>Bills (${atts.length})</title><style>body{margin:0;background:#111;display:flex;flex-wrap:wrap;gap:8px;padding:12px}img{max-width:calc(50% - 4px);border-radius:6px}</style></head><body>`+atts.map(a=>a.data.startsWith('data:image')?`<img src="${a.data}" title="${a.name}"/>`:`<embed src="${a.data}" type="application/pdf" style="width:100%;height:600px;border:none;"/>`).join('')+`</body></html>`);
         }
 
         function viewProjExpBill(projID, itemID) {
