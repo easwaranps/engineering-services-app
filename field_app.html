@@ -776,6 +776,95 @@
         }).join('')}`;
     }
 
+    // ── EXPENSE ITEM CRUD ─────────────────────────────────────────
+    function openExpItemModal(projID) {
+        document.getElementById('eiProjID').value = projID;
+        document.getElementById('eiDate').value   = new Date().toISOString().split('T')[0];
+        document.getElementById('eiDesc').value   = '';
+        document.getElementById('eiAmt').value    = '';
+        document.getElementById('eiBillName').textContent = '';
+        document.getElementById('eiBill').value   = '';
+        // Populate staff dropdown from loaded staffList
+        const staffSel = document.getElementById('eiStaff');
+        staffSel.innerHTML = '<option value="">— Select —</option>' +
+            staffList.map(s => `<option value="${s.name}">${s.name} (${s.staffType||'Staff'})</option>`).join('');
+        staffSel.value = '';
+        document.getElementById('expItemModal').classList.add('show');
+    }
+
+    function closeExpItemModal() {
+        document.getElementById('expItemModal').classList.remove('show');
+    }
+
+    // File name preview
+    document.addEventListener('DOMContentLoaded', () => {
+        const eiBill = document.getElementById('eiBill');
+        if (eiBill) {
+            eiBill.addEventListener('change', function () {
+                document.getElementById('eiBillName').textContent =
+                    this.files[0] ? '📎 ' + this.files[0].name : '';
+            });
+        }
+    });
+
+    async function saveExpItem(e) {
+        e.preventDefault();
+        const projID = document.getElementById('eiProjID').value;
+        const idx    = projectExpenses.findIndex(x => x.projExpID === projID);
+        if (idx < 0) return;
+        let billData = null, billName = null;
+        const file = document.getElementById('eiBill').files[0];
+        if (file) {
+            if (file.size > 3 * 1024 * 1024) { alert('File too large. Max 3MB.'); return; }
+            billData = await new Promise((res, rej) => {
+                const r = new FileReader();
+                r.onload  = () => res(r.result);
+                r.onerror = () => rej(new Error('Read failed'));
+                r.readAsDataURL(file);
+            });
+            billName = file.name;
+        }
+        if (!projectExpenses[idx].items) projectExpenses[idx].items = [];
+        projectExpenses[idx].items.push({
+            itemID:      'PEI' + Date.now(),
+            date:        document.getElementById('eiDate').value,
+            category:    document.getElementById('eiCat').value,
+            description: document.getElementById('eiDesc').value,
+            staffName:   document.getElementById('eiStaff').value || '',
+            staffID:     staffList.find(s => s.name === document.getElementById('eiStaff').value)?.staffID || '',
+            amount:      parseFloat(document.getElementById('eiAmt').value) || 0,
+            billData,
+            billName
+        });
+        await saveData('projectExpenses', projectExpenses);
+        closeExpItemModal();
+        renderView();
+        showToast('✅ Expense added');
+    }
+
+    async function deleteExpItem(projID, itemID) {
+        if (!confirm('Delete this expense entry?')) return;
+        const idx = projectExpenses.findIndex(x => x.projExpID === projID);
+        if (idx < 0) return;
+        projectExpenses[idx].items =
+            (projectExpenses[idx].items || []).filter(i => i.itemID !== itemID);
+        await saveData('projectExpenses', projectExpenses);
+        renderView();
+        showToast('🗑️ Entry deleted');
+    }
+
+    function viewBill(projID, itemID) {
+        const p    = projectExpenses.find(x => x.projExpID === projID);
+        const item = (p?.items || []).find(i => i.itemID === itemID);
+        if (!item?.billData) return;
+        const w = window.open();
+        if (item.billData.startsWith('data:application/pdf')) {
+            w.document.write(`<html><body style="margin:0"><embed src="${item.billData}" type="application/pdf" width="100%" height="100%"/></body></html>`);
+        } else {
+            w.document.write(`<html><body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${item.billData}" style="max-width:100%;max-height:100vh;object-fit:contain"/></body></html>`);
+        }
+    }
+
     // ── WORK LOGS VIEW ────────────────────────────────────────────
     // Structure: workLogs = array of Project Work Logs
     // Each log has: wlID, project, location, workStartDate, workEndDate,
