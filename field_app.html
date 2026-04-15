@@ -165,56 +165,127 @@
 
 <!-- ═══ MODALS ════════════════════════════════════════════════════ -->
 
-<!-- Expense Item Modal -->
+<!-- ═══ FUND REQUEST MODAL ══════════════════════════════════════ -->
+<div id="fundReqModal" class="modal">
+    <div class="modal-box" style="max-width:520px">
+        <div class="modal-hdr" style="background:linear-gradient(135deg,#1e3a5f,#1d4ed8)">
+            <span class="font-bold text-white text-lg" id="fundReqTitle">New Fund Request</span>
+            <button onclick="closeFundReqModal()" class="text-white text-2xl font-bold leading-none">✕</button>
+        </div>
+        <form id="fundReqForm" onsubmit="saveFundRequest(event)" class="p-5 space-y-4">
+            <input type="hidden" id="frProjID"/>
+            <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:10px 14px">
+                <p class="field-label" style="color:#1d4ed8;margin-bottom:6px">💰 FUND REQUEST DETAILS</p>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="field-label">Date <span class="text-red-500">*</span></label>
+                        <input type="date" id="frDate" class="field-input" required/>
+                    </div>
+                    <div>
+                        <label class="field-label">Amount Requested (₹) <span class="text-red-500">*</span></label>
+                        <input type="number" id="frAmount" class="field-input" required min="0" step="0.01" placeholder="e.g. 5000"/>
+                    </div>
+                </div>
+                <div class="mt-3">
+                    <label class="field-label">Purpose <span class="text-red-500">*</span></label>
+                    <select id="frPurpose" class="field-input" required>
+                        <option value="Local Transport">Local Transport</option>
+                        <option value="Food / Meals">Food / Meals</option>
+                        <option value="Accommodation">Accommodation</option>
+                        <option value="Communication">Communication</option>
+                        <option value="Tools / Materials">Tools / Materials</option>
+                        <option value="Miscellaneous">Miscellaneous</option>
+                    </select>
+                </div>
+                <div class="mt-3">
+                    <label class="field-label">Remarks / Justification</label>
+                    <textarea id="frRemarks" class="field-input" rows="2" placeholder="Why is this fund needed?"></textarea>
+                </div>
+            </div>
+            <div class="flex gap-3 pt-2">
+                <button type="button" onclick="closeFundReqModal()" class="btn-secondary flex-1">Cancel</button>
+                <button type="submit" class="btn-primary flex-1">📤 Submit Request</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ═══ EXPENSE ENTRY MODAL ═════════════════════════════════════ -->
 <div id="expItemModal" class="modal">
-    <div class="modal-box">
+    <div class="modal-box" style="max-width:600px">
         <div class="modal-hdr" style="background:linear-gradient(135deg,#0d7c66,#0a6355)">
-            <span class="font-bold text-white text-lg">Add Expense</span>
+            <span class="font-bold text-white text-lg" id="expItemTitle">Add Expense</span>
             <button onclick="closeExpItemModal()" class="text-white text-2xl font-bold leading-none">✕</button>
         </div>
         <form id="expItemForm" onsubmit="saveExpItem(event)" class="p-5 space-y-4">
             <input type="hidden" id="eiProjID"/>
-            <div class="grid grid-cols-2 gap-3">
-                <div>
-                    <label class="field-label">Date <span class="text-red-500">*</span></label>
-                    <input type="date" id="eiDate" class="field-input" required/>
+            <input type="hidden" id="eiItemID"/>
+
+            <!-- Date & Category -->
+            <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:10px 14px">
+                <p class="field-label" style="color:#15803d;margin-bottom:6px">📋 EXPENSE DETAILS</p>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="field-label">Date <span class="text-red-500">*</span></label>
+                        <input type="date" id="eiDate" class="field-input" required/>
+                    </div>
+                    <div>
+                        <label class="field-label">Category <span class="text-red-500">*</span></label>
+                        <select id="eiCat" class="field-input" required>
+                            <option value="Local Transport">Local Transport</option>
+                            <option value="Food / Meals">Food / Meals</option>
+                            <option value="Accommodation">Accommodation</option>
+                            <option value="Communication">Communication</option>
+                            <option value="Tools / Materials">Tools / Materials</option>
+                            <option value="Miscellaneous">Miscellaneous</option>
+                        </select>
+                    </div>
                 </div>
-                <div>
-                    <label class="field-label">Category <span class="text-red-500">*</span></label>
-                    <select id="eiCat" class="field-input" required>
-                        <option value="Food">Food / Meals</option>
-                        <option value="Travel">Travel / Transport</option>
-                        <option value="Accommodation">Accommodation</option>
-                        <option value="Communication">Communication</option>
-                        <option value="Tools">Tools / Equipment</option>
-                        <option value="Misc">Miscellaneous</option>
-                    </select>
+                <div class="mt-3">
+                    <label class="field-label">Purpose / Description <span class="text-red-500">*</span></label>
+                    <input type="text" id="eiDesc" class="field-input" required placeholder="What was the expense for?"/>
+                </div>
+                <div class="grid grid-cols-2 gap-3 mt-3">
+                    <div>
+                        <label class="field-label">Amount (₹) <span class="text-red-500">*</span></label>
+                        <input type="number" id="eiAmt" class="field-input" required min="0" step="0.01" placeholder="0.00"/>
+                    </div>
+                    <div>
+                        <label class="field-label">Payment Mode</label>
+                        <select id="eiPayMode" class="field-input">
+                            <option value="Cash">Cash</option>
+                            <option value="UPI">UPI</option>
+                            <option value="Card">Card</option>
+                            <option value="Bank Transfer">Bank Transfer</option>
+                        </select>
+                    </div>
                 </div>
             </div>
+
+            <!-- Technicians who benefited -->
+            <div style="background:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;padding:10px 14px">
+                <p class="field-label" style="color:#7c3aed;margin-bottom:6px">👷 TECHNICIANS (who benefited from this expense)</p>
+                <div id="eiStaffList" class="space-y-2"></div>
+                <button type="button" onclick="addEiStaffRow()" class="mt-2 text-xs px-3 py-1.5 rounded-lg font-semibold" style="background:#ede9fe;color:#7c3aed;border:1px solid #c4b5fd">+ Add Technician</button>
+            </div>
+
+            <!-- Vendor / Paid to -->
             <div>
-                <label class="field-label">Description <span class="text-red-500">*</span></label>
-                <input type="text" id="eiDesc" class="field-input" required placeholder="What was purchased?"/>
+                <label class="field-label">Vendor / Paid To</label>
+                <input type="text" id="eiVendor" class="field-input" placeholder="Restaurant name, transport provider, etc."/>
             </div>
-            <div class="grid grid-cols-2 gap-3">
-                <div>
-                    <label class="field-label">Amount (₹) <span class="text-red-500">*</span></label>
-                    <input type="number" id="eiAmt" class="field-input" required min="0" step="0.01" placeholder="0.00"/>
-                </div>
-                <div>
-                    <label class="field-label">Staff Member</label>
-                    <select id="eiStaff" class="field-input">
-                        <option value="">— Select —</option>
-                    </select>
-                </div>
+
+            <!-- Multiple bill attachments -->
+            <div style="background:#f8fafc;border:1px solid var(--border);border-radius:10px;padding:10px 14px">
+                <p class="field-label" style="margin-bottom:6px">📎 BILLS / RECEIPTS <span style="font-weight:400;text-transform:none;font-size:11px;color:var(--muted)">(multiple attachments allowed)</span></p>
+                <div id="eiBillGrid" class="flex flex-wrap gap-2 mb-2"></div>
+                <input type="file" id="eiBillFiles" accept="image/*,application/pdf" capture="environment" class="hidden" onchange="handleEiBills(this)" multiple/>
+                <button type="button" onclick="document.getElementById('eiBillFiles').click()" class="text-xs px-3 py-1.5 rounded-lg" style="background:#f1f5f9;border:1.5px dashed #94a3b8;color:#475569">📷 Attach Bill / Receipt</button>
             </div>
-            <div>
-                <label class="field-label">Attach Bill / Photo</label>
-                <input type="file" id="eiBill" accept="image/*,application/pdf" capture="environment" class="field-input" style="padding:6px"/>
-                <p id="eiBillName" class="text-xs text-teal-600 mt-1"></p>
-            </div>
+
             <div class="flex gap-3 pt-2">
                 <button type="button" onclick="closeExpItemModal()" class="btn-secondary flex-1">Cancel</button>
-                <button type="submit" class="btn-primary flex-1">Add Expense</button>
+                <button type="submit" class="btn-primary flex-1">💾 Save Expense</button>
             </div>
         </form>
     </div>
@@ -701,171 +772,475 @@
     }
 
     // ── PROJECT EXPENSES VIEW ─────────────────────────────────────
+    // Structure per project: projectExpenses[i].fundRequests[] + .items[]
+    // fundRequests: [{frID, date, amount, purpose, remarks, status:'Pending'|'Approved'|'Received'}]
+    // items: [{itemID, date, category, description, amount, payMode, vendors,
+    //          technicians[], billAttachments:[{data,name}]}]
+
     function renderProjExp(el) {
-        const fmt = n => '₹' + (+n||0).toLocaleString('en-IN', { minimumFractionDigits:2 });
-        const totalFunds = projectExpenses.reduce((s,p) => s+(parseFloat(p.totalFunds)||0), 0);
-        const totalSpent = projectExpenses.reduce((s,p) => s+(p.items||[]).reduce((a,i)=>a+(parseFloat(i.amount)||0),0), 0);
+        const fmt = n => '₹' + (+n||0).toLocaleString('en-IN', {minimumFractionDigits:2});
+
+        // Grand totals across all projects
+        const totalFunds  = projectExpenses.reduce((s,p)=>s+(parseFloat(p.totalFunds)||0),0);
+        const totalReqd   = projectExpenses.reduce((s,p)=>s+(p.fundRequests||[]).reduce((a,r)=>a+(parseFloat(r.amount)||0),0),0);
+        const totalSpent  = projectExpenses.reduce((s,p)=>s+(p.items||[]).reduce((a,i)=>a+(parseFloat(i.amount)||0),0),0);
+        const totalBal    = totalFunds - totalSpent;
 
         el.innerHTML = `
-        <!-- Summary -->
-        <div class="grid grid-cols-2 gap-3 mb-4">
-            <div class="card p-4" style="background:linear-gradient(135deg,#d97706,#b45309)">
-                <p class="text-xs font-semibold text-amber-100 mb-1">TOTAL FUNDS</p>
-                <p class="text-xl font-bold text-white">${fmt(totalFunds)}</p>
+        <!-- Grand summary -->
+        <div class="grid grid-cols-2 gap-3 mb-3">
+            <div class="card p-3" style="background:linear-gradient(135deg,#1e3a5f,#1d4ed8)">
+                <p style="font-size:10px;font-weight:600;color:#bfdbfe;margin-bottom:2px">TOTAL OFFICE FUNDS</p>
+                <p style="font-size:18px;font-weight:700;color:#fff">${fmt(totalFunds)}</p>
             </div>
-            <div class="card p-4" style="background:linear-gradient(135deg,#0d7c66,#0a6355)">
-                <p class="text-xs font-semibold text-teal-100 mb-1">TOTAL SPENT</p>
-                <p class="text-xl font-bold text-white">${fmt(totalSpent)}</p>
-                <p class="text-xs text-teal-200 mt-0.5">Bal: ${fmt(totalFunds-totalSpent)}</p>
+            <div class="card p-3" style="background:linear-gradient(135deg,#0d7c66,#0a6355)">
+                <p style="font-size:10px;font-weight:600;color:#99f6e4;margin-bottom:2px">TOTAL SPENT</p>
+                <p style="font-size:18px;font-weight:700;color:#fff">${fmt(totalSpent)}</p>
+                <p style="font-size:10px;color:#5eead4">Balance: ${fmt(totalBal)}</p>
             </div>
         </div>
 
-        <div class="card p-3 mb-4 flex items-center gap-2" style="background:#eff6ff;border-color:#bfdbfe">
-            <span style="font-size:16px">ℹ️</span>
-            <p class="text-xs" style="color:#1d4ed8">Projects are created by the office. Tap <strong>+ Expense</strong> on any project to add your expenses.</p>
+        <div class="card p-3 mb-3 flex items-center gap-2" style="background:#eff6ff;border-color:#bfdbfe">
+            <span style="font-size:15px">ℹ️</span>
+            <p style="font-size:12px;color:#1d4ed8">Projects are created by the office. Use <strong>Fund Request</strong> to ask for funds, then <strong>Add Expense</strong> to record spending. Use <strong>Reconcile</strong> to export PDF/CSV for office submission.</p>
         </div>
 
         <!-- Project cards -->
         ${!projectExpenses.length ?
             `<div class="card p-10 text-center"><div style="font-size:48px;margin-bottom:8px">🧳</div><p class="font-medium text-gray-400">No projects yet</p><p class="text-sm text-gray-400 mt-1">Projects will appear here once created by the office team.</p></div>` :
         projectExpenses.map(p => {
-            const spent = (p.items||[]).reduce((a,i)=>a+(parseFloat(i.amount)||0),0);
-            const bal   = (parseFloat(p.totalFunds)||0) - spent;
-            const pct   = p.totalFunds > 0 ? Math.min(100, (spent/p.totalFunds)*100) : 0;
-            const barCol= pct > 90 ? '#dc2626' : pct > 70 ? '#d97706' : '#0d7c66';
+            const funds   = parseFloat(p.totalFunds)||0;
+            const spent   = (p.items||[]).reduce((a,i)=>a+(parseFloat(i.amount)||0),0);
+            const bal     = funds - spent;
+            const pct     = funds>0 ? Math.min(100,(spent/funds)*100) : 0;
+            const barCol  = pct>90?'#dc2626':pct>70?'#d97706':'#0d7c66';
+            const pendReq = (p.fundRequests||[]).filter(r=>r.status==='Pending').length;
+            const totalReq= (p.fundRequests||[]).reduce((a,r)=>a+(parseFloat(r.amount)||0),0);
+
             return `
-            <div class="card mb-4">
+            <div class="card mb-4" style="border-left:4px solid ${bal>=0?'#0d7c66':'#dc2626'}">
+                <!-- Project header -->
                 <div class="p-4">
-                    <div class="flex justify-between items-start mb-3">
-                        <div class="flex-1 min-w-0 mr-3">
-                            <p class="font-bold text-gray-800 leading-tight">${p.projectName}</p>
-                            ${p.projectRef ? `<p class="text-xs text-gray-400 mt-0.5">Ref: ${p.projectRef}</p>` : ''}
-                            ${p.startDate ? `<p class="text-xs text-gray-400">${p.startDate}${p.endDate?' → '+p.endDate:''}</p>` : ''}
+                    <div class="flex justify-between items-start mb-2">
+                        <div class="flex-1 min-w-0 mr-2">
+                            <p class="font-bold" style="color:var(--navy);font-size:15px">${p.projectName}</p>
+                            ${p.projectRef?`<p style="font-size:11px;color:var(--muted)">Ref: ${p.projectRef}</p>`:''}
+                            ${p.startDate?`<p style="font-size:11px;color:var(--muted)">${p.startDate}${p.endDate?' → '+p.endDate:''}</p>`:''}
                         </div>
-                        <button onclick="openExpItemModal('${p.projExpID}')" class="btn-primary flex-shrink-0" style="padding:8px 14px;font-size:13px">+ Add Expense</button>
+                        <span class="badge" style="background:${bal>=0?'#f0fdf4':'#fef2f2'};color:${bal>=0?'#15803d':'#dc2626'};font-size:12px">Bal: ${fmt(bal)}</span>
                     </div>
+
                     <!-- Fund bar -->
-                    <div class="flex justify-between text-xs mb-1.5" style="color:var(--muted)">
-                        <span>Spent: <strong>${fmt(spent)}</strong></span>
-                        <span>Balance: <strong style="color:${bal>=0?'#0d7c66':'#dc2626'}">${fmt(bal)}</strong></span>
-                        <span>Fund: ${fmt(p.totalFunds||0)}</span>
+                    <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:4px">
+                        <span>Office Fund: <strong>${fmt(funds)}</strong></span>
+                        <span>Requested: <strong style="color:#1d4ed8">${fmt(totalReq)}</strong></span>
+                        <span>Spent: <strong style="color:#b45309">${fmt(spent)}</strong></span>
                     </div>
                     <div class="prog-track"><div class="prog-fill" style="width:${pct}%;background:${barCol}"></div></div>
+                    ${pendReq>0?`<p style="font-size:11px;color:#1d4ed8;margin-top:4px">⏳ ${pendReq} pending fund request${pendReq>1?'s':''}</p>`:''}
+
+                    <!-- Action buttons -->
+                    <div class="flex gap-2 mt-3 flex-wrap">
+                        <button onclick="openFundReqModal('${p.projExpID}')" style="padding:7px 12px;border-radius:9px;background:#1e3a5f;color:#fff;border:none;cursor:pointer;font-size:12px;font-weight:600">💰 Fund Request</button>
+                        <button onclick="openExpItemModal('${p.projExpID}')" class="btn-primary" style="padding:7px 12px;font-size:12px">+ Add Expense</button>
+                        <button onclick="reconcilePDF('${p.projExpID}')" style="padding:7px 12px;border-radius:9px;background:#7c3aed;color:#fff;border:none;cursor:pointer;font-size:12px;font-weight:600">📄 Reconcile PDF</button>
+                        <button onclick="reconcileCSV('${p.projExpID}')" style="padding:7px 12px;border-radius:9px;background:#15803d;color:#fff;border:none;cursor:pointer;font-size:12px;font-weight:600">📊 Reconcile CSV</button>
+                    </div>
                 </div>
 
-                <!-- Expense items -->
-                ${(p.items||[]).length ? `
-                <div style="border-top:1px solid var(--border)">
-                    ${(p.items||[]).map(it => `
-                    <div style="padding:10px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
-                        <div class="min-w-0 flex-1 mr-2">
-                            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                                <span class="badge" style="background:#f0fdf4;color:#0d7c66;border:1px solid #bbf7d0">${it.category}</span>
-                                <span style="font-size:13px;font-weight:500;color:var(--text)">${it.description}</span>
-                            </div>
-                            <p style="font-size:11px;color:var(--muted);margin-top:2px">${it.date}${it.staffName ? ' · '+it.staffName : ''}</p>
+                <!-- Fund requests section -->
+                ${(p.fundRequests||[]).length ? `
+                <div style="border-top:1px solid var(--border);background:#f0f9ff">
+                    <div style="padding:8px 14px;font-size:11px;font-weight:700;color:#1d4ed8;letter-spacing:.04em">FUND REQUESTS</div>
+                    ${(p.fundRequests||[]).map(r=>`
+                    <div style="padding:8px 14px;border-top:1px solid #e0f2fe;display:flex;justify-content:space-between;align-items:center">
+                        <div>
+                            <span style="font-size:12px;font-weight:600;color:var(--text)">${r.purpose}</span>
+                            <span style="font-size:11px;color:var(--muted);margin-left:8px">${r.date}</span>
+                            ${r.remarks?`<p style="font-size:11px;color:var(--muted)">${r.remarks}</p>`:''}
                         </div>
-                        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
-                            <span style="font-size:14px;font-weight:700;color:var(--navy)">${fmt(it.amount)}</span>
-                            ${it.billData ? `<button onclick="viewBill('${p.projExpID}','${it.itemID}')" style="font-size:16px;background:none;border:none;cursor:pointer">📎</button>` : ''}
-                            <button onclick="deleteExpItem('${p.projExpID}','${it.itemID}')" style="font-size:12px;color:#dc2626;background:none;border:none;cursor:pointer;padding:4px">✕</button>
+                        <div style="display:flex;align-items:center;gap:8px">
+                            <span style="font-size:13px;font-weight:700;color:#1d4ed8">${fmt(r.amount)}</span>
+                            <span class="badge" style="background:${r.status==='Received'?'#dcfce7':r.status==='Approved'?'#dbeafe':'#fef3c7'};color:${r.status==='Received'?'#15803d':r.status==='Approved'?'#1d4ed8':'#b45309'};font-size:10px">${r.status}</span>
+                            <button onclick="deleteFundReq('${p.projExpID}','${r.frID}')" style="color:#dc2626;background:none;border:none;font-size:12px;cursor:pointer">✕</button>
                         </div>
                     </div>`).join('')}
-                </div>` : `<p style="padding:10px 14px;font-size:12px;color:var(--muted)">No expenses yet — tap "+ Add Expense"</p>`}
+                </div>` : ''}
+
+                <!-- Expense items section -->
+                ${(p.items||[]).length ? `
+                <div style="border-top:1px solid var(--border)">
+                    <div style="padding:8px 14px;font-size:11px;font-weight:700;color:#0d7c66;letter-spacing:.04em">EXPENSE ENTRIES</div>
+                    ${(p.items||[]).map(it=>{
+                        const techNames=(it.technicians||[]).map(t=>t.name).join(', ')||it.staffName||'';
+                        const attCount=(it.billAttachments||[]).length+(it.billData?1:0);
+                        return `
+                        <div style="padding:10px 14px;border-top:1px solid var(--border)">
+                            <div style="display:flex;justify-content:space-between;align-items:flex-start">
+                                <div class="flex-1 min-w-0 mr-2">
+                                    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px">
+                                        <span class="badge" style="background:#f0fdf4;color:#0d7c66;border:1px solid #bbf7d0">${it.category}</span>
+                                        <span style="font-size:13px;font-weight:600;color:var(--text)">${it.description}</span>
+                                    </div>
+                                    <p style="font-size:11px;color:var(--muted)">${it.date}${it.payMode?' · '+it.payMode:''}${it.vendor?' · '+it.vendor:''}${techNames?' · 👷 '+techNames:''}</p>
+                                </div>
+                                <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+                                    <span style="font-size:14px;font-weight:700;color:var(--navy)">${fmt(it.amount)}</span>
+                                    ${attCount>0?`<button onclick="viewExpAttachments('${p.projExpID}','${it.itemID}')" style="padding:3px 8px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;font-size:11px;color:#1d4ed8;cursor:pointer">📎 ${attCount}</button>`:''}
+                                    <button onclick="deleteExpItem('${p.projExpID}','${it.itemID}')" style="color:#dc2626;background:none;border:none;font-size:12px;cursor:pointer;padding:2px">✕</button>
+                                </div>
+                            </div>
+                        </div>`;
+                    }).join('')}
+                </div>` : `<p style="padding:10px 14px;font-size:12px;color:var(--muted);border-top:1px solid var(--border)">No expenses recorded yet.</p>`}
             </div>`;
         }).join('')}`;
     }
 
+    // ── FUND REQUEST CRUD ─────────────────────────────────────────
+    function openFundReqModal(projID) {
+        document.getElementById('frProjID').value = projID;
+        document.getElementById('frDate').value   = new Date().toISOString().split('T')[0];
+        document.getElementById('frAmount').value = '';
+        document.getElementById('frRemarks').value= '';
+        document.getElementById('fundReqModal').classList.add('show');
+    }
+    function closeFundReqModal() { document.getElementById('fundReqModal').classList.remove('show'); }
+
+    async function saveFundRequest(e) {
+        e.preventDefault();
+        const projID = document.getElementById('frProjID').value;
+        const idx    = projectExpenses.findIndex(x=>x.projExpID===projID);
+        if (idx<0) return;
+        if (!projectExpenses[idx].fundRequests) projectExpenses[idx].fundRequests = [];
+        projectExpenses[idx].fundRequests.push({
+            frID:    'FR'+Date.now(),
+            date:    document.getElementById('frDate').value,
+            amount:  parseFloat(document.getElementById('frAmount').value)||0,
+            purpose: document.getElementById('frPurpose').value,
+            remarks: document.getElementById('frRemarks').value,
+            status:  'Pending'
+        });
+        await saveData('projectExpenses', projectExpenses);
+        closeFundReqModal(); renderView(); showToast('📤 Fund request submitted');
+    }
+
+    async function deleteFundReq(projID, frID) {
+        if (!confirm('Delete this fund request?')) return;
+        const idx = projectExpenses.findIndex(x=>x.projExpID===projID);
+        if (idx<0) return;
+        projectExpenses[idx].fundRequests = (projectExpenses[idx].fundRequests||[]).filter(r=>r.frID!==frID);
+        await saveData('projectExpenses', projectExpenses);
+        renderView(); showToast('🗑️ Fund request deleted');
+    }
+
     // ── EXPENSE ITEM CRUD ─────────────────────────────────────────
-    function openExpItemModal(projID) {
-        document.getElementById('eiProjID').value = projID;
-        document.getElementById('eiDate').value   = new Date().toISOString().split('T')[0];
-        document.getElementById('eiDesc').value   = '';
-        document.getElementById('eiAmt').value    = '';
-        document.getElementById('eiBillName').textContent = '';
-        document.getElementById('eiBill').value   = '';
-        // Populate staff dropdown from loaded staffList
-        const staffSel = document.getElementById('eiStaff');
-        staffSel.innerHTML = '<option value="">— Select —</option>' +
-            staffList.map(s => `<option value="${s.name}">${s.name} (${s.staffType||'Staff'})</option>`).join('');
-        staffSel.value = '';
+    let _eiStaffRows = [], _eiBillAttachments = [];
+
+    function renderEiStaffRows() {
+        const el = document.getElementById('eiStaffList'); if (!el) return;
+        el.innerHTML = _eiStaffRows.map((r,i) => `
+        <div style="display:flex;gap:8px;align-items:center">
+            <select onchange="_eiStaffRows[${i}].name=this.value;_eiStaffRows[${i}].staffID=staffList.find(s=>s.name===this.value)?.staffID||''" class="field-input flex-1" style="font-size:13px">
+                <option value="">— Select —</option>
+                ${staffList.map(s=>`<option value="${s.name}"${s.name===r.name?' selected':''}>${s.name} (${s.staffType||'Staff'})</option>`).join('')}
+            </select>
+            <button type="button" onclick="_eiStaffRows.splice(${i},1);renderEiStaffRows()" style="color:#dc2626;background:none;border:none;font-size:18px;cursor:pointer;padding:4px">✕</button>
+        </div>`).join('');
+    }
+    function addEiStaffRow() { _eiStaffRows.push({name:'',staffID:''}); renderEiStaffRows(); }
+
+    function renderEiBillGrid() {
+        const grid = document.getElementById('eiBillGrid'); if (!grid) return;
+        grid.innerHTML = _eiBillAttachments.map((b,i) => `
+        <div style="position:relative;display:inline-flex;flex-direction:column;align-items:center">
+            ${b.data.startsWith('data:image')?
+                `<img src="${b.data}" style="width:60px;height:60px;border-radius:8px;object-fit:cover;border:1.5px solid var(--border)"/>` :
+                `<div style="width:60px;height:60px;border-radius:8px;background:#f0fdf4;border:1.5px solid #bbf7d0;display:flex;align-items:center;justify-content:center;font-size:22px">📄</div>`}
+            <span style="font-size:9px;color:var(--muted);max-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${b.name}</span>
+            <button type="button" onclick="_eiBillAttachments.splice(${i},1);renderEiBillGrid()" style="position:absolute;top:-4px;right:-4px;background:#dc2626;color:#fff;border:none;border-radius:99px;width:16px;height:16px;font-size:9px;cursor:pointer;line-height:1">✕</button>
+        </div>`).join('');
+    }
+
+    function handleEiBills(input) {
+        Array.from(input.files||[]).forEach(file => {
+            if (file.size > 4*1024*1024) { showToast('⚠️ '+file.name+' too large (max 4MB)'); return; }
+            const r = new FileReader();
+            r.onload = e => { _eiBillAttachments.push({data:e.target.result,name:file.name}); renderEiBillGrid(); };
+            r.readAsDataURL(file);
+        });
+        input.value = '';
+    }
+
+    function openExpItemModal(projID, itemID=null) {
+        _eiStaffRows = []; _eiBillAttachments = [];
+        document.getElementById('eiProjID').value  = projID;
+        document.getElementById('eiItemID').value  = itemID||'';
+        const p    = projectExpenses.find(x=>x.projExpID===projID);
+        const item = itemID ? (p?.items||[]).find(i=>i.itemID===itemID) : null;
+        document.getElementById('expItemTitle').textContent = item ? 'Edit Expense' : 'Add Expense';
+        document.getElementById('eiDate').value    = item?.date    || new Date().toISOString().split('T')[0];
+        document.getElementById('eiCat').value     = item?.category|| 'Local Transport';
+        document.getElementById('eiDesc').value    = item?.description||'';
+        document.getElementById('eiAmt').value     = item?.amount  || '';
+        document.getElementById('eiPayMode').value = item?.payMode || 'Cash';
+        document.getElementById('eiVendor').value  = item?.vendor  || '';
+        if (item?.technicians?.length) _eiStaffRows = item.technicians.map(t=>({name:t.name,staffID:t.staffID||''}));
+        else _eiStaffRows = [{name:'',staffID:''}];
+        if (item?.billAttachments) _eiBillAttachments = [...item.billAttachments];
+        else if (item?.billData)   _eiBillAttachments = [{data:item.billData,name:item.billName||'attachment'}];
+        renderEiStaffRows();
+        renderEiBillGrid();
         document.getElementById('expItemModal').classList.add('show');
     }
 
     function closeExpItemModal() {
         document.getElementById('expItemModal').classList.remove('show');
+        _eiStaffRows=[]; _eiBillAttachments=[];
     }
-
-    // File name preview
-    document.addEventListener('DOMContentLoaded', () => {
-        const eiBill = document.getElementById('eiBill');
-        if (eiBill) {
-            eiBill.addEventListener('change', function () {
-                document.getElementById('eiBillName').textContent =
-                    this.files[0] ? '📎 ' + this.files[0].name : '';
-            });
-        }
-    });
 
     async function saveExpItem(e) {
         e.preventDefault();
         const projID = document.getElementById('eiProjID').value;
-        const idx    = projectExpenses.findIndex(x => x.projExpID === projID);
-        if (idx < 0) return;
-        let billData = null, billName = null;
-        const file = document.getElementById('eiBill').files[0];
-        if (file) {
-            if (file.size > 3 * 1024 * 1024) { alert('File too large. Max 3MB.'); return; }
-            billData = await new Promise((res, rej) => {
-                const r = new FileReader();
-                r.onload  = () => res(r.result);
-                r.onerror = () => rej(new Error('Read failed'));
-                r.readAsDataURL(file);
-            });
-            billName = file.name;
+        const itemID = document.getElementById('eiItemID').value;
+        const idx    = projectExpenses.findIndex(x=>x.projExpID===projID);
+        if (idx<0) return;
+        if (!projectExpenses[idx].items) projectExpenses[idx].items=[];
+        const techs = _eiStaffRows.filter(r=>r.name).map(r=>({name:r.name,staffID:r.staffID||staffList.find(s=>s.name===r.name)?.staffID||''}));
+        const entry = {
+            itemID:          itemID || ('PEI'+Date.now()),
+            date:            document.getElementById('eiDate').value,
+            category:        document.getElementById('eiCat').value,
+            description:     document.getElementById('eiDesc').value,
+            amount:          parseFloat(document.getElementById('eiAmt').value)||0,
+            payMode:         document.getElementById('eiPayMode').value,
+            vendor:          document.getElementById('eiVendor').value,
+            technicians:     techs,
+            staffName:       techs.map(t=>t.name).join(', '),
+            billAttachments: [..._eiBillAttachments]
+        };
+        if (itemID) {
+            const ei = projectExpenses[idx].items.findIndex(i=>i.itemID===itemID);
+            if (ei>=0) projectExpenses[idx].items[ei]=entry; else projectExpenses[idx].items.push(entry);
+        } else {
+            projectExpenses[idx].items.push(entry);
         }
-        if (!projectExpenses[idx].items) projectExpenses[idx].items = [];
-        projectExpenses[idx].items.push({
-            itemID:      'PEI' + Date.now(),
-            date:        document.getElementById('eiDate').value,
-            category:    document.getElementById('eiCat').value,
-            description: document.getElementById('eiDesc').value,
-            staffName:   document.getElementById('eiStaff').value || '',
-            staffID:     staffList.find(s => s.name === document.getElementById('eiStaff').value)?.staffID || '',
-            amount:      parseFloat(document.getElementById('eiAmt').value) || 0,
-            billData,
-            billName
-        });
         await saveData('projectExpenses', projectExpenses);
-        closeExpItemModal();
-        renderView();
-        showToast('✅ Expense added');
+        closeExpItemModal(); renderView(); showToast('✅ Expense saved');
     }
 
     async function deleteExpItem(projID, itemID) {
         if (!confirm('Delete this expense entry?')) return;
-        const idx = projectExpenses.findIndex(x => x.projExpID === projID);
-        if (idx < 0) return;
-        projectExpenses[idx].items =
-            (projectExpenses[idx].items || []).filter(i => i.itemID !== itemID);
+        const idx = projectExpenses.findIndex(x=>x.projExpID===projID);
+        if (idx<0) return;
+        projectExpenses[idx].items = (projectExpenses[idx].items||[]).filter(i=>i.itemID!==itemID);
         await saveData('projectExpenses', projectExpenses);
-        renderView();
-        showToast('🗑️ Entry deleted');
+        renderView(); showToast('🗑️ Expense deleted');
     }
 
-    function viewBill(projID, itemID) {
-        const p    = projectExpenses.find(x => x.projExpID === projID);
-        const item = (p?.items || []).find(i => i.itemID === itemID);
-        if (!item?.billData) return;
-        const w = window.open();
-        if (item.billData.startsWith('data:application/pdf')) {
-            w.document.write(`<html><body style="margin:0"><embed src="${item.billData}" type="application/pdf" width="100%" height="100%"/></body></html>`);
-        } else {
-            w.document.write(`<html><body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${item.billData}" style="max-width:100%;max-height:100vh;object-fit:contain"/></body></html>`);
-        }
+    function viewExpAttachments(projID, itemID) {
+        const p    = projectExpenses.find(x=>x.projExpID===projID);
+        const item = (p?.items||[]).find(i=>i.itemID===itemID);
+        if (!item) return;
+        const atts = item.billAttachments?.length ? item.billAttachments : (item.billData?[{data:item.billData,name:item.billName||'attachment'}]:[]);
+        if (!atts.length) return;
+        if (atts.length===1) { openAttachment(atts[0]); return; }
+        // Multiple — open gallery
+        const win = window.open();
+        win.document.write(`<html><head><title>Attachments</title><style>body{margin:0;background:#111;display:flex;flex-wrap:wrap;gap:8px;padding:12px}img{max-width:calc(50% - 4px);border-radius:6px;cursor:zoom-in}.pdf{width:100%;height:600px;border:none}</style></head><body>`+
+            atts.map((a,i)=>a.data.startsWith('data:image')?
+                `<img src="${a.data}" title="${a.name}" onclick="window.open('${a.data}')"/>`:
+                `<embed src="${a.data}" type="application/pdf" class="pdf"/>`
+            ).join('')+`</body></html>`);
     }
+    function openAttachment(att) {
+        const win = window.open();
+        if (att.data.startsWith('data:application/pdf')) win.document.write(`<html><body style="margin:0"><embed src="${att.data}" type="application/pdf" width="100%" height="100%"/></body></html>`);
+        else win.document.write(`<html><body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${att.data}" style="max-width:100%;max-height:100vh;object-fit:contain"/></body></html>`);
+    }
+
+    // ── RECONCILIATION ────────────────────────────────────────────
+    async function reconcilePDF(projID) {
+        const p = projectExpenses.find(x=>x.projExpID===projID);
+        if (!p) return;
+        showToast('⏳ Generating reconciliation PDF…', 5000);
+        if (!window.jspdf) {
+            await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+            await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+        }
+        const {jsPDF}=window.jspdf;
+        const doc=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+        const ML=14,MR=14,CW=210-ML-MR,PW=210;
+        const INR=n=>'INR '+Math.max(0,+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
+        const fmt=n=>'₹'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
+
+        const funds   = parseFloat(p.totalFunds)||0;
+        const items   = p.items||[];
+        const reqs    = p.fundRequests||[];
+        const spent   = items.reduce((a,i)=>a+(parseFloat(i.amount)||0),0);
+        const bal     = funds-spent;
+        const totalReq= reqs.reduce((a,r)=>a+(parseFloat(r.amount)||0),0);
+
+        // ── Header ──────────────────────────────────────────────
+        doc.setFillColor(15,58,95);doc.rect(0,0,210,38,'F');
+        doc.setFontSize(16);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
+        doc.text('EXPENSE RECONCILIATION STATEMENT',PW/2,13,{align:'center'});
+        doc.setFontSize(9);doc.setFont('helvetica','normal');doc.setTextColor(147,197,253);
+        doc.text('IMSE Tech India — Field Expense Report',PW/2,20,{align:'center'});
+        doc.setFontSize(8.5);doc.setTextColor(203,213,225);
+        doc.text('Project: '+p.projectName+(p.projectRef?' | Ref: '+p.projectRef:'')+'  |  Generated: '+new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}),PW/2,27,{align:'center'});
+        doc.text(p.startDate?'Period: '+p.startDate+(p.endDate?' → '+p.endDate:''):'',PW/2,33,{align:'center'});
+        doc.setFillColor(29,78,216);doc.rect(0,37,210,2,'F');
+        let y=44;
+
+        // ── Summary box ─────────────────────────────────────────
+        doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',styles:{fontSize:9,cellPadding:3},
+            headStyles:{fillColor:[30,58,138],textColor:[255,255,255],fontStyle:'bold'},
+            head:[['RECONCILIATION SUMMARY','','']],
+            body:[
+                ['Office Fund Provided',INR(funds),''],
+                ['Total Fund Requested',INR(totalReq),'('+reqs.length+' request'+(reqs.length!==1?'s':'')+'  |  Pending: '+reqs.filter(r=>r.status==='Pending').length+')'],
+                ['Total Expenses Claimed',INR(spent),'('+items.length+' entr'+(items.length!==1?'ies':'y')+')'],
+                [{content:bal>=0?'BALANCE REMAINING':'OVER-SPENT',styles:{fontStyle:'bold',textColor:bal>=0?[21,128,61]:[220,38,38]}},{content:INR(Math.abs(bal)),styles:{fontStyle:'bold',textColor:bal>=0?[21,128,61]:[220,38,38]}},'']
+            ],
+            columnStyles:{0:{cellWidth:75,fontStyle:'bold',fillColor:[241,245,249]},1:{cellWidth:40,halign:'right'},2:{cellWidth:CW-115}}
+        });
+        y=doc.lastAutoTable.finalY+6;
+
+        // ── Fund requests table ──────────────────────────────────
+        if (reqs.length) {
+            doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',styles:{fontSize:8.5,cellPadding:2.5},
+                headStyles:{fillColor:[30,58,138],textColor:[255,255,255],fontStyle:'bold'},
+                head:[['FUND REQUESTS SUBMITTED','','','','']],
+                body:[
+                    ['#','Date','Purpose','Remarks','Amount','Status'].map(h=>({content:h,styles:{fontStyle:'bold'}})),
+                    ...reqs.map((r,i)=>[String(i+1),r.date,r.purpose,r.remarks||'—',INR(r.amount),{content:r.status,styles:{textColor:r.status==='Received'?[21,128,61]:r.status==='Approved'?[29,78,216]:[180,83,9],fontStyle:'bold'}}])
+                ],
+                columnStyles:{0:{cellWidth:8,halign:'center'},1:{cellWidth:22},2:{cellWidth:36},3:{cellWidth:CW-8-22-36-22-22},4:{cellWidth:22,halign:'right'},5:{cellWidth:22,halign:'center'}}
+            });
+            y=doc.lastAutoTable.finalY+6;
+        }
+
+        // ── Expense entries table ────────────────────────────────
+        if (items.length) {
+            doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',styles:{fontSize:8.5,cellPadding:2.5},
+                headStyles:{fillColor:[13,124,102],textColor:[255,255,255],fontStyle:'bold'},
+                head:[['EXPENSE ENTRIES','','','','','']],
+                body:[
+                    ['#','Date','Category','Description / Vendor','Technicians','Pay Mode','Amount'].map(h=>({content:h,styles:{fontStyle:'bold'}})),
+                    ...items.map((it,i)=>{
+                        const techs=(it.technicians||[]).map(t=>t.name).join(', ')||it.staffName||'—';
+                        const attCount=(it.billAttachments||[]).length+(it.billData?1:0);
+                        return [String(i+1),it.date,it.category,(it.description||'—')+(it.vendor?' / '+it.vendor:'')+(attCount?' 📎'+attCount:''),techs,it.payMode||'Cash',{content:INR(it.amount),styles:{fontStyle:'bold'}}];
+                    }),
+                    [{content:'TOTAL SPENT',styles:{fontStyle:'bold',fillColor:[224,242,254],textColor:[15,23,72]}},
+                     '','','','',
+                     {content:INR(spent),styles:{fontStyle:'bold',fillColor:[186,230,253],textColor:[15,23,72]}},
+                     '']
+                ],
+                columnStyles:{0:{cellWidth:8,halign:'center'},1:{cellWidth:22},2:{cellWidth:28},3:{cellWidth:CW-8-22-28-30-18-22},4:{cellWidth:30},5:{cellWidth:18},6:{cellWidth:22,halign:'right'}}
+            });
+            y=doc.lastAutoTable.finalY+6;
+        }
+
+        // ── Balance reconciliation ───────────────────────────────
+        if (y>240){doc.addPage();y=15;}
+        doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',styles:{fontSize:9,cellPadding:3},
+            headStyles:{fillColor:[88,28,135],textColor:[255,255,255],fontStyle:'bold'},
+            head:[['FUND RECONCILIATION']],
+            body:[
+                [`Fund Provided by Office: ${INR(funds)}`],
+                [`Less: Total Expenses Claimed: ${INR(spent)}`],
+                [{content:`Balance ${bal>=0?'to be Returned':'Over-Spent'}: ${INR(Math.abs(bal))}`,styles:{fontStyle:'bold',textColor:bal>=0?[21,128,61]:[220,38,38]}}]
+            ],columnStyles:{0:{cellWidth:CW}}
+        });
+        y=doc.lastAutoTable.finalY+8;
+
+        // ── Bill attachments (images) ────────────────────────────
+        const imgItems=items.filter(it=>(it.billAttachments||[]).some(b=>b.data.startsWith('data:image'))||(it.billData?.startsWith('data:image')));
+        if(imgItems.length){
+            if(y>220){doc.addPage();y=15;}
+            doc.setFillColor(15,58,95);doc.rect(ML,y,CW,8,'F');
+            doc.setFontSize(9);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
+            doc.text('SUPPORTING BILLS / RECEIPTS',ML+3,y+5.5);y+=12;
+            for(const it of imgItems){
+                const imgs=(it.billAttachments||[]).filter(b=>b.data.startsWith('data:image'));
+                if(it.billData?.startsWith('data:image'))imgs.push({data:it.billData,name:it.billName||''});
+                const imgW=(CW-6)/3;let col=0;
+                for(const b of imgs){
+                    if(y+50>275){doc.addPage();y=15;}
+                    const xPos=ML+col*(imgW+3);
+                    try{doc.addImage(b.data,b.data.startsWith('data:image/png')?'PNG':'JPEG',xPos,y,imgW,45,'','MEDIUM');
+                    doc.setFontSize(6.5);doc.setFont('helvetica','normal');doc.setTextColor(100,100,100);
+                    doc.text(it.date+' · '+it.category,xPos+imgW/2,y+47,{align:'center'});}
+                    catch(e){}
+                    col++;if(col===3){col=0;y+=52;}
+                }
+                if(col>0)y+=52;
+            }
+        }
+
+        // ── Signature block ──────────────────────────────────────
+        if(y>255){doc.addPage();y=15;}
+        doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',styles:{fontSize:8.5,cellPadding:6,minCellHeight:18},
+            headStyles:{fillColor:[30,41,59],textColor:[255,255,255],fontStyle:'bold'},
+            head:[['FIELD TECHNICIAN','SUPERVISOR / PROJECT MANAGER','ACCOUNTS / OFFICE']],
+            body:[['Name: __________________','Name: __________________','Name: __________________'],
+                  ['Signature:','Signature:','Signature:'],['Date:','Date:','Date:']],
+            columnStyles:{0:{cellWidth:CW/3},1:{cellWidth:CW/3},2:{cellWidth:CW/3}}});
+
+        // ── Footer ───────────────────────────────────────────────
+        const pc=doc.getNumberOfPages();
+        for(let pg=1;pg<=pc;pg++){doc.setPage(pg);doc.setFontSize(7);doc.setFont('helvetica','italic');doc.setTextColor(150,150,150);doc.text('IMSE Tech India — Expense Reconciliation — '+p.projectName+' — Page '+pg+' of '+pc,PW/2,291,{align:'center'});}
+
+        doc.save('Reconciliation_'+(p.projectName||'Project').replace(/\s+/g,'_')+'_'+new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'2-digit',year:'numeric'}).replace(/\//g,'-')+'.pdf');
+        showToast('✅ Reconciliation PDF downloaded');
+    }
+
+    function reconcileCSV(projID) {
+        const p = projectExpenses.find(x=>x.projExpID===projID);
+        if (!p) return;
+        const funds = parseFloat(p.totalFunds)||0;
+        const items = p.items||[];
+        const reqs  = p.fundRequests||[];
+        const spent = items.reduce((a,i)=>a+(parseFloat(i.amount)||0),0);
+
+        const rows = [];
+        rows.push(['EXPENSE RECONCILIATION — '+p.projectName+(p.projectRef?' ('+p.projectRef+')':'')]);
+        rows.push(['Period', p.startDate||'', 'to', p.endDate||'']);
+        rows.push(['Generated', new Date().toLocaleDateString('en-IN')]);
+        rows.push([]);
+        rows.push(['FUND SUMMARY']);
+        rows.push(['Office Fund Provided', funds]);
+        rows.push(['Total Requested', reqs.reduce((a,r)=>a+(parseFloat(r.amount)||0),0)]);
+        rows.push(['Total Spent', spent]);
+        rows.push(['Balance', funds-spent]);
+        rows.push([]);
+        rows.push(['FUND REQUESTS']);
+        rows.push(['#','Date','Purpose','Amount','Remarks','Status']);
+        reqs.forEach((r,i)=>rows.push([i+1,r.date,r.purpose,r.amount,r.remarks||'',r.status]));
+        rows.push([]);
+        rows.push(['EXPENSE ENTRIES']);
+        rows.push(['#','Date','Category','Description','Vendor','Technicians','Payment Mode','Amount','Bill Attachments']);
+        items.forEach((it,i)=>{
+            const techs=(it.technicians||[]).map(t=>t.name).join(' / ')||it.staffName||'';
+            const attCount=(it.billAttachments||[]).length+(it.billData?1:0);
+            rows.push([i+1,it.date,it.category,it.description,it.vendor||'',techs,it.payMode||'Cash',it.amount,attCount+' attachment(s)']);
+        });
+        rows.push([]);
+        rows.push(['TOTAL','',' ','','','','',spent,'']);
+
+        const csv=rows.map(r=>r.map(c=>'"'+(String(c||'').replace(/"/g,'""'))+'"').join(',')).join('\n');
+        const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'});
+        const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+        a.download='Reconciliation_'+(p.projectName||'Project').replace(/\s+/g,'_')+'.csv';
+        a.click();URL.revokeObjectURL(a.href);
+        showToast('✅ Reconciliation CSV downloaded');
+    }
+
 
     // ── WORK LOGS VIEW ────────────────────────────────────────────
+
     // Structure: workLogs = array of Project Work Logs
     // Each log has: wlID, project, location, workStartDate, workEndDate,
     //   technicians[], status, createdAt
