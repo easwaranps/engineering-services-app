@@ -490,7 +490,10 @@
             </div>
             <!-- Photos -->
             <div style="background:#f8fafc;border:1px solid var(--border);border-radius:12px;padding:12px 14px">
-                <p class="field-label" style="margin-bottom:8px">📷 PHOTOS <span style="font-weight:400;text-transform:none;font-size:11px;color:var(--muted)">(up to 10 per day)</span></p>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                    <p class="field-label" style="margin:0">📷 PHOTOS <span style="font-weight:400;text-transform:none;font-size:11px;color:var(--muted)">(up to 10 per day)</span></p>
+                    <button type="button" onclick="document.getElementById('dayPhotoFile').click()" style="font-size:12px;padding:5px 12px;border-radius:8px;background:#e0f2fe;color:#0369a1;border:1px solid #bae6fd;cursor:pointer;font-weight:600">📷 Add Photo</button>
+                </div>
                 <div id="dayPhotoGrid" class="flex flex-wrap gap-2"></div>
                 <input type="file" id="dayPhotoFile" accept="image/*" capture="environment" class="hidden" onchange="handleDayPhoto(this)" multiple/>
             </div>
@@ -1018,7 +1021,8 @@
                                 <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
                                     <span style="font-size:14px;font-weight:700;color:var(--navy)">${fmt(it.amount)}</span>
                                     ${attCount>0?`<button onclick="viewExpAttachments('${p.projExpID}','${it.itemID}')" style="padding:3px 8px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;font-size:11px;color:#1d4ed8;cursor:pointer">📎 ${attCount}</button>`:''}
-                                    <button onclick="deleteExpItem('${p.projExpID}','${it.itemID}')" style="color:#dc2626;background:none;border:none;font-size:12px;cursor:pointer;padding:2px">✕</button>
+                                    <button onclick="openExpItemModal('${p.projExpID}','${it.itemID}')" style="padding:3px 8px;border-radius:6px;border:1.5px solid var(--border);background:#fff;cursor:pointer;font-size:11px;color:var(--muted)">✏️</button>
+                                    <button onclick="deleteExpItem('${p.projExpID}','${it.itemID}')" style="padding:3px 8px;border-radius:6px;border:1.5px solid #fecaca;background:#fff;cursor:pointer;font-size:11px;color:#dc2626">✕</button>
                                 </div>
                             </div>
                         </div>`;
@@ -1607,10 +1611,11 @@
                         const dayTechs=(d.technicians||[]).map(t=>t.name).join(', ')||(w.technicians||[]).map(t=>t.name).join(', ')||'—';
                         return `
                         <div style="padding:12px 16px;border-bottom:1px solid var(--border);background:${idx%2===0?'#fff':'#f8fafc'}">
-                            <div class="flex justify-between items-start mb-1">
+                            <!-- Header row: day number, date, time, category, actions -->
+                            <div class="flex justify-between items-start mb-2">
                                 <div>
                                     <span class="font-semibold" style="font-size:13px;color:var(--navy)">Day ${days-idx} — ${d.date||'—'}</span>
-                                    ${d.startTime?`<span style="font-size:11px;color:var(--muted);margin-left:8px">⏱ ${d.startTime}–${d.endTime}${dur?' ('+dur+')':''}</span>`:''}
+                                    ${d.startTime?`<span style="font-size:11px;color:var(--muted);margin-left:8px">⏱ ${d.startTime}–${d.endTime||'?'}${dur?' ('+dur+')':''}</span>`:''}
                                     ${d.category?`<span class="badge" style="margin-left:6px;background:#eff6ff;color:#1d4ed8;font-size:10px">${d.category}</span>`:''}
                                 </div>
                                 <div class="flex gap-1.5">
@@ -1618,12 +1623,39 @@
                                     <button onclick="deleteDayEntry('${w.wlID}','${d.entryID}')" style="padding:4px 8px;border-radius:6px;border:1.5px solid #fecaca;background:#fff;cursor:pointer;font-size:11px;color:#dc2626">✕</button>
                                 </div>
                             </div>
-                            <p style="font-size:12px;color:var(--muted);margin-bottom:3px">👷 ${dayTechs}</p>
-                            <p style="font-size:12px;color:var(--text);line-height:1.6">${d.description||''}</p>
-                            ${d.observations?`<p style="font-size:11px;color:#0369a1;margin-top:4px"><strong>🔍 Obs:</strong> ${d.observations}</p>`:''}
-                            ${d.exclusions?`<p style="font-size:11px;color:#b45309;margin-top:2px"><strong>⚠️ Excl:</strong> ${d.exclusions}</p>`:''}
-                            ${d.witnessName?`<p style="font-size:11px;color:#be123c;margin-top:4px">✍️ Witnessed: ${d.witnessName}${d.witnessDesig?' ('+d.witnessDesig+')':''}</p>`:''}
-                            ${(d.photos||[]).length?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${d.photos.map((ph,i)=>`<img src="${ph}" class="photo-thumb" onclick="viewDayPhoto('${w.wlID}','${d.entryID}',${i})" style="width:52px;height:52px"/>`).join('')}</div>`:''}
+                            <!-- Technicians -->
+                            <p style="font-size:11px;color:#7c3aed;margin-bottom:4px">👷 <strong>On Site:</strong> ${dayTechs}</p>
+                            <!-- Work done -->
+                            ${d.description?`<div style="background:#fffbeb;border-left:3px solid #f59e0b;padding:6px 10px;border-radius:0 6px 6px 0;margin-bottom:4px">
+                                <p style="font-size:10px;font-weight:700;color:#b45309;letter-spacing:.04em;margin-bottom:2px">🔧 WORK CARRIED OUT</p>
+                                <p style="font-size:12px;color:var(--text);line-height:1.6">${d.description}</p>
+                            </div>`:''}
+                            <!-- Observations -->
+                            ${d.observations?`<div style="background:#eff6ff;border-left:3px solid #3b82f6;padding:5px 10px;border-radius:0 6px 6px 0;margin-bottom:4px">
+                                <p style="font-size:10px;font-weight:700;color:#1d4ed8;margin-bottom:2px">🔍 OBSERVATIONS / FINDINGS</p>
+                                <p style="font-size:12px;color:var(--text)">${d.observations}</p>
+                            </div>`:''}
+                            <!-- Exclusions -->
+                            ${d.exclusions?`<div style="background:#fff7ed;border-left:3px solid #f97316;padding:5px 10px;border-radius:0 6px 6px 0;margin-bottom:4px">
+                                <p style="font-size:10px;font-weight:700;color:#b45309;margin-bottom:2px">⚠️ EXCLUSIONS / REMARKS</p>
+                                <p style="font-size:12px;color:var(--text)">${d.exclusions}</p>
+                            </div>`:''}
+                            <!-- Recommendations -->
+                            ${d.recommendations?`<div style="background:#f0fdf4;border-left:3px solid #22c55e;padding:5px 10px;border-radius:0 6px 6px 0;margin-bottom:4px">
+                                <p style="font-size:10px;font-weight:700;color:#15803d;margin-bottom:2px">💡 RECOMMENDATIONS</p>
+                                <p style="font-size:12px;color:var(--text)">${d.recommendations}</p>
+                            </div>`:''}
+                            <!-- Witness -->
+                            ${d.witnessName?`<div style="background:#fff1f2;border-left:3px solid #f43f5e;padding:5px 10px;border-radius:0 6px 6px 0;margin-bottom:4px">
+                                <p style="font-size:10px;font-weight:700;color:#be123c;margin-bottom:2px">✍️ WITNESSED BY</p>
+                                <p style="font-size:12px;color:var(--text)">${d.witnessName}${d.witnessDesig?' — '+d.witnessDesig:''}</p>
+                                ${d.witnessRemarks?`<p style="font-size:11px;color:var(--muted);margin-top:2px">"${d.witnessRemarks}"</p>`:''}
+                            </div>`:''}
+                            <!-- Photos -->
+                            ${(d.photos||[]).length?`<div style="margin-top:8px">
+                                <p style="font-size:10px;font-weight:700;color:var(--muted);margin-bottom:4px">📷 PHOTOS (${d.photos.length})</p>
+                                <div style="display:flex;gap:6px;flex-wrap:wrap">${d.photos.map((ph,i)=>`<img src="${ph}" class="photo-thumb" onclick="viewDayPhoto('${w.wlID}','${d.entryID}',${i})" style="width:60px;height:60px;border-radius:8px;object-fit:cover;cursor:pointer;border:2px solid var(--border)"/>`).join('')}</div>
+                            </div>`:''}
                         </div>`;
                     }).join('')}
                 </div>`}
