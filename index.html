@@ -7426,7 +7426,7 @@
             const p   = projectExpenses.find(x=>x.projExpID===projID);
             const req = (p?.fundRequests||[]).find(r=>r.frID===frID);
             if (!p || !req) return;
-            showToast('⏳ Generating Fund Statement…', 5000);
+            // generating...
 
             if (!window.jspdf) {
                 await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
@@ -7627,7 +7627,7 @@
 
             const safeProj=(p.projectName||'Project').replace(/\s+/g,'_').replace(/[^a-zA-Z0-9_-]/g,'');
             doc.save('FundStatement_'+safeProj+'_Release'+releaseNo+'_'+(req.releasedDate||req.date||'').replace(/-/g,'')+'.pdf');
-            showToast('✅ Fund Statement PDF downloaded');
+            // done
         }
         async function approveFundRequest(projID, frID) {
             const idx = projectExpenses.findIndex(x=>x.projExpID===projID);
