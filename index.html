@@ -7087,57 +7087,48 @@
                     <!-- Fund requests for this project -->
                     ${projReqs.length ? `
                     <div class="border-t">
-                        <div class="px-4 py-2 bg-blue-50 text-xs font-bold text-blue-700 uppercase tracking-wide">
-                            Fund Requests (${projReqs.length})
+                        <div class="px-4 py-2 bg-blue-50 flex items-center justify-between">
+                            <span class="text-xs font-bold text-blue-700 uppercase tracking-wide">Fund Requests (${projReqs.length}) · Total Released: ${fmt(projReqs.reduce((a,r)=>a+(parseFloat(r.releasedAmount)||0),0))}</span>
                         </div>
-                        <table class="w-full text-xs">
-                            <thead class="bg-gray-50 text-gray-400 uppercase">
-                                <tr>
-                                    <th class="px-3 py-1.5 text-left">Date</th>
-                                    <th class="px-3 py-1.5 text-left">Purpose</th>
-                                    <th class="px-3 py-1.5 text-left">Requested By</th>
-                                    <th class="px-3 py-1.5 text-right">Requested</th>
-                                    <th class="px-3 py-1.5 text-right">Released</th>
-                                    <th class="px-3 py-1.5 text-center">Status</th>
-                                    <th class="px-3 py-1.5 text-center">Action</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                            ${projReqs.map(r=>`
-                                <tr class="border-t hover:bg-blue-50">
-                                    <td class="px-3 py-1.5">${r.date}</td>
-                                    <td class="px-3 py-1.5">${r.purpose}${r.remarks?`<br><span class="text-gray-400">${r.remarks}</span>`:''}</td>
-                                    <td class="px-3 py-1.5 text-gray-500">${r.addedBy||'—'}</td>
-                                    <td class="px-3 py-1.5 text-right font-medium">${fmt(r.amount)}</td>
-                                    <td class="px-3 py-1.5 text-right font-medium text-green-700">${r.releasedAmount?fmt(r.releasedAmount):'—'}</td>
-                                    <td class="px-3 py-1.5 text-center">
-                                        <span class="px-1.5 py-0.5 rounded text-xs font-semibold
-                                            ${r.status==='Received'?'bg-green-100 text-green-700':
+                        ${projReqs.map((r,ri)=>`
+                        <div class="border-t ${r.status==='Received'?'bg-green-50':r.status==='Rejected'?'bg-red-50':'bg-white'}">
+                            <!-- Request header row -->
+                            <div class="px-4 py-2 flex justify-between items-start flex-wrap gap-2">
+                                <div class="flex-1 min-w-0">
+                                    <div class="flex items-center gap-2 flex-wrap">
+                                        <span class="font-semibold text-xs text-gray-800">#${ri+1} · ${r.purpose}</span>
+                                        <span class="px-2 py-0.5 rounded-full text-xs font-semibold
+                                            ${r.status==='Received'?'bg-green-200 text-green-800':
                                               r.status==='Approved'?'bg-blue-100 text-blue-700':
                                               r.status==='Rejected'?'bg-red-100 text-red-700':
                                               'bg-amber-100 text-amber-700'}">${r.status}</span>
-                                    </td>
-                                    <td class="px-3 py-1.5 text-center">
-                                        ${r.status==='Pending'?`
-                                        <button onclick="approveFundRequest('${p.projExpID}','${r.frID}')" class="text-blue-600 hover:text-blue-800 font-medium mr-1">✓</button>
-                                        <button onclick="rejectFundRequest('${p.projExpID}','${r.frID}')" class="text-red-500 hover:text-red-700">✗</button>`
-                                        :r.status==='Approved'?`
-                                        <button onclick="openReleaseFundsModal('${p.projExpID}','${r.frID}',${r.amount})" class="px-2 py-0.5 bg-green-600 text-white rounded text-xs hover:bg-green-700">💸 Release</button>`
-                                        :r.status==='Received'?`
-                                        <div class="flex gap-1 justify-center flex-wrap">
-                                            <button onclick="openAttachReceiptModal('${p.projExpID}','${r.frID}')" class="px-2 py-0.5 ${r.paymentReceipts?.length?'bg-indigo-100 text-indigo-700':'bg-amber-100 text-amber-700'} rounded text-xs hover:bg-indigo-200 font-medium">
-                                                📎 ${r.paymentReceipts?.length ? r.paymentReceipts.length+' receipt'+(r.paymentReceipts.length>1?'s':'') : 'Attach Receipt'}
-                                            </button>
-                                            ${r.paymentReceipts?.length ? `
-                                            <button onclick="viewPaymentReceipts('${p.projExpID}','${r.frID}')" class="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs hover:bg-blue-200 font-medium">👁 View</button>
-                                            <button onclick="deleteReceiptByIndex('${p.projExpID}','${r.frID}')" class="px-2 py-0.5 bg-red-100 text-red-600 rounded text-xs hover:bg-red-200 font-medium" title="Delete receipt(s)">🗑 Del</button>
-                                            ` : ''}
-                                        </div>`
-                                        :`<span class="text-gray-300">—</span>`}
-                                    </td>
-                                </tr>`).join('')}
-                            </tbody>
-                        </table>
+                                        ${r.paymentReceipts?.length?`<span class="text-xs text-indigo-600">📎 ${r.paymentReceipts.length} receipt(s)</span>`:''}
+                                    </div>
+                                    <div class="text-xs text-gray-500 mt-0.5 flex flex-wrap gap-3">
+                                        <span>📅 Requested: ${r.date}${r.addedBy?' by <strong>'+r.addedBy+'</strong>':''}</span>
+                                        <span>💰 Requested: <strong>${fmt(r.amount)}</strong></span>
+                                        ${r.releasedAmount?`<span class="text-green-700">✅ Released: <strong>${fmt(r.releasedAmount)}</strong>${r.releasedDate?' on '+r.releasedDate:''}${r.releaseMode?' via '+r.releaseMode:''}</span>`:''}
+                                        ${r.officeRemarks?`<span class="text-gray-400">📝 ${r.officeRemarks}</span>`:''}
+                                    </div>
+                                    ${r.remarks?`<p class="text-xs text-gray-400 mt-0.5 italic">"${r.remarks}"</p>`:''}
+                                </div>
+                                <!-- Action buttons -->
+                                <div class="flex gap-1 flex-wrap items-center">
+                                    ${r.status==='Pending'?`
+                                        <button onclick="approveFundRequest('${p.projExpID}','${r.frID}')" class="px-2 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 font-medium">✓ Approve</button>
+                                        <button onclick="rejectFundRequest('${p.projExpID}','${r.frID}')" class="px-2 py-1 bg-red-100 text-red-600 rounded text-xs hover:bg-red-200">✗ Reject</button>`
+                                    :r.status==='Approved'?`
+                                        <button onclick="openReleaseFundsModal('${p.projExpID}','${r.frID}',${r.amount})" class="px-2 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700 font-medium">💸 Release</button>`
+                                    :r.status==='Received'?`
+                                        <button onclick="openAttachReceiptModal('${p.projExpID}','${r.frID}')" class="px-2 py-1 ${r.paymentReceipts?.length?'bg-indigo-100 text-indigo-700':'bg-amber-100 text-amber-700'} rounded text-xs hover:bg-indigo-200 font-medium">📎 ${r.paymentReceipts?.length?r.paymentReceipts.length+' receipt(s)':'Attach Receipt'}</button>
+                                        ${r.paymentReceipts?.length?`
+                                        <button onclick="viewPaymentReceipts('${p.projExpID}','${r.frID}')" class="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs hover:bg-blue-200 font-medium">👁 View</button>
+                                        <button onclick="deleteReceiptByIndex('${p.projExpID}','${r.frID}')" class="px-2 py-1 bg-red-100 text-red-600 rounded text-xs hover:bg-red-200 font-medium">🗑 Del</button>`:''}
+                                        <button onclick="fundStatementPDF('${p.projExpID}','${r.frID}')" class="px-2 py-1 bg-purple-600 text-white rounded text-xs hover:bg-purple-700 font-medium" title="Generate Fund Disbursement Statement PDF">📄 Statement</button>`
+                                    :`<span class="text-gray-300 text-xs">—</span>`}
+                                </div>
+                            </div>
+                        </div>`).join('')}
                     </div>` : ''}
 
                     <!-- Field expense entries -->
@@ -7428,7 +7419,216 @@
             await saveData('projectExpenses', projectExpenses);
             renderView();
         }
-        // ── FUND REQUEST APPROVAL ──────────────────────────────────
+        // ── FUND DISBURSEMENT STATEMENT PDF ──────────────────────────
+        // Generates a cash-book style statement per fund release showing:
+        // Fund received → expenses attributed to it → running balance → return amount
+        async function fundStatementPDF(projID, frID) {
+            const p   = projectExpenses.find(x=>x.projExpID===projID);
+            const req = (p?.fundRequests||[]).find(r=>r.frID===frID);
+            if (!p || !req) return;
+            showToast('⏳ Generating Fund Statement…', 5000);
+
+            if (!window.jspdf) {
+                await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+                await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+            }
+            const {jsPDF} = window.jspdf;
+            const doc = new jsPDF({orientation:'portrait', unit:'mm', format:'a4'});
+            const ML=14, MR=14, CW=210-ML-MR, PW=210;
+            const fmt  = n => '₹'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
+            const INR  = n => (+(n)||0).toLocaleString('en-IN',{minimumFractionDigits:2});
+
+            // Which release number is this among all received releases?
+            const allReceived = (p.fundRequests||[]).filter(r=>r.status==='Received');
+            const releaseNo   = allReceived.findIndex(r=>r.frID===frID)+1;
+            const totalReleases = allReceived.length;
+
+            // Attribute expenses to this release:
+            // All expenses dated on or after this release date, up to the next release date
+            const sortedReleases = [...allReceived].sort((a,b)=>(a.releasedDate||a.date||'').localeCompare(b.releasedDate||b.date||''));
+            const thisRelIdx = sortedReleases.findIndex(r=>r.frID===frID);
+            const releaseFromDate = req.releasedDate || req.date || '';
+            const releaseToDate   = sortedReleases[thisRelIdx+1]?.releasedDate || sortedReleases[thisRelIdx+1]?.date || '';
+            const allItems = [...(p.items||[])].sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+            const attributed = allItems.filter(it => {
+                if (!it.date) return false;
+                if (it.date < releaseFromDate) return false;
+                if (releaseToDate && it.date >= releaseToDate) return false;
+                return true;
+            });
+            const releasedAmt = parseFloat(req.releasedAmount) || parseFloat(req.amount) || 0;
+            const totalSpent  = attributed.reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
+            const balance     = releasedAmt - totalSpent;
+
+            // ── HEADER ──────────────────────────────────────────────
+            doc.setFillColor(15,58,95); doc.rect(0,0,210,40,'F');
+            doc.setFontSize(15); doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255);
+            doc.text('FUND DISBURSEMENT STATEMENT', PW/2, 12, {align:'center'});
+            doc.setFontSize(9); doc.setFont('helvetica','normal'); doc.setTextColor(147,197,253);
+            doc.text((settings.companyName||'IMSE Tech India')+'  |  Generated: '+new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}), PW/2, 20, {align:'center'});
+            doc.setFontSize(8.5); doc.setTextColor(203,213,225);
+            doc.text('Project: '+p.projectName+(p.projectRef?' | Ref: '+p.projectRef:'')+'  |  Release '+releaseNo+' of '+totalReleases, PW/2, 27, {align:'center'});
+            doc.text('Fund Release Date: '+(req.releasedDate||req.date||'—')+'  |  Mode: '+(req.releaseMode||'—')+'  |  Released by: Office', PW/2, 34, {align:'center'});
+            doc.setFillColor(29,78,216); doc.rect(0,39,210,2,'F');
+            let y = 46;
+
+            // ── FUND RELEASE DETAILS ────────────────────────────────
+            doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
+                styles:{fontSize:9, cellPadding:3},
+                headStyles:{fillColor:[30,58,138], textColor:[255,255,255], fontStyle:'bold'},
+                head:[[{content:'FUND RELEASE DETAILS', colSpan:2, styles:{halign:'center'}}]],
+                body:[
+                    [{content:'Requested By',     styles:{fontStyle:'bold',fillColor:[241,245,249]}}, req.addedBy||'—'],
+                    [{content:'Request Date',      styles:{fontStyle:'bold',fillColor:[241,245,249]}}, req.date||'—'],
+                    [{content:'Purpose',           styles:{fontStyle:'bold',fillColor:[241,245,249]}}, req.purpose||'—'],
+                    [{content:'Remarks / Notes',   styles:{fontStyle:'bold',fillColor:[241,245,249]}}, (req.remarks||'—')+(req.officeRemarks?' | Office: '+req.officeRemarks:'')],
+                    [{content:'Amount Requested',  styles:{fontStyle:'bold',fillColor:[241,245,249]}}, {content:fmt(req.amount), styles:{fontStyle:'bold'}}],
+                    [{content:'Amount Released',   styles:{fontStyle:'bold',fillColor:[240,253,244],textColor:[21,128,61]}}, {content:fmt(releasedAmt), styles:{fontStyle:'bold',textColor:[21,128,61]}}],
+                    [{content:'Release Mode',      styles:{fontStyle:'bold',fillColor:[241,245,249]}}, (req.releaseMode||'—')+(req.officeRemarks?' — Ref: '+req.officeRemarks:'')],
+                    [{content:'Payment Receipts',  styles:{fontStyle:'bold',fillColor:[241,245,249]}}, (req.paymentReceipts?.length||0)+' receipt(s) attached'],
+                ],
+                columnStyles:{0:{cellWidth:55}, 1:{cellWidth:CW-55}}
+            });
+            y = doc.lastAutoTable.finalY+6;
+
+            // ── EXPENSE ENTRIES TABLE ────────────────────────────────
+            if (attributed.length) {
+                let running = releasedAmt;
+                const expRows = attributed.map((it,i) => {
+                    const amt = parseFloat(it.amount)||0;
+                    running -= amt;
+                    const techs = (it.technicians||[]).map(t=>t.name).join(', ')||it.staffName||'—';
+                    return [
+                        String(i+1),
+                        it.date||'—',
+                        it.category||'—',
+                        (it.description||'—')+(it.vendor?'\n'+it.vendor:''),
+                        techs,
+                        {content:it.payMode||'Cash', styles:{halign:'center',fontSize:7.5}},
+                        {content:fmt(amt), styles:{halign:'right', fontStyle:'bold'}},
+                        {content:fmt(running), styles:{halign:'right', fontStyle:'bold', textColor:running>=0?[21,128,61]:[220,38,38]}}
+                    ];
+                });
+
+                doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
+                    styles:{fontSize:8, cellPadding:2.5, overflow:'linebreak'},
+                    headStyles:{fillColor:[13,124,102], textColor:[255,255,255], fontStyle:'bold'},
+                    head:[[
+                        {content:'#',          styles:{cellWidth:7,  halign:'center'}},
+                        {content:'Date',       styles:{cellWidth:22}},
+                        {content:'Category',   styles:{cellWidth:30}},
+                        {content:'Description / Vendor', styles:{cellWidth:CW-7-22-30-28-16-22-22}},
+                        {content:'Technicians',styles:{cellWidth:28}},
+                        {content:'Mode',       styles:{cellWidth:16, halign:'center'}},
+                        {content:'Amount',     styles:{cellWidth:22, halign:'right'}},
+                        {content:'Balance',    styles:{cellWidth:22, halign:'right'}}
+                    ]],
+                    body:[
+                        ...expRows,
+                        [{content:'TOTAL EXPENSES', colSpan:6, styles:{fontStyle:'bold',fillColor:[254,252,232],halign:'right',textColor:[180,83,9]}},
+                         {content:fmt(totalSpent), styles:{fontStyle:'bold',halign:'right',fillColor:[254,243,199],textColor:[180,83,9]}},
+                         {content:'', styles:{fillColor:[254,243,199]}}]
+                    ],
+                    columnStyles:{0:{cellWidth:7},1:{cellWidth:22},2:{cellWidth:30},3:{cellWidth:CW-7-22-30-28-16-22-22},4:{cellWidth:28},5:{cellWidth:16},6:{cellWidth:22},7:{cellWidth:22}}
+                });
+                y = doc.lastAutoTable.finalY+6;
+            } else {
+                if(y>250){doc.addPage();y=15;}
+                doc.setFontSize(9); doc.setFont('helvetica','italic'); doc.setTextColor(150,150,150);
+                doc.text('No expense entries recorded against this fund release.', ML, y+4);
+                y += 10;
+            }
+
+            // ── BALANCE SUMMARY ──────────────────────────────────────
+            if(y>240){doc.addPage();y=15;}
+            doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
+                styles:{fontSize:9.5, cellPadding:3.5},
+                headStyles:{fillColor:[88,28,135], textColor:[255,255,255], fontStyle:'bold'},
+                head:[[{content:'FUND ACCOUNT SUMMARY', colSpan:2, styles:{halign:'center'}}]],
+                body:[
+                    [{content:'Opening Balance (Fund Released)',    styles:{fontStyle:'bold',fillColor:[240,253,244],textColor:[21,128,61]}}, {content:fmt(releasedAmt), styles:{halign:'right',fontStyle:'bold',textColor:[21,128,61]}}],
+                    [{content:'Total Expenses Claimed ('+attributed.length+' entries)', styles:{fontStyle:'bold',fillColor:[254,242,242],textColor:[180,83,9]}}, {content:fmt(totalSpent), styles:{halign:'right',fontStyle:'bold',textColor:[180,83,9]}}],
+                    [{content:balance>=0?'Balance to be Returned to Office':'Amount Over-Spent',
+                      styles:{fontStyle:'bold',
+                              fillColor:balance>=0?[224,242,254]:[254,226,226],
+                              textColor:balance>=0?[15,23,72]:[220,38,38]}},
+                     {content:fmt(Math.abs(balance)),
+                      styles:{halign:'right',fontStyle:'bold',textColor:balance>=0?[29,78,216]:[220,38,38]}}]
+                ],
+                columnStyles:{0:{cellWidth:CW-45}, 1:{cellWidth:45, halign:'right'}}
+            });
+            y = doc.lastAutoTable.finalY+8;
+
+            // ── PAYMENT RECEIPT IMAGES ───────────────────────────────
+            const rcpts = req.paymentReceipts?.filter(r=>r.data?.startsWith('data:image'))||[];
+            if (rcpts.length) {
+                if(y>220){doc.addPage();y=15;}
+                doc.setFillColor(30,58,138); doc.rect(ML,y,CW,8,'F');
+                doc.setFontSize(8.5); doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255);
+                doc.text('PAYMENT RECEIPTS / PROOF OF TRANSFER ('+rcpts.length+')',ML+3,y+5.5);
+                y+=11;
+                const imgW=(CW-6)/3; let col=0;
+                for(const r of rcpts){
+                    if(y+48>275){doc.addPage();y=15;}
+                    const xPos=ML+col*(imgW+3);
+                    try{doc.addImage(r.data,'JPEG',xPos,y,imgW,44,'','MEDIUM');
+                    doc.setFontSize(6.5);doc.setFont('helvetica','normal');doc.setTextColor(100,100,100);
+                    doc.text(r.name||'Receipt',xPos+imgW/2,y+46,{align:'center'});}catch(e){}
+                    col++;if(col===3){col=0;y+=50;}
+                }
+                if(col>0)y+=50;
+            }
+
+            // ── EXPENSE BILL IMAGES ──────────────────────────────────
+            const billItems = attributed.filter(it=>(it.billAttachments||[]).some(b=>b.data?.startsWith('data:image'))||(it.billData?.startsWith('data:image')));
+            if(billItems.length){
+                if(y>220){doc.addPage();y=15;}
+                doc.setFillColor(13,124,102); doc.rect(ML,y,CW,8,'F');
+                doc.setFontSize(8.5); doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255);
+                doc.text('SUPPORTING BILLS & RECEIPTS',ML+3,y+5.5);
+                y+=11;
+                const imgW=(CW-6)/3; let col=0;
+                for(const it of billItems){
+                    const imgs=(it.billAttachments||[]).filter(b=>b.data?.startsWith('data:image'));
+                    if(it.billData?.startsWith('data:image'))imgs.push({data:it.billData,name:it.billName||''});
+                    for(const b of imgs){
+                        if(y+48>275){doc.addPage();y=15;}
+                        const xPos=ML+col*(imgW+3);
+                        try{doc.addImage(b.data,b.data.startsWith('data:image/png')?'PNG':'JPEG',xPos,y,imgW,44,'','MEDIUM');
+                        doc.setFontSize(6.5);doc.setFont('helvetica','normal');doc.setTextColor(100,100,100);
+                        doc.text(it.date+' · '+it.category,xPos+imgW/2,y+46,{align:'center'});}catch(e){}
+                        col++;if(col===3){col=0;y+=50;}
+                    }
+                }
+                if(col>0)y+=50;
+            }
+
+            // ── SIGNATURE BLOCK ──────────────────────────────────────
+            if(y>255){doc.addPage();y=15;}
+            doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
+                styles:{fontSize:8.5, cellPadding:6, minCellHeight:18},
+                headStyles:{fillColor:[30,41,59], textColor:[255,255,255], fontStyle:'bold'},
+                head:[['FIELD TECHNICIAN', 'SUPERVISOR / PM', 'ACCOUNTS / OFFICE']],
+                body:[
+                    ['Name: ______________________','Name: ______________________','Name: ______________________'],
+                    ['Signature:','Signature:','Signature:'],
+                    ['Date:','Date:','Date:']
+                ],
+                columnStyles:{0:{cellWidth:CW/3},1:{cellWidth:CW/3},2:{cellWidth:CW/3}}
+            });
+
+            // ── PAGE FOOTER ──────────────────────────────────────────
+            const pc=doc.getNumberOfPages();
+            for(let pg=1;pg<=pc;pg++){
+                doc.setPage(pg);
+                doc.setFontSize(7);doc.setFont('helvetica','italic');doc.setTextColor(150,150,150);
+                doc.text((settings.companyName||'IMSE Tech India')+' — Fund Statement — '+p.projectName+' — Release '+releaseNo+' — Page '+pg+' of '+pc, PW/2,291,{align:'center'});
+            }
+
+            const safeProj=(p.projectName||'Project').replace(/\s+/g,'_').replace(/[^a-zA-Z0-9_-]/g,'');
+            doc.save('FundStatement_'+safeProj+'_Release'+releaseNo+'_'+(req.releasedDate||req.date||'').replace(/-/g,'')+'.pdf');
+            showToast('✅ Fund Statement PDF downloaded');
+        }
         async function approveFundRequest(projID, frID) {
             const idx = projectExpenses.findIndex(x=>x.projExpID===projID);
             if (idx<0) return;
