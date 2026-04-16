@@ -7440,8 +7440,8 @@
             const {jsPDF} = window.jspdf;
             const doc = new jsPDF({orientation:'portrait', unit:'mm', format:'a4'});
             const ML=14, MR=14, CW=210-ML-MR, PW=210;
-            const fmt  = n => '₹'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
-            const INR  = n => (+(n)||0).toLocaleString('en-IN',{minimumFractionDigits:2});
+            const fmt  = n => 'Rs.'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
+            const INR  = n => 'Rs.'+(+(n)||0).toLocaleString('en-IN',{minimumFractionDigits:2});
 
             // Which release number is this among all received releases?
             const allReceived = (p.fundRequests||[]).filter(r=>r.status==='Received');
@@ -7608,19 +7608,14 @@
                 if(col>0)y+=50;
             }
 
-            // ── SIGNATURE BLOCK ──────────────────────────────────────
-            if(y>255){doc.addPage();y=15;}
-            doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
-                styles:{fontSize:8.5, cellPadding:6, minCellHeight:18},
-                headStyles:{fillColor:[30,41,59], textColor:[255,255,255], fontStyle:'bold'},
-                head:[['FIELD TECHNICIAN', 'SUPERVISOR / PM', 'ACCOUNTS / OFFICE']],
-                body:[
-                    ['Name: ______________________','Name: ______________________','Name: ______________________'],
-                    ['Signature:','Signature:','Signature:'],
-                    ['Date:','Date:','Date:']
-                ],
-                columnStyles:{0:{cellWidth:CW/3},1:{cellWidth:CW/3},2:{cellWidth:CW/3}}
-            });
+            // ── COMPUTER GENERATED NOTE ──────────────────────────────
+            if (y + 14 > 280) { doc.addPage(); y = 15; }
+            doc.setFontSize(8.5);
+            doc.setFont('helvetica', 'italic');
+            doc.setTextColor(120, 120, 120);
+            doc.text('This is a Computer Generated Statement. No Signature Required.', PW/2, y + 8, {align:'center'});
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(0, 0, 0);
 
             // ── PAGE FOOTER ──────────────────────────────────────────
             const pc=doc.getNumberOfPages();
