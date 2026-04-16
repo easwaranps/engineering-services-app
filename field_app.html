@@ -364,6 +364,114 @@
     </div>
 </div>
 
+<!-- ═══ CALIBRATION MODAL ════════════════════════════════════════ -->
+<div id="calibModal" class="modal">
+    <div class="modal-box" style="max-width:700px;max-height:92vh;overflow-y:auto">
+        <div class="modal-hdr" style="background:linear-gradient(135deg,#1e3a5f,#7c3aed)">
+            <span class="font-bold text-white text-lg">📐 Dimensional Inspection Record</span>
+            <button onclick="closeCalibModal()" class="text-white text-2xl font-bold leading-none">✕</button>
+        </div>
+        <div class="p-5 space-y-4">
+            <input type="hidden" id="calibDayWlID"/>
+            <input type="hidden" id="calibDayEntryID"/>
+            <input type="hidden" id="calibEditID"/>
+
+            <!-- Component selector -->
+            <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:12px 14px">
+                <p class="field-label" style="color:#0369a1;margin-bottom:8px">🔩 COMPONENT / INSTRUMENT</p>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="field-label">Component <span class="text-red-500">*</span></label>
+                        <select id="calibComponent" class="field-input" onchange="onCalibComponentChange(this.value)">
+                            <option value="">— Select Component —</option>
+                            <option value="Cylinder Liner">Cylinder Liner (Internal Dia / Ovality)</option>
+                            <option value="Piston">Piston (Diameter / Clearance)</option>
+                            <option value="Piston Pin">Piston Pin (Diameter)</option>
+                            <option value="Connecting Rod">Connecting Rod (Big End / Small End Ovality)</option>
+                            <option value="Main Bearing">Main Bearing (Clearance)</option>
+                            <option value="Crank Pin">Crank Pin (Diameter / Ovality)</option>
+                            <option value="Crank Web Deflection">Crank Web Deflection</option>
+                            <option value="Valve Guide Bush">Valve Guide Bush (Internal Dia)</option>
+                            <option value="Rocker Arm Bush">Rocker Arm Bush (Internal Dia)</option>
+                            <option value="Piston Pin Bush">Piston Pin Bush (Internal Dia)</option>
+                            <option value="Valve Seat">Valve Seat (Width / Angle)</option>
+                            <option value="Camshaft Bearing">Camshaft Bearing (Clearance)</option>
+                            <option value="Turbocharger Bearing">Turbocharger Bearing (Clearance)</option>
+                            <option value="Other">Other (Custom)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="field-label">Unit No. / Cylinder No.</label>
+                        <input type="text" id="calibUnitNo" class="field-input" placeholder="e.g. No.1, All, #3"/>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-3 mt-3">
+                    <div>
+                        <label class="field-label">Maker / Engine Type</label>
+                        <input type="text" id="calibMaker" class="field-input" placeholder="e.g. MAN B&W, Wartsila"/>
+                    </div>
+                    <div>
+                        <label class="field-label">Nominal Size (mm)</label>
+                        <input type="text" id="calibNominal" class="field-input" placeholder="e.g. 310.00"/>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-3 mt-3">
+                    <div>
+                        <label class="field-label">New/Standard (mm)</label>
+                        <input type="text" id="calibStdValue" class="field-input" placeholder="e.g. 310.000"/>
+                    </div>
+                    <div>
+                        <label class="field-label">Wear Limit / Max Allowed (mm)</label>
+                        <input type="text" id="calibWearLimit" class="field-input" placeholder="e.g. 310.350"/>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Readings table -->
+            <div style="background:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;padding:12px 14px">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+                    <p class="field-label" style="color:#7c3aed;margin:0">📏 MEASUREMENT READINGS</p>
+                    <button type="button" onclick="addCalibRow()" style="font-size:12px;padding:5px 12px;border-radius:8px;background:#ede9fe;color:#7c3aed;border:1px solid #c4b5fd;cursor:pointer;font-weight:600">+ Add Row</button>
+                </div>
+                <div style="overflow-x:auto">
+                    <table style="width:100%;border-collapse:collapse;font-size:12px" id="calibTable">
+                        <thead id="calibTableHead"></thead>
+                        <tbody id="calibTableBody"></tbody>
+                    </table>
+                </div>
+                <p style="font-size:10px;color:var(--muted);margin-top:6px">Result auto-calculates: PASS if actual ≤ wear limit, FAIL if exceeded.</p>
+            </div>
+
+            <!-- Overall result & remarks -->
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="field-label">Overall Result</label>
+                    <select id="calibOverall" class="field-input">
+                        <option value="PASS">PASS</option>
+                        <option value="FAIL">FAIL</option>
+                        <option value="MONITOR">MONITOR / WATCH</option>
+                        <option value="RENEW">RENEW RECOMMENDED</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="field-label">Instrument Used</label>
+                    <input type="text" id="calibInstrument" class="field-input" placeholder="e.g. Micrometer, Dial gauge"/>
+                </div>
+            </div>
+            <div>
+                <label class="field-label">Remarks</label>
+                <textarea id="calibRemarks" class="field-input" rows="2" placeholder="Condition notes, action taken, recommendations..."></textarea>
+            </div>
+
+            <div class="flex gap-3 pt-2">
+                <button type="button" onclick="closeCalibModal()" class="btn-secondary flex-1">Cancel</button>
+                <button type="button" onclick="saveCalibRecord()" class="btn-primary flex-1">💾 Save Record</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+
 <!-- Work Log Modal — PROJECT HEADER -->
 <div id="wlModal" class="modal">
     <div class="modal-box" style="max-width:600px">
@@ -1549,6 +1657,305 @@
     }
 
 
+    // ── CALIBRATION / DIMENSIONAL INSPECTION ─────────────────────
+    // Each daily entry can have multiple calibration records
+    // calibRecords: [{calibID, component, unitNo, maker, nominal,
+    //   stdValue, wearLimit, instrument, overall, remarks,
+    //   columns:[{key,label}], rows:[{position, readings:{...}, result}]}]
+
+    // Component templates — define measurement positions and column structure
+    const CALIB_TEMPLATES = {
+        'Cylinder Liner': {
+            colHeaders: ['Position','Direction','Actual-1 (mm)','Actual-2 (mm)','Max Reading','Deviation','Result'],
+            rowKeys:    ['pos','dir','a1','a2','max','dev','result'],
+            defaultRows:[
+                {pos:'TDC',   dir:'Fore-Aft'},
+                {pos:'TDC',   dir:'Port-Stbd'},
+                {pos:'Middle',dir:'Fore-Aft'},
+                {pos:'Middle',dir:'Port-Stbd'},
+                {pos:'BDC',   dir:'Fore-Aft'},
+                {pos:'BDC',   dir:'Port-Stbd'},
+            ]
+        },
+        'Piston': {
+            colHeaders: ['Position','Actual (mm)','Standard (mm)','Clearance','Wear Limit','Result'],
+            rowKeys:    ['pos','actual','std','clearance','wearLimit','result'],
+            defaultRows:[
+                {pos:'Top Land'},
+                {pos:'1st Ring Land'},
+                {pos:'2nd Ring Land'},
+                {pos:'Skirt'},
+            ]
+        },
+        'Piston Pin': {
+            colHeaders: ['Direction','Actual (mm)','Standard (mm)','Deviation','Result'],
+            rowKeys:    ['dir','actual','std','dev','result'],
+            defaultRows:[
+                {dir:'Axial (A)'},
+                {dir:'Transverse (B)'},
+                {dir:'Axial 90° (C)'},
+            ]
+        },
+        'Connecting Rod': {
+            colHeaders: ['End','Direction','Actual (mm)','Standard (mm)','Ovality','Result'],
+            rowKeys:    ['end','dir','actual','std','ovality','result'],
+            defaultRows:[
+                {end:'Big End',  dir:'Vertical'},
+                {end:'Big End',  dir:'Horizontal'},
+                {end:'Small End',dir:'Vertical'},
+                {end:'Small End',dir:'Horizontal'},
+            ]
+        },
+        'Main Bearing': {
+            colHeaders: ['Bearing No.','Position','Clearance (mm)','Std Clearance','Limit','Result'],
+            rowKeys:    ['bearNo','pos','clearance','stdClear','limit','result'],
+            defaultRows:[
+                {bearNo:'#1',pos:'Top'},
+                {bearNo:'#2',pos:'Top'},
+                {bearNo:'#3',pos:'Top'},
+                {bearNo:'#4',pos:'Top'},
+            ]
+        },
+        'Crank Pin': {
+            colHeaders: ['Throw No.','Direction','Actual (mm)','Standard (mm)','Deviation','Ovality','Result'],
+            rowKeys:    ['throwNo','dir','actual','std','dev','ovality','result'],
+            defaultRows:[
+                {throwNo:'#1',dir:'Vertical'},
+                {throwNo:'#1',dir:'Horizontal'},
+                {throwNo:'#2',dir:'Vertical'},
+                {throwNo:'#2',dir:'Horizontal'},
+            ]
+        },
+        'Crank Web Deflection': {
+            colHeaders: ['Crank No.','Bottom','Stbd','Top','Port','Difference (V)','Result'],
+            rowKeys:    ['crankNo','bottom','stbd','top','port','diffV','result'],
+            defaultRows:[
+                {crankNo:'#1'},
+                {crankNo:'#2'},
+                {crankNo:'#3'},
+                {crankNo:'#4'},
+            ]
+        },
+        'Valve Guide Bush': {
+            colHeaders: ['Valve','Direction','Actual ID (mm)','Standard','Max Limit','Clearance','Result'],
+            rowKeys:    ['valve','dir','actualID','std','limit','clearance','result'],
+            defaultRows:[
+                {valve:'Inlet',  dir:'Fore-Aft'},
+                {valve:'Inlet',  dir:'Port-Stbd'},
+                {valve:'Exhaust',dir:'Fore-Aft'},
+                {valve:'Exhaust',dir:'Port-Stbd'},
+            ]
+        },
+        'Rocker Arm Bush': {
+            colHeaders: ['Component','Direction','Actual ID (mm)','Standard','Clearance','Result'],
+            rowKeys:    ['comp','dir','actualID','std','clearance','result'],
+            defaultRows:[
+                {comp:'Inlet Rocker',   dir:'Axial'},
+                {comp:'Inlet Rocker',   dir:'Transverse'},
+                {comp:'Exhaust Rocker', dir:'Axial'},
+                {comp:'Exhaust Rocker', dir:'Transverse'},
+            ]
+        },
+        'Piston Pin Bush': {
+            colHeaders: ['Direction','Actual ID (mm)','Standard','Pin OD (mm)','Clearance','Result'],
+            rowKeys:    ['dir','actualID','std','pinOD','clearance','result'],
+            defaultRows:[
+                {dir:'Vertical'},
+                {dir:'Horizontal'},
+            ]
+        },
+        'Valve Seat': {
+            colHeaders: ['Valve','Seat Width (mm)','Std Width','Seat Angle (°)','Std Angle','Result'],
+            rowKeys:    ['valve','width','stdWidth','angle','stdAngle','result'],
+            defaultRows:[
+                {valve:'Inlet'},
+                {valve:'Exhaust'},
+            ]
+        },
+        'Camshaft Bearing': {
+            colHeaders: ['Bearing No.','Clearance (mm)','Standard','Limit','Result'],
+            rowKeys:    ['bearNo','clearance','std','limit','result'],
+            defaultRows:[
+                {bearNo:'#1'},{bearNo:'#2'},{bearNo:'#3'},
+            ]
+        },
+        'Turbocharger Bearing': {
+            colHeaders: ['Bearing','Type','Clearance (mm)','Standard','Limit','Result'],
+            rowKeys:    ['bearing','type','clearance','std','limit','result'],
+            defaultRows:[
+                {bearing:'Drive End',   type:'Radial'},
+                {bearing:'Drive End',   type:'Axial'},
+                {bearing:'Compressor End',type:'Radial'},
+            ]
+        },
+        'Other': {
+            colHeaders: ['Item / Position','Measurement 1','Measurement 2','Standard','Limit','Result'],
+            rowKeys:    ['item','m1','m2','std','limit','result'],
+            defaultRows:[{item:''}]
+        }
+    };
+
+    let _calibRows = [];
+    let _calibTemplate = null;
+
+    function onCalibComponentChange(comp) {
+        _calibTemplate = CALIB_TEMPLATES[comp] || CALIB_TEMPLATES['Other'];
+        _calibRows = _calibTemplate.defaultRows.map(r=>({...r}));
+        renderCalibTable();
+    }
+
+    function renderCalibTable() {
+        if (!_calibTemplate) return;
+        const thead = document.getElementById('calibTableHead');
+        const tbody = document.getElementById('calibTableBody');
+        if (!thead || !tbody) return;
+
+        const thStyle = 'padding:6px 8px;background:#1e3a5f;color:#fff;font-size:11px;font-weight:600;white-space:nowrap;border:1px solid #334155';
+        thead.innerHTML = '<tr>' + _calibTemplate.colHeaders.map(h=>`<th style="${thStyle}">${h}</th>`).join('') + '<th style="'+thStyle+'">Del</th></tr>';
+
+        tbody.innerHTML = _calibRows.map((row,ri) => {
+            return '<tr>' + _calibTemplate.rowKeys.map((key,ci) => {
+                const isResult = key === 'result';
+                const val = row[key]||'';
+                const resultCol = isResult ? getCalibResult(row) : '';
+                const resultStyle = resultCol==='PASS'?'background:#dcfce7;color:#15803d;font-weight:700':
+                                    resultCol==='FAIL'?'background:#fee2e2;color:#dc2626;font-weight:700':'';
+                if (isResult) {
+                    return `<td style="padding:5px 8px;border:1px solid #e2e8f0;text-align:center;font-size:11px;${resultStyle}">${resultCol||'—'}</td>`;
+                }
+                const isFixed = ci < 2 && _calibTemplate.colHeaders[ci] !== 'Actual (mm)' && !_calibTemplate.colHeaders[ci].startsWith('Actual');
+                const inputW = ci < 2 ? '80px' : '70px';
+                return `<td style="padding:3px 4px;border:1px solid #e2e8f0">
+                    <input type="text" value="${val}" placeholder="${_calibTemplate.colHeaders[ci]}"
+                        onchange="_calibRows[${ri}]['${key}']=this.value;renderCalibTable()"
+                        style="width:${inputW};border:none;background:transparent;font-size:11px;padding:3px 4px;outline:none;color:#1e3a5f"
+                        ${isFixed&&val?'readonly style="width:'+inputW+';border:none;background:transparent;font-size:11px;padding:3px 4px;color:#374151;font-weight:500"':''}/>
+                </td>`;
+            }).join('') +
+            `<td style="padding:3px 6px;border:1px solid #e2e8f0;text-align:center">
+                <button type="button" onclick="_calibRows.splice(${ri},1);renderCalibTable()" style="color:#dc2626;background:none;border:none;cursor:pointer;font-size:14px;line-height:1">✕</button>
+            </td></tr>`;
+        }).join('');
+    }
+
+    function getCalibResult(row) {
+        // Determine pass/fail based on actual vs wear limit
+        const wearLimitEl = document.getElementById('calibWearLimit');
+        const globalLimit = parseFloat(wearLimitEl?.value)||0;
+        // Find numeric values in the row to compare
+        const keys = _calibTemplate?.rowKeys||[];
+        const actKeys = keys.filter(k=>k.startsWith('a')||k==='actual'||k.startsWith('actual')||k==='clearance'||k==='m1'||k==='m2');
+        const limitKeys = keys.filter(k=>k==='limit'||k==='wearLimit');
+        const vals = actKeys.map(k=>parseFloat(row[k])).filter(v=>!isNaN(v));
+        const limit = limitKeys.map(k=>parseFloat(row[k])).filter(v=>!isNaN(v))[0]||globalLimit;
+        if (!vals.length||!limit) return '';
+        const max = Math.max(...vals);
+        return max <= limit ? 'PASS' : 'FAIL';
+    }
+
+    function addCalibRow() {
+        if (!_calibTemplate) return;
+        _calibRows.push({});
+        renderCalibTable();
+    }
+
+    function openCalibModal(wlID, entryID, calibID=null) {
+        document.getElementById('calibDayWlID').value   = wlID;
+        document.getElementById('calibDayEntryID').value= entryID;
+        document.getElementById('calibEditID').value    = calibID||'';
+        // Reset fields
+        ['calibComponent','calibUnitNo','calibMaker','calibNominal','calibStdValue',
+         'calibWearLimit','calibInstrument','calibRemarks'].forEach(id=>{
+            const el=document.getElementById(id); if(el)el.value='';
+        });
+        document.getElementById('calibOverall').value='PASS';
+        _calibRows=[]; _calibTemplate=null;
+        const thead=document.getElementById('calibTableHead');
+        const tbody=document.getElementById('calibTableBody');
+        if(thead)thead.innerHTML=''; if(tbody)tbody.innerHTML='';
+
+        // If editing, prefill
+        if (calibID) {
+            const wl  = workLogs.find(x=>x.wlID===wlID);
+            const entry = (wl?.dailyEntries||[]).find(e=>e.entryID===entryID);
+            const rec = (entry?.calibrations||[]).find(c=>c.calibID===calibID);
+            if (rec) {
+                document.getElementById('calibComponent').value  = rec.component||'';
+                document.getElementById('calibUnitNo').value     = rec.unitNo||'';
+                document.getElementById('calibMaker').value      = rec.maker||'';
+                document.getElementById('calibNominal').value    = rec.nominal||'';
+                document.getElementById('calibStdValue').value   = rec.stdValue||'';
+                document.getElementById('calibWearLimit').value  = rec.wearLimit||'';
+                document.getElementById('calibInstrument').value = rec.instrument||'';
+                document.getElementById('calibOverall').value    = rec.overall||'PASS';
+                document.getElementById('calibRemarks').value    = rec.remarks||'';
+                _calibTemplate = CALIB_TEMPLATES[rec.component]||CALIB_TEMPLATES['Other'];
+                _calibRows = rec.rows ? rec.rows.map(r=>({...r})) : [];
+                renderCalibTable();
+            }
+        }
+        document.getElementById('calibModal').classList.add('show');
+    }
+
+    function closeCalibModal() {
+        document.getElementById('calibModal').classList.remove('show');
+        _calibRows=[]; _calibTemplate=null;
+    }
+
+    async function saveCalibRecord() {
+        const wlID    = document.getElementById('calibDayWlID').value;
+        const entryID = document.getElementById('calibDayEntryID').value;
+        const calibID = document.getElementById('calibEditID').value;
+        const comp    = document.getElementById('calibComponent').value;
+        if (!comp) { showToast('⚠️ Please select a component'); return; }
+
+        const rec = {
+            calibID:    calibID || ('CAL'+Date.now()),
+            component:  comp,
+            unitNo:     document.getElementById('calibUnitNo').value,
+            maker:      document.getElementById('calibMaker').value,
+            nominal:    document.getElementById('calibNominal').value,
+            stdValue:   document.getElementById('calibStdValue').value,
+            wearLimit:  document.getElementById('calibWearLimit').value,
+            instrument: document.getElementById('calibInstrument').value,
+            overall:    document.getElementById('calibOverall').value,
+            remarks:    document.getElementById('calibRemarks').value,
+            columns:    _calibTemplate?.colHeaders||[],
+            rowKeys:    _calibTemplate?.rowKeys||[],
+            rows:       _calibRows.map(r=>({...r, result:getCalibResult(r)}))
+        };
+
+        const wlIdx = workLogs.findIndex(x=>x.wlID===wlID);
+        if (wlIdx<0) return;
+        const ei = workLogs[wlIdx].dailyEntries.findIndex(e=>e.entryID===entryID);
+        if (ei<0) return;
+        if (!workLogs[wlIdx].dailyEntries[ei].calibrations) workLogs[wlIdx].dailyEntries[ei].calibrations=[];
+
+        if (calibID) {
+            const ci=workLogs[wlIdx].dailyEntries[ei].calibrations.findIndex(c=>c.calibID===calibID);
+            if(ci>=0) workLogs[wlIdx].dailyEntries[ei].calibrations[ci]=rec;
+            else workLogs[wlIdx].dailyEntries[ei].calibrations.push(rec);
+        } else {
+            workLogs[wlIdx].dailyEntries[ei].calibrations.push(rec);
+        }
+        await saveData('workLogs', workLogs);
+        closeCalibModal();
+        renderView();
+        showToast('✅ Calibration record saved');
+    }
+
+    async function deleteCalibRecord(wlID, entryID, calibID) {
+        if (!confirm('Delete this calibration record?')) return;
+        const wlIdx=workLogs.findIndex(x=>x.wlID===wlID);if(wlIdx<0)return;
+        const ei=workLogs[wlIdx].dailyEntries.findIndex(e=>e.entryID===entryID);if(ei<0)return;
+        workLogs[wlIdx].dailyEntries[ei].calibrations=
+            (workLogs[wlIdx].dailyEntries[ei].calibrations||[]).filter(c=>c.calibID!==calibID);
+        await saveData('workLogs',workLogs);
+        renderView();
+        showToast('🗑️ Calibration record deleted');
+    }
+
+
     // ── WORK LOGS VIEW ────────────────────────────────────────────
 
     // Structure: workLogs = array of Project Work Logs
@@ -1618,8 +2025,9 @@
                                     ${d.startTime?`<span style="font-size:11px;color:var(--muted);margin-left:8px">⏱ ${d.startTime}–${d.endTime||'?'}${dur?' ('+dur+')':''}</span>`:''}
                                     ${d.category?`<span class="badge" style="margin-left:6px;background:#eff6ff;color:#1d4ed8;font-size:10px">${d.category}</span>`:''}
                                 </div>
-                                <div class="flex gap-1.5">
+                                <div class="flex gap-1.5 flex-wrap">
                                     <button onclick="editDayEntry('${w.wlID}','${d.entryID}')" style="padding:4px 8px;border-radius:6px;border:1.5px solid var(--border);background:#fff;cursor:pointer;font-size:11px;color:var(--muted)">✏️</button>
+                                    <button onclick="openCalibModal('${w.wlID}','${d.entryID}')" style="padding:4px 8px;border-radius:6px;border:1.5px solid #e9d5ff;background:#faf5ff;cursor:pointer;font-size:11px;color:#7c3aed;font-weight:600">📐 ${(d.calibrations||[]).length?d.calibrations.length+' Cal':'+ Cal'}</button>
                                     <button onclick="deleteDayEntry('${w.wlID}','${d.entryID}')" style="padding:4px 8px;border-radius:6px;border:1.5px solid #fecaca;background:#fff;cursor:pointer;font-size:11px;color:#dc2626">✕</button>
                                 </div>
                             </div>
@@ -1650,6 +2058,35 @@
                                 <p style="font-size:10px;font-weight:700;color:#be123c;margin-bottom:2px">✍️ WITNESSED BY</p>
                                 <p style="font-size:12px;color:var(--text)">${d.witnessName}${d.witnessDesig?' — '+d.witnessDesig:''}</p>
                                 ${d.witnessRemarks?`<p style="font-size:11px;color:var(--muted);margin-top:2px">"${d.witnessRemarks}"</p>`:''}
+                            </div>`:''}
+                            <!-- Calibration Records -->
+                            ${(d.calibrations||[]).length?`<div style="margin-top:8px">
+                                <p style="font-size:10px;font-weight:700;color:#7c3aed;margin-bottom:4px">📐 CALIBRATION / INSPECTION RECORDS (${d.calibrations.length})</p>
+                                ${d.calibrations.map(c=>`
+                                <div style="background:#faf5ff;border:1px solid #e9d5ff;border-radius:8px;padding:8px 10px;margin-bottom:6px">
+                                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                                        <span style="font-size:12px;font-weight:600;color:#7c3aed">${c.component}${c.unitNo?' — '+c.unitNo:''}</span>
+                                        <div style="display:flex;gap:4px;align-items:center">
+                                            <span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;background:${c.overall==='PASS'?'#dcfce7':c.overall==='FAIL'?'#fee2e2':'#fef3c7'};color:${c.overall==='PASS'?'#15803d':c.overall==='FAIL'?'#dc2626':'#b45309'}">${c.overall}</span>
+                                            <button onclick="openCalibModal('${w.wlID}','${d.entryID}','${c.calibID}')" style="font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid var(--border);background:#fff;cursor:pointer;color:var(--muted)">✏️</button>
+                                            <button onclick="deleteCalibRecord('${w.wlID}','${d.entryID}','${c.calibID}')" style="font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid #fecaca;background:#fff;cursor:pointer;color:#dc2626">✕</button>
+                                        </div>
+                                    </div>
+                                    ${c.maker?`<p style="font-size:10px;color:var(--muted)">Maker: ${c.maker}${c.nominal?' | Nominal: '+c.nominal+' mm':''}</p>`:''}
+                                    ${c.wearLimit?`<p style="font-size:10px;color:var(--muted)">Wear Limit: ${c.wearLimit} mm${c.stdValue?' | Standard: '+c.stdValue+' mm':''}</p>`:''}
+                                    ${c.rows?.length?`<div style="overflow-x:auto;margin-top:6px">
+                                        <table style="width:100%;border-collapse:collapse;font-size:10px">
+                                            <thead><tr>${(c.columns||[]).map(h=>`<th style="padding:3px 6px;background:#1e3a5f;color:#fff;font-size:10px;white-space:nowrap">${h}</th>`).join('')}</tr></thead>
+                                            <tbody>${c.rows.map(r=>`<tr>${(c.rowKeys||[]).map(k=>{
+                                                const v=r[k]||'';
+                                                const bg=k==='result'?(v==='PASS'?'#dcfce7':v==='FAIL'?'#fee2e2':'#fff'):'#fff';
+                                                const col=k==='result'?(v==='PASS'?'#15803d':v==='FAIL'?'#dc2626':'#374151'):'#374151';
+                                                return `<td style="padding:3px 6px;border:1px solid #e9d5ff;background:${bg};color:${col};font-weight:${k==='result'?'700':'400'}">${v||'—'}</td>`;
+                                            }).join('')}</tr>`).join('')}</tbody>
+                                        </table>
+                                    </div>`:''}
+                                    ${c.remarks?`<p style="font-size:10px;color:#64748b;margin-top:4px;font-style:italic">"${c.remarks}"</p>`:''}
+                                </div>`).join('')}
                             </div>`:''}
                             <!-- Photos -->
                             ${(d.photos||[]).length?`<div style="margin-top:8px">
@@ -1839,6 +2276,11 @@
             witnessRemarks:document.getElementById('dayWitnessRemarks').value,
             photos:        [..._dayPhotos]
         };
+        // Preserve existing calibrations when editing — they are managed separately
+        if(entryID){
+            const existingEntry = workLogs[wlIdx]?.dailyEntries?.find(x=>x.entryID===entryID);
+            if(existingEntry?.calibrations) entry.calibrations = existingEntry.calibrations;
+        }
         if(entryID){
             const ei=workLogs[wlIdx].dailyEntries.findIndex(x=>x.entryID===entryID);
             if(ei>=0)workLogs[wlIdx].dailyEntries[ei]=entry;else workLogs[wlIdx].dailyEntries.push(entry);
@@ -1938,6 +2380,82 @@
                     head:[[s.title]],body:[[s.text]],columnStyles:{0:{cellWidth:CW}}});
                 y=doc.lastAutoTable.finalY+3;
             });
+
+            // ── CALIBRATION / DIMENSIONAL INSPECTION RECORDS ─────────
+            if((d.calibrations||[]).length){
+                if(y>230){doc.addPage();y=15;}
+                // Section header
+                doc.setFillColor(124,58,237);doc.rect(ML,y,CW,8,'F');
+                doc.setFontSize(8.5);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
+                doc.text('CALIBRATION / DIMENSIONAL INSPECTION RECORDS ('+d.calibrations.length+')',ML+3,y+5.5);
+                y+=12;
+
+                d.calibrations.forEach((cal,ci)=>{
+                    if(y>250){doc.addPage();y=15;}
+                    // Record header
+                    const overallCol = cal.overall==='PASS'?[21,128,61]:cal.overall==='FAIL'?[220,38,38]:[180,83,9];
+                    doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+                        styles:{fontSize:8,cellPadding:2.5},
+                        headStyles:{fillColor:[88,28,135],textColor:[255,255,255],fontStyle:'bold',fontSize:8},
+                        head:[[{content:(ci+1)+'. '+cal.component+(cal.unitNo?' — '+cal.unitNo:''),colSpan:3}]],
+                        body:[
+                            [{content:'Maker / Engine',styles:{fontStyle:'bold',fillColor:[248,245,255]}},cal.maker||'—',
+                             {content:'Instrument Used',styles:{fontStyle:'bold',fillColor:[248,245,255]}}],
+                            [{content:'Standard (mm)',styles:{fontStyle:'bold',fillColor:[248,245,255]}},cal.stdValue||'—',
+                             {content:'Wear Limit (mm)',styles:{fontStyle:'bold',fillColor:[248,245,255]}}],
+                        ].map((r,ri)=>{
+                            const extras=[cal.instrument||'—',cal.wearLimit||'—'];
+                            return [r[0],r[1],r[2],extras[ri]];
+                        }),
+                        columnStyles:{0:{cellWidth:30},1:{cellWidth:CW/2-30},2:{cellWidth:30},3:{cellWidth:CW/2-30}}
+                    });
+                    y=doc.lastAutoTable.finalY+2;
+
+                    // Overall result badge
+                    if(y>265){doc.addPage();y=15;}
+                    doc.setFillColor(...overallCol);doc.rect(ML,y,30,7,'F');
+                    doc.setFontSize(8);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
+                    doc.text('OVERALL: '+cal.overall,ML+2,y+5);
+                    if(cal.remarks){
+                        doc.setFontSize(7.5);doc.setFont('helvetica','italic');doc.setTextColor(80,80,80);
+                        doc.text('Remarks: '+cal.remarks,ML+34,y+5);
+                    }
+                    y+=10;
+
+                    // Readings table
+                    if(cal.rows?.length && cal.columns?.length){
+                        if(y>255){doc.addPage();y=15;}
+                        const colW=Math.min(22,(CW)/(cal.columns.length));
+                        const colStyles={};
+                        cal.columns.forEach((_,i)=>{colStyles[i]={cellWidth:colW,halign:'center'};});
+                        colStyles[0]={cellWidth:colW,halign:'left'};
+                        if(cal.columns.length>1)colStyles[1]={cellWidth:colW,halign:'left'};
+
+                        const tableBody=cal.rows.map(row=>{
+                            return (cal.rowKeys||[]).map((k,ki)=>{
+                                const v=row[k]||'—';
+                                if(k==='result'){
+                                    return {content:v,styles:{
+                                        fontStyle:'bold',halign:'center',
+                                        textColor:v==='PASS'?[21,128,61]:v==='FAIL'?[220,38,38]:[100,100,100],
+                                        fillColor:v==='PASS'?[220,252,231]:v==='FAIL'?[254,226,226]:[255,255,255]
+                                    }};
+                                }
+                                return {content:v,styles:{halign:ki<2?'left':'center'}};
+                            });
+                        });
+
+                        doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+                            styles:{fontSize:7.5,cellPadding:2},
+                            headStyles:{fillColor:[30,58,138],textColor:[255,255,255],fontStyle:'bold',fontSize:7.5},
+                            head:[cal.columns.map(h=>({content:h,styles:{halign:'center'}}))],
+                            body:tableBody,
+                            columnStyles:colStyles
+                        });
+                        y=doc.lastAutoTable.finalY+6;
+                    }
+                });
+            }
 
             // Photos for this day
             if((d.photos||[]).length){
