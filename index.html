@@ -2498,10 +2498,19 @@
 
                 // ── Bank details ───────────────────────────────────────────
                 if (bankName && txn.txnDirection === 'Outgoing') {
-                    // Estimate bank block height: heading + up to 5 fields (5mm each) + sig block (30mm) = ~65mm
+                    // Calculate actual space needed
                     const bankFields = [bankName, beneficiary, accountNo, ifscCode, branchAddress].filter(Boolean).length;
-                    const bankBlockH = 8 + (bankFields * 5) + 30;
-                    if (finalY + bankBlockH > 265) {
+                    // Bank heading(8) + fields(5 each) + gap(10) + sig block(28) = total
+                    const bankBlockH = 8 + (bankFields * 5) + 10 + 28;
+
+                    // Add a small separator line before bank details
+                    finalY += 4;
+                    doc.setDrawColor(220, 220, 220);
+                    doc.line(14, finalY, 196, finalY);
+                    finalY += 6;
+
+                    // Only add new page if genuinely not enough space (< 40mm remaining)
+                    if (finalY + bankBlockH > 275) {
                         doc.addPage();
                         addHeader(doc, doc.internal.getNumberOfPages());
                         finalY = 50;
@@ -2509,6 +2518,7 @@
 
                     doc.setFontSize(9);
                     doc.setFont(undefined, 'bold');
+                    doc.setTextColor(0, 0, 0);
                     doc.text('Bank Details:', 14, finalY);
                     doc.setFont(undefined, 'normal');
                     let bY = finalY + 6;
@@ -2518,19 +2528,14 @@
                     if (ifscCode)      { bY += 5; doc.text('IFSC: '        + ifscCode,    14, bY); }
                     if (branchAddress) { bY += 5; doc.text('Branch: '      + branchAddress, 14, bY); }
 
-                    // Authorized Signature — needs ~30mm; check fits before footer
-                    finalY = bY + 18;
-                    if (finalY + 30 > 265) {
-                        doc.addPage();
-                        addHeader(doc, doc.internal.getNumberOfPages());
-                        finalY = 50;
-                    }
+                    // Authorized Signature block — always on same page as bank details
+                    finalY = bY + 12;
                     doc.setFont(undefined, 'normal');
                     doc.setFontSize(9);
                     doc.text('For ' + (settings.companyName || 'EASY EMS'), 140, finalY);
-                    doc.line(140, finalY + 20, 190, finalY + 20); // Signature line
+                    doc.line(140, finalY + 18, 190, finalY + 18); // Signature line
                     doc.setFont(undefined, 'bold');
-                    doc.text('Authorized Signatory', 140, finalY + 25);
+                    doc.text('Authorized Signatory', 140, finalY + 23);
                 }
 
                 // Footer on every page — company address centred + page X of Y right
