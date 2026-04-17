@@ -1719,20 +1719,25 @@
         },
 
         // ── CONNECTING ROD ─────────────────────────────────────────
-        // Component Position: Fwd / Aft
-        // Measurement: 3 positions per end (Top/Middle/Bottom) for ovality check
+        // Big End Fwd: 3 measurement positions
+        // Big End Aft: 3 measurement positions
+        // Small End Fwd / Middle / Aft: Top-Bottom, Fwd-Aft each
         'Connecting Rod': {
-            colHeaders: ['Con-Rod','End','Meas. Position','Actual (mm)','Standard (mm)','Ovality','Result'],
-            rowKeys:    ['conrod','end','measPos','actual','std','ovality','result'],
+            colHeaders: ['End','Position','Meas. Direction','Actual (mm)','Standard (mm)','Ovality','Result'],
+            rowKeys:    ['end','pos','dir','actual','std','ovality','result'],
             defaultRows:[
-                {conrod:'#1', end:'Big End',   measPos:'Position 1 (0°)'},
-                {conrod:'#1', end:'Big End',   measPos:'Position 2 (60°)'},
-                {conrod:'#1', end:'Big End',   measPos:'Position 3 (120°)'},
-                {conrod:'#1', end:'Big End - Fwd', measPos:'Fwd Side'},
-                {conrod:'#1', end:'Big End - Aft', measPos:'Aft Side'},
-                {conrod:'#1', end:'Small End', measPos:'Position 1'},
-                {conrod:'#1', end:'Small End', measPos:'Position 2'},
-                {conrod:'#1', end:'Small End', measPos:'Position 3'},
+                {end:'Big End - Fwd', pos:'Position 1', dir:'—'},
+                {end:'Big End - Fwd', pos:'Position 2', dir:'—'},
+                {end:'Big End - Fwd', pos:'Position 3', dir:'—'},
+                {end:'Big End - Aft', pos:'Position 1', dir:'—'},
+                {end:'Big End - Aft', pos:'Position 2', dir:'—'},
+                {end:'Big End - Aft', pos:'Position 3', dir:'—'},
+                {end:'Small End - Fwd', pos:'Top-Bottom', dir:'Vertical'},
+                {end:'Small End - Fwd', pos:'Fwd-Aft',   dir:'Horizontal'},
+                {end:'Small End - Mid', pos:'Top-Bottom', dir:'Vertical'},
+                {end:'Small End - Mid', pos:'Fwd-Aft',   dir:'Horizontal'},
+                {end:'Small End - Aft', pos:'Top-Bottom', dir:'Vertical'},
+                {end:'Small End - Aft', pos:'Fwd-Aft',   dir:'Horizontal'},
             ]
         },
 
