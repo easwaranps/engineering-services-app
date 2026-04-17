@@ -816,6 +816,8 @@
     }
 
     // ── LOAD / SAVE ───────────────────────────────────────────────
+    let appSettings = {};
+
     async function loadData() {
         renderLoading();
         try {
@@ -828,6 +830,10 @@
             projectExpenses = Array.isArray(pe) ? pe : [];
             workLogs        = Array.isArray(wl) ? wl : [];
             staffList       = Array.isArray(sf) ? sf.filter(s=>s.status==='Active') : [];
+            // Load settings if available (for company name in PDF)
+            if (SHARED_FILE_IDS.settings) {
+                try { appSettings = await readFile(SHARED_FILE_IDS.settings) || {}; } catch(e) { appSettings = {}; }
+            }
             // Always ask who the user is on fresh load — ensures correct attribution
             currentUser = null;
             renderUserSelect();
@@ -2408,8 +2414,8 @@
         const vessel  =wl.vesselName||wl.location||'—';
         const port    =wl.port||'—';
         const projName=wl.project||'—';
-        const co      =settings?.companyName||'IMSE TECH SERVICES PVT LTD';
-        const co_gst  =settings?.gstNumber||'';
+        const co      = appSettings?.companyName || 'IMSE TECH SERVICES PVT LTD';
+        const co_gst  = appSettings?.gstNumber   || '';
         const dateRange=wl.workStartDate&&wl.workEndDate
             ?wl.workStartDate.split('-').reverse().join('.')+' to '+wl.workEndDate.split('-').reverse().join('.')
             :wl.workStartDate?wl.workStartDate.split('-').reverse().join('.'):'—';
