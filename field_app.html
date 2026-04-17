@@ -1665,97 +1665,150 @@
 
     // Component templates — define measurement positions and column structure
     const CALIB_TEMPLATES = {
+
+        // ── CYLINDER LINER ─────────────────────────────────────────
+        // 3 positions × 2 directions = 6 rows
+        // Columns: Position | Direction | Actual (mm) | Standard (mm) | Wear Limit | Deviation | Result
         'Cylinder Liner': {
-            colHeaders: ['Position','Direction','Actual-1 (mm)','Actual-2 (mm)','Max Reading','Deviation','Result'],
-            rowKeys:    ['pos','dir','a1','a2','max','dev','result'],
+            colHeaders: ['Position','Direction','Actual (mm)','Standard (mm)','Wear Limit','Deviation','Result'],
+            rowKeys:    ['pos','dir','actual','std','wearLimit','dev','result'],
             defaultRows:[
-                {pos:'TDC',   dir:'Fore-Aft'},
-                {pos:'TDC',   dir:'Port-Stbd'},
-                {pos:'Middle',dir:'Fore-Aft'},
-                {pos:'Middle',dir:'Port-Stbd'},
-                {pos:'BDC',   dir:'Fore-Aft'},
-                {pos:'BDC',   dir:'Port-Stbd'},
+                {pos:'TDC',    dir:'Fore-Aft'},
+                {pos:'TDC',    dir:'Port-Stbd'},
+                {pos:'Middle', dir:'Fore-Aft'},
+                {pos:'Middle', dir:'Port-Stbd'},
+                {pos:'BDC',    dir:'Fore-Aft'},
+                {pos:'BDC',    dir:'Port-Stbd'},
             ]
         },
-        'Piston': {
-            colHeaders: ['Position','Actual (mm)','Standard (mm)','Clearance','Wear Limit','Result'],
-            rowKeys:    ['pos','actual','std','clearance','wearLimit','result'],
-            defaultRows:[
-                {pos:'Top Land'},
-                {pos:'1st Ring Land'},
-                {pos:'2nd Ring Land'},
-                {pos:'Skirt'},
-            ]
-        },
+
+        // ── PISTON PIN ─────────────────────────────────────────────
+        // 3 positions (Fwd/Mid/Aft) × 4 directions (Top/Bottom/Port/Stbd) = 12 rows
         'Piston Pin': {
-            colHeaders: ['Direction','Actual (mm)','Standard (mm)','Deviation','Result'],
-            rowKeys:    ['dir','actual','std','dev','result'],
+            colHeaders: ['Position','Direction','Actual (mm)','Standard (mm)','Wear Limit','Deviation','Result'],
+            rowKeys:    ['pos','dir','actual','std','wearLimit','dev','result'],
             defaultRows:[
-                {dir:'Axial (A)'},
-                {dir:'Transverse (B)'},
-                {dir:'Axial 90° (C)'},
+                {pos:'Forward', dir:'Top'},
+                {pos:'Forward', dir:'Bottom'},
+                {pos:'Forward', dir:'Port'},
+                {pos:'Forward', dir:'Stbd'},
+                {pos:'Middle',  dir:'Top'},
+                {pos:'Middle',  dir:'Bottom'},
+                {pos:'Middle',  dir:'Port'},
+                {pos:'Middle',  dir:'Stbd'},
+                {pos:'Aft',     dir:'Top'},
+                {pos:'Aft',     dir:'Bottom'},
+                {pos:'Aft',     dir:'Port'},
+                {pos:'Aft',     dir:'Stbd'},
             ]
         },
+
+        // ── PISTON ─────────────────────────────────────────────────
+        // 3 positions × 2 directions = 6 rows
+        'Piston': {
+            colHeaders: ['Position','Direction','Actual (mm)','Standard (mm)','Wear Limit','Clearance','Result'],
+            rowKeys:    ['pos','dir','actual','std','wearLimit','clearance','result'],
+            defaultRows:[
+                {pos:'Top Land',   dir:'Fore-Aft'},
+                {pos:'Top Land',   dir:'Port-Stbd'},
+                {pos:'Ring Land',  dir:'Fore-Aft'},
+                {pos:'Ring Land',  dir:'Port-Stbd'},
+                {pos:'Skirt',      dir:'Fore-Aft'},
+                {pos:'Skirt',      dir:'Port-Stbd'},
+            ]
+        },
+
+        // ── CONNECTING ROD ─────────────────────────────────────────
+        // Component Position: Fwd / Aft
+        // Measurement: 3 positions per end (Top/Middle/Bottom) for ovality check
         'Connecting Rod': {
-            colHeaders: ['End','Direction','Actual (mm)','Standard (mm)','Ovality','Result'],
-            rowKeys:    ['end','dir','actual','std','ovality','result'],
+            colHeaders: ['Con-Rod','End','Meas. Position','Actual (mm)','Standard (mm)','Ovality','Result'],
+            rowKeys:    ['conrod','end','measPos','actual','std','ovality','result'],
             defaultRows:[
-                {end:'Big End',  dir:'Vertical'},
-                {end:'Big End',  dir:'Horizontal'},
-                {end:'Small End',dir:'Vertical'},
-                {end:'Small End',dir:'Horizontal'},
+                {conrod:'#1', end:'Big End',   measPos:'Position 1 (0°)'},
+                {conrod:'#1', end:'Big End',   measPos:'Position 2 (60°)'},
+                {conrod:'#1', end:'Big End',   measPos:'Position 3 (120°)'},
+                {conrod:'#1', end:'Big End - Fwd', measPos:'Fwd Side'},
+                {conrod:'#1', end:'Big End - Aft', measPos:'Aft Side'},
+                {conrod:'#1', end:'Small End', measPos:'Position 1'},
+                {conrod:'#1', end:'Small End', measPos:'Position 2'},
+                {conrod:'#1', end:'Small End', measPos:'Position 3'},
             ]
         },
+
+        // ── MAIN BEARING ───────────────────────────────────────────
+        // Top clearance per bearing number
         'Main Bearing': {
-            colHeaders: ['Bearing No.','Position','Clearance (mm)','Std Clearance','Limit','Result'],
-            rowKeys:    ['bearNo','pos','clearance','stdClear','limit','result'],
+            colHeaders: ['Bearing No.','Side','Clearance (mm)','Std Clearance','Max Limit','Result'],
+            rowKeys:    ['bearNo','side','clearance','stdClear','limit','result'],
             defaultRows:[
-                {bearNo:'#1',pos:'Top'},
-                {bearNo:'#2',pos:'Top'},
-                {bearNo:'#3',pos:'Top'},
-                {bearNo:'#4',pos:'Top'},
+                {bearNo:'#1', side:'Top'},
+                {bearNo:'#2', side:'Top'},
+                {bearNo:'#3', side:'Top'},
+                {bearNo:'#4', side:'Top'},
+                {bearNo:'#5', side:'Top'},
+                {bearNo:'#6', side:'Top'},
             ]
         },
+
+        // ── CRANK PIN ──────────────────────────────────────────────
+        // Each throw: Vertical + Horizontal readings for ovality
         'Crank Pin': {
-            colHeaders: ['Throw No.','Direction','Actual (mm)','Standard (mm)','Deviation','Ovality','Result'],
-            rowKeys:    ['throwNo','dir','actual','std','dev','ovality','result'],
+            colHeaders: ['Throw No.','Direction','Actual (mm)','Standard (mm)','Ovality','Wear Limit','Result'],
+            rowKeys:    ['throwNo','dir','actual','std','ovality','wearLimit','result'],
             defaultRows:[
-                {throwNo:'#1',dir:'Vertical'},
-                {throwNo:'#1',dir:'Horizontal'},
-                {throwNo:'#2',dir:'Vertical'},
-                {throwNo:'#2',dir:'Horizontal'},
+                {throwNo:'#1', dir:'Vertical'},
+                {throwNo:'#1', dir:'Horizontal'},
+                {throwNo:'#2', dir:'Vertical'},
+                {throwNo:'#2', dir:'Horizontal'},
+                {throwNo:'#3', dir:'Vertical'},
+                {throwNo:'#3', dir:'Horizontal'},
+                {throwNo:'#4', dir:'Vertical'},
+                {throwNo:'#4', dir:'Horizontal'},
             ]
         },
+
+        // ── CRANK WEB DEFLECTION ───────────────────────────────────
+        // 5 positions per crank: 30° after TDC, Port/Stbd, BDC, Stbd/Port, 30° before TDC
+        // Reading at BDC used as datum; difference = max - min
         'Crank Web Deflection': {
-            colHeaders: ['Crank No.','Bottom','Stbd','Top','Port','Difference (V)','Result'],
-            rowKeys:    ['crankNo','bottom','stbd','top','port','diffV','result'],
+            colHeaders: ['Crank No.','30° Aft TDC','Port/Stbd','BDC','Stbd/Port','30° Bef TDC','Max-Min Diff','Result'],
+            rowKeys:    ['crankNo','p30aftTDC','portStbd','bdc','stbdPort','p30befTDC','diff','result'],
             defaultRows:[
                 {crankNo:'#1'},
                 {crankNo:'#2'},
                 {crankNo:'#3'},
                 {crankNo:'#4'},
+                {crankNo:'#5'},
             ]
         },
+
+        // ── VALVE GUIDE BUSH ───────────────────────────────────────
+        // Inlet & Exhaust per cylinder, 2 directions each
         'Valve Guide Bush': {
-            colHeaders: ['Valve','Direction','Actual ID (mm)','Standard','Max Limit','Clearance','Result'],
-            rowKeys:    ['valve','dir','actualID','std','limit','clearance','result'],
+            colHeaders: ['Valve Type','Direction','Actual ID (mm)','Standard (mm)','Max Limit','Stem OD (mm)','Clearance','Result'],
+            rowKeys:    ['valve','dir','actualID','std','limit','stemOD','clearance','result'],
             defaultRows:[
-                {valve:'Inlet',  dir:'Fore-Aft'},
-                {valve:'Inlet',  dir:'Port-Stbd'},
-                {valve:'Exhaust',dir:'Fore-Aft'},
-                {valve:'Exhaust',dir:'Port-Stbd'},
+                {valve:'Inlet',   dir:'Fore-Aft'},
+                {valve:'Inlet',   dir:'Port-Stbd'},
+                {valve:'Exhaust', dir:'Fore-Aft'},
+                {valve:'Exhaust', dir:'Port-Stbd'},
             ]
         },
+
+        // ── ROCKER ARM BUSH ────────────────────────────────────────
         'Rocker Arm Bush': {
-            colHeaders: ['Component','Direction','Actual ID (mm)','Standard','Clearance','Result'],
-            rowKeys:    ['comp','dir','actualID','std','clearance','result'],
+            colHeaders: ['Component','Direction','Actual ID (mm)','Standard','Pin OD (mm)','Clearance','Result'],
+            rowKeys:    ['comp','dir','actualID','std','pinOD','clearance','result'],
             defaultRows:[
-                {comp:'Inlet Rocker',   dir:'Axial'},
-                {comp:'Inlet Rocker',   dir:'Transverse'},
-                {comp:'Exhaust Rocker', dir:'Axial'},
-                {comp:'Exhaust Rocker', dir:'Transverse'},
+                {comp:'Inlet Rocker',    dir:'Axial'},
+                {comp:'Inlet Rocker',    dir:'Transverse'},
+                {comp:'Exhaust Rocker',  dir:'Axial'},
+                {comp:'Exhaust Rocker',  dir:'Transverse'},
             ]
         },
+
+        // ── PISTON PIN BUSH ────────────────────────────────────────
         'Piston Pin Bush': {
             colHeaders: ['Direction','Actual ID (mm)','Standard','Pin OD (mm)','Clearance','Result'],
             rowKeys:    ['dir','actualID','std','pinOD','clearance','result'],
@@ -1764,6 +1817,8 @@
                 {dir:'Horizontal'},
             ]
         },
+
+        // ── VALVE SEAT ─────────────────────────────────────────────
         'Valve Seat': {
             colHeaders: ['Valve','Seat Width (mm)','Std Width','Seat Angle (°)','Std Angle','Result'],
             rowKeys:    ['valve','width','stdWidth','angle','stdAngle','result'],
@@ -1772,22 +1827,28 @@
                 {valve:'Exhaust'},
             ]
         },
+
+        // ── CAMSHAFT BEARING ───────────────────────────────────────
         'Camshaft Bearing': {
             colHeaders: ['Bearing No.','Clearance (mm)','Standard','Limit','Result'],
             rowKeys:    ['bearNo','clearance','std','limit','result'],
             defaultRows:[
-                {bearNo:'#1'},{bearNo:'#2'},{bearNo:'#3'},
+                {bearNo:'#1'},{bearNo:'#2'},{bearNo:'#3'},{bearNo:'#4'},
             ]
         },
+
+        // ── TURBOCHARGER BEARING ───────────────────────────────────
         'Turbocharger Bearing': {
             colHeaders: ['Bearing','Type','Clearance (mm)','Standard','Limit','Result'],
             rowKeys:    ['bearing','type','clearance','std','limit','result'],
             defaultRows:[
-                {bearing:'Drive End',   type:'Radial'},
-                {bearing:'Drive End',   type:'Axial'},
-                {bearing:'Compressor End',type:'Radial'},
+                {bearing:'Drive End',      type:'Radial'},
+                {bearing:'Drive End',      type:'Axial'},
+                {bearing:'Compressor End', type:'Radial'},
             ]
         },
+
+        // ── OTHER (CUSTOM) ─────────────────────────────────────────
         'Other': {
             colHeaders: ['Item / Position','Measurement 1','Measurement 2','Standard','Limit','Result'],
             rowKeys:    ['item','m1','m2','std','limit','result'],
