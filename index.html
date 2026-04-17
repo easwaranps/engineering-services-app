@@ -3880,7 +3880,7 @@
                 taxableAmt:        tdsOn ? (parseFloat(document.getElementById('expTaxableAmt').value)||0) : 0,
                 tdsPct:            tdsOn ? document.getElementById('expTDSPct').value : 0,
                 tdsAmt,
-                netAmt,
+                netAmt:            +(grossTotal - tdsAmt).toFixed(2),
                 netPayable,
                 deductionsApplicable: document.getElementById('expDeductionsApplicable')?.checked || false,
                 pfAmt:             document.getElementById('expDeductionsApplicable')?.checked ? (parseFloat(document.getElementById('expPF').value)||0) : 0,
