@@ -1964,21 +1964,28 @@
         }
 
         function calculateTotals(items) {
-            let subtotal = 0, totalTax = 0;
-            items.forEach(item => {
-                const itemTotal = item.qty * item.rate;
+            let subtotal = 0, cgstTotal = 0, sgstTotal = 0, igstTotal = 0;
+            (items||[]).forEach(item => {
+                const itemTotal = (item.qty||0) * (item.rate||0);
                 const discount = (itemTotal * (item.discountPct || 0)) / 100;
                 const afterDiscount = itemTotal - discount;
                 const sgst = (afterDiscount * (item.sgstPct || 0)) / 100;
                 const cgst = (afterDiscount * (item.cgstPct || 0)) / 100;
                 const igst = (afterDiscount * (item.igstPct || 0)) / 100;
-                subtotal += afterDiscount;
-                totalTax += sgst + cgst + igst;
+                subtotal   += afterDiscount;
+                cgstTotal  += cgst;
+                sgstTotal  += sgst;
+                igstTotal  += igst;
             });
+            const totalTax = cgstTotal + sgstTotal + igstTotal;
             return {
-                subtotal: subtotal.toFixed(2),
-                tax: totalTax.toFixed(2),
-                total: (subtotal + totalTax).toFixed(2)
+                subtotal:  +subtotal.toFixed(2),
+                cgst:      +cgstTotal.toFixed(2),
+                sgst:      +sgstTotal.toFixed(2),
+                igst:      +igstTotal.toFixed(2),
+                tax:       +totalTax.toFixed(2),      // backward compat alias
+                totalTax:  +totalTax.toFixed(2),
+                total:     +(subtotal + totalTax).toFixed(2)
             };
         }
 
@@ -3191,8 +3198,18 @@
                         ${hasAttach ? `<span class="text-xs">(${t.attachments.length})</span>` : ''}
                     </button>` : ''}
                     ${locked
-                        ? `<span class="text-xs text-gray-400 italic mr-1" title="Record locked">🔒</span>
-                           <button disabled class="text-gray-300 cursor-not-allowed mr-1 text-xs">Edit</button>
+                        ? `<span class="text-xs text-gray-400 italic mr-1" title="Record locked — use status dropdown to change">🔒</span>
+                           <select onchange="changeLockedTxnStatus('${t.txnID}',this.value)" class="text-xs border border-gray-200 rounded px-1 py-0.5 mr-1 bg-white cursor-pointer" title="Change status">
+                               <option value="" disabled selected>${t.status}</option>
+                               ${t.txnCategory==='INVOICE'?`
+                               <option value="Sent">Sent</option>
+                               <option value="Approved">Approved</option>
+                               <option value="Completed">Completed</option>
+                               <option value="Paid">Paid</option>`:`
+                               <option value="Approved">Approved</option>
+                               <option value="Completed">Completed</option>
+                               <option value="Paid">Paid</option>`}
+                           </select>
                            <button onclick='requestUnlockDelete(${tJson})' class="text-orange-500 hover:text-red-700 text-xs font-medium" title="Delete with Admin PIN">🔓 Del</button>`
                         : `${t.txnCategory === 'PROFORMA_INVOICE' && t.status === 'Approved' && !t.convertedToInvoice
                             ? `<button onclick='convertToInvoice(${tJson})' class="text-green-700 hover:text-green-900 mr-2 text-xs font-bold bg-green-50 px-2 py-1 rounded border border-green-300" title="Convert to Final Invoice">✓ Convert to Invoice</button>`
@@ -3205,6 +3222,19 @@
                     }
                 </td>
             </tr>`;
+        }
+
+        async function changeLockedTxnStatus(txnID, newStatus) {
+            if (!newStatus) return;
+            const idx = transactions.findIndex(t => t.txnID === txnID);
+            if (idx < 0) return;
+            const oldStatus = transactions[idx].status;
+            if (!confirm(`Change status from "${oldStatus}" to "${newStatus}"?`)) {
+                renderView(); return;   // reset dropdown
+            }
+            transactions[idx].status = newStatus;
+            await saveData('transactions', transactions);
+            renderView();
         }
 
         // Group config: label, category match, direction match, header colour
@@ -4069,8 +4099,11 @@
             });
 
             // ── Outgoing Invoices for the period ────────────────────────────
+            // GST liability arises when invoice is issued — include all statuses
+            // except Draft (not yet sent to client)
             const outInvoices = transactions.filter(t => {
                 if (t.txnCategory !== 'INVOICE' || t.txnDirection !== 'Outgoing') return false;
+                if (t.status === 'Draft') return false;   // Draft not yet issued
                 return (t.txnDate||'').startsWith(pfx);
             });
 
