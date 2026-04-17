@@ -660,7 +660,7 @@
         projectExpenses: '1OwJc4CdczowDWeHpCtSmfR0pYqhS49s0',
         workLogs:        '1P1sZh77q7w33eY2B9P20sYpT92Cb1FuK',
         staff:           '1JFS8ZZNkCXx8sIx6ssZzCbtbciRUrK3v'
-        // settings: 'https://drive.google.com/file/d/1GwB9ZAC5_oKpZRq0WQRlGIvpl1ypwcVb/view?usp=drive_link'  ← optional: add settings.json file ID from main app Drive folder
+        // settings: 'PASTE_SETTINGS_FILE_ID_HERE'  ← optional: add settings.json file ID from main app Drive folder
     };
 
     // ── STATE ─────────────────────────────────────────────────────
@@ -2445,6 +2445,7 @@
         const projName=wl.project||'—';
         const co      = appSettings?.companyName || 'IMSE TECH SERVICES PVT LTD';
         const co_gst  = appSettings?.gstNumber   || '';
+        console.log('wlPDF: appSettings keys:', Object.keys(appSettings||{}), '| logoData length:', appSettings?.logoData?.length||0);
         const dateRange=wl.workStartDate&&wl.workEndDate
             ?wl.workStartDate.split('-').reverse().join('.')+' to '+wl.workEndDate.split('-').reverse().join('.')
             :wl.workStartDate?wl.workStartDate.split('-').reverse().join('.'):'—';
@@ -2461,12 +2462,17 @@
             // Logo top-left
             const logo = appSettings?.logoData || null;
             let logoPlaced = false;
-            if (logo && (logo.startsWith('data:image') || logo.startsWith('http'))) {
+            if (logo && logo.startsWith('data:image')) {
                 try {
-                    const ext = logo.includes('image/png')?'PNG':logo.includes('image/svg')?'SVG':'JPEG';
-                    doc.addImage(logo, ext, ML, 3, 18, 16);
+                    const ext = logo.includes('image/png')?'PNG':logo.includes('image/svg+xml')?'SVG':'JPEG';
+                    // Use unique alias to avoid jsPDF internal cache issues
+                    const alias = 'logo_' + wlID;
+                    doc.addImage(logo, ext, ML, 3, 18, 16, alias, 'FAST');
                     logoPlaced = true;
-                } catch(e) { logoPlaced = false; }
+                } catch(e) {
+                    console.warn('Logo load failed:', e.message);
+                    logoPlaced = false;
+                }
             }
 
             // Company name — bold blue, right of logo
