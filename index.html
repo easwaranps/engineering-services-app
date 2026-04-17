@@ -161,7 +161,7 @@
 
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
                     <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">Bill Amount (Ex-GST / Taxable) <span class="text-red-500">*</span></label>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Taxable Amount <span class="text-red-500">*</span></label>
                         <input type="number" id="expBillAmount" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()" required/>
                     </div>
                     <div>
@@ -184,10 +184,14 @@
                         <input type="number" id="expIGST" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
                     </div>
                     <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Total Bill Amount <span class="text-gray-400 font-normal">(Taxable + GST, auto)</span></label>
+                        <input type="number" id="expTotalBillAmt" placeholder="Auto" class="w-full px-3 py-2 border rounded-lg text-sm font-semibold bg-blue-50 border-blue-200" readonly/>
+                    </div>
+                    <div>
                         <label class="block text-xs font-semibold text-gray-600 mb-1">Credit Note / Discount</label>
                         <input type="number" id="expCreditNote" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
                     </div>
-                    <div class="md:col-span-2">
+                    <div>
                         <label class="block text-xs font-semibold text-gray-600 mb-1">Credit Note / Discount Details</label>
                         <input type="text" id="expCreditNoteDetails" placeholder="Reference / description of credit note" class="w-full px-3 py-2 border rounded-lg text-sm"/>
                     </div>
@@ -339,9 +343,10 @@
                 </div>
 
                 <!-- Computed totals summary -->
-                <div class="bg-orange-50 border border-orange-200 rounded-xl p-4 mb-6 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                    <div><span class="text-gray-500 block text-xs">Bill Amount (INR)</span><span id="sumBillINR" class="font-bold text-orange-700">—</span></div>
-                    <div><span class="text-gray-500 block text-xs">Total Tax</span><span id="sumTax" class="font-bold text-orange-700">—</span></div>
+                <div class="bg-orange-50 border border-orange-200 rounded-xl p-4 mb-6 grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
+                    <div><span class="text-gray-500 block text-xs">Taxable Amount (INR)</span><span id="sumBillINR" class="font-bold text-orange-700">—</span></div>
+                    <div><span class="text-gray-500 block text-xs">Total Bill Amount</span><span id="sumTotalBill" class="font-bold text-blue-700">—</span></div>
+                    <div><span class="text-gray-500 block text-xs">Total Tax (GST)</span><span id="sumTax" class="font-bold text-orange-700">—</span></div>
                     <div><span class="text-gray-500 block text-xs">TDS Deducted</span><span id="sumTDS" class="font-bold text-orange-700">—</span></div>
                     <div><span class="text-gray-500 block text-xs">Net Payable</span><span id="sumNet" class="font-bold text-orange-800 text-base">—</span></div>
                 </div>
@@ -3663,6 +3668,7 @@
                 document.getElementById('expExchRate').value      = exp.exchRate||'1';
                 document.getElementById('expBillAmount').value    = exp.billAmount||'';
                 document.getElementById('expBillAmtINR').value    = exp.billAmtINR||'';
+                document.getElementById('expTotalBillAmt').value  = exp.totalBillAmt || ((parseFloat(exp.billAmtINR)||0) + (parseFloat(exp.cgst)||0) + (parseFloat(exp.sgst)||0) + (parseFloat(exp.igst)||0)) || '';
                 document.getElementById('expCGST').value          = exp.cgst||'';
                 document.getElementById('expSGST').value          = exp.sgst||'';
                 document.getElementById('expIGST').value          = exp.igst||'';
@@ -3731,6 +3737,10 @@
             const billAmtINREl = document.getElementById('expBillAmtINR');
             if (billAmtINREl) billAmtINREl.value = billINR.toFixed(2);
 
+            // Total Bill Amount = Taxable + CGST + SGST + IGST
+            const totalBillAmtEl = document.getElementById('expTotalBillAmt');
+            if (totalBillAmtEl) totalBillAmtEl.value = grossTotal.toFixed(2);
+
             // TDS — deducted on taxable (ex-GST) amount entered in Taxable Amount field
             // Formula: Net Payable = Bill + GST - TDS - Credit Note
             let tdsAmt = 0;
@@ -3777,13 +3787,15 @@
             // Summary bar
             const fmt = n => '₹'+n.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
             const s1 = document.getElementById('sumBillINR');
+            const s1b= document.getElementById('sumTotalBill');
             const s2 = document.getElementById('sumTax');
             const s3 = document.getElementById('sumTDS');
             const s4 = document.getElementById('sumNet');
-            if (s1) s1.textContent = fmt(billINR);
-            if (s2) s2.textContent = fmt(totalTax);
-            if (s3) s3.textContent = fmt(tdsAmt + totalDeductions);
-            if (s4) s4.textContent = fmt(netPayable);
+            if (s1)  s1.textContent  = fmt(billINR);
+            if (s1b) s1b.textContent = fmt(grossTotal);
+            if (s2)  s2.textContent  = fmt(totalTax);
+            if (s3)  s3.textContent  = fmt(tdsAmt + totalDeductions);
+            if (s4)  s4.textContent  = fmt(netPayable);
         }
 
         function toggleDeductionFields() {
@@ -3814,8 +3826,9 @@
             const adv   = parseFloat(document.getElementById('expAdvanceAmt').value)||0;
             const billINR = bill * rate;
             const tdsAmt  = tdsOn ? (parseFloat(document.getElementById('expTDSAmt').value)||0) : 0;
-            const netAmt  = billINR - tdsAmt;
-            const netPayable = netAmt + cgst + sgst + igst - cn;
+            const totalTax = cgst + sgst + igst;
+            const grossTotal = billINR + totalTax;          // Total Bill Amount
+            const netPayable = +(grossTotal - tdsAmt - cn).toFixed(2);
 
             // Calculate deductions
             const deductOn = document.getElementById('expDeductionsApplicable')?.checked || false;
@@ -3859,6 +3872,7 @@
                 exchRate:          rate,
                 billAmount:        bill,
                 billAmtINR:        billINR,
+                totalBillAmt:      grossTotal,
                 cgst, sgst, igst,
                 creditNote:        cn,
                 creditNoteDetails: document.getElementById('expCreditNoteDetails').value,
