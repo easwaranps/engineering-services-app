@@ -2448,21 +2448,38 @@
         const CONTENT_BOTTOM=297-SIG_H-8;
 
         function drawPageHeader(){
-            doc.setFillColor(15,58,95);doc.rect(0,0,210,14,'F');
-            // Logo top-left if available
+            // White background with blue border bottom
+            doc.setFillColor(255,255,255);
+            doc.rect(0,0,210,26,'F');
+            doc.setDrawColor(15,58,95);doc.setLineWidth(1.2);
+            doc.line(0,26,210,26);
+
+            // Logo top-left
             const logo = appSettings?.logoData;
             if (logo) {
                 try {
                     const ext = logo.includes('image/png')?'PNG':logo.includes('image/svg')?'SVG':'JPEG';
-                    doc.addImage(logo, ext, 2, 1, 12, 12, '', 'FAST');
+                    doc.addImage(logo, ext, ML, 2, 18, 18, '', 'FAST');
                 } catch(e) {}
             }
-            doc.setFontSize(13);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
-            doc.text(co.toUpperCase(),PW/2,9.5,{align:'center'});
-            if(co_gst){doc.setFontSize(7.5);doc.setFont('helvetica','normal');doc.setTextColor(147,197,253);doc.text('GST: '+co_gst,PW/2,13.5,{align:'center'});}
-            doc.setFontSize(11.5);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
-            doc.text('TIME SHEET AND WORK DONE REPORT',PW/2,22,{align:'center'});
-            doc.setDrawColor(15,58,95);doc.setLineWidth(0.5);doc.line(ML,24,210-MR,24);
+
+            // Company name — bold blue, right of logo
+            doc.setFontSize(14);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
+            doc.text(co.toUpperCase(), logo ? ML+22 : PW/2, 11, {align: logo ? 'left' : 'center'});
+
+            // GST below company name
+            if(co_gst){
+                doc.setFontSize(7.5);doc.setFont('helvetica','normal');doc.setTextColor(80,80,80);
+                doc.text('GST: '+co_gst, logo ? ML+22 : PW/2, 17, {align: logo ? 'left' : 'center'});
+            }
+
+            // Report title — centred, bold blue, slightly larger
+            doc.setFontSize(11);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
+            doc.text('TIME SHEET AND WORK DONE REPORT', PW/2, 33, {align:'center'});
+            // Underline the title
+            const titleW = doc.getTextWidth('TIME SHEET AND WORK DONE REPORT');
+            doc.setDrawColor(15,58,95);doc.setLineWidth(0.4);
+            doc.line(PW/2 - titleW/2, 34.5, PW/2 + titleW/2, 34.5);
         }
 
         function drawSignatureFooter(p,total){
@@ -2490,7 +2507,7 @@
         }
 
         // Page 1
-        drawPageHeader();y=30;
+        drawPageHeader();y=42;
 
         // Project details
         doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
@@ -2507,7 +2524,7 @@
         y=doc.lastAutoTable.finalY+10;
 
         // ── SECTION I — Technician Time Log ──────────────────────
-        if(y+20>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=30;}
+        if(y+20>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=42;}
         doc.setFontSize(10.5);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
         doc.text('I.  Technician Working Time Log',ML,y);y+=6;
 
@@ -2540,18 +2557,18 @@
                 ]],
                 body:timeLogRows,
                 columnStyles:{0:{cellWidth:22},1:{cellWidth:10,halign:'center'},2:{cellWidth:52},3:{cellWidth:16,halign:'center'},4:{cellWidth:16,halign:'center'},5:{cellWidth:CW-116}},
-                didAddPage:()=>{drawPageHeader();}
+                didAddPage:(data)=>{drawPageHeader();data.cursor.y=42;}
             });
             y=doc.lastAutoTable.finalY+10;
         }
 
         // ── SECTION II — Work Performed ───────────────────────────
-        if(y+20>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=30;}
+        if(y+20>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=42;}
         doc.setFontSize(10.5);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
         doc.text('II.  Work Performed',ML,y);y+=6;
 
         days.forEach((d,idx)=>{
-            if(y+20>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=30;}
+            if(y+20>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=42;}
             const dur=calcDuration(d.startTime,d.endTime);
             const dayTechs=(d.technicians||[]).map(t=>t.name).join(', ')||(wl.technicians||[]).map(t=>t.name).join(', ')||'—';
             const dateStr=d.date?d.date.split('-').reverse().join('.'):'—';
@@ -2569,7 +2586,7 @@
              {title:'Exclusions / Remarks',       text:d.exclusions,  col:[180,83,9]},
              {title:'Recommendations',            text:d.recommendations,col:[21,128,61]}
             ].filter(s=>s.text&&s.text.trim()).forEach(s=>{
-                if(y+16>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=30;}
+                if(y+16>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=42;}
                 doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
                     styles:{fontSize:8.5,cellPadding:3},
                     headStyles:{fillColor:s.col,textColor:[255,255,255],fontStyle:'bold',fontSize:8},
@@ -2579,7 +2596,7 @@
 
             // Witness
             if(d.witnessName){
-                if(y+10>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=30;}
+                if(y+10>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=42;}
                 doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
                     styles:{fontSize:8,cellPadding:2.5},
                     body:[[{content:'Witnessed By',styles:{fontStyle:'bold',fillColor:[255,241,242],cellWidth:35}},
@@ -2593,13 +2610,13 @@
 
             // Calibrations
             if((d.calibrations||[]).length){
-                if(y+12>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=30;}
+                if(y+12>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=42;}
                 doc.setFillColor(88,28,135);doc.rect(ML,y,CW,8,'F');
                 doc.setFontSize(8.5);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
                 doc.text('CALIBRATION / DIMENSIONAL INSPECTION RECORDS ('+d.calibrations.length+')',ML+3,y+5.5);
                 y+=10;
                 d.calibrations.forEach((cal,ci)=>{
-                    if(y+16>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=30;}
+                    if(y+16>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=42;}
                     const oCol=cal.overall==='PASS'?[21,128,61]:cal.overall==='FAIL'?[220,38,38]:[180,83,9];
                     doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
                         styles:{fontSize:8,cellPadding:2.5},
@@ -2618,7 +2635,7 @@
                     y=doc.lastAutoTable.finalY+2;
                     if(cal.remarks){doc.setFontSize(7.5);doc.setFont('helvetica','italic');doc.setTextColor(80,80,80);doc.text('Remarks: '+cal.remarks,ML+2,y+4);y+=7;}
                     if(cal.rows&&cal.rows.length&&cal.columns&&cal.columns.length){
-                        if(y+12>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=30;}
+                        if(y+12>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=42;}
                         const colW=Math.min(24,CW/cal.columns.length);
                         const cs={};cal.columns.forEach((_,i)=>{cs[i]={cellWidth:colW,halign:'center'};});
                         cs[0]={cellWidth:colW,halign:'left'};if(cal.columns.length>1)cs[1]={cellWidth:colW,halign:'left'};
@@ -2641,7 +2658,7 @@
 
             // Photos
             if((d.photos||[]).length){
-                if(y+30>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=30;}
+                if(y+30>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=42;}
                 doc.setFillColor(55,65,81);doc.rect(ML,y,CW,7,'F');
                 doc.setFontSize(8);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
                 doc.text('SITE PHOTOS — '+dateStr+' ('+d.photos.length+' photo'+(d.photos.length>1?'s':'')+')',ML+3,y+5);
@@ -2649,7 +2666,7 @@
                 const imgW=(CW-6)/3;let col=0;
                 for(let pi=0;pi<d.photos.length;pi++){
                     const imgH=46,xPos=ML+col*(imgW+3);
-                    if(y+imgH>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=30;col=0;}
+                    if(y+imgH>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=42;col=0;}
                     try{const fmt=d.photos[pi].startsWith('data:image/png')?'PNG':'JPEG';
                         doc.addImage(d.photos[pi],fmt,xPos,y,imgW,imgH,'','MEDIUM');
                         doc.setFontSize(6.5);doc.setFont('helvetica','normal');doc.setTextColor(100,100,100);
