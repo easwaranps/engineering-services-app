@@ -660,6 +660,7 @@
         projectExpenses: '1OwJc4CdczowDWeHpCtSmfR0pYqhS49s0',
         workLogs:        '1P1sZh77q7w33eY2B9P20sYpT92Cb1FuK',
         staff:           '1JFS8ZZNkCXx8sIx6ssZzCbtbciRUrK3v'
+        // settings: 'PASTE_SETTINGS_FILE_ID_HERE'  ← optional: add settings.json file ID from main app Drive folder
     };
 
     // ── STATE ─────────────────────────────────────────────────────
@@ -821,7 +822,11 @@
     // Read settings.json by searching in the same Drive folder as the shared files
     async function readSettingsByName() {
         try {
-            // Get the parent folder of one of the known files
+            // First try direct file ID if configured
+            if (SHARED_FILE_IDS.settings && SHARED_FILE_IDS.settings !== 'PASTE_SETTINGS_FILE_ID_HERE') {
+                try { const d = await readFile(SHARED_FILE_IDS.settings); if(d) return d; } catch(e) {}
+            }
+            // Fallback: search by filename in same folder as staff file
             const metaR = await fetch(
                 `https://www.googleapis.com/drive/v3/files/${SHARED_FILE_IDS.staff}?fields=parents&supportsAllDrives=true`,
                 { headers: { Authorization: `Bearer ${accessToken}` } }
@@ -830,7 +835,6 @@
             const meta = await metaR.json();
             const parentId = (meta.parents||[])[0];
             if (!parentId) return null;
-            // Search for settings.json in that folder
             const q = encodeURIComponent(`name='settings.json' and '${parentId}' in parents and trashed=false`);
             const listR = await fetch(
                 `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)&spaces=drive`,
@@ -2455,22 +2459,24 @@
             doc.line(0,26,210,26);
 
             // Logo top-left
-            const logo = appSettings?.logoData;
-            if (logo) {
+            const logo = appSettings?.logoData || null;
+            let logoPlaced = false;
+            if (logo && (logo.startsWith('data:image') || logo.startsWith('http'))) {
                 try {
                     const ext = logo.includes('image/png')?'PNG':logo.includes('image/svg')?'SVG':'JPEG';
-                    doc.addImage(logo, ext, ML, 2, 18, 18, '', 'FAST');
-                } catch(e) {}
+                    doc.addImage(logo, ext, ML, 3, 18, 16);
+                    logoPlaced = true;
+                } catch(e) { logoPlaced = false; }
             }
 
             // Company name — bold blue, right of logo
             doc.setFontSize(14);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
-            doc.text(co.toUpperCase(), logo ? ML+22 : PW/2, 11, {align: logo ? 'left' : 'center'});
+            doc.text(co.toUpperCase(), logoPlaced ? ML+22 : PW/2, 11, {align: logoPlaced ? 'left' : 'center'});
 
             // GST below company name
             if(co_gst){
                 doc.setFontSize(7.5);doc.setFont('helvetica','normal');doc.setTextColor(80,80,80);
-                doc.text('GST: '+co_gst, logo ? ML+22 : PW/2, 17, {align: logo ? 'left' : 'center'});
+                doc.text('GST: '+co_gst, logoPlaced ? ML+22 : PW/2, 17, {align: logoPlaced ? 'left' : 'center'});
             }
 
             // Report title — centred, bold blue, slightly larger
@@ -2573,11 +2579,11 @@
             const dayTechs=(d.technicians||[]).map(t=>t.name).join(', ')||(wl.technicians||[]).map(t=>t.name).join(', ')||'—';
             const dateStr=d.date?d.date.split('-').reverse().join('.'):'—';
 
-            // Day header bar
+            // Day header bar — date and category only (timing/techs in Section I)
             doc.setFillColor(241,245,249);doc.rect(ML,y,CW,8,'F');
             doc.setDrawColor(15,58,95);doc.setLineWidth(0.4);doc.rect(ML,y,CW,8);
             doc.setFontSize(9);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
-            const hdr=dateStr+'   |   '+d.category+'   |   '+(d.startTime||'—')+' – '+(d.endTime||'—')+(dur?' ('+dur+')':'')+'   |   '+dayTechs;
+            const hdr=dateStr+(d.category?'   |   '+d.category:'');
             doc.text(hdr,ML+3,y+5.5);y+=11;
 
             // Work sections
