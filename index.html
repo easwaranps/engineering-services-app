@@ -619,6 +619,20 @@
                         <label class="block text-sm font-semibold text-gray-700 mb-2">Signatory Designation <span class="text-xs text-gray-400 font-normal">(optional)</span></label>
                         <input type="text" id="txnSignatoryDesig" placeholder="e.g. Manager, Director" class="w-full px-4 py-2 border border-gray-300 rounded-lg" maxlength="100" />
                     </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-2">TDS Deducted by Client (%) <span class="text-xs text-gray-400 font-normal">(for 26AS reconciliation)</span></label>
+                        <select id="txnTDSFromClientPct" class="w-full px-4 py-2 border border-gray-300 rounded-lg">
+                            <option value="0">None</option>
+                            <option value="1">1%</option>
+                            <option value="2">2%</option>
+                            <option value="5">5%</option>
+                            <option value="10">10%</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-2">TDS Amount (from Client) <span class="text-xs text-gray-400 font-normal">(auto / manual)</span></label>
+                        <input type="number" id="txnTDSFromClient" placeholder="0.00" min="0" step="0.01" class="w-full px-4 py-2 border border-gray-300 rounded-lg" />
+                    </div>
                 </div>
                 
                 <!-- Terms & Conditions for Quotation -->
@@ -2975,6 +2989,7 @@
                             <button onclick="switchView('expenses')" class="px-4 py-2 rounded-lg ${currentView === 'expenses' ? 'bg-orange-100 text-orange-700' : 'text-gray-600 hover:bg-gray-100'}">💸 Expenses</button>
                             <button onclick="switchView('staff')" class="px-4 py-2 rounded-lg ${currentView === 'staff' ? 'bg-teal-100 text-teal-700' : 'text-gray-600 hover:bg-gray-100'}">👥 Staff</button>
                             <button onclick="switchView('projexp')" class="px-4 py-2 rounded-lg ${currentView === 'projexp' ? 'bg-yellow-100 text-yellow-700' : 'text-gray-600 hover:bg-gray-100'}">🧳 Projects</button>
+                            <button onclick="switchView('tax')" class="px-4 py-2 rounded-lg ${currentView === 'tax' ? 'bg-red-100 text-red-700' : 'text-gray-600 hover:bg-gray-100'}">🧾 Tax</button>
                             <button onclick="switchView('mis')" class="px-4 py-2 rounded-lg ${currentView === 'mis' ? 'bg-green-100 text-green-700' : 'text-gray-600 hover:bg-gray-100'}">📊 MIS Report</button>
                             <button onclick="switchView('parties')" class="px-4 py-2 rounded-lg ${currentView === 'parties' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Parties</button>
                             <button onclick="switchView('settings')" class="px-4 py-2 rounded-lg ${currentView === 'settings' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Settings</button>
@@ -3015,7 +3030,8 @@
             else if (currentView === 'staff') renderStaff(content);
             else if (currentView === 'projexp') renderProjectExpenses(content);
             else if (currentView === 'worklogs') renderWorkLogs(content);
-            else if (currentView === 'mis') renderMIS(content);
+            else if (currentView === 'tax')      renderTaxCompliance(content);
+            else if (currentView === 'mis')      renderMIS(content);
             else if (currentView === 'parties') renderParties(content);
             else if (currentView === 'settings') renderSettings(content);
         }
@@ -3995,6 +4011,687 @@
             pending.innerHTML = newItems ? `<p class="text-xs text-gray-400 mt-1">New files to add:</p>${newItems}` : '';
             if (!listEl.querySelector('[data-pending]')) listEl.appendChild(pending);
         });
+
+
+        // ════════════════════════════════════════════════════════════════════
+        //  TAX COMPLIANCE DASHBOARD
+        // ════════════════════════════════════════════════════════════════════
+
+        function renderTaxCompliance(content) {
+            const now = new Date();
+            const defMonth = now.getMonth() + 1;
+            const defYear  = now.getFullYear();
+            const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            const yearOpts = [defYear-1, defYear, defYear+1].map(y =>
+                `<option value="${y}" ${y===defYear?'selected':''}>${y}</option>`).join('');
+            const monthOpts = months.map((m,i) =>
+                `<option value="${i+1}" ${i+1===defMonth?'selected':''}>${m}</option>`).join('');
+
+            content.innerHTML = `
+            <div class="flex items-center justify-between mb-6 flex-wrap gap-3">
+                <div>
+                    <h2 class="text-3xl font-bold text-gray-800">🧾 Tax Compliance Dashboard</h2>
+                    <p class="text-gray-500 text-sm mt-1">TDS liability, GST input/output reconciliation and filing alerts</p>
+                </div>
+                <div class="flex gap-2 items-center">
+                    <select id="taxMonth" onchange="refreshTax()" class="px-3 py-2 border border-gray-200 rounded-lg text-sm font-medium">${monthOpts}</select>
+                    <select id="taxYear"  onchange="refreshTax()" class="px-3 py-2 border border-gray-200 rounded-lg text-sm font-medium">${yearOpts}</select>
+                    <button onclick="exportTaxPDF()" class="px-4 py-2 bg-red-600 text-white rounded-xl text-sm font-medium hover:bg-red-700">📄 Export PDF</button>
+                </div>
+            </div>
+            <div id="taxDashboardBody"></div>`;
+
+            refreshTax();
+        }
+
+        function refreshTax() {
+            const month = parseInt(document.getElementById('taxMonth')?.value || new Date().getMonth()+1);
+            const year  = parseInt(document.getElementById('taxYear')?.value  || new Date().getFullYear());
+            const body  = document.getElementById('taxDashboardBody');
+            if (body) body.innerHTML = buildTaxDashboard(month, year);
+        }
+
+        function getTaxPeriodData(month, year) {
+            const fmt  = n => '₹' + (+n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+            const pad  = n => String(n).padStart(2,'0');
+            const pfx  = `${year}-${pad(month)}`;   // "2026-04"
+
+            // ── TDS from Expenses (we deduct TDS from vendors) ─────────────
+            const tdsExpenses = expenses.filter(e => {
+                if (!e.tdsApplicable || !e.tdsAmt || parseFloat(e.tdsAmt)<=0) return false;
+                return (e.billDate||'').startsWith(pfx);
+            });
+
+            // ── GST Input from Expenses (CGST+SGST+IGST we paid to vendors) ─
+            const gstInputExps = expenses.filter(e => {
+                const hasTax = (parseFloat(e.cgst)||0)+(parseFloat(e.sgst)||0)+(parseFloat(e.igst)||0) > 0;
+                return hasTax && (e.billDate||'').startsWith(pfx);
+            });
+
+            // ── Outgoing Invoices for the period ────────────────────────────
+            const outInvoices = transactions.filter(t => {
+                if (t.txnCategory !== 'INVOICE' || t.txnDirection !== 'Outgoing') return false;
+                return (t.txnDate||'').startsWith(pfx);
+            });
+
+            // ── TDS Receivable from Invoices (client deducts TDS from us) ───
+            // Look for tdsFromClient field on transactions or estimate from invoice
+            const tdsReceivable = transactions.filter(t => {
+                if (t.txnCategory !== 'INVOICE' || t.txnDirection !== 'Outgoing') return false;
+                if (!(t.txnDate||'').startsWith(pfx)) return false;
+                return t.tdsFromClient > 0 || t.tdsFromClientPct > 0;
+            });
+
+            // Compute totals
+            const totalTDSDeducted  = tdsExpenses.reduce((s,e) => s+(parseFloat(e.tdsAmt)||0), 0);
+            const totalTDSReceivable= tdsReceivable.reduce((s,t) => s+(parseFloat(t.tdsFromClient)||0), 0);
+
+            const gstInputTotal = gstInputExps.reduce((s,e) =>
+                s+(parseFloat(e.cgst)||0)+(parseFloat(e.sgst)||0)+(parseFloat(e.igst)||0), 0);
+            const gstInputCGST  = gstInputExps.reduce((s,e) => s+(parseFloat(e.cgst)||0), 0);
+            const gstInputSGST  = gstInputExps.reduce((s,e) => s+(parseFloat(e.sgst)||0), 0);
+            const gstInputIGST  = gstInputExps.reduce((s,e) => s+(parseFloat(e.igst)||0), 0);
+
+            const gstOutput = outInvoices.reduce((s,t) => {
+                const tot = calculateTotals(t.items||[]);
+                return s + (parseFloat(tot.totalTax)||0);
+            }, 0);
+            const gstOutputCGST = outInvoices.reduce((s,t) => {
+                const tot = calculateTotals(t.items||[]);
+                return s + (parseFloat(tot.cgst)||0);
+            }, 0);
+            const gstOutputSGST = outInvoices.reduce((s,t) => {
+                const tot = calculateTotals(t.items||[]);
+                return s + (parseFloat(tot.sgst)||0);
+            }, 0);
+            const gstOutputIGST = outInvoices.reduce((s,t) => {
+                const tot = calculateTotals(t.items||[]);
+                return s + (parseFloat(tot.igst)||0);
+            }, 0);
+
+            const netGST    = gstOutput - gstInputTotal;
+            const months    = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            const monthName = months[month-1];
+
+            // Due dates
+            const tdsDueDate  = new Date(year, month, 7);  // 7th of next month
+            const gstDueDate  = new Date(year, month, 20); // 20th of next month
+            const today       = new Date();
+            const tdsDaysLeft = Math.ceil((tdsDueDate - today) / (1000*60*60*24));
+            const gstDaysLeft = Math.ceil((gstDueDate - today) / (1000*60*60*24));
+
+            return {
+                month, year, monthName, pfx, fmt, pad,
+                tdsExpenses, tdsReceivable, outInvoices, gstInputExps,
+                totalTDSDeducted, totalTDSReceivable,
+                gstInputTotal, gstInputCGST, gstInputSGST, gstInputIGST,
+                gstOutput, gstOutputCGST, gstOutputSGST, gstOutputIGST,
+                netGST, tdsDaysLeft, gstDaysLeft, tdsDueDate, gstDueDate
+            };
+        }
+
+        function buildTaxDashboard(month, year) {
+            const d   = getTaxPeriodData(month, year);
+            const fmt = d.fmt;
+            const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+            // Alert helpers
+            const alertBadge = (daysLeft, paid) => {
+                if (paid) return `<span class="px-3 py-1 rounded-full text-xs font-bold bg-green-100 text-green-700">✅ Filed / Paid</span>`;
+                if (daysLeft < 0)  return `<span class="px-3 py-1 rounded-full text-xs font-bold bg-red-600 text-white animate-pulse">🔴 OVERDUE by ${Math.abs(daysLeft)} days</span>`;
+                if (daysLeft <= 5) return `<span class="px-3 py-1 rounded-full text-xs font-bold bg-red-100 text-red-700">⚠️ DUE IN ${daysLeft} DAYS</span>`;
+                if (daysLeft <= 10)return `<span class="px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-700">⏰ Due in ${daysLeft} days</span>`;
+                return `<span class="px-3 py-1 rounded-full text-xs font-bold bg-green-100 text-green-700">🟢 ${daysLeft} days remaining</span>`;
+            };
+
+            // ── SUMMARY CARDS ─────────────────────────────────────────────
+            const cards = `
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                <div class="bg-gradient-to-br from-red-600 to-red-700 text-white rounded-xl p-4 shadow">
+                    <p class="text-xs opacity-80">TDS to Deposit (Expenses)</p>
+                    <p class="text-2xl font-bold">${fmt(d.totalTDSDeducted)}</p>
+                    <p class="text-xs opacity-70 mt-1">Due: 7th ${months[month%12]} ${month===12?year+1:year}</p>
+                </div>
+                <div class="bg-gradient-to-br from-blue-600 to-blue-700 text-white rounded-xl p-4 shadow">
+                    <p class="text-xs opacity-80">TDS Receivable (from Clients)</p>
+                    <p class="text-2xl font-bold">${fmt(d.totalTDSReceivable)}</p>
+                    <p class="text-xs opacity-70 mt-1">${d.tdsReceivable.length} invoice(s)</p>
+                </div>
+                <div class="bg-gradient-to-br from-amber-500 to-orange-600 text-white rounded-xl p-4 shadow">
+                    <p class="text-xs opacity-80">GST Input Credit (Expenses)</p>
+                    <p class="text-2xl font-bold">${fmt(d.gstInputTotal)}</p>
+                    <p class="text-xs opacity-70 mt-1">${d.gstInputExps.length} bills</p>
+                </div>
+                <div class="${d.netGST > 0 ? 'bg-gradient-to-br from-purple-600 to-purple-700' : 'bg-gradient-to-br from-teal-600 to-teal-700'} text-white rounded-xl p-4 shadow">
+                    <p class="text-xs opacity-80">${d.netGST > 0 ? 'GST Payable' : 'GST Credit (Carry Fwd)'}</p>
+                    <p class="text-2xl font-bold">${fmt(Math.abs(d.netGST))}</p>
+                    <p class="text-xs opacity-70 mt-1">Output ${fmt(d.gstOutput)} − Input ${fmt(d.gstInputTotal)}</p>
+                </div>
+            </div>`;
+
+            // ── TDS PANEL ─────────────────────────────────────────────────
+            const tdsRows = d.tdsExpenses.map((e,i) => {
+                const paid    = !!e.tdsPaid;
+                const challan = e.tdsChallan||'';
+                const safeId  = e.expID.replace(/'/g,"\\'");
+                return `<tr class="border-t hover:bg-red-50 ${paid?'bg-green-50':''}">
+                    <td class="px-3 py-2 text-xs">${i+1}</td>
+                    <td class="px-3 py-2 text-xs font-medium">${e.billDate||'—'}</td>
+                    <td class="px-3 py-2 text-xs">${e.companyName||'—'}</td>
+                    <td class="px-3 py-2 text-xs">${e.voucherNo||e.billNo||'—'}</td>
+                    <td class="px-3 py-2 text-xs text-right">${fmt(e.taxableAmt||e.billAmtINR||0)}</td>
+                    <td class="px-3 py-2 text-xs text-center">${e.tdsPct||'—'}%</td>
+                    <td class="px-3 py-2 text-xs text-right font-bold text-red-700">${fmt(e.tdsAmt)}</td>
+                    <td class="px-3 py-2 text-xs text-center">
+                        ${paid
+                            ? `<span class="text-green-700 font-semibold">✅ Paid</span>`
+                            : `<span class="text-red-500 font-semibold">⏳ Pending</span>`}
+                    </td>
+                    <td class="px-3 py-2 text-xs text-center">${challan?`<span class="font-mono text-blue-700">${challan}</span>`:'—'}</td>
+                    <td class="px-3 py-2 text-xs text-center whitespace-nowrap">
+                        <button onclick="openTDSPayModal('${safeId}')"
+                            class="px-2 py-1 text-xs rounded border ${paid?'bg-green-100 border-green-300 text-green-700':'bg-red-100 border-red-300 text-red-700'} hover:opacity-80">
+                            ${paid?'✎ Edit':'💳 Mark Paid'}
+                        </button>
+                    </td>
+                </tr>`;
+            }).join('');
+
+            const tdsPanel = `
+            <div class="bg-white rounded-2xl shadow-sm mb-6 overflow-hidden">
+                <div class="flex items-center justify-between px-5 py-3 bg-red-600">
+                    <div>
+                        <h3 class="text-white font-bold text-base">💳 TDS DEDUCTED — ${d.monthName} ${year}</h3>
+                        <p class="text-red-200 text-xs mt-0.5">Tax deducted from vendor/contractor payments — deposit by 7th of next month</p>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <span class="text-white font-bold text-lg">${fmt(d.totalTDSDeducted)}</span>
+                        ${alertBadge(d.tdsDaysLeft, false)}
+                    </div>
+                </div>
+                <div class="px-5 py-3 bg-red-50 flex flex-wrap gap-4 text-sm border-b border-red-100">
+                    <span>📅 Due Date: <strong>7th ${months[month%12]} ${month===12?year+1:year}</strong></span>
+                    <span>📋 Entries: <strong>${d.tdsExpenses.length}</strong></span>
+                    <span>✅ Paid: <strong>${d.tdsExpenses.filter(e=>e.tdsPaid).length}</strong></span>
+                    <span>⏳ Pending: <strong class="text-red-600">${d.tdsExpenses.filter(e=>!e.tdsPaid).length}</strong></span>
+                    <span>💰 Total TDS: <strong>${fmt(d.totalTDSDeducted)}</strong></span>
+                </div>
+                ${d.tdsExpenses.length ? `
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead class="bg-red-50 text-xs text-gray-500 uppercase">
+                            <tr>
+                                <th class="px-3 py-2">#</th>
+                                <th class="px-3 py-2 text-left">Bill Date</th>
+                                <th class="px-3 py-2 text-left">Vendor / Party</th>
+                                <th class="px-3 py-2 text-left">Voucher / Bill No</th>
+                                <th class="px-3 py-2 text-right">Taxable Amt</th>
+                                <th class="px-3 py-2 text-center">TDS %</th>
+                                <th class="px-3 py-2 text-right">TDS Amt</th>
+                                <th class="px-3 py-2 text-center">Status</th>
+                                <th class="px-3 py-2 text-center">Challan No</th>
+                                <th class="px-3 py-2 text-center">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>${tdsRows}</tbody>
+                        <tfoot class="bg-red-100">
+                            <tr>
+                                <td colspan="6" class="px-3 py-2 text-xs font-bold text-right text-red-800">TOTAL TDS TO DEPOSIT:</td>
+                                <td class="px-3 py-2 text-sm font-bold text-right text-red-800">${fmt(d.totalTDSDeducted)}</td>
+                                <td colspan="3"></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>` : `<p class="text-gray-400 text-center py-8">No TDS-applicable expenses in ${d.monthName} ${year}</p>`}
+            </div>`;
+
+            // ── TDS RECEIVABLE PANEL ──────────────────────────────────────
+            const tdsRecRows = d.tdsReceivable.map((t,i) => {
+                const tot = calculateTotals(t.items||[]);
+                return `<tr class="border-t hover:bg-blue-50">
+                    <td class="px-3 py-2 text-xs">${t.txnID||'—'}</td>
+                    <td class="px-3 py-2 text-xs">${t.txnDate||'—'}</td>
+                    <td class="px-3 py-2 text-xs font-medium">${t.partyName||'—'}</td>
+                    <td class="px-3 py-2 text-xs text-right">${fmt(tot.subtotal||0)}</td>
+                    <td class="px-3 py-2 text-xs text-center">${t.tdsFromClientPct||'—'}%</td>
+                    <td class="px-3 py-2 text-xs text-right font-bold text-blue-700">${fmt(t.tdsFromClient||0)}</td>
+                    <td class="px-3 py-2 text-xs text-center">${t.status||'—'}</td>
+                </tr>`;
+            }).join('');
+
+            const tdsRecPanel = `
+            <div class="bg-white rounded-2xl shadow-sm mb-6 overflow-hidden">
+                <div class="flex items-center justify-between px-5 py-3 bg-blue-600">
+                    <div>
+                        <h3 class="text-white font-bold text-base">📥 TDS RECEIVABLE — ${d.monthName} ${year}</h3>
+                        <p class="text-blue-200 text-xs mt-0.5">TDS deducted by clients from our invoices — track against Form 26AS</p>
+                    </div>
+                    <span class="text-white font-bold text-lg">${fmt(d.totalTDSReceivable)}</span>
+                </div>
+                ${d.tdsReceivable.length ? `
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead class="bg-blue-50 text-xs text-gray-500 uppercase">
+                            <tr>
+                                <th class="px-3 py-2 text-left">Invoice No</th>
+                                <th class="px-3 py-2 text-left">Date</th>
+                                <th class="px-3 py-2 text-left">Client</th>
+                                <th class="px-3 py-2 text-right">Invoice Value</th>
+                                <th class="px-3 py-2 text-center">TDS %</th>
+                                <th class="px-3 py-2 text-right">TDS Amt</th>
+                                <th class="px-3 py-2 text-center">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>${tdsRecRows}</tbody>
+                    </table>
+                </div>
+                <div class="px-5 py-3 bg-blue-50 text-xs text-blue-700 border-t">
+                    💡 Verify these amounts against your <strong>Form 26AS</strong> to reconcile TDS credits.
+                    Enter TDS % in the Transaction form's "TDS from Client" field to track receivables.
+                </div>` : `<p class="text-gray-400 text-center py-6 text-sm">No TDS receivable entries for ${d.monthName} ${year}.
+                    <br><span class="text-xs text-gray-400">Add "TDS from Client %" in the invoice transaction to track receivables.</span></p>`}
+            </div>`;
+
+            // ── GST PANEL ─────────────────────────────────────────────────
+            const gstInputRows = d.gstInputExps.map(e => {
+                const tax = (parseFloat(e.cgst)||0)+(parseFloat(e.sgst)||0)+(parseFloat(e.igst)||0);
+                return `<tr class="border-t hover:bg-amber-50">
+                    <td class="px-3 py-2 text-xs">${e.billDate||'—'}</td>
+                    <td class="px-3 py-2 text-xs font-medium">${e.companyName||'—'}</td>
+                    <td class="px-3 py-2 text-xs">${e.voucherNo||e.billNo||'—'}</td>
+                    <td class="px-3 py-2 text-xs">${e.description||'—'}</td>
+                    <td class="px-3 py-2 text-xs text-right">${fmt(e.billAmtINR||0)}</td>
+                    <td class="px-3 py-2 text-xs text-right">${fmt(e.cgst||0)}</td>
+                    <td class="px-3 py-2 text-xs text-right">${fmt(e.sgst||0)}</td>
+                    <td class="px-3 py-2 text-xs text-right">${fmt(e.igst||0)}</td>
+                    <td class="px-3 py-2 text-xs text-right font-bold text-amber-700">${fmt(tax)}</td>
+                </tr>`;
+            }).join('');
+
+            const gstOutputRows = d.outInvoices.map(t => {
+                const tot = calculateTotals(t.items||[]);
+                return `<tr class="border-t hover:bg-purple-50">
+                    <td class="px-3 py-2 text-xs">${t.txnDate||'—'}</td>
+                    <td class="px-3 py-2 text-xs font-medium">${t.partyName||'—'}</td>
+                    <td class="px-3 py-2 text-xs">${t.txnID||'—'}</td>
+                    <td class="px-3 py-2 text-xs">${t.reference||'—'}</td>
+                    <td class="px-3 py-2 text-xs text-right">${fmt(tot.subtotal||0)}</td>
+                    <td class="px-3 py-2 text-xs text-right">${fmt(tot.cgst||0)}</td>
+                    <td class="px-3 py-2 text-xs text-right">${fmt(tot.sgst||0)}</td>
+                    <td class="px-3 py-2 text-xs text-right">${fmt(tot.igst||0)}</td>
+                    <td class="px-3 py-2 text-xs text-right font-bold text-purple-700">${fmt(tot.totalTax||0)}</td>
+                </tr>`;
+            }).join('');
+
+            const gstStatus = d.netGST > 0
+                ? `<div class="flex items-center gap-2"><span class="text-2xl font-bold text-purple-700">${fmt(d.netGST)}</span><span class="text-sm text-purple-600">payable to govt</span></div>`
+                : `<div class="flex items-center gap-2"><span class="text-2xl font-bold text-teal-700">${fmt(Math.abs(d.netGST))}</span><span class="text-sm text-teal-600">input credit (carry forward)</span></div>`;
+
+            const gstPanel = `
+            <div class="bg-white rounded-2xl shadow-sm mb-6 overflow-hidden">
+                <div class="flex items-center justify-between px-5 py-3 bg-gradient-to-r from-amber-500 to-purple-600">
+                    <div>
+                        <h3 class="text-white font-bold text-base">🔄 GST RECONCILIATION — ${d.monthName} ${year}</h3>
+                        <p class="text-white text-opacity-80 text-xs mt-0.5">GSTR-3B filing — Input credit vs Output tax</p>
+                    </div>
+                    <div class="text-right">
+                        ${alertBadge(d.gstDaysLeft, false)}
+                        <p class="text-white text-xs mt-1">Due: 20th ${months[month%12]} ${month===12?year+1:year}</p>
+                    </div>
+                </div>
+
+                <!-- GST Summary boxes -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-0 border-b">
+                    <div class="p-5 border-r">
+                        <p class="text-xs font-bold text-amber-600 uppercase mb-2">📥 GST Input (Expenses)</p>
+                        <p class="text-2xl font-bold text-amber-700">${fmt(d.gstInputTotal)}</p>
+                        <div class="mt-2 space-y-1 text-xs text-gray-500">
+                            <div class="flex justify-between"><span>CGST</span><span class="font-medium">${fmt(d.gstInputCGST)}</span></div>
+                            <div class="flex justify-between"><span>SGST</span><span class="font-medium">${fmt(d.gstInputSGST)}</span></div>
+                            <div class="flex justify-between"><span>IGST</span><span class="font-medium">${fmt(d.gstInputIGST)}</span></div>
+                        </div>
+                        <p class="text-xs text-amber-600 mt-2">${d.gstInputExps.length} expense entries</p>
+                    </div>
+                    <div class="p-5 border-r">
+                        <p class="text-xs font-bold text-purple-600 uppercase mb-2">📤 GST Output (Invoices)</p>
+                        <p class="text-2xl font-bold text-purple-700">${fmt(d.gstOutput)}</p>
+                        <div class="mt-2 space-y-1 text-xs text-gray-500">
+                            <div class="flex justify-between"><span>CGST</span><span class="font-medium">${fmt(d.gstOutputCGST)}</span></div>
+                            <div class="flex justify-between"><span>SGST</span><span class="font-medium">${fmt(d.gstOutputSGST)}</span></div>
+                            <div class="flex justify-between"><span>IGST</span><span class="font-medium">${fmt(d.gstOutputIGST)}</span></div>
+                        </div>
+                        <p class="text-xs text-purple-600 mt-2">${d.outInvoices.length} outgoing invoice(s)</p>
+                    </div>
+                    <div class="p-5 ${d.netGST>0?'bg-purple-50':'bg-teal-50'}">
+                        <p class="text-xs font-bold uppercase mb-2 ${d.netGST>0?'text-purple-600':'text-teal-600'}">
+                            ${d.netGST>0?'💸 NET GST PAYABLE':'💰 NET CREDIT (CARRY FWD)'}
+                        </p>
+                        ${gstStatus}
+                        <div class="mt-3 text-xs text-gray-500 space-y-1">
+                            <div class="flex justify-between"><span>Output</span><span>${fmt(d.gstOutput)}</span></div>
+                            <div class="flex justify-between"><span>− Input Credit</span><span>${fmt(d.gstInputTotal)}</span></div>
+                            <div class="flex justify-between font-bold border-t pt-1 ${d.netGST>0?'text-purple-700':'text-teal-700'}">
+                                <span>= Net</span><span>${d.netGST>0?fmt(d.netGST):'('+fmt(Math.abs(d.netGST))+')'}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- GST Input table -->
+                <div class="px-5 py-2 bg-amber-50 flex items-center justify-between border-b">
+                    <span class="text-xs font-bold text-amber-700 uppercase">📥 Input Tax Credit Details (Expenses)</span>
+                    <span class="text-xs text-amber-600">${d.gstInputExps.length} bills · ${fmt(d.gstInputTotal)}</span>
+                </div>
+                ${d.gstInputExps.length ? `
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead class="bg-amber-50 text-xs text-gray-500 uppercase">
+                            <tr>
+                                <th class="px-3 py-2 text-left">Date</th>
+                                <th class="px-3 py-2 text-left">Vendor</th>
+                                <th class="px-3 py-2 text-left">Bill / Voucher</th>
+                                <th class="px-3 py-2 text-left">Description</th>
+                                <th class="px-3 py-2 text-right">Taxable</th>
+                                <th class="px-3 py-2 text-right">CGST</th>
+                                <th class="px-3 py-2 text-right">SGST</th>
+                                <th class="px-3 py-2 text-right">IGST</th>
+                                <th class="px-3 py-2 text-right">Total Tax</th>
+                            </tr>
+                        </thead>
+                        <tbody>${gstInputRows}</tbody>
+                        <tfoot class="bg-amber-100 font-bold text-xs">
+                            <tr>
+                                <td colspan="5" class="px-3 py-2 text-right text-amber-800">TOTAL INPUT:</td>
+                                <td class="px-3 py-2 text-right text-amber-800">${fmt(d.gstInputCGST)}</td>
+                                <td class="px-3 py-2 text-right text-amber-800">${fmt(d.gstInputSGST)}</td>
+                                <td class="px-3 py-2 text-right text-amber-800">${fmt(d.gstInputIGST)}</td>
+                                <td class="px-3 py-2 text-right text-amber-800">${fmt(d.gstInputTotal)}</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>` : `<p class="text-gray-400 text-center py-4 text-sm">No GST-inclusive expenses in ${d.monthName} ${year}</p>`}
+
+                <!-- GST Output table -->
+                <div class="px-5 py-2 bg-purple-50 flex items-center justify-between border-t border-b">
+                    <span class="text-xs font-bold text-purple-700 uppercase">📤 Output Tax Details (Invoices)</span>
+                    <span class="text-xs text-purple-600">${d.outInvoices.length} invoice(s) · ${fmt(d.gstOutput)}</span>
+                </div>
+                ${d.outInvoices.length ? `
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead class="bg-purple-50 text-xs text-gray-500 uppercase">
+                            <tr>
+                                <th class="px-3 py-2 text-left">Date</th>
+                                <th class="px-3 py-2 text-left">Client</th>
+                                <th class="px-3 py-2 text-left">Invoice No</th>
+                                <th class="px-3 py-2 text-left">Reference</th>
+                                <th class="px-3 py-2 text-right">Taxable</th>
+                                <th class="px-3 py-2 text-right">CGST</th>
+                                <th class="px-3 py-2 text-right">SGST</th>
+                                <th class="px-3 py-2 text-right">IGST</th>
+                                <th class="px-3 py-2 text-right">Total Tax</th>
+                            </tr>
+                        </thead>
+                        <tbody>${gstOutputRows}</tbody>
+                        <tfoot class="bg-purple-100 font-bold text-xs">
+                            <tr>
+                                <td colspan="5" class="px-3 py-2 text-right text-purple-800">TOTAL OUTPUT:</td>
+                                <td class="px-3 py-2 text-right text-purple-800">${fmt(d.gstOutputCGST)}</td>
+                                <td class="px-3 py-2 text-right text-purple-800">${fmt(d.gstOutputSGST)}</td>
+                                <td class="px-3 py-2 text-right text-purple-800">${fmt(d.gstOutputIGST)}</td>
+                                <td class="px-3 py-2 text-right text-purple-800">${fmt(d.gstOutput)}</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>` : `<p class="text-gray-400 text-center py-4 text-sm">No outgoing invoices in ${d.monthName} ${year}</p>`}
+            </div>`;
+
+            // ── COMPLIANCE CHECKLIST ──────────────────────────────────────
+            const tdsPending = d.tdsExpenses.filter(e=>!e.tdsPaid).length;
+            const checklist = `
+            <div class="bg-white rounded-2xl shadow-sm mb-6 p-5">
+                <h3 class="font-bold text-gray-800 mb-4">✅ Compliance Checklist — ${d.monthName} ${year}</h3>
+                <div class="space-y-3">
+                    ${[
+                        {
+                            ok: d.tdsExpenses.length === 0 || tdsPending === 0,
+                            warn: tdsPending > 0 && d.tdsDaysLeft > 5,
+                            danger: tdsPending > 0 && d.tdsDaysLeft <= 5,
+                            label: `TDS Deposit — ₹${(+d.totalTDSDeducted).toLocaleString('en-IN',{minimumFractionDigits:2})} by 7th ${months[month%12]}`,
+                            detail: tdsPending > 0 ? `${tdsPending} payment(s) pending` : d.tdsExpenses.length === 0 ? 'No TDS deducted this period' : 'All TDS payments marked as paid'
+                        },
+                        {
+                            ok: d.netGST <= 0,
+                            warn: d.netGST > 0 && d.gstDaysLeft > 5,
+                            danger: d.netGST > 0 && d.gstDaysLeft <= 5,
+                            label: `GSTR-3B Filing — Net GST ${d.netGST > 0 ? '₹'+d.netGST.toLocaleString('en-IN',{minimumFractionDigits:2})+' payable' : 'Input credit available'} by 20th ${months[month%12]}`,
+                            detail: d.netGST > 0 ? `File and pay by 20th ${months[month%12]}` : 'Input credit available — carry forward or claim refund'
+                        },
+                        {
+                            ok: d.tdsReceivable.length === 0,
+                            warn: d.tdsReceivable.length > 0,
+                            danger: false,
+                            label: `Form 26AS Reconciliation — ${d.tdsReceivable.length} TDS receivable entry(s)`,
+                            detail: d.tdsReceivable.length > 0 ? 'Verify TDS credits appear in Form 26AS after client deposits' : 'No TDS receivable this period'
+                        }
+                    ].map(item => `
+                    <div class="flex items-start gap-3 p-3 rounded-xl border ${item.danger?'bg-red-50 border-red-200':item.warn?'bg-amber-50 border-amber-200':item.ok?'bg-green-50 border-green-200':'bg-gray-50 border-gray-200'}">
+                        <span class="text-xl mt-0.5">${item.danger?'🔴':item.warn?'🟡':item.ok?'✅':'⚪'}</span>
+                        <div>
+                            <p class="text-sm font-semibold ${item.danger?'text-red-700':item.warn?'text-amber-700':item.ok?'text-green-700':'text-gray-600'}">${item.label}</p>
+                            <p class="text-xs ${item.danger?'text-red-500':item.warn?'text-amber-500':'text-gray-400'} mt-0.5">${item.detail}</p>
+                        </div>
+                    </div>`).join('')}
+                </div>
+            </div>`;
+
+            return cards + tdsPanel + tdsRecPanel + gstPanel + checklist;
+        }
+
+        // ── TDS PAYMENT MODAL ─────────────────────────────────────────────
+        function openTDSPayModal(expID) {
+            const exp = expenses.find(e => e.expID === expID);
+            if (!exp) return;
+            const fmt = n => '₹'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
+            const html = `
+            <div id="tdsPayModal" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:200;display:flex;align-items:center;justify-content:center">
+                <div style="background:#fff;border-radius:16px;width:100%;max-width:460px;margin:16px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
+                    <div style="background:linear-gradient(135deg,#dc2626,#b91c1c);padding:16px 20px;display:flex;justify-content:space-between;align-items:center">
+                        <div>
+                            <p style="color:#fff;font-weight:700;font-size:16px">💳 Mark TDS Payment</p>
+                            <p style="color:#fca5a5;font-size:12px">${exp.companyName||''} · ${exp.billDate||''}</p>
+                        </div>
+                        <button onclick="document.getElementById('tdsPayModal').remove()" style="color:#fff;background:none;border:none;font-size:22px;cursor:pointer">✕</button>
+                    </div>
+                    <div style="padding:20px">
+                        <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:12px;margin-bottom:16px">
+                            <div style="display:flex;justify-content:space-between;font-size:13px">
+                                <span style="color:#6b7280">Taxable Amount</span><strong>${fmt(exp.taxableAmt||exp.billAmtINR||0)}</strong>
+                            </div>
+                            <div style="display:flex;justify-content:space-between;font-size:15px;margin-top:6px">
+                                <span style="color:#6b7280">TDS Amount (${exp.tdsPct}%)</span><strong style="color:#dc2626">${fmt(exp.tdsAmt)}</strong>
+                            </div>
+                        </div>
+                        <div style="margin-bottom:12px">
+                            <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:4px">Challan / BSR Number</label>
+                            <input type="text" id="tdsChallanInput" value="${exp.tdsChallan||''}" placeholder="e.g. 0510123456" style="width:100%;padding:8px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;box-sizing:border-box"/>
+                        </div>
+                        <div style="margin-bottom:12px">
+                            <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:4px">Payment Date</label>
+                            <input type="date" id="tdsPayDateInput" value="${exp.tdsPayDate||new Date().toISOString().split('T')[0]}" style="width:100%;padding:8px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;box-sizing:border-box"/>
+                        </div>
+                        <div style="margin-bottom:16px">
+                            <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:4px">Remarks</label>
+                            <input type="text" id="tdsPayRemarksInput" value="${exp.tdsPayRemarks||''}" placeholder="Bank, mode, reference..." style="width:100%;padding:8px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;box-sizing:border-box"/>
+                        </div>
+                        <div style="display:flex;gap:10px">
+                            ${exp.tdsPaid?`<button onclick="saveTDSPayment('${expID}',false)" style="flex:1;padding:10px;border:1.5px solid #fca5a5;border-radius:10px;background:#fff;color:#dc2626;font-weight:600;cursor:pointer;font-size:13px">🔄 Un-mark Paid</button>`:''}
+                            <button onclick="document.getElementById('tdsPayModal').remove()" style="flex:1;padding:10px;border:1.5px solid #d1d5db;border-radius:10px;background:#fff;color:#374151;font-weight:600;cursor:pointer;font-size:13px">Cancel</button>
+                            <button onclick="saveTDSPayment('${expID}',true)" style="flex:1;padding:10px;border:none;border-radius:10px;background:#dc2626;color:#fff;font-weight:700;cursor:pointer;font-size:13px">✅ Save Payment</button>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+            document.body.insertAdjacentHTML('beforeend', html);
+        }
+
+        async function saveTDSPayment(expID, paid) {
+            const idx = expenses.findIndex(e => e.expID === expID);
+            if (idx < 0) return;
+            expenses[idx].tdsPaid        = paid;
+            expenses[idx].tdsChallan     = document.getElementById('tdsChallanInput')?.value?.trim() || expenses[idx].tdsChallan || '';
+            expenses[idx].tdsPayDate     = document.getElementById('tdsPayDateInput')?.value || '';
+            expenses[idx].tdsPayRemarks  = document.getElementById('tdsPayRemarksInput')?.value?.trim() || '';
+            await saveData('expenses', expenses);
+            document.getElementById('tdsPayModal')?.remove();
+            refreshTax();
+        }
+
+        // ── TAX COMPLIANCE PDF EXPORT ─────────────────────────────────────
+        async function exportTaxPDF() {
+            const month = parseInt(document.getElementById('taxMonth')?.value || new Date().getMonth()+1);
+            const year  = parseInt(document.getElementById('taxYear')?.value  || new Date().getFullYear());
+            const d     = getTaxPeriodData(month, year);
+
+            if (!window.jspdf) {
+                await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+                await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+            }
+            const {jsPDF} = window.jspdf;
+            const doc = new jsPDF({orientation:'portrait', unit:'mm', format:'a4'});
+            const ML=14, MR=14, CW=182, PW=210;
+            const INR = n => 'Rs.'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
+            const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+            // Header
+            doc.setFillColor(15,58,95); doc.rect(0,0,210,38,'F');
+            doc.setFontSize(15);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
+            doc.text('TAX COMPLIANCE REPORT',PW/2,12,{align:'center'});
+            doc.setFontSize(9);doc.setFont('helvetica','normal');doc.setTextColor(147,197,253);
+            doc.text((settings.companyName||'IMSE Tech India')+'  |  Period: '+d.monthName+' '+year,PW/2,20,{align:'center'});
+            doc.setFontSize(8);doc.setTextColor(203,213,225);
+            doc.text('GST: '+(settings.gstNo||'N/A')+'  |  Generated: '+new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}),PW/2,28,{align:'center'});
+            doc.setFillColor(29,78,216);doc.rect(0,37,210,2,'F');
+            let y = 44;
+
+            // Summary
+            doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+                styles:{fontSize:9,cellPadding:3},
+                headStyles:{fillColor:[30,58,138],textColor:[255,255,255],fontStyle:'bold'},
+                head:[[{content:'TAX SUMMARY — '+d.monthName.toUpperCase()+' '+year,colSpan:2,styles:{halign:'center'}}]],
+                body:[
+                    ['TDS Deducted (to deposit by 7th '+months[month%12]+')',{content:INR(d.totalTDSDeducted),styles:{fontStyle:'bold',textColor:[220,38,38]}}],
+                    ['TDS Receivable (from clients)',INR(d.totalTDSReceivable)],
+                    ['GST Input Credit (from expenses)',{content:INR(d.gstInputTotal),styles:{textColor:[180,83,9]}}],
+                    ['GST Output (from invoices)',{content:INR(d.gstOutput),styles:{textColor:[126,34,206]}}],
+                    [d.netGST>0?'Net GST Payable':'Net GST Credit (Carry Forward)',{content:INR(Math.abs(d.netGST)),styles:{fontStyle:'bold',textColor:d.netGST>0?[126,34,206]:[13,148,136]}}],
+                ],
+                columnStyles:{0:{cellWidth:120},1:{cellWidth:62,halign:'right'}}
+            });
+            y = doc.lastAutoTable.finalY+6;
+
+            // TDS Table
+            if (d.tdsExpenses.length) {
+                doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+                    styles:{fontSize:7.5,cellPadding:2.5},
+                    headStyles:{fillColor:[185,28,28],textColor:[255,255,255],fontStyle:'bold'},
+                    head:[['TDS DEDUCTED ENTRIES',{content:'',colSpan:7}]],
+                    body:[],columnStyles:{0:{cellWidth:CW}}
+                });
+                y = doc.lastAutoTable.finalY;
+                doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+                    styles:{fontSize:7.5,cellPadding:2.5},
+                    headStyles:{fillColor:[239,68,68],textColor:[255,255,255],fontStyle:'bold'},
+                    head:[['Date','Vendor','Bill No','Taxable','TDS %','TDS Amt','Status']],
+                    body:d.tdsExpenses.map(e=>[e.billDate||'—',e.companyName||'—',e.voucherNo||e.billNo||'—',
+                        {content:INR(e.taxableAmt||e.billAmtINR||0),styles:{halign:'right'}},
+                        {content:(e.tdsPct||'—')+'%',styles:{halign:'center'}},
+                        {content:INR(e.tdsAmt),styles:{halign:'right',fontStyle:'bold',textColor:[185,28,28]}},
+                        {content:e.tdsPaid?'Paid':'Pending',styles:{halign:'center',textColor:e.tdsPaid?[21,128,61]:[220,38,38]}}
+                    ]),
+                    foot:[[{content:'TOTAL',colSpan:5,styles:{fontStyle:'bold',halign:'right'}},{content:INR(d.totalTDSDeducted),styles:{fontStyle:'bold',halign:'right',textColor:[185,28,28]}},'']],
+                    columnStyles:{0:{cellWidth:18},1:{cellWidth:45},2:{cellWidth:28},3:{cellWidth:28,halign:'right'},4:{cellWidth:14},5:{cellWidth:28},6:{cellWidth:21}}
+                });
+                y = doc.lastAutoTable.finalY+5;
+            }
+
+            // GST Input
+            if (d.gstInputExps.length) {
+                if(y>220){doc.addPage();y=15;}
+                doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+                    styles:{fontSize:7.5,cellPadding:2.5},
+                    headStyles:{fillColor:[180,83,9],textColor:[255,255,255],fontStyle:'bold'},
+                    head:[['Date','Vendor','Bill No','Taxable','CGST','SGST','IGST','Total Tax']],
+                    body:d.gstInputExps.map(e=>{
+                        const tax=(parseFloat(e.cgst)||0)+(parseFloat(e.sgst)||0)+(parseFloat(e.igst)||0);
+                        return [e.billDate||'—',e.companyName||'—',e.voucherNo||e.billNo||'—',
+                            {content:INR(e.billAmtINR||0),styles:{halign:'right'}},
+                            {content:INR(e.cgst||0),styles:{halign:'right'}},
+                            {content:INR(e.sgst||0),styles:{halign:'right'}},
+                            {content:INR(e.igst||0),styles:{halign:'right'}},
+                            {content:INR(tax),styles:{halign:'right',fontStyle:'bold',textColor:[180,83,9]}}];
+                    }),
+                    foot:[[{content:'GST INPUT TOTAL',colSpan:4,styles:{fontStyle:'bold',halign:'right',fillColor:[254,243,199]}},
+                        {content:INR(d.gstInputCGST),styles:{halign:'right',fontStyle:'bold',fillColor:[254,243,199]}},
+                        {content:INR(d.gstInputSGST),styles:{halign:'right',fontStyle:'bold',fillColor:[254,243,199]}},
+                        {content:INR(d.gstInputIGST),styles:{halign:'right',fontStyle:'bold',fillColor:[254,243,199]}},
+                        {content:INR(d.gstInputTotal),styles:{halign:'right',fontStyle:'bold',fillColor:[254,243,199],textColor:[180,83,9]}}]],
+                    columnStyles:{0:{cellWidth:18},1:{cellWidth:42},2:{cellWidth:24},3:{cellWidth:24},4:{cellWidth:22},5:{cellWidth:22},6:{cellWidth:18},7:{cellWidth:22}}
+                });
+                y = doc.lastAutoTable.finalY+5;
+            }
+
+            // GST Output
+            if (d.outInvoices.length) {
+                if(y>220){doc.addPage();y=15;}
+                doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+                    styles:{fontSize:7.5,cellPadding:2.5},
+                    headStyles:{fillColor:[126,34,206],textColor:[255,255,255],fontStyle:'bold'},
+                    head:[['Date','Client','Invoice No','Taxable','CGST','SGST','IGST','Total Tax']],
+                    body:d.outInvoices.map(t=>{
+                        const tot=calculateTotals(t.items||[]);
+                        return [t.txnDate||'—',t.partyName||'—',t.txnID||'—',
+                            {content:INR(tot.subtotal||0),styles:{halign:'right'}},
+                            {content:INR(tot.cgst||0),styles:{halign:'right'}},
+                            {content:INR(tot.sgst||0),styles:{halign:'right'}},
+                            {content:INR(tot.igst||0),styles:{halign:'right'}},
+                            {content:INR(tot.totalTax||0),styles:{halign:'right',fontStyle:'bold',textColor:[126,34,206]}}];
+                    }),
+                    foot:[[{content:'GST OUTPUT TOTAL',colSpan:4,styles:{fontStyle:'bold',halign:'right',fillColor:[243,232,255]}},
+                        {content:INR(d.gstOutputCGST),styles:{halign:'right',fontStyle:'bold',fillColor:[243,232,255]}},
+                        {content:INR(d.gstOutputSGST),styles:{halign:'right',fontStyle:'bold',fillColor:[243,232,255]}},
+                        {content:INR(d.gstOutputIGST),styles:{halign:'right',fontStyle:'bold',fillColor:[243,232,255]}},
+                        {content:INR(d.gstOutput),styles:{halign:'right',fontStyle:'bold',fillColor:[243,232,255],textColor:[126,34,206]}}]],
+                    columnStyles:{0:{cellWidth:18},1:{cellWidth:42},2:{cellWidth:24},3:{cellWidth:24},4:{cellWidth:22},5:{cellWidth:22},6:{cellWidth:18},7:{cellWidth:22}}
+                });
+                y = doc.lastAutoTable.finalY+5;
+            }
+
+            // Net GST summary
+            if(y>250){doc.addPage();y=15;}
+            doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+                styles:{fontSize:9.5,cellPadding:3.5},
+                headStyles:{fillColor:[30,58,138],textColor:[255,255,255],fontStyle:'bold'},
+                head:[[{content:'GST RECONCILIATION SUMMARY',colSpan:2,styles:{halign:'center'}}]],
+                body:[
+                    [{content:'GST Output (Invoices)',styles:{fillColor:[243,232,255]}},{content:INR(d.gstOutput),styles:{halign:'right',fillColor:[243,232,255],textColor:[126,34,206],fontStyle:'bold'}}],
+                    [{content:'Less: GST Input Credit (Expenses)',styles:{fillColor:[255,251,235]}},{content:'('+INR(d.gstInputTotal)+')',styles:{halign:'right',fillColor:[255,251,235],textColor:[180,83,9],fontStyle:'bold'}}],
+                    [{content:d.netGST>0?'Net GST Payable (GSTR-3B)':'Net Input Credit (Carry Forward)',styles:{fontStyle:'bold',fillColor:d.netGST>0?[243,232,255]:[240,253,250]}},
+                     {content:INR(Math.abs(d.netGST)),styles:{halign:'right',fontStyle:'bold',textColor:d.netGST>0?[126,34,206]:[13,148,136],fillColor:d.netGST>0?[243,232,255]:[240,253,250]}}],
+                ],
+                columnStyles:{0:{cellWidth:130},1:{cellWidth:52,halign:'right'}}
+            });
+
+            // Footer
+            const pc=doc.getNumberOfPages();
+            for(let pg=1;pg<=pc;pg++){
+                doc.setPage(pg);
+                doc.setFontSize(7);doc.setFont('helvetica','italic');doc.setTextColor(150,150,150);
+                doc.text((settings.companyName||'IMSE Tech India')+' — Tax Compliance Report — '+d.monthName+' '+year+' — Page '+pg+' of '+pc,PW/2,291,{align:'center'});
+            }
+            doc.save('TaxCompliance_'+d.monthName+'_'+year+'.pdf');
+        }
+
 
         // ════════════════════════════════════════════════════════════════════
         //  MIS REPORT MODULE
@@ -5037,11 +5734,15 @@
                 document.getElementById('txnClientPIC').value = txn.clientPIC;
                 document.getElementById('txnSignatoryName').value = txn.signatoryName||'';
                 document.getElementById('txnSignatoryDesig').value = txn.signatoryDesig||'';
+                document.getElementById('txnTDSFromClientPct').value = txn.tdsFromClientPct||'0';
+                document.getElementById('txnTDSFromClient').value = txn.tdsFromClient||'';
             }
             if (txn && txn.clientEmail) {
                 document.getElementById('txnClientEmail').value = txn.clientEmail;
                 document.getElementById('txnSignatoryName').value  = txn.signatoryName||'';
                 document.getElementById('txnSignatoryDesig').value = txn.signatoryDesig||'';
+                document.getElementById('txnTDSFromClientPct').value = txn.tdsFromClientPct||'0';
+                document.getElementById('txnTDSFromClient').value = txn.tdsFromClient||'';
             }
 
             // Load bank account if exists
@@ -5279,6 +5980,8 @@
                     clientEmail: document.getElementById('txnClientEmail')?.value || '',
                     signatoryName: document.getElementById('txnSignatoryName')?.value || '',
                     signatoryDesig: document.getElementById('txnSignatoryDesig')?.value || '',
+                    tdsFromClientPct: parseFloat(document.getElementById('txnTDSFromClientPct')?.value)||0,
+                    tdsFromClient:    parseFloat(document.getElementById('txnTDSFromClient')?.value)||0,
                     status: document.getElementById('txnStatus').value,
                     currency: document.getElementById('txnCurrency').value,
                     bankAccountId: document.getElementById('txnBankAccount')?.value || '',
