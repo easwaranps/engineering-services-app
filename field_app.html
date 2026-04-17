@@ -499,9 +499,19 @@
                         <input type="date" id="wlWorkEnd" class="field-input"/>
                     </div>
                 </div>
+                <div class="grid grid-cols-2 gap-3 mt-3">
+                    <div>
+                        <label class="field-label">Vessel Name <span class="text-red-500">*</span></label>
+                        <input type="text" id="wlVesselName" class="field-input" required placeholder="e.g. MV. HALDI"/>
+                    </div>
+                    <div>
+                        <label class="field-label">Port / Location</label>
+                        <input type="text" id="wlPort" class="field-input" placeholder="e.g. VISHAKHAPATNAM"/>
+                    </div>
+                </div>
                 <div class="mt-3">
-                    <label class="field-label">Location / Vessel / Site <span class="text-red-500">*</span></label>
-                    <input type="text" id="wlLocation" class="field-input" required placeholder="e.g. MV Vessel Name, Port, Dry Dock"/>
+                    <label class="field-label">Scope of Work / Job Description</label>
+                    <textarea id="wlScopeOfWork" class="field-input" rows="2" placeholder="Brief description of work scope..."></textarea>
                 </div>
             </div>
             <!-- Technicians -->
@@ -2205,7 +2215,13 @@
         projSel.value=w?.project||'';
         document.getElementById('wlWorkStart').value=w?.workStartDate||'';
         document.getElementById('wlWorkEnd').value=w?.workEndDate||'';
-        document.getElementById('wlLocation').value=w?.location||'';
+        document.getElementById('wlLocation')?.setAttribute('placeholder','Legacy field');
+        const wlVesselEl=document.getElementById('wlVesselName');
+        const wlPortEl=document.getElementById('wlPort');
+        const wlScopeEl=document.getElementById('wlScopeOfWork');
+        if(wlVesselEl)wlVesselEl.value=w?.vesselName||w?.location||'';
+        if(wlPortEl)wlPortEl.value=w?.port||'';
+        if(wlScopeEl)wlScopeEl.value=w?.scopeOfWork||'';
         document.getElementById('wlStatus').value=w?.status||'In Progress';
         if(w?.technicians?.length)_wlStaffRows=w.technicians.map(t=>({name:t.name,staffID:t.staffID||''}));
         else _wlStaffRows=[{name:'',staffID:''}];
@@ -2222,6 +2238,9 @@
         const obj={
             wlID:         _editWlID||('WL'+Date.now()),
             project:      document.getElementById('wlProject').value,
+            vesselName:   document.getElementById('wlVesselName').value,
+            port:         document.getElementById('wlPort').value,
+            scopeOfWork:  document.getElementById('wlScopeOfWork').value,
             workStartDate:document.getElementById('wlWorkStart').value,
             workEndDate:  document.getElementById('wlWorkEnd').value,
             location:     document.getElementById('wlLocation').value,
@@ -2376,7 +2395,7 @@
     // ── WORK LOG PDF — Full Project Report ───────────────────────
     async function wlPDF(wlID){
         const wl=workLogs.find(x=>x.wlID===wlID);if(!wl)return;
-        const days=[...( wl.dailyEntries||[])].sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+        const days=[...(wl.dailyEntries||[])].sort((a,b)=>(a.date||'').localeCompare(b.date||''));
         showToast('⏳ Generating PDF…',6000);
         if(!window.jspdf){
             await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
@@ -2384,195 +2403,230 @@
         }
         const {jsPDF}=window.jspdf;
         const doc=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
-        const ML=14,MR=14,CW=210-ML-MR;let y=0;
+        const ML=14,MR=14,CW=210-ML-MR,PW=210;
+        let y=0;
+        const vessel  =wl.vesselName||wl.location||'—';
+        const port    =wl.port||'—';
+        const projName=wl.project||'—';
+        const co      =settings?.companyName||'IMSE TECH SERVICES PVT LTD';
+        const co_gst  =settings?.gstNumber||'';
+        const dateRange=wl.workStartDate&&wl.workEndDate
+            ?wl.workStartDate.split('-').reverse().join('.')+' to '+wl.workEndDate.split('-').reverse().join('.')
+            :wl.workStartDate?wl.workStartDate.split('-').reverse().join('.'):'—';
+        const SIG_H=26;
+        const CONTENT_BOTTOM=297-SIG_H-8;
 
-        const drawHeader=()=>{
-            doc.setFillColor(15,58,95);doc.rect(0,0,210,42,'F');
-            doc.setFontSize(17);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
-            doc.text('FIELD SERVICE WORK REPORT',105,13,{align:'center'});
-            doc.setFontSize(10);doc.setFont('helvetica','normal');doc.setTextColor(147,197,253);
-            doc.text('IMSE Tech India — Project Field Report',105,21,{align:'center'});
-            doc.setFontSize(9);doc.setTextColor(203,213,225);
-            doc.text('Project: '+(wl.project||'—')+'   |   Report Date: '+new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}),105,29,{align:'center'});
-            doc.text('ID: '+wl.wlID+'   |   Total Days: '+days.length,105,36,{align:'center'});
-            doc.setFillColor(29,78,216);doc.rect(0,41,210,3,'F');
-        };
-        drawHeader();y=50;
+        function drawPageHeader(){
+            doc.setFillColor(15,58,95);doc.rect(0,0,210,14,'F');
+            doc.setFontSize(13);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
+            doc.text(co.toUpperCase(),PW/2,9.5,{align:'center'});
+            if(co_gst){doc.setFontSize(7.5);doc.setFont('helvetica','normal');doc.setTextColor(147,197,253);doc.text('GST: '+co_gst,PW/2,13.5,{align:'center'});}
+            doc.setFontSize(11.5);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
+            doc.text('TIME SHEET AND WORK DONE REPORT',PW/2,22,{align:'center'});
+            doc.setDrawColor(15,58,95);doc.setLineWidth(0.5);doc.line(ML,24,210-MR,24);
+        }
 
-        // Project summary
-        const sc={'Completed':[21,128,61],'In Progress':[180,83,9],'Pending':[71,85,105],'On Hold':[220,38,38]}[wl.status]||[71,85,105];
-        const allTechs=(wl.technicians||[]).map(t=>t.name).join(', ')||'—';
-        doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',styles:{fontSize:9,cellPadding:3},
-            headStyles:{fillColor:[30,58,138],textColor:[255,255,255],fontStyle:'bold'},
-            head:[['PROJECT SUMMARY','','','']],
+        function drawSignatureFooter(p,total){
+            const fY=297-SIG_H-2;
+            doc.setDrawColor(15,58,95);doc.setLineWidth(0.3);doc.line(ML,fY,210-MR,fY);
+            const colW=CW/3;
+            ['CHIEF ENGINEER / CLIENT','2ND ENGINEER / CLIENT','IMSE AUTHORISED ENGINEER'].forEach((lbl,i)=>{
+                const x=ML+i*colW;
+                doc.setFontSize(7);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
+                doc.text(lbl,x+colW/2,fY+4,{align:'center'});
+                doc.setFont('helvetica','normal');doc.setTextColor(60,60,60);
+                doc.text('Name: ___________________',x+4,fY+10);
+                doc.text('Sign:  ___________________',x+4,fY+17);
+                doc.text('Date:  ___________________',x+4,fY+23);
+                if(i<2){doc.setDrawColor(200,200,200);doc.setLineWidth(0.3);doc.line(x+colW,fY,x+colW,fY+SIG_H);}
+            });
+            doc.setFontSize(7);doc.setFont('helvetica','italic');doc.setTextColor(130,130,130);
+            doc.text('Page '+p+' of '+total+' — '+co,PW/2,295,{align:'center'});
+        }
+
+        // Page 1
+        drawPageHeader();y=30;
+
+        // Project details
+        doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+            styles:{fontSize:9.5,cellPadding:3.5},
             body:[
-                ['Project',{content:wl.project||'—',styles:{fontStyle:'bold'}},'Status',{content:wl.status||'—',styles:{textColor:sc,fontStyle:'bold'}}],
-                ['Location / Vessel',wl.location||'—','Total Days',String(days.length)],
-                ['Work Start',wl.workStartDate||'—','Work End',wl.workEndDate||'—'],
-                ['Assigned Technicians',{content:allTechs,colSpan:3,styles:{}},'','']
-            ],columnStyles:{0:{cellWidth:40,fontStyle:'bold',fillColor:[241,245,249]},2:{cellWidth:35,fontStyle:'bold',fillColor:[241,245,249]}}});
-        y=doc.lastAutoTable.finalY+8;
+                [{content:'Vessel Name',styles:{fontStyle:'bold',fillColor:[241,245,249]}},{content:vessel}],
+                [{content:'Port',       styles:{fontStyle:'bold',fillColor:[241,245,249]}},{content:port}],
+                [{content:'Project Name',styles:{fontStyle:'bold',fillColor:[241,245,249]}},{content:projName}],
+                [{content:'Date',       styles:{fontStyle:'bold',fillColor:[241,245,249]}},{content:dateRange}],
+                ...(wl.scopeOfWork?[[{content:'Scope of Work',styles:{fontStyle:'bold',fillColor:[241,245,249]}},{content:wl.scopeOfWork}]]:[]),
+            ],
+            columnStyles:{0:{cellWidth:40},1:{cellWidth:CW-40}}
+        });
+        y=doc.lastAutoTable.finalY+10;
 
-        // Daily entries
+        // ── SECTION I — Technician Time Log ──────────────────────
+        if(y+20>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=30;}
+        doc.setFontSize(10.5);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
+        doc.text('I.  Technician Working Time Log',ML,y);y+=6;
+
+        const timeLogRows=[];
+        days.forEach(d=>{
+            const techs=(d.technicians||[]).length>0?d.technicians:(wl.technicians||[]);
+            techs.forEach((t,ti)=>{
+                timeLogRows.push([
+                    ti===0?{content:d.date?d.date.split('-').reverse().join('.'):'—'}:{content:''},
+                    {content:String(ti+1)+'.'},
+                    {content:t.name||'—'},
+                    {content:d.startTime||''},
+                    {content:d.endTime||''},
+                    {content:ti===0?(d.witnessRemarks||d.exclusions||''):''}
+                ]);
+            });
+        });
+
+        if(timeLogRows.length){
+            doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+                styles:{fontSize:8,cellPadding:2.5},
+                headStyles:{fillColor:[30,58,138],textColor:[255,255,255],fontStyle:'bold',fontSize:8},
+                head:[[
+                    {content:'Date',styles:{cellWidth:22}},
+                    {content:'S.No',styles:{cellWidth:10,halign:'center'}},
+                    {content:'Name of Technician',styles:{cellWidth:52}},
+                    {content:'Start',styles:{cellWidth:16,halign:'center'}},
+                    {content:'End',styles:{cellWidth:16,halign:'center'}},
+                    {content:'Remarks',styles:{cellWidth:CW-116}}
+                ]],
+                body:timeLogRows,
+                columnStyles:{0:{cellWidth:22},1:{cellWidth:10,halign:'center'},2:{cellWidth:52},3:{cellWidth:16,halign:'center'},4:{cellWidth:16,halign:'center'},5:{cellWidth:CW-116}},
+                didAddPage:()=>{drawPageHeader();}
+            });
+            y=doc.lastAutoTable.finalY+10;
+        }
+
+        // ── SECTION II — Work Performed ───────────────────────────
+        if(y+20>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=30;}
+        doc.setFontSize(10.5);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
+        doc.text('II.  Work Performed',ML,y);y+=6;
+
         days.forEach((d,idx)=>{
+            if(y+20>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=30;}
             const dur=calcDuration(d.startTime,d.endTime);
             const dayTechs=(d.technicians||[]).map(t=>t.name).join(', ')||(wl.technicians||[]).map(t=>t.name).join(', ')||'—';
-
-            // Check page space
-            if(y>240){doc.addPage();y=15;}
+            const dateStr=d.date?d.date.split('-').reverse().join('.'):'—';
 
             // Day header bar
-            doc.setFillColor(30,58,138);doc.rect(ML,y,CW,9,'F');
-            doc.setFontSize(10);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
-            doc.text(`DAY ${idx+1}  —  ${d.date||'—'}  |  ${d.category||''}  |  ${d.startTime||'—'} – ${d.endTime||'—'}${dur?' ('+dur+')':''}`,ML+3,y+6);
-            y+=13;
-
-            // Day details table
-            const rows=[['Technicians on Site',dayTechs,'','']];
-            if(d.witnessName)rows.push(['Witnessed By',d.witnessName+(d.witnessDesig?' ('+d.witnessDesig+')':''),'Remarks',d.witnessRemarks||'—']);
-            doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',styles:{fontSize:8,cellPadding:2.5},
-                body:rows,columnStyles:{0:{cellWidth:40,fontStyle:'bold',fillColor:[241,245,249]},2:{cellWidth:30,fontStyle:'bold',fillColor:[241,245,249]}}});
-            y=doc.lastAutoTable.finalY+2;
+            doc.setFillColor(241,245,249);doc.rect(ML,y,CW,8,'F');
+            doc.setDrawColor(15,58,95);doc.setLineWidth(0.4);doc.rect(ML,y,CW,8);
+            doc.setFontSize(9);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
+            const hdr=dateStr+'   |   '+d.category+'   |   '+(d.startTime||'—')+' – '+(d.endTime||'—')+(dur?' ('+dur+')':'')+'   |   '+dayTechs;
+            doc.text(hdr,ML+3,y+5.5);y+=11;
 
             // Work sections
-            [{title:'DETAILS OF WORK CARRIED OUT',text:d.description,col:[29,78,216]},
-             {title:'OBSERVATIONS / FINDINGS',text:d.observations,col:[3,105,161]},
-             {title:'EXCLUSIONS / REMARKS',text:d.exclusions,col:[180,83,9]},
-             {title:'RECOMMENDATIONS',text:d.recommendations,col:[21,128,61]}
-            ].filter(s=>s.text?.trim()).forEach(s=>{
-                if(y>255){doc.addPage();y=15;}
-                doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',styles:{fontSize:8.5,cellPadding:3.5},
+            [{title:'Details of Work Carried Out',text:d.description,col:[29,78,216]},
+             {title:'Observations / Findings',    text:d.observations,col:[3,105,161]},
+             {title:'Exclusions / Remarks',       text:d.exclusions,  col:[180,83,9]},
+             {title:'Recommendations',            text:d.recommendations,col:[21,128,61]}
+            ].filter(s=>s.text&&s.text.trim()).forEach(s=>{
+                if(y+16>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=30;}
+                doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+                    styles:{fontSize:8.5,cellPadding:3},
                     headStyles:{fillColor:s.col,textColor:[255,255,255],fontStyle:'bold',fontSize:8},
                     head:[[s.title]],body:[[s.text]],columnStyles:{0:{cellWidth:CW}}});
                 y=doc.lastAutoTable.finalY+3;
             });
 
-            // ── CALIBRATION / DIMENSIONAL INSPECTION RECORDS ─────────
+            // Witness
+            if(d.witnessName){
+                if(y+10>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=30;}
+                doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+                    styles:{fontSize:8,cellPadding:2.5},
+                    body:[[{content:'Witnessed By',styles:{fontStyle:'bold',fillColor:[255,241,242],cellWidth:35}},
+                           {content:d.witnessName+(d.witnessDesig?' — '+d.witnessDesig:'')},
+                           {content:'Remarks',styles:{fontStyle:'bold',fillColor:[255,241,242],cellWidth:25}},
+                           {content:d.witnessRemarks||'—'}]],
+                    columnStyles:{0:{cellWidth:35},1:{cellWidth:CW/2-35},2:{cellWidth:25},3:{cellWidth:CW/2-25}}
+                });
+                y=doc.lastAutoTable.finalY+3;
+            }
+
+            // Calibrations
             if((d.calibrations||[]).length){
-                if(y>230){doc.addPage();y=15;}
-                // Section header
-                doc.setFillColor(124,58,237);doc.rect(ML,y,CW,8,'F');
+                if(y+12>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=30;}
+                doc.setFillColor(88,28,135);doc.rect(ML,y,CW,8,'F');
                 doc.setFontSize(8.5);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
                 doc.text('CALIBRATION / DIMENSIONAL INSPECTION RECORDS ('+d.calibrations.length+')',ML+3,y+5.5);
-                y+=12;
-
+                y+=10;
                 d.calibrations.forEach((cal,ci)=>{
-                    if(y>250){doc.addPage();y=15;}
-                    // Record header
-                    const overallCol = cal.overall==='PASS'?[21,128,61]:cal.overall==='FAIL'?[220,38,38]:[180,83,9];
+                    if(y+16>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=30;}
+                    const oCol=cal.overall==='PASS'?[21,128,61]:cal.overall==='FAIL'?[220,38,38]:[180,83,9];
                     doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
                         styles:{fontSize:8,cellPadding:2.5},
                         headStyles:{fillColor:[88,28,135],textColor:[255,255,255],fontStyle:'bold',fontSize:8},
-                        head:[[{content:(ci+1)+'. '+cal.component+(cal.unitNo?' — '+cal.unitNo:''),colSpan:3}]],
-                        body:[
-                            [{content:'Maker / Engine',styles:{fontStyle:'bold',fillColor:[248,245,255]}},cal.maker||'—',
-                             {content:'Instrument Used',styles:{fontStyle:'bold',fillColor:[248,245,255]}}],
-                            [{content:'Standard (mm)',styles:{fontStyle:'bold',fillColor:[248,245,255]}},cal.stdValue||'—',
-                             {content:'Wear Limit (mm)',styles:{fontStyle:'bold',fillColor:[248,245,255]}}],
-                        ].map((r,ri)=>{
-                            const extras=[cal.instrument||'—',cal.wearLimit||'—'];
-                            return [r[0],r[1],r[2],extras[ri]];
-                        }),
+                        head:[[{content:(ci+1)+'. '+cal.component+(cal.unitNo?' — '+cal.unitNo:'')+(cal.maker?' | '+cal.maker:''),colSpan:4}]],
+                        body:[[
+                            {content:'Standard (mm)',styles:{fontStyle:'bold',fillColor:[248,245,255]}},cal.stdValue||'—',
+                            {content:'Wear Limit (mm)',styles:{fontStyle:'bold',fillColor:[248,245,255]}},cal.wearLimit||'—'
+                        ],[
+                            {content:'Instrument',styles:{fontStyle:'bold',fillColor:[248,245,255]}},cal.instrument||'—',
+                            {content:'Overall',styles:{fontStyle:'bold',fillColor:[248,245,255]}},
+                            {content:cal.overall||'—',styles:{fontStyle:'bold',textColor:oCol}}
+                        ]],
                         columnStyles:{0:{cellWidth:30},1:{cellWidth:CW/2-30},2:{cellWidth:30},3:{cellWidth:CW/2-30}}
                     });
                     y=doc.lastAutoTable.finalY+2;
-
-                    // Overall result badge
-                    if(y>265){doc.addPage();y=15;}
-                    doc.setFillColor(...overallCol);doc.rect(ML,y,30,7,'F');
-                    doc.setFontSize(8);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
-                    doc.text('OVERALL: '+cal.overall,ML+2,y+5);
-                    if(cal.remarks){
-                        doc.setFontSize(7.5);doc.setFont('helvetica','italic');doc.setTextColor(80,80,80);
-                        doc.text('Remarks: '+cal.remarks,ML+34,y+5);
-                    }
-                    y+=10;
-
-                    // Readings table
-                    if(cal.rows?.length && cal.columns?.length){
-                        if(y>255){doc.addPage();y=15;}
-                        const colW=Math.min(22,(CW)/(cal.columns.length));
-                        const colStyles={};
-                        cal.columns.forEach((_,i)=>{colStyles[i]={cellWidth:colW,halign:'center'};});
-                        colStyles[0]={cellWidth:colW,halign:'left'};
-                        if(cal.columns.length>1)colStyles[1]={cellWidth:colW,halign:'left'};
-
-                        const tableBody=cal.rows.map(row=>{
-                            return (cal.rowKeys||[]).map((k,ki)=>{
-                                const v=row[k]||'—';
-                                if(k==='result'){
-                                    return {content:v,styles:{
-                                        fontStyle:'bold',halign:'center',
-                                        textColor:v==='PASS'?[21,128,61]:v==='FAIL'?[220,38,38]:[100,100,100],
-                                        fillColor:v==='PASS'?[220,252,231]:v==='FAIL'?[254,226,226]:[255,255,255]
-                                    }};
-                                }
-                                return {content:v,styles:{halign:ki<2?'left':'center'}};
-                            });
-                        });
-
+                    if(cal.remarks){doc.setFontSize(7.5);doc.setFont('helvetica','italic');doc.setTextColor(80,80,80);doc.text('Remarks: '+cal.remarks,ML+2,y+4);y+=7;}
+                    if(cal.rows&&cal.rows.length&&cal.columns&&cal.columns.length){
+                        if(y+12>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=30;}
+                        const colW=Math.min(24,CW/cal.columns.length);
+                        const cs={};cal.columns.forEach((_,i)=>{cs[i]={cellWidth:colW,halign:'center'};});
+                        cs[0]={cellWidth:colW,halign:'left'};if(cal.columns.length>1)cs[1]={cellWidth:colW,halign:'left'};
                         doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
                             styles:{fontSize:7.5,cellPadding:2},
                             headStyles:{fillColor:[30,58,138],textColor:[255,255,255],fontStyle:'bold',fontSize:7.5},
                             head:[cal.columns.map(h=>({content:h,styles:{halign:'center'}}))],
-                            body:tableBody,
-                            columnStyles:colStyles
+                            body:cal.rows.map(row=>(cal.rowKeys||[]).map((k,ki)=>{
+                                const v=row[k]||'—';
+                                if(k==='result')return{content:v,styles:{fontStyle:'bold',halign:'center',
+                                    textColor:v==='PASS'?[21,128,61]:v==='FAIL'?[220,38,38]:[100,100,100],
+                                    fillColor:v==='PASS'?[220,252,231]:v==='FAIL'?[254,226,226]:[255,255,255]}};
+                                return{content:v,styles:{halign:ki<2?'left':'center'}};
+                            })),columnStyles:cs
                         });
                         y=doc.lastAutoTable.finalY+6;
                     }
                 });
             }
 
-            // Photos for this day
+            // Photos
             if((d.photos||[]).length){
-                if(y>220){doc.addPage();y=15;}
+                if(y+30>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=30;}
                 doc.setFillColor(55,65,81);doc.rect(ML,y,CW,7,'F');
                 doc.setFontSize(8);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
-                doc.text(`SITE PHOTOS — DAY ${idx+1} (${d.photos.length} photo${d.photos.length>1?'s':''})`,ML+3,y+5);y+=10;
+                doc.text('SITE PHOTOS — '+dateStr+' ('+d.photos.length+' photo'+(d.photos.length>1?'s':'')+')',ML+3,y+5);
+                y+=10;
                 const imgW=(CW-6)/3;let col=0;
                 for(let pi=0;pi<d.photos.length;pi++){
-                    const imgH=45,xPos=ML+col*(imgW+3);
-                    if(y+imgH>275){doc.addPage();y=15;col=0;}
-                    try{
-                        const fmt=d.photos[pi].startsWith('data:image/png')?'PNG':'JPEG';
+                    const imgH=46,xPos=ML+col*(imgW+3);
+                    if(y+imgH>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=30;col=0;}
+                    try{const fmt=d.photos[pi].startsWith('data:image/png')?'PNG':'JPEG';
                         doc.addImage(d.photos[pi],fmt,xPos,y,imgW,imgH,'','MEDIUM');
                         doc.setFontSize(6.5);doc.setFont('helvetica','normal');doc.setTextColor(100,100,100);
-                        doc.text(`Day ${idx+1} · Photo ${pi+1}`,xPos+imgW/2,y+imgH+3,{align:'center'});
-                    }catch(err){doc.setFontSize(7);doc.setTextColor(180,0,0);doc.text('[Photo error]',xPos+2,y+imgH/2);}
+                        doc.text(dateStr+' · Photo '+(pi+1),xPos+imgW/2,y+imgH+3,{align:'center'});
+                    }catch(e){doc.setFontSize(7);doc.setTextColor(180,0,0);doc.text('[Photo error]',xPos+2,y+imgH/2);}
                     col++;if(col===3){col=0;y+=imgH+6;}
                 }
-                if(col>0)y+=45+6;y+=4;
+                if(col>0)y+=46+6;y+=4;
             }
-
-            // Signature row per day
-            if(y>245){doc.addPage();y=15;}
-            doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
-                styles:{fontSize:8,cellPadding:5,minCellHeight:16},
-                headStyles:{fillColor:[30,41,59],textColor:[255,255,255],fontStyle:'bold',fontSize:7.5},
-                head:[['TECHNICIAN SIGN — DAY '+(idx+1),'CLIENT / WITNESS SIGN','IMSE AUTHORISED SIGN']],
-                body:[
-                    ['Name: '+(d.technicians||[]).map(t=>t.name).join(', ')||'_____','Name: '+(d.witnessName||'_____'),'Name: _____'],
-                    ['Signature:','Signature:','Signature:'],['Date:','Date:','Date:']
-                ],columnStyles:{0:{cellWidth:CW/3},1:{cellWidth:CW/3},2:{cellWidth:CW/3}}});
-            y=doc.lastAutoTable.finalY+10;
+            y+=4;
         });
 
-        // Footer
-        if(!days.length){
-            doc.setFontSize(11);doc.setTextColor(150,150,150);
-            doc.text('No daily entries recorded yet.',105,140,{align:'center'});
-        }
-        const pc=doc.getNumberOfPages();
-        for(let p=1;p<=pc;p++){
-            doc.setPage(p);doc.setFontSize(7);doc.setFont('helvetica','italic');doc.setTextColor(150,150,150);
-            doc.text('IMSE Tech India — Field Service Report   Page '+p+' of '+pc,105,290,{align:'center'});
-        }
-        doc.save('WorkReport_'+(wl.project||'Report').replace(/\s+/g,'_')+'_'+(wl.workStartDate||'nodate')+'.pdf');
+        if(!days.length){doc.setFontSize(11);doc.setTextColor(150,150,150);doc.text('No daily entries recorded yet.',PW/2,140,{align:'center'});}
+
+        // Apply header + signature footer on all pages
+        const total=doc.getNumberOfPages();
+        for(let p=1;p<=total;p++){doc.setPage(p);drawPageHeader();drawSignatureFooter(p,total);}
+
+        const safe=(wl.project||'WorkReport').replace(/\s+/g,'_').replace(/[^a-zA-Z0-9_-]/g,'');
+        doc.save('TimeSheet_'+safe+'_'+(wl.workStartDate||'nodate')+'.pdf');
         showToast('✅ PDF downloaded');
     }
-
-
-    // ── INITIAL RENDER ────────────────────────────────────────────
     window.gapiLoaded = gapiLoaded;
     window.gisLoaded  = gisLoaded;
     renderLogin();
