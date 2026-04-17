@@ -818,6 +818,30 @@
     // ── LOAD / SAVE ───────────────────────────────────────────────
     let appSettings = {};
 
+    // Read settings.json by searching in the same Drive folder as the shared files
+    async function readSettingsByName() {
+        try {
+            // Get the parent folder of one of the known files
+            const metaR = await fetch(
+                `https://www.googleapis.com/drive/v3/files/${SHARED_FILE_IDS.staff}?fields=parents&supportsAllDrives=true`,
+                { headers: { Authorization: `Bearer ${accessToken}` } }
+            );
+            if (!metaR.ok) return null;
+            const meta = await metaR.json();
+            const parentId = (meta.parents||[])[0];
+            if (!parentId) return null;
+            // Search for settings.json in that folder
+            const q = encodeURIComponent(`name='settings.json' and '${parentId}' in parents and trashed=false`);
+            const listR = await fetch(
+                `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)&spaces=drive`,
+                { headers: { Authorization: `Bearer ${accessToken}` } }
+            );
+            if (!listR.ok) return null;
+            const list = await listR.json();
+            if (!list.files||!list.files.length) return null;
+            return await readFile(list.files[0].id);
+        } catch(e) { return null; }
+    }
     async function loadData() {
         renderLoading();
         try {
@@ -830,10 +854,11 @@
             projectExpenses = Array.isArray(pe) ? pe : [];
             workLogs        = Array.isArray(wl) ? wl : [];
             staffList       = Array.isArray(sf) ? sf.filter(s=>s.status==='Active') : [];
-            // Load settings if available (for company name in PDF)
-            if (SHARED_FILE_IDS.settings) {
-                try { appSettings = await readFile(SHARED_FILE_IDS.settings) || {}; } catch(e) { appSettings = {}; }
-            }
+            // Load settings.json from Drive by filename for company info in PDFs
+            try {
+                const settingsData = await readSettingsByName();
+                if (settingsData && typeof settingsData === 'object') appSettings = settingsData;
+            } catch(e) { appSettings = {}; }
             // Always ask who the user is on fresh load — ensures correct attribution
             currentUser = null;
             renderUserSelect();
@@ -2249,7 +2274,7 @@
             scopeOfWork:  document.getElementById('wlScopeOfWork').value,
             workStartDate:document.getElementById('wlWorkStart').value,
             workEndDate:  document.getElementById('wlWorkEnd').value,
-            location:     document.getElementById('wlLocation').value,
+            location:     document.getElementById('wlVesselName')?.value||'',
             status:       document.getElementById('wlStatus').value,
             technicians:  techs,
             staffName:    techs.map(t=>t.name).join(', '),
@@ -2424,6 +2449,14 @@
 
         function drawPageHeader(){
             doc.setFillColor(15,58,95);doc.rect(0,0,210,14,'F');
+            // Logo top-left if available
+            const logo = appSettings?.logoData;
+            if (logo) {
+                try {
+                    const ext = logo.includes('image/png')?'PNG':logo.includes('image/svg')?'SVG':'JPEG';
+                    doc.addImage(logo, ext, 2, 1, 12, 12, '', 'FAST');
+                } catch(e) {}
+            }
             doc.setFontSize(13);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
             doc.text(co.toUpperCase(),PW/2,9.5,{align:'center'});
             if(co_gst){doc.setFontSize(7.5);doc.setFont('helvetica','normal');doc.setTextColor(147,197,253);doc.text('GST: '+co_gst,PW/2,13.5,{align:'center'});}
@@ -2433,21 +2466,27 @@
         }
 
         function drawSignatureFooter(p,total){
+            // Thin separator line
             const fY=297-SIG_H-2;
-            doc.setDrawColor(15,58,95);doc.setLineWidth(0.3);doc.line(ML,fY,210-MR,fY);
+            doc.setDrawColor(15,58,95);doc.setLineWidth(0.4);doc.line(ML,fY,210-MR,fY);
             const colW=CW/3;
+            // Three signature columns — name + signature line only
             ['CHIEF ENGINEER / CLIENT','2ND ENGINEER / CLIENT','IMSE AUTHORISED ENGINEER'].forEach((lbl,i)=>{
                 const x=ML+i*colW;
-                doc.setFontSize(7);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
-                doc.text(lbl,x+colW/2,fY+4,{align:'center'});
-                doc.setFont('helvetica','normal');doc.setTextColor(60,60,60);
-                doc.text('Name: ___________________',x+4,fY+10);
-                doc.text('Sign:  ___________________',x+4,fY+17);
-                doc.text('Date:  ___________________',x+4,fY+23);
+                // Column label
+                doc.setFontSize(7.5);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
+                doc.text(lbl,x+colW/2,fY+5,{align:'center'});
+                // Signature line
+                doc.setDrawColor(100,100,100);doc.setLineWidth(0.3);
+                doc.line(x+4,fY+15,x+colW-6,fY+15);
+                doc.setFontSize(6.5);doc.setFont('helvetica','normal');doc.setTextColor(130,130,130);
+                doc.text('Signature & Date',x+colW/2,fY+19,{align:'center'});
+                // Vertical divider between columns
                 if(i<2){doc.setDrawColor(200,200,200);doc.setLineWidth(0.3);doc.line(x+colW,fY,x+colW,fY+SIG_H);}
             });
+            // Page number centred
             doc.setFontSize(7);doc.setFont('helvetica','italic');doc.setTextColor(130,130,130);
-            doc.text('Page '+p+' of '+total+' — '+co,PW/2,295,{align:'center'});
+            doc.text(co+' — Page '+p+' of '+total,PW/2,fY+SIG_H-1,{align:'center'});
         }
 
         // Page 1
