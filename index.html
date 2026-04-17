@@ -801,18 +801,34 @@
                 <div class="grid grid-cols-3 gap-3 mb-6 text-center">
                     <div class="bg-green-50 rounded-xl p-3">
                         <div class="text-2xl font-bold text-green-700" id="syncCountApproved">0</div>
-                        <div class="text-xs text-gray-500 mt-1">Approved</div>
+                        <div class="text-xs text-gray-500 mt-1">Approved Txns</div>
                     </div>
                     <div class="bg-blue-50 rounded-xl p-3">
                         <div class="text-2xl font-bold text-blue-700" id="syncCountAll">0</div>
-                        <div class="text-xs text-gray-500 mt-1">Transactions</div>
+                        <div class="text-xs text-gray-500 mt-1">All Transactions</div>
                     </div>
                     <div class="bg-purple-50 rounded-xl p-3">
                         <div class="text-2xl font-bold text-purple-700" id="syncCountParties">0</div>
                         <div class="text-xs text-gray-500 mt-1">Parties</div>
                     </div>
+                    <div class="bg-orange-50 rounded-xl p-3">
+                        <div class="text-2xl font-bold text-orange-700" id="syncCountExpenses">0</div>
+                        <div class="text-xs text-gray-500 mt-1">Expenses</div>
+                    </div>
+                    <div class="bg-teal-50 rounded-xl p-3">
+                        <div class="text-2xl font-bold text-teal-700" id="syncCountStaff">0</div>
+                        <div class="text-xs text-gray-500 mt-1">Staff</div>
+                    </div>
+                    <div class="bg-yellow-50 rounded-xl p-3">
+                        <div class="text-2xl font-bold text-yellow-700" id="syncCountFieldExp">0</div>
+                        <div class="text-xs text-gray-500 mt-1">Field Expenses</div>
+                    </div>
+                    <div class="bg-indigo-50 rounded-xl p-3">
+                        <div class="text-2xl font-bold text-indigo-700" id="syncCountWorkLogs">0</div>
+                        <div class="text-xs text-gray-500 mt-1">Work Log Days</div>
+                    </div>
                 </div>
-                <p class="text-sm text-gray-600 text-center mb-4">Your data has been saved to Google Sheets.</p>
+                <p class="text-xs text-gray-500 text-center mb-4">Sheets synced: ApprovedTxns · AllTransactions · ProformaInvoices · Parties · Expenses · Staff · Payslips · ProjectExpenses · FieldExpenses · FundRequests · WorkLogs · DailyEntries · Calibrations · Settings</p>
                 <a id="syncModalSheetLink" href="#" target="_blank"
                    class="block w-full text-center px-6 py-3 bg-green-600 text-white rounded-xl hover:bg-green-700 font-semibold mb-3">
                     📊 Open Google Spreadsheet
@@ -2627,10 +2643,14 @@
 
         // Google Sheets Sync with approved transactions and hyperlinks
         // Show in-page sync success modal (no popup blocker, no alert)
-        function showSyncSuccess(sheetsUrl, approvedCount, allCount, partiesCount) {
-            document.getElementById('syncCountApproved').textContent = approvedCount;
+        function showSyncSuccess(sheetsUrl, approvedCount, allCount, partiesCount, expCount, staffCount, fieldExpCount, wlDayCount) {
+            document.getElementById('syncCountApproved').textContent  = approvedCount;
             document.getElementById('syncCountAll').textContent       = allCount;
             document.getElementById('syncCountParties').textContent   = partiesCount;
+            document.getElementById('syncCountExpenses').textContent  = expCount;
+            document.getElementById('syncCountStaff').textContent     = staffCount;
+            document.getElementById('syncCountFieldExp').textContent  = fieldExpCount;
+            document.getElementById('syncCountWorkLogs').textContent  = wlDayCount;
             document.getElementById('syncModalSheetLink').href        = sheetsUrl;
             document.getElementById('syncSuccessModal').classList.add('show');
         }
@@ -2645,7 +2665,7 @@
                 btn.textContent = 'Syncing...';
                 btn.disabled = true;
 
-                const SHEET_NAMES = ['ApprovedTxns', 'AllTransactions', 'ProformaInvoices', 'Parties', 'Settings', 'Expenses'];
+                const SHEET_NAMES = ['ApprovedTxns', 'AllTransactions', 'ProformaInvoices', 'Parties', 'Settings', 'Expenses', 'Staff', 'Payslips', 'ProjectExpenses', 'FieldExpenses', 'FundRequests', 'WorkLogs', 'DailyEntries', 'Calibrations'];
                 let spreadsheetId = settings.spreadsheetId;
 
                 // Step 1: Verify saved ID still works
@@ -2840,6 +2860,125 @@
                     ]);
                 });
 
+                // ── Staff Sheet ──────────────────────────────────────────
+                const staffRows = [['Staff ID','Name','Type','Designation','Department','Emp Code','DOJ','Mobile','Email',
+                    'UAN','Basic Salary','HRA%','DA%','PF%','TDS Monthly','Status']];
+                staff.forEach(s => {
+                    staffRows.push([
+                        s.staffID||'', s.name||'', s.staffType||'', s.designation||'', s.department||'',
+                        s.employeeCode||'', s.dateOfJoining||'', s.mobile||'', s.email||'',
+                        s.uanNumber||'', parseFloat(s.basicSalary||0), s.hraPct||'', s.daPct||'',
+                        s.pfPct||'', parseFloat(s.tdsMonthly||0), s.status||'Active'
+                    ]);
+                });
+
+                // ── Payslips Sheet ───────────────────────────────────────
+                const payslipRows = [['Payslip ID','Staff ID','Name','Staff Type','Period','Gross','PF','ESIC','PT','TDS','LOP','Net Pay','Status','Generated']];
+                payslips.forEach(p => {
+                    payslipRows.push([
+                        p.payslipID||'', p.staffID||'', p.staffName||'', p.staffType||'',
+                        p.periodLabel||'', parseFloat(p.gross||0), parseFloat(p.pfAmt||0),
+                        parseFloat(p.esicAmt||0), parseFloat(p.ptAmt||0), parseFloat(p.tdsAmt||0),
+                        parseFloat(p.lopAmt||0), parseFloat(p.netPay||0), p.status||'', p.generatedAt||''
+                    ]);
+                });
+
+                // ── Project Expenses Sheet ───────────────────────────────
+                const projExpRows = [['Project ID','Project Name','Ref','Client','Start Date','Total Funds','Total Spent','Balance','Status']];
+                projectExpenses.forEach(p => {
+                    const spent = (p.items||[]).reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
+                    const tfIn  = (p.fundTransfers||[]).filter(t=>t.direction==='in').reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+                    const tfOut = (p.fundTransfers||[]).filter(t=>t.direction==='out').reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
+                    const balance = (parseFloat(p.totalFunds)||0) + tfIn - spent - tfOut;
+                    projExpRows.push([
+                        p.projExpID||'', p.projectName||'', p.projectRef||'', p.clientName||'',
+                        p.startDate||'', parseFloat(p.totalFunds||0), +spent.toFixed(2), +balance.toFixed(2), p.status||''
+                    ]);
+                });
+
+                // ── Field Expenses Sheet (all individual items) ──────────
+                const fieldExpRows = [['Project','Ref','Item ID','Date','Category','Description','Vendor','Technicians',
+                    'Entered By','Pay Mode','Amount','Bill Attachments','Tally Updated','Tally Voucher No','Tally Date']];
+                projectExpenses.forEach(p => {
+                    (p.items||[]).forEach(it => {
+                        const techs = (it.technicians||[]).map(t=>t.name).join(', ')||it.staffName||'';
+                        fieldExpRows.push([
+                            p.projectName||'', p.projectRef||'', it.itemID||'', it.date||'',
+                            it.category||'', it.description||'', it.vendor||'', techs,
+                            it.addedBy||'', it.payMode||'', parseFloat(it.amount||0),
+                            (it.billAttachments||[]).length, it.tallyUpdated?'Y':'N',
+                            it.tallyVoucherNo||'', it.tallyVoucherDate||''
+                        ]);
+                    });
+                });
+
+                // ── Fund Requests Sheet ──────────────────────────────────
+                const fundReqRows = [['Project','Ref','Fund Req ID','Date','Purpose','Requested By','Requested Amt',
+                    'Released Amt','Released Date','Release Mode','Status','Receipts','Office Remarks']];
+                projectExpenses.forEach(p => {
+                    (p.fundRequests||[]).forEach(r => {
+                        fundReqRows.push([
+                            p.projectName||'', p.projectRef||'', r.frID||'', r.date||'',
+                            r.purpose||'', r.addedBy||'', parseFloat(r.amount||0),
+                            parseFloat(r.releasedAmount||0), r.releasedDate||'', r.releaseMode||'',
+                            r.status||'', (r.paymentReceipts||[]).length, r.officeRemarks||''
+                        ]);
+                    });
+                });
+
+                // ── Work Logs Sheet (project-level) ─────────────────────
+                const workLogRows = [['WL ID','Project','Ref','Client','Location','Work Start','Work End',
+                    'Scope','Technicians','Total Days','Status']];
+                workLogs.forEach(w => {
+                    const techs = (w.technicians||[]).map(t=>t.name).join(', ');
+                    workLogRows.push([
+                        w.wlID||'', w.projectName||'', w.projectRef||'', w.clientName||'',
+                        w.location||'', w.workStart||'', w.workEnd||'',
+                        w.scopeOfWork||'', techs, (w.dailyEntries||[]).length, w.status||''
+                    ]);
+                });
+
+                // ── Daily Entries Sheet (one row per day per work log) ───
+                const dailyEntryRows = [['WL ID','Project','Date','Start Time','End Time','Category',
+                    'Technicians','Work Carried Out','Observations','Exclusions','Recommendations',
+                    'Witness Name','Witness Desig','Witness Remarks','Photos','Calibrations','Entered By']];
+                workLogs.forEach(w => {
+                    (w.dailyEntries||[]).forEach(d => {
+                        const techs = (d.technicians||[]).map(t=>t.name).join(', ')
+                            || (w.technicians||[]).map(t=>t.name).join(', ');
+                        dailyEntryRows.push([
+                            w.wlID||'', w.projectName||'',
+                            d.date||'', d.startTime||'', d.endTime||'', d.category||'',
+                            techs, d.description||'', d.observations||'',
+                            d.exclusions||'', d.recommendations||'',
+                            d.witnessName||'', d.witnessDesig||'', d.witnessRemarks||'',
+                            (d.photos||[]).length, (d.calibrations||[]).length,
+                            d.addedBy||''
+                        ]);
+                    });
+                });
+
+                // ── Calibration Records Sheet (one row per component per day) ─
+                const calibRows = [['WL ID','Project','Entry Date','Component','Unit No','Maker',
+                    'Nominal (mm)','Standard (mm)','Wear Limit (mm)','Instrument','Overall Result',
+                    'No. of Readings','PASS Count','FAIL Count','Remarks']];
+                workLogs.forEach(w => {
+                    (w.dailyEntries||[]).forEach(d => {
+                        (d.calibrations||[]).forEach(cal => {
+                            const rows   = cal.rows||[];
+                            const passes = rows.filter(r=>r.result==='PASS').length;
+                            const fails  = rows.filter(r=>r.result==='FAIL').length;
+                            calibRows.push([
+                                w.wlID||'', w.projectName||'', d.date||'',
+                                cal.component||'', cal.unitNo||'', cal.maker||'',
+                                cal.nominal||'', cal.stdValue||'', cal.wearLimit||'',
+                                cal.instrument||'', cal.overall||'',
+                                rows.length, passes, fails, cal.remarks||''
+                            ]);
+                        });
+                    });
+                });
+
                 // Settings sheet data
                 const settingsRows = [
                     ['Field', 'Value'],
@@ -2874,8 +3013,16 @@
                             { range: 'AllTransactions!A1',   values: allRows        },
                             { range: 'ProformaInvoices!A1',  values: proformaRows   },
                             { range: 'Parties!A1',           values: partyRows      },
-                            { range: 'Settings!A1',        values: settingsRows },
-                            { range: 'Expenses!A1',        values: expenseRows  }
+                            { range: 'Settings!A1',          values: settingsRows   },
+                            { range: 'Expenses!A1',          values: expenseRows    },
+                            { range: 'Staff!A1',             values: staffRows      },
+                            { range: 'Payslips!A1',          values: payslipRows    },
+                            { range: 'ProjectExpenses!A1',   values: projExpRows    },
+                            { range: 'FieldExpenses!A1',     values: fieldExpRows   },
+                            { range: 'FundRequests!A1',      values: fundReqRows    },
+                            { range: 'WorkLogs!A1',          values: workLogRows    },
+                            { range: 'DailyEntries!A1',      values: dailyEntryRows },
+                            { range: 'Calibrations!A1',      values: calibRows      }
                         ]
                     })
                 });
@@ -2923,7 +3070,7 @@
 
                 // NO alert(), NO window.open() — both cause issues.
                 // Show in-page success modal with direct clickable link instead.
-                showSyncSuccess(sheetsUrl, approvedTxns.length, transactions.length, parties.length);
+                showSyncSuccess(sheetsUrl, approvedTxns.length, transactions.length, parties.length, expenses.length, staff.length, fieldExpRows.length - 1, dailyEntryRows.length - 1);
 
                 // Also update the persistent banner if visible
                 const banner = document.getElementById('syncSuccessBanner');
