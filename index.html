@@ -4234,46 +4234,49 @@
         function viewExpPhotoById(expID, startIdx) {
             const exp = expenses.find(x => x.expID === expID);
             if (!exp) return;
-            // Build unified list: prefer billAttachments array, fallback to legacy single photo
             const attachments = (exp.billAttachments && exp.billAttachments.length)
                 ? exp.billAttachments
                 : (exp.billPhotoData ? [{ name: exp.billPhotoName || 'attachment', data: exp.billPhotoData, type: exp.billPhotoData.startsWith('data:application/pdf') ? 'pdf' : 'image' }] : []);
             if (!attachments.length) return;
-
-            let idx = startIdx || 0;
-            const w = window.open();
-            const render = () => {
-                const a = attachments[idx];
-                const nav = attachments.length > 1 ? `
-                    <div style="position:fixed;top:10px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.7);color:#fff;padding:6px 16px;border-radius:20px;display:flex;align-items:center;gap:10px;z-index:999">
-                        <button onclick="go(-1)" style="background:none;border:none;color:#fff;font-size:18px;cursor:pointer">&#9664;</button>
-                        <span style="font-size:13px">${a.name} (${idx+1}/${attachments.length})</span>
-                        <button onclick="go(1)" style="background:none;border:none;color:#fff;font-size:18px;cursor:pointer">&#9654;</button>
-                    </div>` : `<div style="position:fixed;top:10px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.7);color:#fff;padding:6px 16px;border-radius:20px;font-size:13px;z-index:999">${a.name}</div>`;
-                const body = a.type === 'pdf'
-                    ? `<embed src="${a.data}" type="application/pdf" style="width:100vw;height:100vh"/>`
-                    : `<img src="${a.data}" style="max-width:100%;max-height:100vh;object-fit:contain"/>`;
-                w.document.open();
-                w.document.write(`<html><head><title>${a.name}</title></head><body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh">${nav}${body}
-                    <script>
-                    const atts = ${JSON.stringify(attachments)};
-                    let idx = ${idx};
-                    function go(dir) {
-                        idx = (idx + dir + atts.length) % atts.length;
-                        const a = atts[idx];
-                        document.querySelector('[data-nav-title]') && (document.querySelector('[data-nav-title]').textContent = a.name + ' (' + (idx+1) + '/' + atts.length + ')');
-                        const container = document.getElementById('mediaContainer');
-                        if (a.type === 'pdf') {
-                            container.innerHTML = '<embed src="' + a.data + '" type="application/pdf" style="width:100vw;height:100vh"/>';
-                        } else {
-                            container.innerHTML = '<img src="' + a.data + '" style="max-width:100%;max-height:100vh;object-fit:contain"/>';
-                        }
-                    }
-                    <\/script>
-                </body></html>`);
-                w.document.close();
-            };
-            render();
+            // Use the same inline lightbox — store on window for nav functions
+            window._lbList = attachments;
+            window._lbCur  = startIdx || 0;
+            // Remove any existing lightbox
+            document.getElementById('expAttachLightbox')?.remove();
+            // Build lightbox
+            const lb = document.createElement('div');
+            lb.id = 'expAttachLightbox';
+            lb.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.92);z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center';
+            const lbTop = document.createElement('div');
+            lbTop.style.cssText = 'position:absolute;top:12px;right:16px;display:flex;gap:10px;align-items:center';
+            const lbCounter = document.createElement('span');
+            lbCounter.id = 'expLbCounter';
+            lbCounter.style.cssText = 'color:#fff;font-size:14px;font-weight:bold';
+            const lbClose = document.createElement('button');
+            lbClose.textContent = '✕';
+            lbClose.style.cssText = 'color:#fff;font-size:28px;background:none;border:none;cursor:pointer;line-height:1';
+            lbClose.addEventListener('click', () => { document.getElementById('expAttachLightbox')?.remove(); window._lbList=null; });
+            lbTop.appendChild(lbCounter); lbTop.appendChild(lbClose);
+            const lbPrev = document.createElement('button');
+            lbPrev.id = 'expLbPrev';
+            lbPrev.textContent = '‹';
+            lbPrev.style.cssText = 'position:absolute;left:12px;top:50%;transform:translateY(-50%);color:#fff;font-size:48px;background:rgba(255,255,255,0.2);border:none;cursor:pointer;border-radius:50%;width:56px;height:56px;line-height:1;display:none';
+            lbPrev.addEventListener('click', () => expLbNav(-1));
+            const lbNext = document.createElement('button');
+            lbNext.id = 'expLbNext';
+            lbNext.textContent = '›';
+            lbNext.style.cssText = 'position:absolute;right:12px;top:50%;transform:translateY(-50%);color:#fff;font-size:48px;background:rgba(255,255,255,0.2);border:none;cursor:pointer;border-radius:50%;width:56px;height:56px;line-height:1;display:none';
+            lbNext.addEventListener('click', () => expLbNav(1));
+            const lbContent = document.createElement('div');
+            lbContent.id = 'expLbContent';
+            lbContent.style.cssText = 'max-width:90%;max-height:84vh;display:flex;align-items:center;justify-content:center';
+            const lbName = document.createElement('div');
+            lbName.id = 'expLbName';
+            lbName.style.cssText = 'color:#ccc;font-size:12px;margin-top:8px;max-width:80%;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+            lb.appendChild(lbTop); lb.appendChild(lbPrev); lb.appendChild(lbNext);
+            lb.appendChild(lbContent); lb.appendChild(lbName);
+            document.body.appendChild(lb);
+            expLbShow(window._lbCur);
         }
 
         // Handle bill photo file selection — show names in attach list
