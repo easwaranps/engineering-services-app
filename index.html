@@ -130,7 +130,7 @@
                     </div>
                     <div>
                         <label class="block text-xs font-semibold text-gray-600 mb-1">Bill Date <span class="text-red-500">*</span></label>
-                        <input type="date" id="expBillDate" class="w-full px-3 py-2 border rounded-lg text-sm" required/>
+                        <input type="date" id="expBillDate" class="w-full px-3 py-2 border rounded-lg text-sm" required onchange="updateVoucherDateMin()"/>
                     </div>
                     <div>
                         <label class="block text-xs font-semibold text-gray-600 mb-1">Company / Vendor Name <span class="text-red-500">*</span></label>
@@ -207,19 +207,23 @@
                     </div>
                     <div id="expTDSFields" class="grid grid-cols-2 md:grid-cols-4 gap-4 hidden">
                         <div>
-                            <label class="block text-xs font-semibold text-gray-600 mb-1">Taxable Amount</label>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1" id="expTaxableAmtLabel">Taxable Amount in INR</label>
                             <input type="number" id="expTaxableAmt" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
                         </div>
                         <div>
                             <label class="block text-xs font-semibold text-gray-600 mb-1">TDS %</label>
-                            <select id="expTDSPct" class="w-full px-3 py-2 border rounded-lg text-sm" onchange="calcExpAmounts()">
+                            <select id="expTDSPct" class="w-full px-3 py-2 border rounded-lg text-sm" onchange="onTDSPctChange()">
                                 <option value="1">1%</option>
                                 <option value="2" selected>2%</option>
                                 <option value="5">5%</option>
                                 <option value="10">10%</option>
                                 <option value="30">30%</option>
-                                <option value="Other">Other</option>
+                                <option value="Other">Other %</option>
                             </select>
+                        </div>
+                        <div id="expTDSCustomPctWrap" class="hidden">
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Custom TDS %</label>
+                            <input type="number" id="expTDSCustomPct" placeholder="e.g. 7.5" min="0" max="100" step="0.01" class="w-full px-3 py-2 border border-yellow-400 rounded-lg text-sm" oninput="calcExpAmounts()"/>
                         </div>
                         <div>
                             <label class="block text-xs font-semibold text-gray-600 mb-1">TDS Amount</label>
@@ -343,11 +347,13 @@
                 </div>
 
                 <!-- Computed totals summary -->
-                <div class="bg-orange-50 border border-orange-200 rounded-xl p-4 mb-6 grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
+                <div class="bg-orange-50 border border-orange-200 rounded-xl p-4 mb-6 grid grid-cols-2 md:grid-cols-7 gap-3 text-sm">
                     <div><span class="text-gray-500 block text-xs">Taxable Amount (INR)</span><span id="sumBillINR" class="font-bold text-orange-700">—</span></div>
                     <div><span class="text-gray-500 block text-xs">Total Bill Amount</span><span id="sumTotalBill" class="font-bold text-blue-700">—</span></div>
                     <div><span class="text-gray-500 block text-xs">Total Tax (GST)</span><span id="sumTax" class="font-bold text-orange-700">—</span></div>
                     <div><span class="text-gray-500 block text-xs">TDS Deducted</span><span id="sumTDS" class="font-bold text-orange-700">—</span></div>
+                    <div><span class="text-gray-500 block text-xs">Credit Note / Discount</span><span id="sumCN" class="font-bold text-green-700">—</span></div>
+                    <div><span class="text-gray-500 block text-xs">Advance Paid</span><span id="sumAdv" class="font-bold text-purple-700">—</span></div>
                     <div><span class="text-gray-500 block text-xs">Net Payable</span><span id="sumNet" class="font-bold text-orange-800 text-base">—</span></div>
                 </div>
 
@@ -1816,6 +1822,10 @@
 
                 setStatus('Processing data...');
                 transactions    = Array.isArray(txnData)     ? txnData      : [];
+                // Deduplicate expenses — keep latest version of each expID
+                const expSeen = new Map();
+                expenses.forEach(ex => { expSeen.set(ex.expID, ex); }); // last write wins
+                expenses = [...expSeen.values()];
                 // Migrate old 4-digit serial IDs → 3-digit (QTE26270001 → QTE2627001)
                 transactions = transactions.map(t => {
                     if (t.txnID) {
@@ -4012,6 +4022,36 @@
                 calcExpAmounts();
             }
             toggleChequeFields();
+            // FIX 3: Bill date — max = today (no future dates)
+            const todayStr = new Date().toISOString().split('T')[0];
+            const billDateEl = document.getElementById('expBillDate');
+            if (billDateEl) billDateEl.max = todayStr;
+            // FIX 5: Advance paid date — max = today
+            const advDateEl = document.getElementById('expAdvanceDate');
+            if (advDateEl) advDateEl.max = todayStr;
+            // FIX 6: Pay date — max = today
+            const payDateEl = document.getElementById('expPayDate');
+            if (payDateEl) payDateEl.max = todayStr;
+            // FIX 10: Voucher date — min = bill date (set after modal loads)
+            const tvVouchDate = document.getElementById('tvVoucherDate');
+            if (tvVouchDate) tvVouchDate.max = todayStr;
+            // Also set voucher date min if editing existing expense with bill date
+            if (exp?.billDate && tvVouchDate) tvVouchDate.min = exp.billDate;
+            // Reset TDS custom field visibility
+            const tdsCustomWrap = document.getElementById('expTDSCustomPctWrap');
+            if (tdsCustomWrap) tdsCustomWrap.classList.add('hidden');
+            const tdsCustomPct = document.getElementById('expTDSCustomPct');
+            if (tdsCustomPct) tdsCustomPct.value = '';
+            // Restore Other % if editing
+            if (exp?.tdsApplicable && exp?.tdsPct) {
+                const knownPcts = ['1','2','5','10','30'];
+                const pctVal = String(exp.tdsPct).replace('%','');
+                if (!knownPcts.includes(pctVal)) {
+                    document.getElementById('expTDSPct').value = 'Other';
+                    if (tdsCustomWrap) tdsCustomWrap.classList.remove('hidden');
+                    if (tdsCustomPct) tdsCustomPct.value = pctVal;
+                }
+            }
             document.getElementById('expenseModal').classList.add('show');
         }
 
@@ -4050,7 +4090,10 @@
                 if (!taxableRaw && document.getElementById('expTaxableAmt')) {
                     document.getElementById('expTaxableAmt').value = taxable.toFixed(2);
                 }
-                const tdsPct  = parseFloat(document.getElementById('expTDSPct')?.value)||2;
+                const tdsPctSel = document.getElementById('expTDSPct')?.value;
+                const tdsPct = tdsPctSel === 'Other'
+                    ? (parseFloat(document.getElementById('expTDSCustomPct')?.value)||0)
+                    : (parseFloat(tdsPctSel)||2);
                 tdsAmt = +(taxable * tdsPct / 100).toFixed(2);
                 const tdsEl = document.getElementById('expTDSAmt');
                 // Net after TDS = gross total - TDS (informational display)
@@ -4075,9 +4118,9 @@
 
             // ── NET PAYABLE FORMULA ──────────────────────────────────
             // Net Payable = Bill Amount + CGST + SGST + IGST - TDS - Credit Note
-            const netPayable = +(grossTotal - tdsAmt - cn).toFixed(2);
-            // Balance to Pay = Net Payable - Advance - Other Deductions
-            const balance    = +Math.max(0, netPayable - adv - totalDeductions).toFixed(2);
+            const netPayable = +(grossTotal - tdsAmt - cn - adv).toFixed(2);
+            // Balance to Pay = Net Payable - Other Deductions
+            const balance    = +Math.max(0, netPayable - totalDeductions).toFixed(2);
 
             const balEl = document.getElementById('expBalanceAmt');
             if (balEl) balEl.value = balance.toFixed(2);
@@ -4089,10 +4132,14 @@
             const s2 = document.getElementById('sumTax');
             const s3 = document.getElementById('sumTDS');
             const s4 = document.getElementById('sumNet');
+            const s5 = document.getElementById('sumCN');
+            const s6 = document.getElementById('sumAdv');
             if (s1)  s1.textContent  = fmt(billINR);
             if (s1b) s1b.textContent = fmt(grossTotal);
             if (s2)  s2.textContent  = fmt(totalTax);
             if (s3)  s3.textContent  = fmt(tdsAmt + totalDeductions);
+            if (s5)  s5.textContent  = cn > 0 ? fmt(cn) : '—';
+            if (s6)  s6.textContent  = adv > 0 ? fmt(adv) : '—';
             if (s4)  s4.textContent  = fmt(netPayable);
         }
 
@@ -4109,11 +4156,47 @@
 
         document.getElementById('expTDSApplicable')?.addEventListener('change', function() {
             document.getElementById('expTDSFields').classList.toggle('hidden', !this.checked);
+            if (!this.checked) {
+                // Reset custom pct field when TDS unchecked
+                document.getElementById('expTDSCustomPctWrap')?.classList.add('hidden');
+                const cPct = document.getElementById('expTDSCustomPct');
+                if (cPct) cPct.value = '';
+            }
             calcExpAmounts();
         });
 
+        function onTDSPctChange() {
+            const sel = document.getElementById('expTDSPct');
+            const wrap = document.getElementById('expTDSCustomPctWrap');
+            const customInput = document.getElementById('expTDSCustomPct');
+            const isOther = sel?.value === 'Other';
+            if (wrap) wrap.classList.toggle('hidden', !isOther);
+            if (isOther) {
+                // Clear TDS amount until user enters custom %
+                const tdsEl = document.getElementById('expTDSAmt');
+                const netEl = document.getElementById('expNetAmt');
+                if (tdsEl) tdsEl.value = '';
+                if (netEl) netEl.value = '';
+                if (customInput) customInput.focus();
+            } else {
+                calcExpAmounts();
+            }
+        }
+
+        function updateVoucherDateMin() {
+            const billDate = document.getElementById('expBillDate')?.value;
+            const voucherDate = document.getElementById('tvVoucherDate');
+            if (voucherDate && billDate) voucherDate.min = billDate;
+        }
+
         async function saveExpense(e) {
             e.preventDefault();
+            // Guard against double-save / duplicate on repeated clicks
+            if (window._expSaving) return;
+            window._expSaving = true;
+            const saveBtn = document.querySelector('#expenseForm button[type="submit"]');
+            if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
+            try {
             const tdsOn = document.getElementById('expTDSApplicable').checked;
             const bill  = parseFloat(document.getElementById('expBillAmount').value)||0;
             const rate  = parseFloat(document.getElementById('expExchRate').value)||1;
@@ -4126,7 +4209,7 @@
             const tdsAmt  = tdsOn ? (parseFloat(document.getElementById('expTDSAmt').value)||0) : 0;
             const totalTax = cgst + sgst + igst;
             const grossTotal = billINR + totalTax;          // Total Bill Amount
-            const netPayable = +(grossTotal - tdsAmt - cn).toFixed(2);
+            const netPayable = +(grossTotal - tdsAmt - cn - adv).toFixed(2);
 
             // Calculate deductions
             const deductOn = document.getElementById('expDeductionsApplicable')?.checked || false;
@@ -4137,7 +4220,7 @@
                    (parseFloat(document.getElementById('expOtherDeduction').value)||0))
                 : 0;
 
-            const balance = Math.max(0, netPayable - adv - totalDeductions);
+            const balance = Math.max(0, netPayable - totalDeductions);
 
             // Handle multiple file attachments
             let billAttachments = currentExpense?.billAttachments ? [...currentExpense.billAttachments] : [];
@@ -4160,7 +4243,7 @@
             }
 
             const expObj = {
-                expID:             currentExpense?.expID || 'EXP' + getFinancialYearCode(new Date()) + String(expenses.length+1).padStart(3,'0'),
+                expID:             currentExpense?.expID || 'EXP' + getFinancialYearCode(new Date()) + Date.now().toString(36).slice(-4).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase(),
                 voucherNo:         document.getElementById('expVoucherNo').value,
                 billNo:            document.getElementById('expBillNo').value,
                 billDate:          document.getElementById('expBillDate').value,
@@ -4176,7 +4259,9 @@
                 creditNoteDetails: document.getElementById('expCreditNoteDetails').value,
                 tdsApplicable:     tdsOn,
                 taxableAmt:        tdsOn ? (parseFloat(document.getElementById('expTaxableAmt').value)||0) : 0,
-                tdsPct:            tdsOn ? document.getElementById('expTDSPct').value : 0,
+                tdsPct:            tdsOn ? (document.getElementById('expTDSPct').value === 'Other'
+                                    ? (document.getElementById('expTDSCustomPct')?.value + '%')
+                                    : document.getElementById('expTDSPct').value) : 0,
                 tdsAmt,
                 netAmt:            +(grossTotal - tdsAmt).toFixed(2),
                 netPayable,
@@ -4210,9 +4295,15 @@
             } else {
                 expenses.push(expObj);
             }
-            await saveData('expenses', expenses);
-            closeExpenseModal();
-            renderView();
+                await saveData('expenses', expenses);
+                closeExpenseModal();
+                renderView();
+            } catch(err) {
+                alert('Save failed: ' + err.message);
+            } finally {
+                window._expSaving = false;
+                if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Expense'; }
+            }
         }
 
         function editExpenseById(expID) {
