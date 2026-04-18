@@ -1787,6 +1787,16 @@
 
                 setStatus('Processing data...');
                 transactions    = Array.isArray(txnData)     ? txnData      : [];
+                // Migrate old 4-digit serial IDs → 3-digit (QTE26270001 → QTE2627001)
+                transactions = transactions.map(t => {
+                    if (t.txnID) {
+                        t.txnID = t.txnID.replace(/^([A-Z]+)(\d{4})(\d)(0*)(\d{3})$/, (m,p,fy,z,pad,ser) => {
+                            // Matches prefix+4digitFY+0+optional_zeros+3digits → remove the leading 0
+                            return p + fy + (pad||'') + ser;
+                        });
+                    }
+                    return t;
+                });
                 parties         = Array.isArray(partyData)   ? partyData    : [];
                 settings        = (settingsData && typeof settingsData === 'object' && !Array.isArray(settingsData))
                                 ? settingsData : {};
@@ -2495,20 +2505,21 @@
 
                 // ── Terms & Conditions (Quotation only) ────────────────────
                 if (txn.txnCategory === 'QUOTATION' && txn.terms) {
-                    const termsLines = doc.splitTextToSize(txn.terms, 180);
-                    const termsBlockH = 9 + (termsLines.length * 5) + 12;
-                    if (finalY + termsBlockH > 265) {
-                        doc.addPage();
-                        addHeader(doc, doc.internal.getNumberOfPages());
-                        finalY = 50;
-                    }
-                    doc.setFontSize(9);
-                    doc.setFont(undefined, 'bold');
+                    // Check space for heading
+                    if (finalY + 14 > 272) { doc.addPage(); addHeader(doc, doc.internal.getNumberOfPages()); finalY = 50; }
+                    doc.setFontSize(9); doc.setFont(undefined, 'bold'); doc.setTextColor(0,0,0);
                     doc.text('Terms & Conditions:', 14, finalY);
-                    doc.setFont(undefined, 'normal');
-                    doc.setFontSize(8);
-                    doc.text(termsLines, 14, finalY + 6);
-                    finalY += termsBlockH;
+                    finalY += 7;
+                    doc.setFont(undefined, 'normal'); doc.setFontSize(8);
+                    // Render terms line-by-line with page breaks so finalY stays accurate
+                    const termsLines = doc.splitTextToSize(txn.terms, 180);
+                    const lineH = 4.5;
+                    termsLines.forEach(line => {
+                        if (finalY + lineH > 272) { doc.addPage(); addHeader(doc, doc.internal.getNumberOfPages()); finalY = 50; }
+                        doc.text(line, 14, finalY);
+                        finalY += lineH;
+                    });
+                    finalY += 4;
                 }
 
                 // ── Terms & Conditions (PO only) ───────────────────────────
@@ -2559,7 +2570,8 @@
                         const sigName  = txn.signatoryName || '';
                         const sigDesig = txn.signatoryDesig || '';
                         const sigBlockH = sigName ? 32 : 26;
-                        if (finalY + sigBlockH > 265) {
+                        // Only break page if truly not enough space (≤ 35mm remaining)
+                        if (finalY + sigBlockH > 272) {
                             doc.addPage();
                             addHeader(doc, doc.internal.getNumberOfPages());
                             finalY = 50;
@@ -3815,11 +3827,12 @@
             const list = currentExpense?.billAttachments || [];
             if (!list.length) return;
             let cur = idx;
-            // Build or reuse lightbox
-            let lb = document.getElementById('expAttachLightbox');
-            if (!lb) {
-                lb = document.createElement('div');
-                lb.id = 'expAttachLightbox';
+            // Always recreate lightbox so closures/handlers are fresh
+            const _oldLb = document.getElementById('expAttachLightbox');
+            if (_oldLb) _oldLb.remove();
+            let lb = document.createElement('div');
+            lb.id = 'expAttachLightbox';
+            {
                 lb.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.92);z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center';
                 lb.innerHTML = `
                   <div style="position:absolute;top:12px;right:16px;display:flex;gap:10px;align-items:center">
