@@ -2525,21 +2525,14 @@
                 } catch(e) { console.warn('addImage failed:', e.message); }
             }
 
-            // Company name — vertically centred, left-aligned after logo
-            const textX = logoPlaced ? ML + logoW + 4 : PW/2;
-            const nameAlign = logoPlaced ? 'left' : 'center';
+            // Company name — centred in the remaining space after the logo
+            const textAreaStart = logoPlaced ? ML + logoW + 3 : 0;
+            const textAreaEnd   = PW - MR;
+            const textCentreX   = logoPlaced ? textAreaStart + (textAreaEnd - textAreaStart) / 2 : PW / 2;
 
-            // With GST: name at y=9, GST at y=16 (centred in 26mm)
-            // Without GST: name at y=13 (single line centred)
-            if (co_gst) {
-                doc.setFontSize(13);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
-                doc.text(co.toUpperCase(), textX, 10, {align: nameAlign});
-                doc.setFontSize(7.5);doc.setFont('helvetica','normal');doc.setTextColor(80,80,80);
-                doc.text('GST: '+co_gst, textX, 17, {align: nameAlign});
-            } else {
-                doc.setFontSize(13);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
-                doc.text(co.toUpperCase(), textX, 14, {align: nameAlign});
-            }
+            // Company name only — no GST in work log report
+            doc.setFontSize(13);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
+            doc.text(co.toUpperCase(), textCentreX, 14, {align: 'center'});
 
             // Report title — centred below the header bar
             doc.setFontSize(11);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
