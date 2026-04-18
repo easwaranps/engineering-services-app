@@ -2480,10 +2480,10 @@
             let logoPlaced = false;
             if (logo && logo.startsWith('data:image')) {
                 try {
-                    const ext = logo.includes('image/png')?'PNG':logo.includes('image/svg+xml')?'SVG':'JPEG';
-                    // Use unique alias to avoid jsPDF internal cache issues
-                    const alias = 'logo_' + wlID;
-                    doc.addImage(logo, ext, ML, 3, 18, 16, alias, 'FAST');
+                    // Strip data URL prefix — jsPDF works more reliably with raw base64
+                    const b64 = logo.split(',')[1];
+                    const ext = logo.includes('image/png')?'PNG':'JPEG';
+                    doc.addImage(b64, ext, ML, 2, 18, 18);
                     logoPlaced = true;
                 } catch(e) {
                     console.warn('Logo load failed:', e.message);
