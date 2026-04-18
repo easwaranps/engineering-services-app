@@ -2480,14 +2480,26 @@
             let logoPlaced = false;
             if (logo && logo.startsWith('data:image')) {
                 try {
-                    // Strip data URL prefix — jsPDF works more reliably with raw base64
-                    const b64 = logo.split(',')[1];
-                    const ext = logo.includes('image/png')?'PNG':'JPEG';
-                    doc.addImage(b64, ext, ML, 2, 18, 18);
-                    logoPlaced = true;
+                    // Pre-render via canvas to strip EXIF and get clean PNG — reliable cross-browser
+                    await new Promise((res) => {
+                        const img = new Image();
+                        img.onload = () => {
+                            try {
+                                const canvas = document.createElement('canvas');
+                                canvas.width = img.naturalWidth || img.width;
+                                canvas.height = img.naturalHeight || img.height;
+                                canvas.getContext('2d').drawImage(img, 0, 0);
+                                const pngData = canvas.toDataURL('image/png').split(',')[1];
+                                doc.addImage(pngData, 'PNG', ML, 2, 18, 18);
+                                logoPlaced = true;
+                            } catch(e2) { console.warn('Canvas logo failed:', e2.message); }
+                            res();
+                        };
+                        img.onerror = () => { console.warn('Logo image load error'); res(); };
+                        img.src = logo;
+                    });
                 } catch(e) {
                     console.warn('Logo load failed:', e.message);
-                    logoPlaced = false;
                 }
             }
 
