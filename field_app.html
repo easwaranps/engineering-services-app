@@ -2506,35 +2506,44 @@
         }
 
         function drawPageHeader(){
-            // White background with blue border bottom
+            // White background with blue bottom border
             doc.setFillColor(255,255,255);
             doc.rect(0,0,210,26,'F');
             doc.setDrawColor(15,58,95);doc.setLineWidth(1.2);
             doc.line(0,26,210,26);
 
-            // Logo top-left — only place if real logo loaded (>500 chars of PNG data)
+            // Logo — IMSE logo is ~154×66px (2.33:1 ratio)
+            // At height 16mm → width = 16 × (154/66) ≈ 37mm — too wide for margin
+            // Use height 14mm → width = 14 × 2.33 ≈ 33mm — fits nicely
+            const logoH = 14, logoW = 33;
+            const logoY = (26 - logoH) / 2;   // vertically centred in 26mm bar
             let logoPlaced = false;
             if (logoPng && logoPng.length > 500) {
                 try {
-                    doc.addImage(logoPng, 'PNG', ML, 2, 18, 18);
+                    doc.addImage(logoPng, 'PNG', ML, logoY, logoW, logoH);
                     logoPlaced = true;
                 } catch(e) { console.warn('addImage failed:', e.message); }
             }
 
-            // Company name — bold blue, right of logo
-            doc.setFontSize(14);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
-            doc.text(co.toUpperCase(), logoPlaced ? ML+22 : PW/2, 11, {align: logoPlaced ? 'left' : 'center'});
+            // Company name — vertically centred, left-aligned after logo
+            const textX = logoPlaced ? ML + logoW + 4 : PW/2;
+            const nameAlign = logoPlaced ? 'left' : 'center';
 
-            // GST below company name
-            if(co_gst){
+            // With GST: name at y=9, GST at y=16 (centred in 26mm)
+            // Without GST: name at y=13 (single line centred)
+            if (co_gst) {
+                doc.setFontSize(13);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
+                doc.text(co.toUpperCase(), textX, 10, {align: nameAlign});
                 doc.setFontSize(7.5);doc.setFont('helvetica','normal');doc.setTextColor(80,80,80);
-                doc.text('GST: '+co_gst, logoPlaced ? ML+22 : PW/2, 17, {align: logoPlaced ? 'left' : 'center'});
+                doc.text('GST: '+co_gst, textX, 17, {align: nameAlign});
+            } else {
+                doc.setFontSize(13);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
+                doc.text(co.toUpperCase(), textX, 14, {align: nameAlign});
             }
 
-            // Report title — centred, bold blue, slightly larger
+            // Report title — centred below the header bar
             doc.setFontSize(11);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
             doc.text('TIME SHEET AND WORK DONE REPORT', PW/2, 33, {align:'center'});
-            // Underline the title
             const titleW = doc.getTextWidth('TIME SHEET AND WORK DONE REPORT');
             doc.setDrawColor(15,58,95);doc.setLineWidth(0.4);
             doc.line(PW/2 - titleW/2, 34.5, PW/2 + titleW/2, 34.5);
