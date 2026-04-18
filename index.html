@@ -121,7 +121,7 @@
                 <!-- Row 1: Voucher / Bill info -->
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
                     <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">Voucher No</label>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Bill Log Ref No</label>
                         <input type="text" id="expVoucherNo" placeholder="Auto / Manual" class="w-full px-3 py-2 border rounded-lg text-sm" />
                     </div>
                     <div>
@@ -2558,8 +2558,8 @@
                         // ── QUOTATION: Authorised Signatory only — no bank details ──
                         const sigName  = txn.signatoryName || '';
                         const sigDesig = txn.signatoryDesig || '';
-                        const sigBlockH = sigName ? 36 : 30;
-                        if (finalY + sigBlockH > 275) {
+                        const sigBlockH = sigName ? 32 : 26;
+                        if (finalY + sigBlockH > 265) {
                             doc.addPage();
                             addHeader(doc, doc.internal.getNumberOfPages());
                             finalY = 50;
@@ -2846,7 +2846,7 @@
                 });
 
                 // Expenses sheet data
-                const expenseRows = [['Voucher No','Bill No','Bill Date','Company/Vendor','Description','Currency','Exch Rate',
+                const expenseRows = [['Bill Log Ref No','Bill No','Bill Date','Company/Vendor','Description','Currency','Exch Rate',
                     'Bill Amt','Bill Amt INR','CGST','SGST','IGST','Credit Note','TDS?','Taxable Amt','TDS%','TDS Amt','Net Amt',
                     'Advance Amt','Advance Date','Balance','Pay Status','Pay Mode','Cheque No','Pay Date','Bank','Remark']];
                 expenses.forEach(e => {
@@ -3812,14 +3812,45 @@
         }
 
         function viewExpAttach(idx) {
-            const a = currentExpense?.billAttachments?.[idx];
-            if (!a) return;
-            const w = window.open();
-            if (a.type === 'pdf') {
-                w.document.write(`<html><body style="margin:0"><embed src="${a.data}" type="application/pdf" width="100%" height="100%"/></body></html>`);
-            } else {
-                w.document.write(`<html><body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${a.data}" style="max-width:100%;max-height:100vh;object-fit:contain"/></body></html>`);
+            const list = currentExpense?.billAttachments || [];
+            if (!list.length) return;
+            let cur = idx;
+            // Build or reuse lightbox
+            let lb = document.getElementById('expAttachLightbox');
+            if (!lb) {
+                lb = document.createElement('div');
+                lb.id = 'expAttachLightbox';
+                lb.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.92);z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center';
+                lb.innerHTML = `
+                  <div style="position:absolute;top:12px;right:16px;display:flex;gap:10px;align-items:center">
+                    <span id="expLbCounter" style="color:#fff;font-size:13px"></span>
+                    <button onclick="document.getElementById('expAttachLightbox').remove()" style="color:#fff;font-size:26px;background:none;border:none;cursor:pointer;line-height:1">✕</button>
+                  </div>
+                  <button id="expLbPrev" style="position:absolute;left:16px;top:50%;transform:translateY(-50%);color:#fff;font-size:36px;background:none;border:none;cursor:pointer">‹</button>
+                  <button id="expLbNext" style="position:absolute;right:16px;top:50%;transform:translateY(-50%);color:#fff;font-size:36px;background:none;border:none;cursor:pointer">›</button>
+                  <div id="expLbContent" style="max-width:90%;max-height:88vh;display:flex;align-items:center;justify-content:center"></div>
+                  <div id="expLbName" style="color:#ccc;font-size:12px;margin-top:8px"></div>`;
+                document.body.appendChild(lb);
             }
+            function showSlide(i) {
+                cur = (i + list.length) % list.length;
+                const a = list[cur];
+                const content = document.getElementById('expLbContent');
+                const prevBtn = document.getElementById('expLbPrev');
+                const nextBtn = document.getElementById('expLbNext');
+                document.getElementById('expLbCounter').textContent = (cur+1) + ' / ' + list.length;
+                document.getElementById('expLbName').textContent = a.name || '';
+                prevBtn.style.display = list.length > 1 ? 'block' : 'none';
+                nextBtn.style.display = list.length > 1 ? 'block' : 'none';
+                if (a.type === 'pdf') {
+                    content.innerHTML = `<iframe src="${a.data}" style="width:85vw;height:82vh;border:none;background:#fff" title="${a.name}"></iframe>`;
+                } else {
+                    content.innerHTML = `<img src="${a.data}" style="max-width:100%;max-height:82vh;object-fit:contain;border-radius:4px" alt="${a.name}"/>`;
+                }
+                document.getElementById('expLbPrev').onclick = () => showSlide(cur - 1);
+                document.getElementById('expLbNext').onclick = () => showSlide(cur + 1);
+            }
+            showSlide(cur);
         }
 
         function removeExpAttach(idx) {
@@ -5838,18 +5869,7 @@
             updatePartyDropdown();
 
             if (txn) {
-                document.getElementById('txnCategory').value  = txn.txnCategory;
-                document.getElementById('txnDirection').value = txn.txnDirection;
-                document.getElementById('txnParty').value     = txn.partyName;
-                document.getElementById('txnCurrency').value  = txn.currency || 'INR';
-                document.getElementById('txnStatus').value    = txn.status;
                 (txn.items || []).forEach(item => addLineItem(item));
-                // Set reference AFTER updateReferenceField populates the dropdown
-            } else {
-                // New transaction defaults — leave category empty so user selects
-                document.getElementById('txnCategory').value  = '';
-                document.getElementById('txnDirection').value = 'Outgoing';
-                document.getElementById('txnStatus').value    = 'Draft';
             }
 
             // Wire change listeners (remove old ones by cloning elements)
@@ -5863,16 +5883,32 @@
             document.getElementById('txnDirection').addEventListener('change', () => { updatePartyDropdown(); updateReferenceField(); updateTxnBankSection(); });
             document.getElementById('txnStatus').addEventListener('change', toggleSupportingDocs);
 
-            // Populate reference dropdown first, THEN set saved value
+            if (txn) {
+                // Restore values AFTER clone (clone resets them)
+                document.getElementById('txnCategory').value  = txn.txnCategory;
+                document.getElementById('txnDirection').value = txn.txnDirection;
+                document.getElementById('txnParty').value     = txn.partyName;
+                document.getElementById('txnCurrency').value  = txn.currency || 'INR';
+                document.getElementById('txnStatus').value    = txn.status;
+            } else {
+                // New transaction defaults — leave category empty so user selects
+                document.getElementById('txnCategory').value  = '';
+                document.getElementById('txnDirection').value = 'Outgoing';
+                document.getElementById('txnStatus').value    = 'Draft';
+            }
+
+            // Populate reference dropdown based on current category+direction, THEN restore saved values
             updateReferenceField();
             if (txn && txn.reference) {
                 document.getElementById('txnReference').value = txn.reference;
-                // Try to match reference type from saved text
+                // Restore saved reference type
                 const sel = document.getElementById('txnReferenceType');
                 const key = txn.txnCategory + '_' + txn.txnDirection;
                 const opts = REFERENCE_OPTIONS[key] || [];
                 const match = opts.find(o => txn.reference.startsWith(o));
                 if (match) sel.value = match;
+                // Also show freeform reference type if no match (manual entry)
+                if (!match && txn.referenceType) sel.value = txn.referenceType;
             }
 
             // Load vendor code if exists
@@ -6146,6 +6182,7 @@
                     txnDirection: document.getElementById('txnDirection').value,
                     partyName: document.getElementById('txnParty').value,
                     reference: document.getElementById('txnReference').value,
+                    referenceType: document.getElementById('txnReferenceType')?.value || '',
                     vendorCode: document.getElementById('txnVendorCode')?.value || '',
                     poNumber: document.getElementById('txnPoNumber')?.value || '',
                     poDate: document.getElementById('txnPoDate')?.value || '',
