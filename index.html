@@ -1667,18 +1667,47 @@
             }
         }
 
+        async function refreshTokenIfNeeded() {
+            // Silently refresh the OAuth token
+            return new Promise((resolve, reject) => {
+                tokenClient.requestAccessToken({
+                    prompt: 'none',
+                    callback: (response) => {
+                        if (response.error) { reject(new Error('Token refresh failed: ' + response.error)); return; }
+                        if (response.access_token) {
+                            accessToken = response.access_token;
+                            try { gapi.client.setToken({ access_token: accessToken }); } catch(e) {}
+                            console.log('🔑 Token refreshed successfully');
+                        }
+                        resolve();
+                    }
+                });
+            });
+        }
+
         async function saveFileToDrive(fileName, fileData) {
             const folderId = await getOrCreateAppFolder();
             const jsonStr  = JSON.stringify(fileData);
             const blob     = new Blob([jsonStr], { type: 'application/json' });
-            const authHdr  = { 'Authorization': `Bearer ${accessToken}` };
+            let authHdr    = { 'Authorization': `Bearer ${accessToken}` };
 
             // Check if file already exists in folder
             const q = encodeURIComponent(`name='${fileName}' and '${folderId}' in parents and trashed=false`);
-            const listRes = await fetch(
+            let listRes = await fetch(
                 `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)&spaces=drive`,
                 { headers: authHdr }
             );
+            // Auto-refresh token on 401 and retry
+            if (listRes.status === 401) {
+                console.warn('⏰ Token expired during save, refreshing...');
+                try { await refreshTokenIfNeeded(); } catch(e) { throw new Error('Session expired. Please sign in again.'); }
+                authHdr = { 'Authorization': `Bearer ${accessToken}` };
+                listRes = await fetch(
+                    `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)&spaces=drive`,
+                    { headers: authHdr }
+                );
+            }
+            if (!listRes.ok) throw new Error(`Drive list failed (${listRes.status}) for ${fileName}`);
             const listData = await listRes.json();
             const existingId = listData.files && listData.files.length > 0 ? listData.files[0].id : null;
 
@@ -3836,15 +3865,35 @@
             const lb = document.createElement('div');
             lb.id = 'expAttachLightbox';
             lb.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.92);z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center';
-            lb.innerHTML = `
-              <div style="position:absolute;top:12px;right:16px;display:flex;gap:10px;align-items:center">
-                <span id="expLbCounter" style="color:#fff;font-size:14px;font-weight:bold"></span>
-                <button onclick="document.getElementById('expAttachLightbox').remove();window._lbList=null;" style="color:#fff;font-size:28px;background:none;border:none;cursor:pointer;line-height:1">✕</button>
-              </div>
-              <button id="expLbPrev" onclick="expLbNav(-1)" style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:#fff;font-size:48px;background:rgba(255,255,255,0.15);border:none;cursor:pointer;border-radius:50%;width:52px;height:52px;display:flex;align-items:center;justify-content:center;line-height:1">‹</button>
-              <button id="expLbNext" onclick="expLbNav(1)"  style="position:absolute;right:12px;top:50%;transform:translateY(-50%);color:#fff;font-size:48px;background:rgba(255,255,255,0.15);border:none;cursor:pointer;border-radius:50%;width:52px;height:52px;display:flex;align-items:center;justify-content:center;line-height:1">›</button>
-              <div id="expLbContent" style="max-width:90%;max-height:84vh;display:flex;align-items:center;justify-content:center"></div>
-              <div id="expLbName" style="color:#ccc;font-size:12px;margin-top:8px;max-width:80%;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>`;
+            // Build DOM nodes — avoids onclick blocking in dynamically created innerHTML
+            const lbTop = document.createElement('div');
+            lbTop.style.cssText = 'position:absolute;top:12px;right:16px;display:flex;gap:10px;align-items:center';
+            const lbCounter = document.createElement('span');
+            lbCounter.id = 'expLbCounter';
+            lbCounter.style.cssText = 'color:#fff;font-size:14px;font-weight:bold';
+            const lbClose = document.createElement('button');
+            lbClose.textContent = '✕';
+            lbClose.style.cssText = 'color:#fff;font-size:28px;background:none;border:none;cursor:pointer;line-height:1';
+            lbClose.addEventListener('click', () => { document.getElementById('expAttachLightbox')?.remove(); window._lbList=null; });
+            lbTop.appendChild(lbCounter); lbTop.appendChild(lbClose);
+            const lbPrev = document.createElement('button');
+            lbPrev.id = 'expLbPrev';
+            lbPrev.textContent = '‹';
+            lbPrev.style.cssText = 'position:absolute;left:12px;top:50%;transform:translateY(-50%);color:#fff;font-size:48px;background:rgba(255,255,255,0.2);border:none;cursor:pointer;border-radius:50%;width:56px;height:56px;line-height:1;display:none';
+            lbPrev.addEventListener('click', () => expLbNav(-1));
+            const lbNext = document.createElement('button');
+            lbNext.id = 'expLbNext';
+            lbNext.textContent = '›';
+            lbNext.style.cssText = 'position:absolute;right:12px;top:50%;transform:translateY(-50%);color:#fff;font-size:48px;background:rgba(255,255,255,0.2);border:none;cursor:pointer;border-radius:50%;width:56px;height:56px;line-height:1;display:none';
+            lbNext.addEventListener('click', () => expLbNav(1));
+            const lbContent = document.createElement('div');
+            lbContent.id = 'expLbContent';
+            lbContent.style.cssText = 'max-width:90%;max-height:84vh;display:flex;align-items:center;justify-content:center';
+            const lbName = document.createElement('div');
+            lbName.id = 'expLbName';
+            lbName.style.cssText = 'color:#ccc;font-size:12px;margin-top:8px;max-width:80%;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+            lb.appendChild(lbTop); lb.appendChild(lbPrev); lb.appendChild(lbNext);
+            lb.appendChild(lbContent); lb.appendChild(lbName);
             document.body.appendChild(lb);
             expLbShow(idx);
         }
