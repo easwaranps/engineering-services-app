@@ -2468,6 +2468,26 @@
         const SIG_H=26;
         const CONTENT_BOTTOM=297-SIG_H-8;
 
+        // ── Pre-convert logo to clean PNG via canvas (async, before any PDF drawing) ──
+        let logoPng = null;
+        const rawLogo = appSettings?.logoData || DEFAULT_LOGO || null;
+        if (rawLogo && rawLogo.startsWith('data:image')) {
+            logoPng = await new Promise((res) => {
+                const img = new Image();
+                img.onload = () => {
+                    try {
+                        const canvas = document.createElement('canvas');
+                        canvas.width  = img.naturalWidth  || img.width  || 100;
+                        canvas.height = img.naturalHeight || img.height || 100;
+                        canvas.getContext('2d').drawImage(img, 0, 0);
+                        res(canvas.toDataURL('image/png').split(',')[1]);
+                    } catch(e) { console.warn('Canvas logo error:', e.message); res(null); }
+                };
+                img.onerror = () => { console.warn('Logo img load error'); res(null); };
+                img.src = rawLogo;
+            });
+        }
+
         function drawPageHeader(){
             // White background with blue border bottom
             doc.setFillColor(255,255,255);
@@ -2475,32 +2495,13 @@
             doc.setDrawColor(15,58,95);doc.setLineWidth(1.2);
             doc.line(0,26,210,26);
 
-            // Logo top-left
-            const logo = appSettings?.logoData || DEFAULT_LOGO || null;
+            // Logo top-left — use pre-converted PNG (no async needed here)
             let logoPlaced = false;
-            if (logo && logo.startsWith('data:image')) {
+            if (logoPng) {
                 try {
-                    // Pre-render via canvas to strip EXIF and get clean PNG — reliable cross-browser
-                    await new Promise((res) => {
-                        const img = new Image();
-                        img.onload = () => {
-                            try {
-                                const canvas = document.createElement('canvas');
-                                canvas.width = img.naturalWidth || img.width;
-                                canvas.height = img.naturalHeight || img.height;
-                                canvas.getContext('2d').drawImage(img, 0, 0);
-                                const pngData = canvas.toDataURL('image/png').split(',')[1];
-                                doc.addImage(pngData, 'PNG', ML, 2, 18, 18);
-                                logoPlaced = true;
-                            } catch(e2) { console.warn('Canvas logo failed:', e2.message); }
-                            res();
-                        };
-                        img.onerror = () => { console.warn('Logo image load error'); res(); };
-                        img.src = logo;
-                    });
-                } catch(e) {
-                    console.warn('Logo load failed:', e.message);
-                }
+                    doc.addImage(logoPng, 'PNG', ML, 2, 18, 18);
+                    logoPlaced = true;
+                } catch(e) { console.warn('addImage failed:', e.message); }
             }
 
             // Company name — bold blue, right of logo
