@@ -365,6 +365,11 @@
         </div>
     </div>
 
+    <!-- Director Expense Modal -->
+    <div id="dirExpModal" class="modal">
+        <!-- content injected by openDirExpModal() -->
+    </div>
+
     <!-- Attach Payment Receipt Modal -->
     <div id="attachReceiptModal" class="modal">
         <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md m-4">
@@ -926,6 +931,7 @@
         let parties = [];
         let settings = {};
         let expenses = [];        // Expense & Bills module
+        let directorExpenses = []; // Director Expenses module
         let bankAccounts = [];    // Bank accounts for income & expense tracking
         let staff = [];           // Staff master (office + field technicians)
         let projectExpenses = []; // Project food/travel reimbursement
@@ -1844,6 +1850,8 @@
                 staff           = Array.isArray(staffData)   ? staffData    : [];
                 projectExpenses = Array.isArray(projExpData) ? projExpData  : [];
                 workLogs        = Array.isArray(workLogData)   ? workLogData   : [];
+                const dirExpData    = await loadFileFromDrive('directorExpenses.json');
+                directorExpenses    = Array.isArray(dirExpData)    ? dirExpData    : [];
                 payslips        = Array.isArray(payslipData)   ? payslipData   : [];
 
                 console.log('✅ Data loaded — transactions:', transactions.length,
@@ -3195,6 +3203,7 @@
                             <button onclick="switchView('expenses')" class="px-4 py-2 rounded-lg ${currentView === 'expenses' ? 'bg-orange-100 text-orange-700' : 'text-gray-600 hover:bg-gray-100'}">💸 Expenses</button>
                             <button onclick="switchView('staff')" class="px-4 py-2 rounded-lg ${currentView === 'staff' ? 'bg-teal-100 text-teal-700' : 'text-gray-600 hover:bg-gray-100'}">👥 Staff</button>
                             <button onclick="switchView('projexp')" class="px-4 py-2 rounded-lg ${currentView === 'projexp' ? 'bg-yellow-100 text-yellow-700' : 'text-gray-600 hover:bg-gray-100'}">🧳 Projects</button>
+                            <button onclick="switchView('direxp')" class="px-4 py-2 rounded-lg ${currentView === 'direxp' ? 'bg-rose-100 text-rose-700' : 'text-gray-600 hover:bg-gray-100'}">👔 Directors</button>
                             <button onclick="switchView('tax')" class="px-4 py-2 rounded-lg ${currentView === 'tax' ? 'bg-red-100 text-red-700' : 'text-gray-600 hover:bg-gray-100'}">🧾 Tax</button>
                             <button onclick="switchView('mis')" class="px-4 py-2 rounded-lg ${currentView === 'mis' ? 'bg-green-100 text-green-700' : 'text-gray-600 hover:bg-gray-100'}">📊 MIS Report</button>
                             <button onclick="switchView('parties')" class="px-4 py-2 rounded-lg ${currentView === 'parties' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Parties</button>
@@ -3235,6 +3244,7 @@
             else if (currentView === 'expenses') renderExpenses(content);
             else if (currentView === 'staff') renderStaff(content);
             else if (currentView === 'projexp') renderProjectExpenses(content);
+            else if (currentView === 'direxp')  renderDirectorExpenses(content);
             else if (currentView === 'worklogs') renderWorkLogs(content);
             else if (currentView === 'tax')      renderTaxCompliance(content);
             else if (currentView === 'mis')      renderMIS(content);
@@ -5566,6 +5576,14 @@
                             <label class="block text-sm font-semibold mb-2">MSME Registration Number</label>
                             <input type="text" id="msmeNumber" value="${settings.msmeNumber || ''}" placeholder="e.g. UDYAM-MH-00-0000000" class="w-full px-4 py-2 border rounded-lg" />
                         </div>
+                        <div>
+                            <label class="block text-sm font-semibold mb-2">👔 Director 1 Name</label>
+                            <input type="text" id="settDir1Name" value="${settings.director1Name || ''}" placeholder="e.g. Mr. Easwaran P S" class="w-full px-4 py-2 border rounded-lg" />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-semibold mb-2">👔 Director 2 Name</label>
+                            <input type="text" id="settDir2Name" value="${settings.director2Name || ''}" placeholder="e.g. Ms. Priya K" class="w-full px-4 py-2 border rounded-lg" />
+                        </div>
                         <div class="md:col-span-2">
                             <label class="block text-sm font-semibold mb-2">Company Address</label>
                             <textarea id="companyAddress" rows="3" class="w-full px-4 py-2 border rounded-lg">${settings.companyAddress || ''}</textarea>
@@ -6739,6 +6757,8 @@
                     gstNumber: document.getElementById('companyGST').value,
                     companyAddress: document.getElementById('companyAddress').value,
                     msmeNumber: document.getElementById('msmeNumber')?.value || settings.msmeNumber || '',
+                    director1Name: document.getElementById('settDir1Name')?.value || settings.director1Name || '',
+                    director2Name: document.getElementById('settDir2Name')?.value || settings.director2Name || '',
                     spreadsheetId: settings.spreadsheetId, // Preserve spreadsheet ID
                     logoData: settings.logoData || null,   // Preserve logo
                     // Preserve old bank fields if they exist (for backward compatibility with old PDFs)
@@ -8159,6 +8179,870 @@
         // ════════════════════════════════════════════════════════════════════
 
         let currentProjExp = null;
+
+
+        // ══════════════════════════════════════════════════════════════
+        // DIRECTOR EXPENSES MODULE
+        // ══════════════════════════════════════════════════════════════
+        let _currentDirExp = null;
+        const DIR_NAMES    = ['Director 1', 'Director 2']; // overridden by settings
+
+        function getDirNames() {
+            return [
+                settings.director1Name || 'Director 1',
+                settings.director2Name || 'Director 2'
+            ];
+        }
+
+        function renderDirectorExpenses(content) {
+            const dirs = getDirNames();
+            const today = new Date();
+            const ym    = (today.getFullYear()) + '-' + String(today.getMonth()+1).padStart(2,'0');
+            const filterDir  = window._dirFilter?.dir  || 'all';
+            const filterMonth= window._dirFilter?.month|| ym;
+            const filterProj = (window._dirFilter?.proj||'').toLowerCase();
+
+            const fmtC = n => '₹'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
+            const filtered = directorExpenses.filter(d => {
+                const mDir = filterDir === 'all' || d.director === filterDir;
+                const mMon = !filterMonth || (d.expDate||'').startsWith(filterMonth);
+                const mPrj = !filterProj || (d.projectNo||'').toLowerCase().includes(filterProj) || (d.description||'').toLowerCase().includes(filterProj);
+                return mDir && mMon && mPrj;
+            }).sort((a,b)=>(b.expDate||'').localeCompare(a.expDate||''));
+
+            // Monthly totals per director
+            const totals = {};
+            dirs.forEach((d,i) => {
+                const key = 'dir'+(i+1);
+                const rows = filtered.filter(r=>r.director===key);
+                totals[key] = {
+                    total: rows.reduce((s,r)=>s+(parseFloat(r.amount)||0),0),
+                    reimbursed: rows.filter(r=>r.reimbursed).reduce((s,r)=>s+(parseFloat(r.reimbursedAmt||r.amount)||0),0),
+                    count: rows.length
+                };
+            });
+            totals.all = {
+                total: filtered.reduce((s,r)=>s+(parseFloat(r.amount)||0),0),
+                reimbursed: filtered.filter(r=>r.reimbursed).reduce((s,r)=>s+(parseFloat(r.reimbursedAmt||r.amount)||0),0),
+                count: filtered.length
+            };
+
+            content.innerHTML = `
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
+                <div>
+                    <h2 class="text-2xl font-bold text-gray-800">👔 Director Expenses</h2>
+                    <p class="text-sm text-gray-500 mt-1">Record, track and reconcile expenses by director — monthly</p>
+                </div>
+                <div class="flex gap-2 flex-wrap">
+                    <button onclick="openDirExpModal()" class="px-5 py-2 bg-rose-600 text-white rounded-xl hover:bg-rose-700 font-semibold">+ New Entry</button>
+                    <button onclick="dirExpReconPDF('${filterMonth}')" class="px-4 py-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 font-medium text-sm">📄 Monthly Recon PDF</button>
+                    <button onclick="dirExpExportCSV()" class="px-4 py-2 bg-green-600 text-white rounded-xl hover:bg-green-700 font-medium text-sm">📊 Export CSV</button>
+                </div>
+            </div>
+
+            <!-- Summary cards -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                ${dirs.map((name,i)=>{const k='dir'+(i+1);const t=totals[k];const bal=t.total-t.reimbursed;return`
+                <div class="bg-white border-2 ${i===0?'border-rose-200':'border-indigo-200'} rounded-2xl p-4 shadow-sm">
+                    <div class="text-xs font-bold ${i===0?'text-rose-600':'text-indigo-600'} uppercase mb-1">${name}</div>
+                    <div class="text-xl font-bold text-gray-800">${fmtC(t.total)}</div>
+                    <div class="text-xs text-gray-500 mt-1">${t.count} entries</div>
+                    <div class="flex justify-between mt-2 text-xs">
+                        <span class="text-green-600">Reimb: ${fmtC(t.reimbursed)}</span>
+                        <span class="${bal>0?'text-red-600':'text-gray-400'}">Pending: ${fmtC(bal)}</span>
+                    </div>
+                </div>`}).join('')}
+                <div class="bg-white border-2 border-gray-200 rounded-2xl p-4 shadow-sm">
+                    <div class="text-xs font-bold text-gray-600 uppercase mb-1">Combined Total</div>
+                    <div class="text-xl font-bold text-gray-800">${fmtC(totals.all.total)}</div>
+                    <div class="text-xs text-gray-500 mt-1">${totals.all.count} entries</div>
+                    <div class="flex justify-between mt-2 text-xs">
+                        <span class="text-green-600">Reimb: ${fmtC(totals.all.reimbursed)}</span>
+                        <span class="text-red-600">Pending: ${fmtC(totals.all.total-totals.all.reimbursed)}</span>
+                    </div>
+                </div>
+                <div class="bg-gradient-to-br from-rose-500 to-indigo-600 rounded-2xl p-4 shadow-sm text-white">
+                    <div class="text-xs font-bold opacity-80 uppercase mb-1">Unreimbursed</div>
+                    <div class="text-xl font-bold">${fmtC(totals.all.total-totals.all.reimbursed)}</div>
+                    <div class="text-xs opacity-70 mt-1">Pending reimbursement</div>
+                </div>
+                <div class="bg-gradient-to-br from-blue-600 to-blue-800 rounded-2xl p-4 shadow-sm text-white">
+                    <div class="text-xs font-bold opacity-80 uppercase mb-1">ITC This Month</div>
+                    <div class="text-xl font-bold">${fmtC(directorExpenses.filter(d=>(d.expDate||'').startsWith(filterMonth)&&d.gstApplicable&&d.itcEligible!=='blocked'&&d.itcEligible!=='none').reduce((s,r)=>s+(parseFloat(r.itcAmt)||0),0))}</div>
+                    <div class="text-xs opacity-70 mt-1">GST Input Tax Credit</div>
+                </div>
+            </div>
+
+            <!-- Filters -->
+            <div class="bg-white border border-gray-200 rounded-xl p-4 mb-4 flex flex-wrap gap-3 items-center">
+                <select onchange="window._dirFilter={...(window._dirFilter||{}),dir:this.value};renderView()" class="px-3 py-2 border rounded-lg text-sm">
+                    <option value="all" ${filterDir==='all'?'selected':''}>All Directors</option>
+                    ${dirs.map((n,i)=>`<option value="dir${i+1}" ${filterDir==='dir'+(i+1)?'selected':''}>${n}</option>`).join('')}
+                </select>
+                <input type="month" value="${filterMonth}" onchange="window._dirFilter={...(window._dirFilter||{}),month:this.value};renderView()" class="px-3 py-2 border rounded-lg text-sm"/>
+                <input type="text" placeholder="Search project / description…" value="${filterProj}" oninput="window._dirFilter={...(window._dirFilter||{}),proj:this.value};renderView()" class="px-3 py-2 border rounded-lg text-sm flex-1 min-w-40"/>
+                <button onclick="window._dirFilter={};renderView()" class="px-3 py-2 text-xs text-gray-500 border rounded-lg hover:bg-gray-50">Clear</button>
+            </div>
+
+            <!-- Table -->
+            <div class="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="bg-rose-600 text-white">
+                            <th class="px-3 py-3 text-left text-xs font-semibold w-8"></th>
+                            <th class="px-3 py-3 text-left text-xs font-semibold">Date</th>
+                            <th class="px-3 py-3 text-left text-xs font-semibold">Director</th>
+                            <th class="px-3 py-3 text-left text-xs font-semibold">Category</th>
+                            <th class="px-3 py-3 text-left text-xs font-semibold">Description</th>
+                            <th class="px-3 py-3 text-left text-xs font-semibold">Project</th>
+                            <th class="px-3 py-3 text-left text-xs font-semibold">Mode</th>
+                            <th class="px-3 py-3 text-right text-xs font-semibold">Amount</th>
+                            <th class="px-3 py-3 text-center text-xs font-semibold">Reimb.</th>
+                            <th class="px-3 py-3 text-right text-xs font-semibold">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${filtered.length === 0 ? `<tr><td colspan="10" class="px-4 py-12 text-center text-gray-400">No entries found. Click + New Entry to add.</td></tr>` :
+                            filtered.map(d => {
+                                const safeId = d.deID.replace(/'/g,"\'");
+                                const dirIdx = d.director === 'dir1' ? 0 : 1;
+                                const dirName = dirs[dirIdx] || d.director;
+                                const attCount = (d.attachments||[]).length;
+                                const rowId = 'de_'+d.deID.replace(/[^a-zA-Z0-9]/g,'_');
+                                return `
+                                <tr class="border-b hover:bg-rose-50 cursor-pointer ${d.reimbursed?'bg-green-50':''}" onclick="toggleDirExpDetail('${rowId}')">
+                                    <td class="px-2 py-2 text-center"><span id="${rowId}_arrow" style="font-size:10px;color:#9ca3af;display:inline-block;transition:transform .2s">▶</span></td>
+                                    <td class="px-3 py-2 whitespace-nowrap text-xs text-gray-600">${d.expDate||'—'}</td>
+                                    <td class="px-3 py-2"><span class="text-xs font-semibold px-2 py-0.5 rounded-full ${dirIdx===0?'bg-rose-100 text-rose-700':'bg-indigo-100 text-indigo-700'}">${dirName}</span></td>
+                                    <td class="px-3 py-2 text-xs">${d.category||'—'}</td>
+                                    <td class="px-3 py-2 text-xs" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${d.description||''}">${d.description||'—'}</td>
+                                    <td class="px-3 py-2 text-xs ${d.projectNo?'text-blue-600 font-medium':''}">${d.projectNo||'—'}</td>
+                                    <td class="px-3 py-2 text-xs">${d.payMode||'—'}</td>
+                                    <td class="px-3 py-2 text-right font-semibold text-gray-800">${fmtC(d.amount)}</td>
+                                    <td class="px-3 py-2 text-center">
+                                        ${d.reimbursed
+                                            ? `<span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-semibold">✓ Paid</span>`
+                                            : `<button onclick="event.stopPropagation();markDirExpReimbursed('${safeId}')" class="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full hover:bg-orange-200">Mark Paid</button>`}
+                                    </td>
+                                    <td class="px-3 py-2 text-right" onclick="event.stopPropagation()">
+                                        <div class="flex items-center justify-end gap-1">
+                                            ${attCount>0?`<button onclick="viewDirExpAttach('${safeId}',0)" class="text-blue-500 hover:text-blue-700 text-xs">📎${attCount}</button>`:''}
+                                            <button onclick="openDirExpModal('${safeId}')" class="text-indigo-600 hover:text-indigo-800 text-xs font-medium">Edit</button>
+                                            <button onclick="deleteDirExp('${safeId}')" class="text-red-500 hover:text-red-700 text-xs">Del</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                <tr id="${rowId}" class="hidden">
+                                    <td colspan="10" style="padding:0;border-bottom:2px solid #fecdd3">
+                                        <div style="background:#fff1f2;padding:12px 16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px">
+                                            <div>
+                                                <p style="font-size:10px;font-weight:700;color:#9f1239;letter-spacing:.05em;margin-bottom:4px">EXPENSE DETAILS</p>
+                                                <p style="font-size:12px"><span class="text-gray-500">Amount:</span> <strong>${fmtC(d.amount)}</strong></p>
+                                                ${d.gstApplicable ? `
+                                <p style="font-size:12px"><span class="text-gray-500">GST:</span> <strong>${fmtC(d.gstAmt||0)}</strong></p>
+                                ${d.cgstAmt||d.sgstAmt?`<p style="font-size:11px;color:#6b7280">CGST: ${fmtC(d.cgstAmt)} | SGST: ${fmtC(d.sgstAmt)}</p>`:''}
+                                ${d.igstAmt?`<p style="font-size:11px;color:#6b7280">IGST: ${fmtC(d.igstAmt)}</p>`:''}
+                                ${d.itcAmt>0?`<p style="font-size:12px"><span class="text-gray-500">ITC Eligible:</span> <strong class="text-green-700">${fmtC(d.itcAmt)}</strong></p>`:''}
+                                ${d.vendorGSTIN?`<p style="font-size:11px;color:#6b7280">GSTIN: ${d.vendorGSTIN}</p>`:''}
+                                ${d.billNo?`<p style="font-size:11px;color:#6b7280">Bill No: ${d.billNo} ${d.billDate||''}</p>`:''}
+                                ` : `<p style="font-size:12px;color:#9ca3af">No GST bill</p>`}
+                                                <p style="font-size:12px"><span class="text-gray-500">Mode:</span> ${d.payMode||'—'}${d.cardLast4?' ****'+d.cardLast4:''}</p>
+                                                ${d.refNo?`<p style="font-size:12px"><span class="text-gray-500">Ref/TXN No:</span> ${d.refNo}</p>`:''}
+                                            </div>
+                                            <div>
+                                                <p style="font-size:10px;font-weight:700;color:#9f1239;letter-spacing:.05em;margin-bottom:4px">REIMBURSEMENT</p>
+                                                <p style="font-size:12px"><span class="text-gray-500">Status:</span> <strong class="${d.reimbursed?'text-green-600':'text-orange-600'}">${d.reimbursed?'Reimbursed':'Pending'}</strong></p>
+                                                ${d.reimbursed?`<p style="font-size:12px"><span class="text-gray-500">Reimb. Amt:</span> ${fmtC(d.reimbursedAmt||d.amount)}</p>`:''}
+                                                ${d.reimbursed&&d.reimbursedDate?`<p style="font-size:12px"><span class="text-gray-500">Date:</span> ${d.reimbursedDate}</p>`:''}
+                                                ${d.linkedExpID?`<p style="font-size:12px"><span class="text-gray-500">Linked Exp:</span> <span class="text-blue-600">${d.linkedExpID}</span></p>`:''}
+                                            </div>
+                                            <div>
+                                                <p style="font-size:10px;font-weight:700;color:#9f1239;letter-spacing:.05em;margin-bottom:4px">PROJECT / NOTES</p>
+                                                ${d.projectNo?`<p style="font-size:12px"><span class="text-gray-500">Project:</span> <strong class="text-blue-700">${d.projectNo}</strong></p>`:''}
+                                                ${d.notes?`<p style="font-size:12px"><span class="text-gray-500">Notes:</span> ${d.notes}</p>`:''}
+                                                ${d.vendor?`<p style="font-size:12px"><span class="text-gray-500">Vendor:</span> ${d.vendor}</p>`:''}
+                                                ${attCount>0?`<button onclick="viewDirExpAttach('${safeId}',0)" style="font-size:11px;color:#2563eb;margin-top:4px">📎 ${attCount} attachment${attCount>1?'s':''}</button>`:''}
+                                            </div>
+                                        </div>
+                                    </td>
+                                </tr>`;
+                            }).join('')}
+                    </tbody>
+                </table>
+            </div>`;
+        }
+
+        function toggleDirExpDetail(id) {
+            const row = document.getElementById(id);
+            const arrow = document.getElementById(id+'_arrow');
+            if (!row) return;
+            const hidden = row.classList.toggle('hidden');
+            if (arrow) arrow.style.transform = hidden ? '' : 'rotate(90deg)';
+        }
+
+        function openDirExpModal(deID = null) {
+            const exp = deID ? directorExpenses.find(d => d.deID === deID) : null;
+            _currentDirExp = exp ? JSON.parse(JSON.stringify(exp)) : null;
+            const dirs = getDirNames();
+            const today = new Date().toISOString().split('T')[0];
+
+            document.getElementById('dirExpModal').innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl mx-4 my-4 max-h-screen overflow-y-auto">
+                <div class="bg-gradient-to-r from-rose-600 to-indigo-600 p-5 text-white flex justify-between items-center sticky top-0 z-10">
+                    <h2 class="text-lg font-bold">${exp?'Edit':'New'} Director Expense</h2>
+                    <button onclick="closeDirExpModal()" class="text-white text-2xl font-bold leading-none">✕</button>
+                </div>
+                <form id="dirExpForm" onsubmit="saveDirExp(event)" class="p-5 space-y-4">
+                    <!-- Director + Date + Category -->
+                    <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Director <span class="text-red-500">*</span></label>
+                            <select id="deDirector" class="w-full px-3 py-2 border rounded-lg text-sm" required>
+                                <option value="">-- Select --</option>
+                                ${dirs.map((n,i)=>`<option value="dir${i+1}" ${exp?.director==='dir'+(i+1)?'selected':''}>${n}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Expense Date <span class="text-red-500">*</span></label>
+                            <input type="date" id="deDate" max="${today}" value="${exp?.expDate||today}" class="w-full px-3 py-2 border rounded-lg text-sm" required/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Category <span class="text-red-500">*</span></label>
+                            <select id="deCategory" class="w-full px-3 py-2 border rounded-lg text-sm" required>
+                                <option value="">-- Select --</option>
+                                ${['Travel','Accommodation','Meals & Entertainment','Fuel','Office Supplies','Client Meeting','Software/Subscription','Communication','Medical','Training','Gifts & Hospitality','Vehicle Maintenance','Other'].map(c=>`<option value="${c}" ${exp?.category===c?'selected':''}>${c}</option>`).join('')}
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Description + Vendor -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Description <span class="text-red-500">*</span></label>
+                            <input type="text" id="deDesc" value="${exp?.description||''}" placeholder="Brief description of expense" class="w-full px-3 py-2 border rounded-lg text-sm" required/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Vendor / Merchant</label>
+                            <input type="text" id="deVendor" value="${exp?.vendor||''}" placeholder="e.g. Taj Hotel, Swiggy" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                    </div>
+
+                    <!-- Amount + Project -->
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Total Bill Amount (₹) <span class="text-red-500">*</span></label>
+                            <input type="number" id="deAmount" value="${exp?.amount||''}" min="0" step="0.01" placeholder="0.00" class="w-full px-3 py-2 border rounded-lg text-sm" required oninput="calcDirExpNet()"/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Taxable Amount (ex-GST)</label>
+                            <input type="number" id="deNetAmt" value="${exp?.netAmt||''}" min="0" step="0.01" placeholder="Auto" class="w-full px-3 py-2 border rounded-lg bg-gray-50 text-sm" readonly/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Total GST</label>
+                            <input type="number" id="deGSTTotal" placeholder="Auto" class="w-full px-3 py-2 border rounded-lg bg-gray-50 text-sm" readonly/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Project No.</label>
+                            <input type="text" id="deProjectNo" value="${exp?.projectNo||''}" placeholder="e.g. PJT-376" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                    </div>
+
+                    <!-- GST Details Section -->
+                    <div class="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                        <div class="flex items-center gap-3 mb-3">
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" id="deGSTApplicable" class="w-4 h-4 accent-blue-600" onchange="toggleDeGSTFields()" ${exp?.gstApplicable?'checked':''}/>
+                                <span class="text-sm font-semibold text-blue-800">GST Bill — Capture Tax Details for ITC</span>
+                            </label>
+                        </div>
+                        <div id="deGSTFields" class="${exp?.gstApplicable?'':'hidden'} space-y-3">
+                            <!-- Invoice details row -->
+                            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">Bill / Invoice No.</label>
+                                    <input type="text" id="deBillNo" value="${exp?.billNo||''}" placeholder="e.g. INV/2025-26/001" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">Bill Date</label>
+                                    <input type="date" id="deBillDate" value="${exp?.billDate||''}" max="${today}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">Vendor GSTIN</label>
+                                    <input type="text" id="deVendorGSTIN" value="${exp?.vendorGSTIN||''}" placeholder="27AABCU9603R1ZX" maxlength="15" class="w-full px-3 py-2 border rounded-lg text-sm font-mono" oninput="this.value=this.value.toUpperCase()"/>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">HSN / SAC Code</label>
+                                    <input type="text" id="deHSN" value="${exp?.hsnCode||''}" placeholder="e.g. 996311" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                                </div>
+                            </div>
+                            <!-- GST Rate + CGST/SGST/IGST split -->
+                            <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">GST Rate</label>
+                                    <select id="deGSTRate" class="w-full px-3 py-2 border rounded-lg text-sm" onchange="calcDirExpNet()">
+                                        <option value="0">0%</option>
+                                        <option value="5">5%</option>
+                                        <option value="12">12%</option>
+                                        <option value="18" ${(!exp?.gstApplicable||exp?.gstRate==='18'||!exp?.gstRate)?'selected':''}>18%</option>
+                                        <option value="28" ${exp?.gstRate==='28'?'selected':''}>28%</option>
+                                        <option value="manual">Manual Entry</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">Supply Type</label>
+                                    <select id="deSupplyType" class="w-full px-3 py-2 border rounded-lg text-sm" onchange="calcDirExpNet()">
+                                        <option value="intra" ${exp?.supplyType==='intra'||!exp?.supplyType?'selected':''}>Intra-State (CGST+SGST)</option>
+                                        <option value="inter" ${exp?.supplyType==='inter'?'selected':''}>Inter-State (IGST)</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">CGST (₹)</label>
+                                    <input type="number" id="deCGST" value="${exp?.cgstAmt||''}" min="0" step="0.01" placeholder="Auto" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcDirExpNet()"/>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">SGST (₹)</label>
+                                    <input type="number" id="deSGST" value="${exp?.sgstAmt||''}" min="0" step="0.01" placeholder="Auto" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcDirExpNet()"/>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">IGST (₹)</label>
+                                    <input type="number" id="deIGST" value="${exp?.igstAmt||''}" min="0" step="0.01" placeholder="Auto" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcDirExpNet()"/>
+                                </div>
+                            </div>
+                            <!-- ITC Eligibility -->
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">ITC Eligibility</label>
+                                    <select id="deITCEligible" class="w-full px-3 py-2 border rounded-lg text-sm" onchange="calcDirExpNet()">
+                                        <option value="full" ${exp?.itcEligible==='full'||!exp?.itcEligible?'selected':''}>Full ITC Eligible</option>
+                                        <option value="partial" ${exp?.itcEligible==='partial'?'selected':''}>Partial ITC</option>
+                                        <option value="blocked" ${exp?.itcEligible==='blocked'?'selected':''}>Blocked (Sec 17(5))</option>
+                                        <option value="none" ${exp?.itcEligible==='none'?'selected':''}>Not Eligible</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">Eligible ITC Amount (₹)</label>
+                                    <input type="number" id="deITCAmt" value="${exp?.itcAmt||''}" min="0" step="0.01" placeholder="Auto" class="w-full px-3 py-2 border rounded-lg bg-gray-50 text-sm" readonly/>
+                                </div>
+                                <div class="flex items-end">
+                                    <div class="w-full bg-blue-100 border border-blue-200 rounded-lg p-2 text-xs text-blue-800">
+                                        <strong>ITC Note:</strong> Sec 17(5) blocks ITC on food, accommodation, personal use, motor vehicles (not for business).
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Payment Mode -->
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Payment Mode <span class="text-red-500">*</span></label>
+                            <select id="dePayMode" class="w-full px-3 py-2 border rounded-lg text-sm" required onchange="toggleDePayFields()">
+                                <option value="">-- Select --</option>
+                                ${['Cash','G-Pay / UPI','Bank Transfer (NEFT/RTGS/IMPS)','Credit Card','Debit Card','Cheque','Company Card','Personal - To Reimburse'].map(m=>`<option value="${m}" ${exp?.payMode===m?'selected':''}>${m}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div id="deCardWrap">
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Card Last 4 Digits</label>
+                            <input type="text" id="deCardLast4" value="${exp?.cardLast4||''}" maxlength="4" placeholder="1234" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Ref / TXN No.</label>
+                            <input type="text" id="deRefNo" value="${exp?.refNo||''}" placeholder="UPI TXN / Cheque No." class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Payment Date</label>
+                            <input type="date" id="dePayDate" max="${today}" value="${exp?.payDate||''}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                    </div>
+
+                    <!-- Reimbursement section -->
+                    <div class="bg-green-50 border border-green-200 rounded-xl p-4">
+                        <div class="flex items-center gap-3 mb-3">
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" id="deReimbursed" class="w-4 h-4 accent-green-600" onchange="toggleDeReimbFields()" ${exp?.reimbursed?'checked':''}/>
+                                <span class="text-sm font-semibold text-green-800">Reimbursed / Paid Back to Director</span>
+                            </label>
+                        </div>
+                        <div id="deReimbFields" class="${exp?.reimbursed?'':'hidden'} grid grid-cols-2 md:grid-cols-3 gap-4">
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-600 mb-1">Reimbursed Amount (₹)</label>
+                                <input type="number" id="deReimbAmt" value="${exp?.reimbursedAmt||''}" min="0" step="0.01" placeholder="0.00" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-600 mb-1">Reimbursement Date</label>
+                                <input type="date" id="deReimbDate" max="${today}" value="${exp?.reimbursedDate||''}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-600 mb-1">Linked Expense Bill Ref</label>
+                                <input type="text" id="deLinkedExp" value="${exp?.linkedExpID||''}" placeholder="e.g. VCH2627111" class="w-full px-3 py-2 border rounded-lg text-sm" list="deExpList"/>
+                                <datalist id="deExpList">
+                                    ${expenses.map(e=>`<option value="${e.voucherNo||e.expID}">${e.voucherNo||e.expID} — ${e.companyName||e.description||''}</option>`).join('')}
+                                </datalist>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Notes -->
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Notes / Remarks</label>
+                        <textarea id="deNotes" rows="2" placeholder="Additional details…" class="w-full px-3 py-2 border rounded-lg text-sm">${exp?.notes||''}</textarea>
+                    </div>
+
+                    <!-- Attachments -->
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Supporting Documents (Bills, Receipts, Screenshots)</label>
+                        <input type="file" id="deAttachFile" accept="image/*,application/pdf" multiple class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        <p class="text-xs text-gray-400 mt-1">Images or PDFs. Max 2MB each. Multiple files allowed.</p>
+                        <div id="deAttachList" class="mt-2 space-y-1"></div>
+                    </div>
+
+                    <div class="flex gap-3 justify-end pt-2">
+                        <button type="button" onclick="closeDirExpModal()" class="px-5 py-2 border border-gray-300 rounded-xl text-gray-600 hover:bg-gray-50">Cancel</button>
+                        <button type="submit" id="deSaveBtn" class="px-6 py-2 bg-rose-600 text-white rounded-xl hover:bg-rose-700 font-semibold">Save</button>
+                    </div>
+                </form>
+            </div>`;
+            document.getElementById('dirExpModal').classList.add('show');
+            toggleDePayFields();
+            toggleDeReimbFields();
+            renderDeAttachList();
+            if (exp?.amount) calcDirExpNet();
+        }
+
+        function closeDirExpModal() {
+            document.getElementById('dirExpModal').classList.remove('show');
+            _currentDirExp = null;
+        }
+
+        function calcDirExpNet() {
+            const amt     = parseFloat(document.getElementById('deAmount')?.value)||0;
+            const gstOn   = document.getElementById('deGSTApplicable')?.checked;
+            let cgst=0, sgst=0, igst=0, totalGST=0, itcAmt=0;
+
+            if (gstOn) {
+                const rate     = document.getElementById('deGSTRate')?.value;
+                const supply   = document.getElementById('deSupplyType')?.value || 'intra';
+                const itcType  = document.getElementById('deITCEligible')?.value || 'full';
+
+                if (rate === 'manual') {
+                    // Use manually entered values
+                    cgst = parseFloat(document.getElementById('deCGST')?.value)||0;
+                    sgst = parseFloat(document.getElementById('deSGST')?.value)||0;
+                    igst = parseFloat(document.getElementById('deIGST')?.value)||0;
+                    totalGST = cgst + sgst + igst;
+                } else {
+                    const pct = parseFloat(rate)||0;
+                    // Back-calculate taxable from total amount
+                    // amt = taxable + GST, GST = taxable * pct/100
+                    // taxable = amt / (1 + pct/100)
+                    const taxable = +(amt / (1 + pct/100)).toFixed(2);
+                    totalGST = +(amt - taxable).toFixed(2);
+                    if (supply === 'inter') {
+                        igst = totalGST;
+                        cgst = 0; sgst = 0;
+                    } else {
+                        cgst = +(totalGST/2).toFixed(2);
+                        sgst = +(totalGST - cgst).toFixed(2);
+                        igst = 0;
+                    }
+                    // Set fields
+                    const cgstEl = document.getElementById('deCGST'); if(cgstEl) cgstEl.value = cgst.toFixed(2);
+                    const sgstEl = document.getElementById('deSGST'); if(sgstEl) sgstEl.value = sgst.toFixed(2);
+                    const igstEl = document.getElementById('deIGST'); if(igstEl) igstEl.value = igst.toFixed(2);
+                }
+
+                // ITC calculation
+                if (itcType === 'full')         itcAmt = totalGST;
+                else if (itcType === 'partial')  itcAmt = +(totalGST * 0.5).toFixed(2); // user adjustable
+                else                             itcAmt = 0; // blocked or none
+
+                const itcEl = document.getElementById('deITCAmt'); if(itcEl) itcEl.value = itcAmt.toFixed(2);
+                const gstTotalEl = document.getElementById('deGSTTotal'); if(gstTotalEl) gstTotalEl.value = totalGST.toFixed(2);
+            } else {
+                totalGST = 0;
+                const gstTotalEl = document.getElementById('deGSTTotal'); if(gstTotalEl) gstTotalEl.value = '0.00';
+                const itcEl = document.getElementById('deITCAmt'); if(itcEl) itcEl.value = '0.00';
+            }
+
+            const netEl = document.getElementById('deNetAmt');
+            if (netEl) netEl.value = (amt - totalGST).toFixed(2);
+        }
+
+        function toggleDeGSTFields() {
+            const on = document.getElementById('deGSTApplicable')?.checked;
+            document.getElementById('deGSTFields')?.classList.toggle('hidden', !on);
+            calcDirExpNet();
+        }
+
+        function toggleDePayFields() {
+            const mode = document.getElementById('dePayMode')?.value||'';
+            const cardWrap = document.getElementById('deCardWrap');
+            if (cardWrap) cardWrap.classList.toggle('hidden', !['Credit Card','Debit Card','Company Card'].includes(mode));
+        }
+
+        function toggleDeReimbFields() {
+            const on = document.getElementById('deReimbursed')?.checked;
+            document.getElementById('deReimbFields')?.classList.toggle('hidden', !on);
+        }
+
+        function renderDeAttachList() {
+            const list = _currentDirExp?.attachments || [];
+            const el = document.getElementById('deAttachList');
+            if (!el) return;
+            el.innerHTML = list.map((a,i) => `
+                <div class="flex items-center gap-2 bg-rose-50 border border-rose-200 rounded-lg px-2 py-1 text-xs">
+                    <span class="flex-1 truncate text-rose-800">${a.type==='pdf'?'📄':'🖼️'} ${a.name}</span>
+                    <button type="button" onclick="viewDeAttach(${i})" class="text-blue-500 hover:text-blue-700 font-medium">View</button>
+                    <button type="button" onclick="removeDeAttach(${i})" class="text-red-500 hover:text-red-700">✕</button>
+                </div>`).join('');
+        }
+
+        function removeDeAttach(idx) {
+            if (!_currentDirExp) _currentDirExp = {attachments:[]};
+            if (!_currentDirExp.attachments) _currentDirExp.attachments = [];
+            _currentDirExp.attachments.splice(idx, 1);
+            renderDeAttachList();
+        }
+
+        function viewDeAttach(idx) {
+            const list = _currentDirExp?.attachments || [];
+            if (!list.length) return;
+            window._lbList = list; window._lbCur = idx;
+            document.getElementById('expAttachLightbox')?.remove();
+            const lb = document.createElement('div');
+            lb.id = 'expAttachLightbox';
+            lb.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.92);z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center';
+            const lbTop = document.createElement('div'); lbTop.style.cssText='position:absolute;top:12px;right:16px;display:flex;gap:10px;align-items:center';
+            const lbCounter = document.createElement('span'); lbCounter.id='expLbCounter'; lbCounter.style.cssText='color:#fff;font-size:14px;font-weight:bold';
+            const lbClose = document.createElement('button'); lbClose.textContent='✕'; lbClose.style.cssText='color:#fff;font-size:28px;background:none;border:none;cursor:pointer;line-height:1';
+            lbClose.addEventListener('click',()=>{document.getElementById('expAttachLightbox')?.remove();window._lbList=null;});
+            lbTop.appendChild(lbCounter); lbTop.appendChild(lbClose);
+            const lbPrev = document.createElement('button'); lbPrev.id='expLbPrev'; lbPrev.textContent='‹'; lbPrev.style.cssText='position:absolute;left:12px;top:50%;transform:translateY(-50%);color:#fff;font-size:48px;background:rgba(255,255,255,0.2);border:none;cursor:pointer;border-radius:50%;width:56px;height:56px;line-height:1;display:none'; lbPrev.addEventListener('click',()=>expLbNav(-1));
+            const lbNext = document.createElement('button'); lbNext.id='expLbNext'; lbNext.textContent='›'; lbNext.style.cssText='position:absolute;right:12px;top:50%;transform:translateY(-50%);color:#fff;font-size:48px;background:rgba(255,255,255,0.2);border:none;cursor:pointer;border-radius:50%;width:56px;height:56px;line-height:1;display:none'; lbNext.addEventListener('click',()=>expLbNav(1));
+            const lbContent = document.createElement('div'); lbContent.id='expLbContent'; lbContent.style.cssText='max-width:90%;max-height:84vh;display:flex;align-items:center;justify-content:center';
+            const lbName = document.createElement('div'); lbName.id='expLbName'; lbName.style.cssText='color:#ccc;font-size:12px;margin-top:8px;max-width:80%;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+            lb.appendChild(lbTop); lb.appendChild(lbPrev); lb.appendChild(lbNext); lb.appendChild(lbContent); lb.appendChild(lbName);
+            document.body.appendChild(lb); expLbShow(idx);
+        }
+
+        function viewDirExpAttach(deID, startIdx) {
+            const exp = directorExpenses.find(d => d.deID === deID);
+            if (!exp || !exp.attachments?.length) return;
+            window._lbList = exp.attachments; window._lbCur = startIdx||0;
+            document.getElementById('expAttachLightbox')?.remove();
+            const lb = document.createElement('div'); lb.id='expAttachLightbox';
+            lb.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.92);z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center';
+            const lbTop=document.createElement('div'); lbTop.style.cssText='position:absolute;top:12px;right:16px;display:flex;gap:10px;align-items:center';
+            const lbCounter=document.createElement('span'); lbCounter.id='expLbCounter'; lbCounter.style.cssText='color:#fff;font-size:14px;font-weight:bold';
+            const lbClose=document.createElement('button'); lbClose.textContent='✕'; lbClose.style.cssText='color:#fff;font-size:28px;background:none;border:none;cursor:pointer;line-height:1';
+            lbClose.addEventListener('click',()=>{document.getElementById('expAttachLightbox')?.remove();window._lbList=null;});
+            lbTop.appendChild(lbCounter); lbTop.appendChild(lbClose);
+            const lbPrev=document.createElement('button'); lbPrev.id='expLbPrev'; lbPrev.textContent='‹'; lbPrev.style.cssText='position:absolute;left:12px;top:50%;transform:translateY(-50%);color:#fff;font-size:48px;background:rgba(255,255,255,0.2);border:none;cursor:pointer;border-radius:50%;width:56px;height:56px;line-height:1;display:none'; lbPrev.addEventListener('click',()=>expLbNav(-1));
+            const lbNext=document.createElement('button'); lbNext.id='expLbNext'; lbNext.textContent='›'; lbNext.style.cssText='position:absolute;right:12px;top:50%;transform:translateY(-50%);color:#fff;font-size:48px;background:rgba(255,255,255,0.2);border:none;cursor:pointer;border-radius:50%;width:56px;height:56px;line-height:1;display:none'; lbNext.addEventListener('click',()=>expLbNav(1));
+            const lbContent=document.createElement('div'); lbContent.id='expLbContent'; lbContent.style.cssText='max-width:90%;max-height:84vh;display:flex;align-items:center;justify-content:center';
+            const lbName=document.createElement('div'); lbName.id='expLbName'; lbName.style.cssText='color:#ccc;font-size:12px;margin-top:8px;max-width:80%;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+            lb.appendChild(lbTop); lb.appendChild(lbPrev); lb.appendChild(lbNext); lb.appendChild(lbContent); lb.appendChild(lbName);
+            document.body.appendChild(lb); expLbShow(startIdx||0);
+        }
+
+        async function saveDirExp(e) {
+            e.preventDefault();
+            if (window._deSaving) return;
+            window._deSaving = true;
+            const saveBtn = document.getElementById('deSaveBtn');
+            if (saveBtn) { saveBtn.disabled=true; saveBtn.textContent='Saving…'; }
+            try {
+                let attachments = _currentDirExp?.attachments ? [..._currentDirExp.attachments] : [];
+                const newFiles = document.getElementById('deAttachFile').files;
+                for (const file of newFiles) {
+                    if (file.size > 2*1024*1024) { alert(`"${file.name}" exceeds 2MB limit`); return; }
+                    const data = await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>rej();r.readAsDataURL(file);});
+                    attachments.push({ name:file.name, data, type:file.type==='application/pdf'?'pdf':'image' });
+                }
+                const expObj = {
+                    deID:           _currentDirExp?.deID || 'DE'+getFinancialYearCode(new Date())+Date.now().toString(36).slice(-4).toUpperCase()+Math.random().toString(36).slice(-2).toUpperCase(),
+                    director:       document.getElementById('deDirector').value,
+                    expDate:        document.getElementById('deDate').value,
+                    category:       document.getElementById('deCategory').value,
+                    description:    document.getElementById('deDesc').value,
+                    vendor:         document.getElementById('deVendor').value,
+                    amount:         parseFloat(document.getElementById('deAmount').value)||0,
+                    gstApplicable:  document.getElementById('deGSTApplicable')?.checked||false,
+                    billNo:         document.getElementById('deBillNo')?.value||'',
+                    billDate:       document.getElementById('deBillDate')?.value||'',
+                    vendorGSTIN:    document.getElementById('deVendorGSTIN')?.value||'',
+                    hsnCode:        document.getElementById('deHSN')?.value||'',
+                    gstRate:        document.getElementById('deGSTRate')?.value||'',
+                    supplyType:     document.getElementById('deSupplyType')?.value||'intra',
+                    cgstAmt:        parseFloat(document.getElementById('deCGST')?.value)||0,
+                    sgstAmt:        parseFloat(document.getElementById('deSGST')?.value)||0,
+                    igstAmt:        parseFloat(document.getElementById('deIGST')?.value)||0,
+                    gstAmt:         parseFloat(document.getElementById('deGSTTotal')?.value)||0,
+                    itcEligible:    document.getElementById('deITCEligible')?.value||'none',
+                    itcAmt:         parseFloat(document.getElementById('deITCAmt')?.value)||0,
+                    netAmt:         parseFloat(document.getElementById('deNetAmt')?.value)||0,
+                    projectNo:      document.getElementById('deProjectNo').value,
+                    payMode:        document.getElementById('dePayMode').value,
+                    cardLast4:      document.getElementById('deCardLast4')?.value||'',
+                    refNo:          document.getElementById('deRefNo').value,
+                    payDate:        document.getElementById('dePayDate').value,
+                    reimbursed:     document.getElementById('deReimbursed').checked,
+                    reimbursedAmt:  parseFloat(document.getElementById('deReimbAmt')?.value)||0,
+                    reimbursedDate: document.getElementById('deReimbDate')?.value||'',
+                    linkedExpID:    document.getElementById('deLinkedExp')?.value||'',
+                    notes:          document.getElementById('deNotes').value,
+                    attachments,
+                    createdAt:      _currentDirExp?.createdAt || new Date().toISOString()
+                };
+                if (_currentDirExp) {
+                    const idx = directorExpenses.findIndex(d=>d.deID===_currentDirExp.deID);
+                    if (idx>=0) directorExpenses[idx] = expObj; else directorExpenses.push(expObj);
+                } else {
+                    directorExpenses.push(expObj);
+                }
+                await saveData('directorExpenses', directorExpenses);
+                closeDirExpModal();
+                renderView();
+            } catch(err) { alert('Save failed: '+err.message); }
+            finally { window._deSaving=false; if(saveBtn){saveBtn.disabled=false;saveBtn.textContent='Save';} }
+        }
+
+        async function deleteDirExp(deID) {
+            if (!confirm('Delete this director expense entry?')) return;
+            directorExpenses = directorExpenses.filter(d=>d.deID!==deID);
+            await saveData('directorExpenses', directorExpenses);
+            renderView();
+        }
+
+        async function markDirExpReimbursed(deID) {
+            const idx = directorExpenses.findIndex(d=>d.deID===deID);
+            if (idx<0) return;
+            const exp = directorExpenses[idx];
+            const date = prompt('Reimbursement date (YYYY-MM-DD):', new Date().toISOString().split('T')[0]);
+            if (!date) return;
+            const amt = prompt('Reimbursed amount:', exp.amount);
+            if (!amt) return;
+            directorExpenses[idx] = {...exp, reimbursed:true, reimbursedDate:date, reimbursedAmt:parseFloat(amt)||exp.amount};
+            await saveData('directorExpenses', directorExpenses);
+            renderView();
+        }
+
+        async function dirExpReconPDF(month) {
+            const dirs = getDirNames();
+            showToast ? showToast('⏳ Generating Reconciliation PDF…',5000) : null;
+            if (!window.jspdf) {
+                await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+                await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+            }
+            const {jsPDF} = window.jspdf;
+            const doc = new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+            const ML=14, MR=14, CW=210-ML-MR, PW=210;
+            const fmt = n => 'INR '+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
+            const monthRows = directorExpenses.filter(d=>(d.expDate||'').startsWith(month))
+                .sort((a,b)=>(a.expDate||'').localeCompare(b.expDate||''));
+            const [yr,mo] = month.split('-');
+            const monthLabel = new Date(+yr,+mo-1,1).toLocaleDateString('en-IN',{month:'long',year:'numeric'});
+
+            // Header
+            doc.setFillColor(157,23,77); doc.rect(0,0,210,36,'F');
+            doc.setFontSize(15); doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255);
+            doc.text('DIRECTOR EXPENSES — MONTHLY RECONCILIATION', PW/2, 12, {align:'center'});
+            doc.setFontSize(10); doc.setFont('helvetica','normal'); doc.setTextColor(253,164,175);
+            doc.text((settings.companyName||'IMSE Tech Services Pvt Ltd')+'  |  '+monthLabel, PW/2, 20, {align:'center'});
+            doc.setFontSize(8.5); doc.setTextColor(251,207,232);
+            doc.text('Generated: '+new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}), PW/2, 28, {align:'center'});
+            doc.setFillColor(190,24,93); doc.rect(0,35,210,2,'F');
+            let y = 42;
+
+            // Summary per director
+            dirs.forEach((dirName, di) => {
+                const key = 'dir'+(di+1);
+                const rows = monthRows.filter(r=>r.director===key);
+                if (!rows.length) return;
+                const total = rows.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
+                const reimb = rows.filter(r=>r.reimbursed).reduce((s,r)=>s+(parseFloat(r.reimbursedAmt||r.amount)||0),0);
+                const pending = total - reimb;
+
+                if (y > 230) { doc.addPage(); y=15; }
+                // Director header bar
+                doc.setFillColor(di===0?[254,205,211]:[199,210,254]); doc.rect(ML,y,CW,7,'F');
+                doc.setFontSize(10); doc.setFont('helvetica','bold'); doc.setTextColor(di===0?[157,23,77]:[67,56,202]);
+                doc.text(dirName.toUpperCase(), ML+3, y+5);
+                doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(100,100,100);
+                doc.text('Total: '+fmt(total)+'   Reimbursed: '+fmt(reimb)+'   Pending: '+fmt(pending), PW-MR, y+5, {align:'right'});
+                y += 10;
+
+                // Category breakdown
+                const byCat = {};
+                rows.forEach(r=>{ byCat[r.category||'Other'] = (byCat[r.category||'Other']||0) + (parseFloat(r.amount)||0); });
+                doc.autoTable({
+                    startY: y, margin:{left:ML,right:MR}, theme:'grid',
+                    styles:{fontSize:8, cellPadding:2.5},
+                    headStyles:{fillColor:di===0?[157,23,77]:[67,56,202], textColor:[255,255,255], fontStyle:'bold'},
+                    head:[['#','Date','Category','Description','Vendor','Project','Mode','Amount','Reimb.','Status']],
+                    body: rows.map((r,i)=>[
+                        String(i+1),
+                        r.expDate||'—',
+                        r.category||'—',
+                        r.description||'—',
+                        r.vendor||'—',
+                        r.projectNo||'—',
+                        r.payMode||'—',
+                        {content:fmt(r.amount), styles:{halign:'right', fontStyle:'bold'}},
+                        {content:r.reimbursed?fmt(r.reimbursedAmt||r.amount):'—', styles:{halign:'right'}},
+                        {content:r.reimbursed?'✓ Paid':'Pending', styles:{halign:'center', textColor:r.reimbursed?[21,128,61]:[220,38,38], fontStyle:'bold'}}
+                    ]).concat([[
+                        {content:'TOTAL', colSpan:7, styles:{halign:'right',fontStyle:'bold',fillColor:[254,252,232]}},
+                        {content:fmt(total), styles:{halign:'right',fontStyle:'bold',fillColor:[254,243,199],textColor:[180,83,9]}},
+                        {content:fmt(reimb), styles:{halign:'right',fontStyle:'bold',fillColor:[240,253,244],textColor:[21,128,61]}},
+                        {content:fmt(pending), styles:{halign:'center',fontStyle:'bold',fillColor:pending>0?[254,226,226]:[240,253,244],textColor:pending>0?[220,38,38]:[21,128,61]}}
+                    ]]),
+                    columnStyles:{0:{cellWidth:7},1:{cellWidth:20},2:{cellWidth:28},3:{cellWidth:CW-7-20-28-22-14-22-22-18-16},4:{cellWidth:22},5:{cellWidth:14},6:{cellWidth:22},7:{cellWidth:22},8:{cellWidth:18},9:{cellWidth:16}}
+                });
+                y = doc.lastAutoTable.finalY + 8;
+            });
+
+            // Combined summary table
+            if (y > 220) { doc.addPage(); y = 15; }
+            doc.autoTable({
+                startY: y, margin:{left:ML,right:MR}, theme:'grid',
+                styles:{fontSize:9.5, cellPadding:3.5},
+                headStyles:{fillColor:[30,41,59], textColor:[255,255,255], fontStyle:'bold'},
+                head:[[{content:'COMBINED RECONCILIATION SUMMARY', colSpan:4, styles:{halign:'center'}}]],
+                body:[
+                    ['Director', 'Total Expenses', 'Reimbursed', 'Pending'],
+                    ...dirs.map((n,di)=>{
+                        const key='dir'+(di+1);
+                        const rows=monthRows.filter(r=>r.director===key);
+                        const tot=rows.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
+                        const re=rows.filter(r=>r.reimbursed).reduce((s,r)=>s+(parseFloat(r.reimbursedAmt||r.amount)||0),0);
+                        return [n, {content:fmt(tot),styles:{halign:'right'}}, {content:fmt(re),styles:{halign:'right',textColor:[21,128,61]}}, {content:fmt(tot-re),styles:{halign:'right',textColor:tot-re>0?[220,38,38]:[21,128,61]}}];
+                    }),
+                    [{content:'GRAND TOTAL', styles:{fontStyle:'bold',fillColor:[241,245,249]}},
+                     {content:fmt(monthRows.reduce((s,r)=>s+(parseFloat(r.amount)||0),0)), styles:{halign:'right',fontStyle:'bold',fillColor:[241,245,249]}},
+                     {content:fmt(monthRows.filter(r=>r.reimbursed).reduce((s,r)=>s+(parseFloat(r.reimbursedAmt||r.amount)||0),0)), styles:{halign:'right',fontStyle:'bold',fillColor:[240,253,244],textColor:[21,128,61]}},
+                     {content:fmt(monthRows.reduce((s,r)=>s+(parseFloat(r.amount)||0),0)-monthRows.filter(r=>r.reimbursed).reduce((s,r)=>s+(parseFloat(r.reimbursedAmt||r.amount)||0),0)), styles:{halign:'right',fontStyle:'bold'}}]
+                ],
+                columnStyles:{0:{cellWidth:50},1:{cellWidth:40},2:{cellWidth:40},3:{cellWidth:40}}
+            });
+            y = doc.lastAutoTable.finalY + 8;
+
+            // ── GST / ITC Reconciliation Section ──────────────────────────
+            const gstRows = monthRows.filter(r=>r.gstApplicable && r.gstAmt>0);
+            if (gstRows.length) {
+                if (y > 200) { doc.addPage(); y = 15; }
+                doc.setFillColor(30,64,175); doc.rect(ML,y,CW,8,'F');
+                doc.setFontSize(9.5); doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255);
+                doc.text('GST INPUT TAX CREDIT (ITC) RECONCILIATION — '+monthLabel, ML+3, y+5.5);
+                y += 11;
+
+                const totalCGST  = gstRows.reduce((s,r)=>s+(parseFloat(r.cgstAmt)||0),0);
+                const totalSGST  = gstRows.reduce((s,r)=>s+(parseFloat(r.sgstAmt)||0),0);
+                const totalIGST  = gstRows.reduce((s,r)=>s+(parseFloat(r.igstAmt)||0),0);
+                const totalGST   = gstRows.reduce((s,r)=>s+(parseFloat(r.gstAmt)||0),0);
+                const totalITC   = gstRows.filter(r=>r.itcEligible!=='blocked'&&r.itcEligible!=='none').reduce((s,r)=>s+(parseFloat(r.itcAmt)||0),0);
+                const blockedITC = gstRows.filter(r=>r.itcEligible==='blocked').reduce((s,r)=>s+(parseFloat(r.gstAmt)||0),0);
+
+                doc.autoTable({
+                    startY:y, margin:{left:ML,right:MR}, theme:'grid',
+                    styles:{fontSize:7.5, cellPadding:2},
+                    headStyles:{fillColor:[30,64,175], textColor:[255,255,255], fontStyle:'bold'},
+                    head:[['#','Dir','Date','Vendor','GSTIN','Bill No','HSN','Taxable','CGST','SGST','IGST','Total GST','ITC Eligible','ITC Amt','Status']],
+                    body:[
+                        ...gstRows.map((r,i)=>{
+                            const dirName = r.director==='dir1'?dirs[0]:dirs[1];
+                            const itcStat = r.itcEligible==='full'?'Full':r.itcEligible==='partial'?'Partial':r.itcEligible==='blocked'?'Blocked':'No';
+                            return [
+                                String(i+1), dirName.split(' ')[0], r.expDate||'—',
+                                {content:(r.vendor||'—').substring(0,15), styles:{fontSize:7}},
+                                {content:r.vendorGSTIN||'—', styles:{fontSize:6.5, fontStyle:'italic'}},
+                                {content:r.billNo||'—', styles:{fontSize:7}},
+                                r.hsnCode||'—',
+                                {content:fmt(r.netAmt||0), styles:{halign:'right'}},
+                                {content:fmt(r.cgstAmt||0), styles:{halign:'right'}},
+                                {content:fmt(r.sgstAmt||0), styles:{halign:'right'}},
+                                {content:fmt(r.igstAmt||0), styles:{halign:'right'}},
+                                {content:fmt(r.gstAmt||0), styles:{halign:'right', fontStyle:'bold'}},
+                                {content:itcStat, styles:{halign:'center', textColor:itcStat==='Blocked'?[220,38,38]:itcStat==='Full'?[21,128,61]:[180,83,9]}},
+                                {content:fmt(r.itcAmt||0), styles:{halign:'right', fontStyle:'bold', textColor:[21,128,61]}},
+                                {content:r.reimbursed?'Reimb':'Pend', styles:{halign:'center', textColor:r.reimbursed?[21,128,61]:[220,38,38]}}
+                            ];
+                        }),
+                        // Totals row
+                        [{content:'TOTALS', colSpan:7, styles:{halign:'right',fontStyle:'bold',fillColor:[239,246,255]}},
+                         {content:fmt(totalCGST), styles:{halign:'right',fontStyle:'bold',fillColor:[219,234,254]}},
+                         {content:fmt(totalSGST), styles:{halign:'right',fontStyle:'bold',fillColor:[219,234,254]}},
+                         {content:fmt(totalIGST), styles:{halign:'right',fontStyle:'bold',fillColor:[219,234,254]}},
+                         {content:fmt(totalGST),  styles:{halign:'right',fontStyle:'bold',fillColor:[191,219,254]}},
+                         {content:'', styles:{fillColor:[219,234,254]}},
+                         {content:fmt(totalITC),  styles:{halign:'right',fontStyle:'bold',fillColor:[220,252,231],textColor:[21,128,61]}},
+                         {content:'', styles:{fillColor:[219,234,254]}}]
+                    ],
+                    columnStyles:{0:{cellWidth:6},1:{cellWidth:12},2:{cellWidth:18},3:{cellWidth:24},4:{cellWidth:22},5:{cellWidth:18},6:{cellWidth:12},7:{cellWidth:20},8:{cellWidth:16},9:{cellWidth:16},10:{cellWidth:16},11:{cellWidth:18},12:{cellWidth:14},13:{cellWidth:16},14:{cellWidth:12}}
+                });
+                y = doc.lastAutoTable.finalY + 6;
+
+                // ITC Summary Box
+                if (y > 240) { doc.addPage(); y = 15; }
+                doc.autoTable({
+                    startY:y, margin:{left:ML,right:MR}, theme:'grid',
+                    styles:{fontSize:9.5, cellPadding:3.5},
+                    headStyles:{fillColor:[30,64,175], textColor:[255,255,255], fontStyle:'bold'},
+                    head:[[{content:'ITC SUMMARY', colSpan:2, styles:{halign:'center'}}]],
+                    body:[
+                        [{content:'Total GST on Director Expenses', styles:{fontStyle:'bold',fillColor:[239,246,255]}},
+                         {content:fmt(totalGST), styles:{halign:'right',fontStyle:'bold'}}],
+                        [{content:'Total Eligible ITC (CGST+SGST+IGST)', styles:{fontStyle:'bold',fillColor:[220,252,231],textColor:[21,128,61]}},
+                         {content:fmt(totalITC), styles:{halign:'right',fontStyle:'bold',textColor:[21,128,61]}}],
+                        [{content:'Blocked ITC — Sec 17(5)', styles:{fontStyle:'bold',fillColor:[254,226,226],textColor:[220,38,38]}},
+                         {content:fmt(blockedITC), styles:{halign:'right',fontStyle:'bold',textColor:[220,38,38]}}],
+                        [{content:'CGST Available', styles:{fillColor:[241,245,249]}},
+                         {content:fmt(totalCGST - gstRows.filter(r=>r.itcEligible==='blocked').reduce((s,r)=>s+(parseFloat(r.cgstAmt)||0),0)), styles:{halign:'right'}}],
+                        [{content:'SGST Available', styles:{fillColor:[241,245,249]}},
+                         {content:fmt(totalSGST - gstRows.filter(r=>r.itcEligible==='blocked').reduce((s,r)=>s+(parseFloat(r.sgstAmt)||0),0)), styles:{halign:'right'}}],
+                        [{content:'IGST Available', styles:{fillColor:[241,245,249]}},
+                         {content:fmt(totalIGST - gstRows.filter(r=>r.itcEligible==='blocked').reduce((s,r)=>s+(parseFloat(r.igstAmt)||0),0)), styles:{halign:'right'}}],
+                    ],
+                    columnStyles:{0:{cellWidth:CW-45}, 1:{cellWidth:45}}
+                });
+                y = doc.lastAutoTable.finalY + 8;
+            }
+
+            // Signature block
+            if (y>255) { doc.addPage(); y=15; }
+            doc.autoTable({
+                startY:y, margin:{left:ML,right:MR}, theme:'grid',
+                styles:{fontSize:8.5, cellPadding:7, minCellHeight:20},
+                headStyles:{fillColor:[30,41,59], textColor:[255,255,255], fontStyle:'bold'},
+                head:[[ dirs[0]+' (Director)', dirs[1]+' (Director)', 'Accounts / CFO']],
+                body:[['Signature & Date','Signature & Date','Signature & Date']],
+                columnStyles:{0:{cellWidth:CW/3},1:{cellWidth:CW/3},2:{cellWidth:CW/3}}
+            });
+
+            // Footer
+            const pc=doc.getNumberOfPages();
+            for(let p=1;p<=pc;p++){
+                doc.setPage(p);
+                doc.setFontSize(7);doc.setFont('helvetica','italic');doc.setTextColor(150,150,150);
+                doc.text((settings.companyName||'IMSE Tech Services Pvt Ltd')+' — Director Expenses Reconciliation — '+monthLabel+' — Page '+p+' of '+pc, PW/2,291,{align:'center'});
+            }
+            doc.save('DirectorExp_Recon_'+month+'.pdf');
+            alert('✅ PDF downloaded: DirectorExp_Recon_'+month+'.pdf');
+        }
+
+        function dirExpExportCSV() {
+            const dirs = getDirNames();
+            const rows = [['deID','Director','Date','Category','Description','Vendor','Project','Pay Mode','Card Last4','Ref No','Amount','GST Total','CGST','SGST','IGST','Net(ex-GST)','GST Bill?','Bill No','Bill Date','Vendor GSTIN','HSN/SAC','GST Rate','Supply Type','ITC Eligible','ITC Amount','Reimbursed','Reimb Amount','Reimb Date','Linked Exp','Notes']];
+            directorExpenses.sort((a,b)=>(b.expDate||'').localeCompare(a.expDate||'')).forEach(d=>{
+                const dirName = d.director==='dir1'?dirs[0]:dirs[1];
+                rows.push([d.deID,dirName,d.expDate,d.category,d.description,d.vendor||'',d.projectNo||'',d.payMode||'',d.cardLast4||'',d.refNo||'',d.amount,d.gstAmt||0,d.cgstAmt||0,d.sgstAmt||0,d.igstAmt||0,d.netAmt||0,d.gstApplicable?'Yes':'No',d.billNo||'',d.billDate||'',d.vendorGSTIN||'',d.hsnCode||'',d.gstRate||'',d.supplyType||'',d.itcEligible||'',d.itcAmt||0,d.reimbursed?'Yes':'No',d.reimbursedAmt||'',d.reimbursedDate||'',d.linkedExpID||'',d.notes||'']);
+            });
+            const csv = rows.map(r=>r.map(c=>'"'+String(c||'').replace(/"/g,'""')+'"').join(',')).join('\n');
+            const blob = new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'});
+            const a = document.createElement('a'); a.href=URL.createObjectURL(blob);
+            a.download='DirectorExpenses_'+new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'2-digit',year:'numeric'}).replace(/\//g,'-')+'.csv';
+            a.click(); URL.revokeObjectURL(a.href);
+        }
 
         function renderProjectExpenses(content) {
             const fmt = n => '₹' + (+n||0).toLocaleString('en-IN', {minimumFractionDigits:2});
