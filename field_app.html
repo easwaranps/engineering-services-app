@@ -654,7 +654,7 @@
     const CLIENT_ID = '807569986194-feca4li2k0t96tbbutlpu2ko64obe95k.apps.googleusercontent.com';
     const DISCOVERY_DOCS = ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"];
     // Only read/write scope needed — no full Drive access
-    const SCOPES = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email openid';
+    const SCOPES = 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/userinfo.email openid';
 
     // ── SHARED FILE IDs ───────────────────────────────────────────
     // ADMIN: Paste the Google Drive file IDs for each shared file below.
@@ -758,7 +758,7 @@
         });
     }
 
-    function handleSignIn() { tokenClient.requestAccessToken({ prompt: 'consent' }); }
+    function handleSignIn() { tokenClient.requestAccessToken({ prompt: 'select_account' }); }
 
     function handleSignOut() {
         stopTokenRefresh();
@@ -800,12 +800,24 @@
             { headers: { Authorization: `Bearer ${accessToken}` } }
         );
         if (!r.ok) {
-            if (r.status === 403 || r.status === 404) throw new Error('PERMISSION_DENIED:' + fileId);
+            if (r.status === 403 || r.status === 404) {
+                // Try to fetch the current account's email to make the error message helpful
+                try {
+                    const u = await fetch('https://www.googleapis.com/oauth2/v3/userinfo',
+                        { headers: { Authorization: `Bearer ${accessToken}` } });
+                    if (u.ok) {
+                        const ud = await u.json();
+                        _currentSignedInEmail = ud.email || '';
+                    }
+                } catch(e) {}
+                throw new Error('PERMISSION_DENIED:' + fileId);
+            }
             return null;
         }
         const txt = await r.text();
         return txt ? JSON.parse(txt) : null;
     }
+    let _currentSignedInEmail = '';
 
     async function writeFile(fileId, data) {
         const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
@@ -984,13 +996,14 @@
                 body  = `Admin needs to paste the Drive file IDs into field_app.html for: <strong>${missing.join(', ')}</strong>.<br><br>See the setup instructions in the file.`;
             } else if (msg.startsWith('PERMISSION_DENIED:')) {
                 icon  = '🔒';
-                title = 'File Not Shared';
-                body  = `A required file has not been shared with this account.<br><br>
-                         Admin: right-click each of these files in Google Drive and share with
-                         <strong>imsetechnician@gmail.com</strong>:<br>
-                         • projectExpenses.json → Editor<br>
-                         • workLogs.json → Editor<br>
-                         • staff.json → Viewer`;
+                title = 'Wrong Google Account';
+                const acctLine = _currentSignedInEmail
+                    ? `<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:10px;margin:10px 0;font-size:13px"><b>You are signed in as:</b><br><span style="color:#b45309;font-family:monospace">${_currentSignedInEmail}</span></div>`
+                    : '';
+                body  = `${acctLine}This account doesn't have access to the field app data files.<br><br>
+                         <b>Required account:</b> imsetechnician@gmail.com<br><br>
+                         Click <b>Sign Out & Retry</b>, then carefully <b>choose the imsetechnician account</b> from the Google account picker.<br><br>
+                         <small style="color:#9ca3af">If you don't see the picker, sign out of all Google accounts in your browser first, then retry.</small>`;
             }
             document.getElementById('app').innerHTML = `
             <div class="min-h-screen flex items-center justify-center p-6" style="background:linear-gradient(160deg,#0f2b4c,#0d7c66)">
