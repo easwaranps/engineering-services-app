@@ -8938,7 +8938,11 @@
         // ── BULK TIME LOG MODAL (log today's check-in for all office staff) ──
         function openBulkTimeModal() {
             const today = new Date().toISOString().split('T')[0];
-            const isSaturdayToday = new Date().getDay() === 6;
+            const isSatToday  = new Date().getDay() === 6;
+            const headerStart = isSatToday ? (settings.saturdayStart || settings.officeStartTime || '09:30')
+                                           : (settings.officeStartTime || '09:30');
+            const headerEnd   = isSatToday ? (settings.saturdayEnd || '13:30')
+                                           : (settings.officeEndTime || '18:00');
             const officeStaff = staff.filter(s=>s.status==='Active' && s.staffType!=='Technician');
             if (!officeStaff.length) { alert('No active office staff found.'); return; }
 
@@ -8962,7 +8966,7 @@
                     <div style="background:linear-gradient(135deg,#ea580c,#dc2626);padding:16px 20px;border-radius:16px 16px 0 0;display:flex;justify-content:space-between;align-items:center">
                         <div>
                             <div style="color:#fff;font-weight:700;font-size:15px">⏰ Log Today's Attendance & Times</div>
-                            <div style="color:#fed7aa;font-size:12px">Date: ${today} | Office Start: ${settings.officeStartTime||'09:30'} | Grace: ${settings.lateGraceMins||10} min</div>
+                            <div style="color:#fed7aa;font-size:12px">Date: ${today}${isSatToday?' (Saturday)':''} | Office: ${headerStart} – ${headerEnd} | Grace: ${settings.lateGraceMins||10} min</div>
                         </div>
                         <button onclick="this.closest('[style*=fixed]').remove()" style="color:#fff;font-size:24px;background:none;border:none;cursor:pointer;line-height:1">✕</button>
                     </div>
@@ -8991,9 +8995,16 @@
 
         async function saveBulkTime(btn, today) {
             const overlay = btn.closest('[style*=fixed]');
-            const offStart  = settings.officeStartTime||'09:30';
-            const graceMins = parseInt(settings.lateGraceMins)||10;
+            // Determine if today is a Saturday — use Saturday office hours if so
+            const todayDate = new Date(today + 'T00:00:00');
+            const isSat     = todayDate.getDay() === 6;
+            const offStart  = isSat ? (settings.saturdayStart || settings.officeStartTime || '09:30')
+                                    : (settings.officeStartTime || '09:30');
+            const offEnd    = isSat ? (settings.saturdayEnd   || '13:30')
+                                    : (settings.officeEndTime  || '18:00');
+            const graceMins = parseInt(settings.lateGraceMins) || 10;
             const [sh,sm]   = offStart.split(':').map(Number);
+            const [eh,em]   = offEnd.split(':').map(Number);
             const officeStaff = staff.filter(s=>s.status==='Active' && s.staffType!=='Technician');
 
             officeStaff.forEach(st => {
@@ -9005,15 +9016,16 @@
                 const checkOut  = coEl?.value || '';
                 let lateMinutes=0, earlyMins=0, extraWorkMins=0;
                 if (status !== 'WFH' && checkIn) {
-                    const [ih,im]=checkIn.split(':').map(Number);
-                    const late=(ih*60+im)-(sh*60+sm+graceMins);
-                    lateMinutes = late > 0 ? late : 0;
-                    const offEnd    = isSat?(settings.saturdayEnd||'13:30'):(settings.officeEndTime||'18:00');
-                    const [eh,em]   = offEnd.split(':').map(Number);
-                    const early     = (sh*60+sm)-(ih*60+im);
-                    earlyMins       = early > 0 ? early : 0;
-                    const co        = rowEls.find(el=>el.dataset.idx===String(r.idx)&&el.dataset.field==='checkOut')?.value||'';
-                    if (co) { const [oh,om]=co.split(':').map(Number); const ext=(oh*60+om)-(eh*60+em); extraWorkMins=ext>0?ext:0; }
+                    const [ih,im] = checkIn.split(':').map(Number);
+                    const late    = (ih*60+im) - (sh*60+sm+graceMins);
+                    lateMinutes   = late > 0 ? late : 0;
+                    const early   = (sh*60+sm) - (ih*60+im);
+                    earlyMins     = early > 0 ? early : 0;
+                    if (checkOut) {
+                        const [oh,om] = checkOut.split(':').map(Number);
+                        const ext     = (oh*60+om) - (eh*60+em);
+                        extraWorkMins = ext > 0 ? ext : 0;
+                    }
                 }
                 if (!st.attendance) st.attendance = [];
                 const ei = st.attendance.findIndex(a=>a.date===today);
@@ -9021,9 +9033,16 @@
                 if (ei>=0) st.attendance[ei]=rec; else st.attendance.push(rec);
             });
             btn.disabled=true; btn.textContent='Saving…';
-            await saveData('staff', staff);
-            overlay.remove();
-            renderView();
+            try {
+                await saveData('staff', staff);
+                overlay.remove();
+                if (typeof showToast === 'function') showToast('✓ Attendance saved for ' + officeStaff.length + ' staff', 3500);
+                renderView();
+            } catch(err) {
+                btn.disabled = false;
+                btn.textContent = '💾 Save All';
+                alert('Save failed: ' + err.message);
+            }
         }
 
         // ── SEND DAILY LATE ALERT EMAIL ─────────────────────────────
@@ -15213,4 +15232,3 @@ Automated WFH alert — ${company} Attendance System.`;
     </div>
 </body>
 </html>
-
