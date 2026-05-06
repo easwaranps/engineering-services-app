@@ -666,7 +666,7 @@
         staff:           '1JFS8ZZNkCXx8sIx6ssZzCbtbciRUrK3v',
         // Fund tracking files — share with imsetechnician@gmail.com:
         fundRequests:    '1HMZBIrE59L6ZpXBa-94uWPaK2S2GG3N7',  // Editor (tech writes new requests)
-        fundPools:       '1x1NniCFB4hba29FxsO9b5rmKoMHE3J8s'      // Viewer (tech reads pool balances)
+        fundPools:       '1x1NniCFB4hba29FxsO9b5rmKoMHE3J8s'   // Viewer (tech reads pool balances)
         // settings: 'PASTE_SETTINGS_FILE_ID_HERE'  ← optional: add settings.json file ID from main app Drive folder
     };
 
@@ -1438,8 +1438,15 @@
         }
     }
 
+    let _savingFundReq = false;
+
     async function saveFundRequest(e) {
         e.preventDefault();
+        if (_savingFundReq) return; // prevent double-submit
+        _savingFundReq = true;
+        const submitBtn = e.target?.querySelector?.('button[type="submit"]');
+        if (submitBtn) { submitBtn.disabled = true; submitBtn.innerHTML = 'Submitting…'; }
+        try {
         const requesterID = document.getElementById('frRequester').value;
         const requester   = (staffList||[]).find(s => s.staffID === requesterID);
         const amt = parseFloat(document.getElementById('frAmount').value);
@@ -1488,6 +1495,10 @@
             } else {
                 showToast('⚠ Save failed: ' + (err.message || 'try again'));
             }
+        }
+        } finally {
+            _savingFundReq = false;
+            if (submitBtn) { submitBtn.disabled = false; submitBtn.innerHTML = '📤 Submit Request'; }
         }
     }
 
