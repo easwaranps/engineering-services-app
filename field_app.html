@@ -165,17 +165,16 @@
 
 <!-- ═══ MODALS ════════════════════════════════════════════════════ -->
 
-<!-- ═══ FUND REQUEST MODAL ══════════════════════════════════════ -->
+<!-- ═══ FUND REQUEST MODAL — Pool-based (Phase A+B) ═════════════ -->
 <div id="fundReqModal" class="modal">
     <div class="modal-box" style="max-width:520px">
-        <div class="modal-hdr" style="background:linear-gradient(135deg,#1e3a5f,#1d4ed8)">
-            <span class="font-bold text-white text-lg" id="fundReqTitle">New Fund Request</span>
+        <div class="modal-hdr" style="background:linear-gradient(135deg,#0d7c66,#15803d)">
+            <span class="font-bold text-white text-lg" id="fundReqTitle">📋 Request Fund</span>
             <button onclick="closeFundReqModal()" class="text-white text-2xl font-bold leading-none">✕</button>
         </div>
         <form id="fundReqForm" onsubmit="saveFundRequest(event)" class="p-5 space-y-4">
-            <input type="hidden" id="frProjID"/>
-            <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:10px 14px">
-                <p class="field-label" style="color:#1d4ed8;margin-bottom:6px">💰 FUND REQUEST DETAILS</p>
+            <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:10px 14px">
+                <p class="field-label" style="color:#15803d;margin-bottom:6px">💰 FUND REQUEST DETAILS</p>
                 <div class="grid grid-cols-2 gap-3">
                     <div>
                         <label class="field-label">Date <span class="text-red-500">*</span></label>
@@ -183,39 +182,35 @@
                     </div>
                     <div>
                         <label class="field-label">Amount Requested (₹) <span class="text-red-500">*</span></label>
-                        <input type="number" id="frAmount" class="field-input" required min="0" step="0.01" placeholder="e.g. 5000"/>
+                        <input type="number" id="frAmount" class="field-input" required min="100" step="0.01" placeholder="e.g. 10000"/>
                     </div>
                 </div>
                 <div class="mt-3">
-                    <label class="field-label">Purpose <span class="text-red-500">*</span></label>
-                    <select id="frPurpose" class="field-input" required>
-                        <option value="AC001 - Food Expenses">AC001 - Food Expenses</option>
-                        <option value="AC002 - Traveling Expenses">AC002 - Traveling Expenses</option>
-                        <option value="AC003 - Staff Welfare">AC003 - Staff Welfare</option>
-                        <option value="AC004 - Telephone Expenses">AC004 - Telephone Expenses</option>
-                        <option value="AC005 - Consumables">AC005 - Consumables</option>
-                        <option value="AC006 - Petrol and Fuel Charges">AC006 - Petrol and Fuel Charges</option>
-                        <option value="AC007 - Printing & Stationery">AC007 - Printing & Stationery</option>
-                        <option value="AC008 - Transportation Expenses">AC008 - Transportation Expenses</option>
-                        <option value="AC009 - Accommodation Expenses">AC009 - Accommodation Expenses</option>
-                        <option value="AC010 - Repairs & Maintenance">AC010 - Repairs & Maintenance</option>
-                        <option value="AC011 - Business Promotion">AC011 - Business Promotion</option>
-                        <option value="AC012 - Immigration Charges">AC012 - Immigration Charges</option>
-                        <option value="AC013 - Miscellaneous Expenses">AC013 - Miscellaneous Expenses</option>
-                        <option value="AC014 - Hiring Charges">AC014 - Hiring Charges</option>
-                        <option value="AC015 - Electricity Charges">AC015 - Electricity Charges</option>
-                        <option value="AC016 - Postage & Courier">AC016 - Postage & Courier</option>
-                        <option value="AC017 - Office Expenses">AC017 - Office Expenses</option>
+                    <label class="field-label">Requesting Technician <span class="text-red-500">*</span></label>
+                    <select id="frRequester" class="field-input" required>
+                        <!-- populated by openFundReqModal -->
                     </select>
+                    <p style="font-size:10px;color:#64748b;margin-top:2px">Defaults to current user; change only if requesting on someone else's behalf</p>
                 </div>
                 <div class="mt-3">
-                    <label class="field-label">Remarks / Justification</label>
-                    <textarea id="frRemarks" class="field-input" rows="2" placeholder="Why is this fund needed?"></textarea>
+                    <label class="field-label">Purpose <span class="text-red-500">*</span></label>
+                    <textarea id="frPurpose" class="field-input" rows="2" placeholder="What is this fund needed for?" required></textarea>
                 </div>
+                <div class="mt-3">
+                    <label class="field-label">Project <span style="color:#94a3b8">(optional)</span></label>
+                    <input type="text" id="frProject" class="field-input" placeholder="e.g. P-001 or project name"/>
+                </div>
+                <div class="mt-3">
+                    <label class="field-label">Notes <span style="color:#94a3b8">(optional)</span></label>
+                    <input type="text" id="frRemarks" class="field-input" placeholder="Any extra info for office..."/>
+                </div>
+            </div>
+            <div id="frBankPreview" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:10px;font-size:11px;color:#1e3a8a;display:none">
+                <!-- shows technician's bank details on file -->
             </div>
             <div class="flex gap-3 pt-2">
                 <button type="button" onclick="closeFundReqModal()" class="btn-secondary flex-1">Cancel</button>
-                <button type="submit" class="btn-primary flex-1">📤 Submit Request</button>
+                <button type="submit" class="btn-primary flex-1" style="background:linear-gradient(135deg,#0d7c66,#15803d)">📤 Submit Request</button>
             </div>
         </form>
     </div>
@@ -672,6 +667,8 @@
     // ── STATE ─────────────────────────────────────────────────────
     let tokenClient, accessToken = null;
     let projectExpenses = [], workLogs = [], staffList = [], tokenRefreshTimer = null;
+    let fundRequests = [], fundPools = [];   // NEW: pool-based fund tracking (Phase A+B)
+    let _fundFileIDs = {};                    // discovered IDs for fundRequests.json + fundPools.json
     let currentView = 'projexp';  // 'projexp' | 'worklogs'
     let _wlPhotos = [], _editWlID = null;
     let currentUser = null;  // { name, staffID } — set after login, persists for session
@@ -834,6 +831,74 @@
         }
     }
 
+    // ── FUND TRACKING DATA — find/create JSON files by name in parent folder ──
+    // Uses broader 'drive' scope (already configured) to look up files by name in
+    // the same folder as the existing shared files. Caches IDs in _fundFileIDs.
+    async function _getDriveParentFolder() {
+        // Returns the folder ID where staff.json/projectExpenses.json live
+        if (_fieldAttFolderCache['__parent']) return _fieldAttFolderCache['__parent'];
+        const r = await fetch(
+            `https://www.googleapis.com/drive/v3/files/${SHARED_FILE_IDS.workLogs}?fields=parents&supportsAllDrives=true&includeItemsFromAllDrives=true`,
+            { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+        if (!r.ok) throw new Error('Cannot find parent folder');
+        const d = await r.json();
+        const parentId = d.parents?.[0];
+        if (!parentId) throw new Error('No parent folder');
+        _fieldAttFolderCache['__parent'] = parentId;
+        return parentId;
+    }
+    async function _findOrCreateFundFile(fileName) {
+        // Returns Drive file ID for fileName. Creates if missing.
+        if (_fundFileIDs[fileName]) return _fundFileIDs[fileName];
+        const parentId = await _getDriveParentFolder();
+        const q = encodeURIComponent(`name='${fileName}' and '${parentId}' in parents and trashed=false`);
+        const r = await fetch(
+            `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)&spaces=drive&supportsAllDrives=true&includeItemsFromAllDrives=true`,
+            { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+        if (r.ok) {
+            const d = await r.json();
+            if (d.files?.length) {
+                _fundFileIDs[fileName] = d.files[0].id;
+                return d.files[0].id;
+            }
+        }
+        // Create empty file
+        const meta = { name: fileName, parents: [parentId], mimeType: 'application/json' };
+        const form = new FormData();
+        form.append('metadata', new Blob([JSON.stringify(meta)], {type:'application/json'}));
+        form.append('file',     new Blob(['[]'],                  {type:'application/json'}));
+        const c = await fetch(
+            'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true',
+            { method:'POST', headers:{ Authorization:`Bearer ${accessToken}` }, body: form }
+        );
+        if (!c.ok) throw new Error('Create file failed: '+fileName);
+        const cd = await c.json();
+        _fundFileIDs[fileName] = cd.id;
+        console.log(`📄 Created ${fileName} in shared folder (ID: ${cd.id})`);
+        return cd.id;
+    }
+    async function loadFundData() {
+        try {
+            const reqID = await _findOrCreateFundFile('fundRequests.json');
+            const reqData = await readFile(reqID);
+            fundRequests = Array.isArray(reqData) ? reqData : [];
+            const poolID = await _findOrCreateFundFile('fundPools.json');
+            const poolData = await readFile(poolID);
+            fundPools = Array.isArray(poolData) ? poolData : [];
+            console.log(`💰 Fund data loaded — ${fundRequests.length} requests, ${fundPools.length} pools`);
+        } catch(err) {
+            console.warn('Fund data load failed (non-critical):', err.message);
+            fundRequests = []; fundPools = [];
+        }
+    }
+    async function saveFundRequests() {
+        const id = await _findOrCreateFundFile('fundRequests.json');
+        await writeFile(id, fundRequests);
+    }
+    // (saveFundPools intentionally omitted — field app never writes pools, only reads)
+
     // ── LOAD / SAVE ───────────────────────────────────────────────
 
     // ── DRIVE ATTACHMENT UTILITIES (Field App) ─────────────────
@@ -982,6 +1047,8 @@
                 const settingsData = await readSettingsByName();
                 if (settingsData && typeof settingsData === 'object') appSettings = settingsData;
             } catch(e) { appSettings = {}; }
+            // Load fund tracking data (Phase A+B) — non-blocking, OK if first run
+            await loadFundData();
             // Always ask who the user is on fresh load — ensures correct attribution
             currentUser = null;
             renderUserSelect();
@@ -1152,6 +1219,8 @@
             projectExpenses = Array.isArray(pe) ? pe : projectExpenses;
             workLogs        = Array.isArray(wl) ? wl : workLogs;
             staffList       = Array.isArray(sf) ? sf.filter(s=>s.status==='Active') : staffList;
+            // Refresh fund data too (catches admin approvals/disbursements while tech is offline)
+            await loadFundData();
             renderView();
             showToast('✅ Synced with Drive');
         } catch { showToast('⚠️ Sync failed — check connection'); }
@@ -1173,23 +1242,67 @@
         const totalSpent  = projectExpenses.reduce((s,p)=>s+(p.items||[]).reduce((a,i)=>a+(parseFloat(i.amount)||0),0),0);
         const totalBal    = totalFunds - totalSpent;
 
+        // ── Pool-based fund tracking (Phase A+B) ──
+        const activePool   = getActiveFundPool();
+        const activeBal    = activePool ? getPoolRunningBalance(activePool) : 0;
+        const lastReq      = getCurrentUserLastRequest();
+        const totalActiveBal = (fundPools||[]).filter(p => p.status === 'Active')
+                                .reduce((s,p) => s + getPoolRunningBalance(p), 0);
+        const activePoolCount = (fundPools||[]).filter(p => p.status === 'Active').length;
+
+        // Status colors for last request
+        const reqStatusInfo = lastReq ? (() => {
+            const s = lastReq.status;
+            if (s === 'Pending')   return { color: '#92400e', bg: '#fef3c7', icon: '⏳', label: 'Pending — awaiting office' };
+            if (s === 'Approved')  return { color: '#1e40af', bg: '#dbeafe', icon: '✓',  label: 'Approved — awaiting bank transfer' };
+            if (s === 'Disbursed') return { color: '#065f46', bg: '#d1fae5', icon: '💸', label: 'Disbursed — funds received' };
+            if (s === 'Rejected')  return { color: '#991b1b', bg: '#fee2e2', icon: '✕',  label: 'Rejected: '+(lastReq.rejectReason||'No reason') };
+            if (s === 'Cancelled') return { color: '#475569', bg: '#f1f5f9', icon: '⊘',  label: 'Cancelled by you' };
+            return null;
+        })() : null;
+
         el.innerHTML = `
-        <!-- Grand summary -->
+        <!-- Pool status strip (Phase A+B) -->
+        <div class="card mb-3" style="background:linear-gradient(135deg,#0d7c66,#15803d);padding:12px 14px">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+                <div style="flex:1;min-width:200px">
+                    <p style="font-size:10px;font-weight:700;color:#bbf7d0;text-transform:uppercase;letter-spacing:.5px">💰 Active Pool ${activePoolCount > 1 ? '('+activePoolCount+' available)' : ''}</p>
+                    ${activePool
+                        ? `<p style="font-size:14px;font-weight:700;color:#fff;font-family:monospace">${activePool.poolID}</p>
+                           <p style="font-size:13px;color:#fff">Balance: <b>${fmt(activeBal)}</b> ${activeBal < 500 ? '<span style="color:#fde68a;font-size:11px">⚠ low — request fresh fund</span>' : ''}</p>`
+                        : `<p style="font-size:13px;color:#fde68a">⚠ No active pool — request fresh fund to log expenses</p>`}
+                </div>
+                <button onclick="openFundReqModal()" style="padding:8px 16px;border-radius:9px;background:#fff;color:#15803d;border:none;cursor:pointer;font-size:13px;font-weight:700;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.15)">+ Request Fund</button>
+            </div>
+            ${reqStatusInfo ? `
+            <div style="margin-top:10px;padding:8px 10px;background:${reqStatusInfo.bg};border-radius:8px;display:flex;justify-content:space-between;align-items:center;gap:8px">
+                <div style="font-size:12px;color:${reqStatusInfo.color}">
+                    <b>${reqStatusInfo.icon} Last Request:</b> ${fmt(lastReq.requestedAmount)} · ${reqStatusInfo.label}
+                    <div style="font-size:10px;opacity:.85;margin-top:1px">Sent ${lastReq.requestedDate} ${lastReq.requestedTime||''}</div>
+                </div>
+                ${lastReq.status === 'Pending'
+                    ? `<button onclick="cancelFundRequest('${lastReq.requestID}')" style="padding:4px 10px;background:rgba(0,0,0,.1);color:${reqStatusInfo.color};border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap">Cancel</button>`
+                    : ''}
+            </div>` : ''}
+        </div>
+
+        <!-- Old grand summary (kept for project-level view) -->
         <div class="grid grid-cols-2 gap-3 mb-3">
             <div class="card p-3" style="background:linear-gradient(135deg,#1e3a5f,#1d4ed8)">
-                <p style="font-size:10px;font-weight:600;color:#bfdbfe;margin-bottom:2px">TOTAL OFFICE FUNDS</p>
-                <p style="font-size:18px;font-weight:700;color:#fff">${fmt(totalFunds)}</p>
+                <p style="font-size:10px;font-weight:600;color:#bfdbfe;margin-bottom:2px">TOTAL FIELD FUNDS</p>
+                <p style="font-size:18px;font-weight:700;color:#fff">${fmt(totalActiveBal)}</p>
+                <p style="font-size:10px;color:#bfdbfe">Across ${activePoolCount} active pool${activePoolCount===1?'':'s'}</p>
             </div>
             <div class="card p-3" style="background:linear-gradient(135deg,#0d7c66,#0a6355)">
-                <p style="font-size:10px;font-weight:600;color:#99f6e4;margin-bottom:2px">TOTAL SPENT</p>
+                <p style="font-size:10px;font-weight:600;color:#99f6e4;margin-bottom:2px">TOTAL SPENT (PROJECTS)</p>
                 <p style="font-size:18px;font-weight:700;color:#fff">${fmt(totalSpent)}</p>
-                <p style="font-size:10px;color:#5eead4">Balance: ${fmt(totalBal)}</p>
+                <p style="font-size:10px;color:#5eead4">Across ${projectExpenses.length} project${projectExpenses.length===1?'':'s'}</p>
             </div>
         </div>
 
         <div class="card p-3 mb-3 flex items-center gap-2" style="background:#eff6ff;border-color:#bfdbfe">
             <span style="font-size:15px">ℹ️</span>
-            <p style="font-size:12px;color:#1d4ed8">Projects are created by the office. Use <strong>Fund Request</strong> to ask for funds, then <strong>Add Expense</strong> to record spending. Use <strong>Reconcile</strong> to export PDF/CSV for office submission.</p>
+            <p style="font-size:12px;color:#1d4ed8">Use <strong>+ Request Fund</strong> above when you need funds. Once disbursed, log expenses against projects below — they'll auto-allocate to the active pool (Phase C feature, coming soon).</p>
         </div>
 
         <!-- Project cards -->
@@ -1204,8 +1317,8 @@
             const totalAvail = funds + tfIn;
             const pct     = totalAvail>0 ? Math.min(100,((spent+tfOut)/totalAvail)*100) : 0;
             const barCol  = pct>90?'#dc2626':pct>70?'#d97706':'#0d7c66';
-            const pendReq = (p.fundRequests||[]).filter(r=>r.status==='Pending').length;
-            const totalReq= (p.fundRequests||[]).reduce((a,r)=>a+(parseFloat(r.amount)||0),0);
+            const pendReq = 0; // Old per-project requests deprecated — pool-based now
+            const totalReq= 0;
 
             return `
             <div class="card mb-4" style="border-left:4px solid ${bal>=0?'#0d7c66':'#dc2626'}">
@@ -1231,9 +1344,7 @@
 
                     <!-- Action buttons -->
                     <div class="flex gap-2 mt-3 flex-wrap">
-                        <button onclick="openFundReqModal('${p.projExpID}')" style="padding:7px 12px;border-radius:9px;background:#1e3a5f;color:#fff;border:none;cursor:pointer;font-size:12px;font-weight:600">💰 Fund Request</button>
                         <button onclick="openExpItemModal('${p.projExpID}')" class="btn-primary" style="padding:7px 12px;font-size:12px">+ Add Expense</button>
-                        ${bal>0?`<button onclick="openTransferModal('${p.projExpID}')" style="padding:7px 12px;border-radius:9px;background:#0369a1;color:#fff;border:none;cursor:pointer;font-size:12px;font-weight:600">↔ Transfer Balance</button>`:''}
                         <button onclick="reconcilePDF('${p.projExpID}')" style="padding:7px 12px;border-radius:9px;background:#7c3aed;color:#fff;border:none;cursor:pointer;font-size:12px;font-weight:600">📄 Reconcile PDF</button>
                         <button onclick="reconcileCSV('${p.projExpID}')" style="padding:7px 12px;border-radius:9px;background:#15803d;color:#fff;border:none;cursor:pointer;font-size:12px;font-weight:600">📊 Reconcile CSV</button>
                     </div>
@@ -1306,43 +1417,156 @@
     }
 
     // ── FUND REQUEST CRUD ─────────────────────────────────────────
-    function openFundReqModal(projID) {
-        document.getElementById('frProjID').value = projID;
-        document.getElementById('frDate').value   = new Date().toISOString().split('T')[0];
-        document.getElementById('frAmount').value = '';
-        document.getElementById('frRemarks').value= '';
+    // ── FUND REQUEST (Phase A+B — pool-based architecture) ──
+    // openFundReqModal: opens the modal. No projID needed — request is tech-bound, not project-bound.
+    function openFundReqModal() {
+        // Populate technician dropdown from staffList (technicians only)
+        const techSel = document.getElementById('frRequester');
+        const techs = (staffList||[]).filter(s => (s.staffType||'').toLowerCase().includes('tech'));
+        techSel.innerHTML = (techs.length ? techs : staffList).map(s =>
+            `<option value="${s.staffID}" ${currentUser?.staffID===s.staffID?'selected':''}>${s.name}${s.staffType?' ('+s.staffType+')':''}</option>`
+        ).join('');
+        document.getElementById('frDate').value     = new Date().toISOString().split('T')[0];
+        document.getElementById('frAmount').value   = '';
+        document.getElementById('frPurpose').value  = '';
+        document.getElementById('frProject').value  = '';
+        document.getElementById('frRemarks').value  = '';
+        // Show bank preview for currently-selected tech
+        _updateFundReqBankPreview();
+        techSel.onchange = _updateFundReqBankPreview;
         document.getElementById('fundReqModal').classList.add('show');
     }
-    function closeFundReqModal() { document.getElementById('fundReqModal').classList.remove('show'); }
+    function closeFundReqModal() {
+        document.getElementById('fundReqModal').classList.remove('show');
+    }
+    function _updateFundReqBankPreview() {
+        const sid = document.getElementById('frRequester').value;
+        const s = (staffList||[]).find(x => x.staffID === sid);
+        const bd = s?.bankDetails || {};
+        const box = document.getElementById('frBankPreview');
+        if (bd.accountNumber && bd.ifsc) {
+            box.style.display = 'block';
+            box.innerHTML = `🏦 <b>Disbursement will go to:</b> ${bd.bankName||'(bank)'}${bd.branch?' · '+bd.branch:''}<br>` +
+                            `<span style="font-family:monospace">A/c: ****${String(bd.accountNumber).slice(-4)} · IFSC: ${bd.ifsc}</span>`;
+        } else {
+            box.style.display = 'block';
+            box.style.background = '#fef2f2';
+            box.style.borderColor = '#fecaca';
+            box.style.color = '#991b1b';
+            box.innerHTML = `⚠ No bank details on file for this technician. Office will need to add them before disbursement.`;
+        }
+    }
 
     async function saveFundRequest(e) {
         e.preventDefault();
-        const projID = document.getElementById('frProjID').value;
-        const idx    = projectExpenses.findIndex(x=>x.projExpID===projID);
-        if (idx<0) return;
-        if (!projectExpenses[idx].fundRequests) projectExpenses[idx].fundRequests = [];
-        projectExpenses[idx].fundRequests.push({
-            frID:    'FR'+Date.now(),
-            date:    document.getElementById('frDate').value,
-            amount:  parseFloat(document.getElementById('frAmount').value)||0,
-            purpose: document.getElementById('frPurpose').value,
-            remarks: document.getElementById('frRemarks').value,
-            status:  'Pending',
-            addedBy:    currentUser?.name || 'Unknown',
-            addedByID:  currentUser?.staffID || '',
-            addedAt:    new Date().toISOString()
-        });
-        await saveData('projectExpenses', projectExpenses);
-        closeFundReqModal(); renderView(); showToast('📤 Fund request submitted');
+        const requesterID = document.getElementById('frRequester').value;
+        const requester   = (staffList||[]).find(s => s.staffID === requesterID);
+        const amt = parseFloat(document.getElementById('frAmount').value);
+        if (!requesterID || !isFinite(amt) || amt < 100) {
+            showToast('⚠ Please complete all required fields (min ₹100)');
+            return;
+        }
+        const now = new Date();
+        const newReq = {
+            requestID:        'REQ-'+now.getTime(),
+            poolID:           '',
+            requestedBy:      requesterID,
+            requestedByName:  requester?.name || 'Unknown',
+            requestedDate:    document.getElementById('frDate').value,
+            requestedTime:    now.toTimeString().slice(0,5),
+            requestedAmount:  amt,
+            purpose:          document.getElementById('frPurpose').value.trim(),
+            project:          document.getElementById('frProject').value.trim(),
+            status:           'Pending',
+            rejectReason:     '',
+            approvedBy:       '',
+            approvedDate:     '',
+            approvedTime:     '',
+            disbursedAmount:  0,
+            disbursedDate:    '',
+            disbursedFromBank:'',
+            disbursedToBank:  '',
+            disbursedToIFSC:  '',
+            transferRefNo:    '',
+            notes:            document.getElementById('frRemarks').value.trim(),
+            cancelledReason:  '',
+            createdAt:        now.toISOString(),
+            updatedAt:        now.toISOString()
+        };
+        fundRequests.push(newReq);
+        try {
+            await saveFundRequests();
+            closeFundReqModal();
+            renderView();
+            showToast('📤 Fund request submitted to office');
+        } catch(err) {
+            // Rollback in-memory if save failed
+            fundRequests = fundRequests.filter(r => r.requestID !== newReq.requestID);
+            showToast('⚠ Save failed — try again');
+        }
     }
 
-    async function deleteFundReq(projID, frID) {
-        if (!confirm('Delete this fund request?')) return;
-        const idx = projectExpenses.findIndex(x=>x.projExpID===projID);
-        if (idx<0) return;
-        projectExpenses[idx].fundRequests = (projectExpenses[idx].fundRequests||[]).filter(r=>r.frID!==frID);
-        await saveData('projectExpenses', projectExpenses);
-        renderView(); showToast('🗑️ Fund request deleted');
+    // Tech can cancel their own pending request (only if still Pending)
+    async function cancelFundRequest(reqID) {
+        if (!confirm('Cancel this fund request?\n\nIf the office has already processed it, you cannot cancel.')) return;
+        const r = fundRequests.find(x => x.requestID === reqID);
+        if (!r) return;
+        if (r.status !== 'Pending') {
+            showToast('⚠ Cannot cancel — request is already ' + r.status.toLowerCase());
+            return;
+        }
+        r.status = 'Cancelled';
+        r.cancelledReason = 'Cancelled by technician';
+        r.updatedAt = new Date().toISOString();
+        try {
+            await saveFundRequests();
+            renderView();
+            showToast('🗑️ Request cancelled');
+        } catch(err) {
+            showToast('⚠ Save failed');
+        }
+    }
+
+    // Stub to keep the OLD project-tied function name available (no-op now) —
+    // prevents errors if any old project rendering accidentally calls it.
+    async function deleteFundReq(_projID, _frID) {
+        showToast('ℹ Old fund-request flow has been replaced. Use new pool-based system.');
+    }
+
+    // FY computation for context display
+    function _fieldFYof(dateStr) {
+        const d = new Date((dateStr||new Date().toISOString().slice(0,10)) + 'T00:00:00');
+        const y = d.getFullYear(), m = d.getMonth();
+        const startYear = (m < 3) ? y - 1 : y;
+        const endYear   = startYear + 1;
+        return String(startYear).slice(-2) + String(endYear).slice(-2);
+    }
+
+    // Compute the active pool for spending (oldest active pool — FIFO).
+    // Phase A+B: returns first active pool. Phase C will plug FIFO logic here.
+    function getActiveFundPool() {
+        const active = (fundPools||[]).filter(p => p.status === 'Active')
+            .sort((a,b) => (a.disbursedDate||'').localeCompare(b.disbursedDate||'')
+                        || (a.poolID||'').localeCompare(b.poolID||''));
+        return active[0] || null;
+    }
+
+    // Compute pool's running balance (Phase A+B: cached value; Phase C: live recompute)
+    function getPoolRunningBalance(pool) {
+        if (!pool) return 0;
+        const disbursed = parseFloat(pool.disbursedAmount) || 0;
+        const linked = (projectExpenses||[]).filter(p => p.poolID === pool.poolID);
+        // Phase B: project-level "items" structure may still contain expenses; sum them
+        const spent = linked.reduce((s,p) => s + (p.items||[]).reduce((a,i) => a+(parseFloat(i.amount)||0), 0), 0);
+        return +(disbursed - spent).toFixed(2);
+    }
+
+    // Get the most recent fund request from the current user (or all techs in pooled view)
+    function getCurrentUserLastRequest() {
+        if (!currentUser?.staffID) return null;
+        const mine = (fundRequests||[]).filter(r => r.requestedBy === currentUser.staffID)
+            .sort((a,b) => (b.createdAt||'').localeCompare(a.createdAt||''));
+        return mine[0] || null;
     }
 
     // ── FUND TRANSFER ─────────────────────────────────────────────
