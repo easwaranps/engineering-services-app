@@ -4652,6 +4652,14 @@
         }
 
         function _renderApprovedRequestRow(r) {
+            // Detect: does a pool already exist for this approved request?
+            // If so, the request was probably un-disbursed (Reverse Disbursement) but
+            // the original pool still exists. Show "Link to existing" instead of "Mark Disbursed".
+            const existingPool = (fundPools||[]).find(p => p.sourceRequestID === r.requestID);
+            const linkedToOldPool = !!existingPool;
+            const warnBadge = linkedToOldPool
+                ? `<span class="text-[10px] px-2 py-0.5 bg-amber-100 text-amber-800 rounded font-semibold" title="An existing pool (${existingPool.poolID}) is already linked to this request">⚠ Pool exists: ${existingPool.poolID}</span>`
+                : '';
             return `<div class="px-5 py-3 hover:bg-blue-50/40 transition-colors">
                 <div class="flex items-center justify-between gap-4 flex-wrap">
                     <div class="flex-1 min-w-0">
@@ -4660,13 +4668,16 @@
                             <span class="text-base font-bold text-blue-700">${_fmtFundAmt(r.requestedAmount)}</span>
                             <span class="text-xs text-gray-400">·</span>
                             <span class="text-xs text-gray-500">${r.purpose || '—'}</span>
+                            ${warnBadge}
                         </div>
                         <div class="text-xs text-gray-400 mt-0.5">
                             Approved by ${r.approvedBy||'admin'} ${_fundTimeAgo(r.approvedDate ? r.approvedDate+'T'+(r.approvedTime||'00:00')+':00.000Z' : null)}
                         </div>
                     </div>
                     <div class="flex gap-1 shrink-0">
-                        <button onclick="markFundDisbursed('${r.requestID}')" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold">💸 Mark Disbursed</button>
+                        ${linkedToOldPool
+                            ? `<button onclick="markAlreadyDisbursed('${r.requestID}','${existingPool.poolID}')" class="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold" title="Link this request back to its existing pool ${existingPool.poolID} without creating a new pool">🔗 Already Disbursed</button>`
+                            : `<button onclick="markFundDisbursed('${r.requestID}')" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold">💸 Mark Disbursed</button>`}
                         <button onclick="viewFundRequest('${r.requestID}')" class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-medium">View</button>
                     </div>
                 </div>
@@ -4776,6 +4787,57 @@
                 )) return;
             }
             _openDisburseModal(r, bd);
+        }
+
+        // Link an Approved request to an EXISTING pool (no new pool created).
+        // Used when:
+        //   • Bank transfer happened outside the app + admin forgot to mark disbursed
+        //   • A pool was created earlier but the request was un-disbursed (Reverse Disbursement)
+        //   • Any case where the pool ALREADY EXISTS for this request and admin wants
+        //     to flip status from Approved → Disbursed without creating another pool.
+        async function markAlreadyDisbursed(reqID, poolID) {
+            const r = fundRequests.find(x => x.requestID === reqID);
+            if (!r) return alert('Request not found');
+            if (r.status !== 'Approved') return alert('Only Approved requests can be linked. Current status: ' + r.status);
+            const p = fundPools.find(x => x.poolID === poolID);
+            if (!p) return alert('Pool not found: ' + poolID);
+            if (p.sourceRequestID !== reqID) {
+                return alert(`Safety check failed: Pool ${poolID} is not linked to this request. Refusing to relink.`);
+            }
+            if (!confirm(
+                `Link this request to existing pool ${poolID}?\n\n` +
+                `• Request status: Approved → Disbursed\n` +
+                `• Pool ${poolID} stays unchanged (₹${(parseFloat(p.disbursedAmount)||0).toLocaleString('en-IN')} disbursed on ${p.disbursedDate})\n` +
+                `• NO new pool will be created\n\n` +
+                `Use this when the bank transfer was already done and a pool exists for it.\n\n` +
+                `Continue?`
+            )) return;
+
+            // Snapshot for rollback
+            const snapshot = JSON.parse(JSON.stringify(r));
+
+            // Update request to match the existing pool's disbursement details
+            r.status            = 'Disbursed';
+            r.poolID            = p.poolID;
+            r.disbursedAmount   = p.disbursedAmount;
+            r.disbursedDate     = p.disbursedDate;
+            r.disbursedFromBank = p.disbursedFromBank || '';
+            r.disbursedToBank   = p.disbursedToBank   || '';
+            r.disbursedToIFSC   = p.disbursedToIFSC   || '';
+            r.transferRefNo     = p.transferRefNo     || '';
+            r.updatedAt         = new Date().toISOString();
+
+            try {
+                await saveData('fundRequests', fundRequests);
+                if (typeof showToast === 'function') showToast(`✓ Request linked to existing pool ${poolID}`, 4000);
+                renderView();
+            } catch(err) {
+                // Rollback in-memory if save failed
+                const idx = fundRequests.findIndex(x => x.requestID === reqID);
+                if (idx >= 0) fundRequests[idx] = snapshot;
+                alert('Save failed: ' + err.message + '\n\nRolled back. Please try again.');
+                renderView();
+            }
         }
 
         // Disburse modal — final confirmation + capture bank ref
