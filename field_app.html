@@ -657,10 +657,16 @@
     // long string between /d/ and /view in the URL.
     // Share projectExpenses.json and workLogs.json as EDITOR,
     // staff.json as VIEWER with imsetechnician@gmail.com.
+    // For Phase A+B (Fund Tracking): admin must create fundRequests.json + fundPools.json
+    // in Main App (auto-created on first sign-in), share them with imsetechnician@gmail.com,
+    // then paste the IDs below.
     const SHARED_FILE_IDS = {
         projectExpenses: '1OwJc4CdczowDWeHpCtSmfR0pYqhS49s0',
         workLogs:        '1P1sZh77q7w33eY2B9P20sYpT92Cb1FuK',
-        staff:           '1JFS8ZZNkCXx8sIx6ssZzCbtbciRUrK3v'
+        staff:           '1JFS8ZZNkCXx8sIx6ssZzCbtbciRUrK3v',
+        // Fund tracking files — share with imsetechnician@gmail.com:
+        fundRequests:    '1HMZBIrE59L6ZpXBa-94uWPaK2S2GG3N7',  // Editor (tech writes new requests)
+        fundPools:       '1x1NniCFB4hba29FxsO9b5rmKoMHE3J8s'      // Viewer (tech reads pool balances)
         // settings: 'PASTE_SETTINGS_FILE_ID_HERE'  ← optional: add settings.json file ID from main app Drive folder
     };
 
@@ -668,7 +674,6 @@
     let tokenClient, accessToken = null;
     let projectExpenses = [], workLogs = [], staffList = [], tokenRefreshTimer = null;
     let fundRequests = [], fundPools = [];   // NEW: pool-based fund tracking (Phase A+B)
-    let _fundFileIDs = {};                    // discovered IDs for fundRequests.json + fundPools.json
     let currentView = 'projexp';  // 'projexp' | 'worklogs'
     let _wlPhotos = [], _editWlID = null;
     let currentUser = null;  // { name, staffID } — set after login, persists for session
@@ -831,73 +836,49 @@
         }
     }
 
-    // ── FUND TRACKING DATA — find/create JSON files by name in parent folder ──
-    // Uses broader 'drive' scope (already configured) to look up files by name in
-    // the same folder as the existing shared files. Caches IDs in _fundFileIDs.
-    async function _getDriveParentFolder() {
-        // Returns the folder ID where staff.json/projectExpenses.json live
-        if (_fieldAttFolderCache['__parent']) return _fieldAttFolderCache['__parent'];
-        const r = await fetch(
-            `https://www.googleapis.com/drive/v3/files/${SHARED_FILE_IDS.workLogs}?fields=parents&supportsAllDrives=true&includeItemsFromAllDrives=true`,
-            { headers: { Authorization: `Bearer ${accessToken}` } }
-        );
-        if (!r.ok) throw new Error('Cannot find parent folder');
-        const d = await r.json();
-        const parentId = d.parents?.[0];
-        if (!parentId) throw new Error('No parent folder');
-        _fieldAttFolderCache['__parent'] = parentId;
-        return parentId;
-    }
-    async function _findOrCreateFundFile(fileName) {
-        // Returns Drive file ID for fileName. Creates if missing.
-        if (_fundFileIDs[fileName]) return _fundFileIDs[fileName];
-        const parentId = await _getDriveParentFolder();
-        const q = encodeURIComponent(`name='${fileName}' and '${parentId}' in parents and trashed=false`);
-        const r = await fetch(
-            `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)&spaces=drive&supportsAllDrives=true&includeItemsFromAllDrives=true`,
-            { headers: { Authorization: `Bearer ${accessToken}` } }
-        );
-        if (r.ok) {
-            const d = await r.json();
-            if (d.files?.length) {
-                _fundFileIDs[fileName] = d.files[0].id;
-                return d.files[0].id;
-            }
-        }
-        // Create empty file
-        const meta = { name: fileName, parents: [parentId], mimeType: 'application/json' };
-        const form = new FormData();
-        form.append('metadata', new Blob([JSON.stringify(meta)], {type:'application/json'}));
-        form.append('file',     new Blob(['[]'],                  {type:'application/json'}));
-        const c = await fetch(
-            'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true',
-            { method:'POST', headers:{ Authorization:`Bearer ${accessToken}` }, body: form }
-        );
-        if (!c.ok) throw new Error('Create file failed: '+fileName);
-        const cd = await c.json();
-        _fundFileIDs[fileName] = cd.id;
-        console.log(`📄 Created ${fileName} in shared folder (ID: ${cd.id})`);
-        return cd.id;
-    }
+    // ── FUND TRACKING DATA — Pool-based fund system (Phase A+B) ──
+    // Architecture: Main App creates fundRequests.json + fundPools.json in the
+    // shared folder, then shares each individually with imsetechnician@gmail.com.
+    // Admin pastes file IDs into SHARED_FILE_IDS above.
+    // If IDs are blank, the field app skips fund features gracefully.
     async function loadFundData() {
         try {
-            const reqID = await _findOrCreateFundFile('fundRequests.json');
-            const reqData = await readFile(reqID);
-            fundRequests = Array.isArray(reqData) ? reqData : [];
-            const poolID = await _findOrCreateFundFile('fundPools.json');
-            const poolData = await readFile(poolID);
-            fundPools = Array.isArray(poolData) ? poolData : [];
+            const reqID  = SHARED_FILE_IDS.fundRequests;
+            const poolID = SHARED_FILE_IDS.fundPools;
+            if (!reqID || reqID.startsWith('PASTE_')) {
+                console.log('💰 Fund tracking not configured (admin: paste fundRequests/fundPools IDs in SHARED_FILE_IDS)');
+                fundRequests = []; fundPools = [];
+                return;
+            }
+            try {
+                const reqData = await readFile(reqID);
+                fundRequests = Array.isArray(reqData) ? reqData : [];
+            } catch(e) {
+                console.warn('Could not read fundRequests.json — has it been shared with imsetechnician@gmail.com?', e.message);
+                fundRequests = [];
+            }
+            if (poolID && !poolID.startsWith('PASTE_')) {
+                try {
+                    const poolData = await readFile(poolID);
+                    fundPools = Array.isArray(poolData) ? poolData : [];
+                } catch(e) {
+                    console.warn('Could not read fundPools.json:', e.message);
+                    fundPools = [];
+                }
+            }
             console.log(`💰 Fund data loaded — ${fundRequests.length} requests, ${fundPools.length} pools`);
         } catch(err) {
-            console.warn('Fund data load failed (non-critical):', err.message);
+            console.warn('Fund data load failed:', err.message);
             fundRequests = []; fundPools = [];
         }
     }
     async function saveFundRequests() {
-        const id = await _findOrCreateFundFile('fundRequests.json');
+        const id = SHARED_FILE_IDS.fundRequests;
+        if (!id || id.startsWith('PASTE_')) {
+            throw new Error('FUND_NOT_CONFIGURED');
+        }
         await writeFile(id, fundRequests);
     }
-    // (saveFundPools intentionally omitted — field app never writes pools, only reads)
 
     // ── LOAD / SAVE ───────────────────────────────────────────────
 
@@ -1502,7 +1483,11 @@
         } catch(err) {
             // Rollback in-memory if save failed
             fundRequests = fundRequests.filter(r => r.requestID !== newReq.requestID);
-            showToast('⚠ Save failed — try again');
+            if (err.message === 'FUND_NOT_CONFIGURED') {
+                showToast('⚠ Fund tracking not yet set up by office — ask admin to share fundRequests.json file');
+            } else {
+                showToast('⚠ Save failed: ' + (err.message || 'try again'));
+            }
         }
     }
 
