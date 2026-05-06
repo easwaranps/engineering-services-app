@@ -4859,72 +4859,130 @@
             document.body.appendChild(modal);
         }
 
+        // Prevent double-submission of disbursement (race condition guard)
+        let _disbursingNow = false;
+
         async function confirmDisburse(e, reqID) {
             e.preventDefault();
-            const r = fundRequests.find(x => x.requestID === reqID);
-            if (!r) return;
-            const dDate = document.getElementById('_dDate').value;
-            const dAmt  = parseFloat(document.getElementById('_dAmt').value);
-            const dFromBank = document.getElementById('_dFromBank').value;
-            const dRef  = document.getElementById('_dRef').value.trim();
-            const dNotes= document.getElementById('_dNotes').value.trim();
-            if (!dDate || !isFinite(dAmt) || dAmt <= 0 || !dFromBank) return alert('Please complete all required fields');
-
-            // Look up tech bank for the pool record
-            const techStaff = staff.find(s => s.staffID === r.requestedBy);
-            const bd = techStaff?.bankDetails || {};
-
-            // Create the pool
-            const idInfo = _nextPoolID(dDate);
-            const newPool = {
-                poolID:           idInfo.poolID,
-                fy:               idInfo.fy,
-                sequenceNo:       idInfo.sequenceNo,
-                sourceRequestID:  r.requestID,
-                requestedBy:      r.requestedBy,
-                requestedByName:  r.requestedByName,
-                disbursedAmount:  dAmt,
-                disbursedDate:    dDate,
-                disbursedFromBank:dFromBank,
-                disbursedToBank:  bd.accountNumber || '',
-                disbursedToIFSC:  bd.ifsc || '',
-                transferRefNo:    dRef,
-                runningBalance:   dAmt,        // cache; recomputed live anyway
-                totalSpent:       0,
-                status:           'Active',
-                closedDate:       '',
-                purpose:          r.purpose,
-                project:          r.project,
-                tallyVoucher:     '',
-                tallyVoucherDate: '',
-                tallyAttachment:  null,
-                notes:            dNotes,
-                createdAt:        new Date().toISOString(),
-                updatedAt:        new Date().toISOString()
-            };
-            fundPools.push(newPool);
-
-            // Update request
-            r.status          = 'Disbursed';
-            r.poolID          = newPool.poolID;
-            r.disbursedAmount = dAmt;
-            r.disbursedDate   = dDate;
-            r.disbursedFromBank = dFromBank;
-            r.disbursedToBank = bd.accountNumber || '';
-            r.disbursedToIFSC = bd.ifsc || '';
-            r.transferRefNo   = dRef;
-            r.notes           = (r.notes ? r.notes + ' | ' : '') + (dNotes ? 'Disb: '+dNotes : '');
-            r.updatedAt       = new Date().toISOString();
-
+            // ── Guard 1: prevent double-click during processing ──
+            if (_disbursingNow) {
+                console.warn('Disbursement already in progress, ignoring duplicate click');
+                return;
+            }
+            _disbursingNow = true;
+            const submitBtn = e.target?.querySelector?.('button[type="submit"]');
+            if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Processing…'; }
             try {
-                // Save both files
-                await saveData('fundPools', fundPools);
-                await saveData('fundRequests', fundRequests);
-                document.getElementById('_fundDisburseModal')?.remove();
-                if (typeof showToast === 'function') showToast(`✅ Pool ${newPool.poolID} created — ${_fmtFundAmt(dAmt)} now available for field expenses`, 5000);
-                renderView();
-            } catch(err) {
-                alert('Save failed: '+err.message+'\n\nNote: Some data may need to be re-entered.');
+                const r = fundRequests.find(x => x.requestID === reqID);
+                if (!r) {
+                    alert('Request not found — may have been deleted or already disbursed');
+                    document.getElementById('_fundDisburseModal')?.remove();
+                    return;
+                }
+                // ── Guard 2: re-verify request is still Approved (not already disbursed) ──
+                if (r.status !== 'Approved') {
+                    alert(`This request is no longer in Approved state (current: ${r.status}). It may have been disbursed by another user.`);
+                    document.getElementById('_fundDisburseModal')?.remove();
+                    renderView();
+                    return;
+                }
+                // ── Guard 3: re-verify no pool already exists for this request ──
+                const existingPool = fundPools.find(p => p.sourceRequestID === r.requestID);
+                if (existingPool) {
+                    alert(`A pool (${existingPool.poolID}) already exists for this request. Cannot create another.`);
+                    document.getElementById('_fundDisburseModal')?.remove();
+                    renderView();
+                    return;
+                }
+
+                const dDate = document.getElementById('_dDate').value;
+                const dAmt  = parseFloat(document.getElementById('_dAmt').value);
+                const dFromBank = document.getElementById('_dFromBank').value;
+                const dRef  = document.getElementById('_dRef').value.trim();
+                const dNotes= document.getElementById('_dNotes').value.trim();
+                if (!dDate || !isFinite(dAmt) || dAmt <= 0 || !dFromBank) {
+                    alert('Please complete all required fields');
+                    return;
+                }
+
+                // Look up tech bank for the pool record
+                const techStaff = staff.find(s => s.staffID === r.requestedBy);
+                const bd = techStaff?.bankDetails || {};
+
+                // Create the pool
+                const idInfo = _nextPoolID(dDate);
+                const newPool = {
+                    poolID:           idInfo.poolID,
+                    fy:               idInfo.fy,
+                    sequenceNo:       idInfo.sequenceNo,
+                    sourceRequestID:  r.requestID,
+                    requestedBy:      r.requestedBy,
+                    requestedByName:  r.requestedByName,
+                    disbursedAmount:  dAmt,
+                    disbursedDate:    dDate,
+                    disbursedFromBank:dFromBank,
+                    disbursedToBank:  bd.accountNumber || '',
+                    disbursedToIFSC:  bd.ifsc || '',
+                    transferRefNo:    dRef,
+                    runningBalance:   dAmt,        // cache; recomputed live anyway
+                    totalSpent:       0,
+                    status:           'Active',
+                    closedDate:       '',
+                    purpose:          r.purpose,
+                    project:          r.project,
+                    tallyVoucher:     '',
+                    tallyVoucherDate: '',
+                    tallyAttachment:  null,
+                    notes:            dNotes,
+                    createdAt:        new Date().toISOString(),
+                    updatedAt:        new Date().toISOString()
+                };
+
+                // ── Snapshot for rollback if save fails ──
+                const requestSnapshot = JSON.parse(JSON.stringify(r));
+
+                fundPools.push(newPool);
+
+                // Update request
+                r.status          = 'Disbursed';
+                r.poolID          = newPool.poolID;
+                r.disbursedAmount = dAmt;
+                r.disbursedDate   = dDate;
+                r.disbursedFromBank = dFromBank;
+                r.disbursedToBank = bd.accountNumber || '';
+                r.disbursedToIFSC = bd.ifsc || '';
+                r.transferRefNo   = dRef;
+                r.notes           = (r.notes ? r.notes + ' | ' : '') + (dNotes ? 'Disb: '+dNotes : '');
+                r.updatedAt       = new Date().toISOString();
+
+                try {
+                    // Save pools first; rollback if it fails
+                    await saveData('fundPools', fundPools);
+                    try {
+                        await saveData('fundRequests', fundRequests);
+                    } catch(reqErr) {
+                        // fundPools saved but fundRequests didn't — leave pool, restore request status
+                        const idx = fundRequests.findIndex(x => x.requestID === reqID);
+                        if (idx >= 0) fundRequests[idx] = requestSnapshot;
+                        alert('Warning: Pool created but request status could not be updated. Refresh and verify state.\n\n' + reqErr.message);
+                        return;
+                    }
+                    document.getElementById('_fundDisburseModal')?.remove();
+                    if (typeof showToast === 'function') showToast(`✅ Pool ${newPool.poolID} created — ${_fmtFundAmt(dAmt)} now available for field expenses`, 5000);
+                    renderView();
+                } catch(err) {
+                    // fundPools save failed — rollback both
+                    fundPools = fundPools.filter(p => p.poolID !== newPool.poolID);
+                    const idx = fundRequests.findIndex(x => x.requestID === reqID);
+                    if (idx >= 0) fundRequests[idx] = requestSnapshot;
+                    alert('Save failed: '+err.message+'\n\nNo changes have been made. Please try again.');
+                }
+            } finally {
+                _disbursingNow = false;
+                if (submitBtn && document.getElementById('_fundDisburseModal')) {
+                    submitBtn.disabled = false;
+                    submitBtn.innerHTML = '💸 Confirm Disbursement';
+                }
             }
         }
 
@@ -5033,15 +5091,76 @@
                                     </tr>`).join('')}</tbody>
                                 </table>`}
                         </div>
-                        <div style="margin-top:14px;padding-top:12px;border-top:1px solid #e2e8f0;font-size:11px;color:#94a3b8">
-                            Pool created ${_fundTimeAgo(p.createdAt)} · Updated ${_fundTimeAgo(p.updatedAt)}
-                            ${p.sourceRequestID ? ` · From <a href="javascript:void(0)" onclick="this.closest('[style*=fixed]').remove();viewFundRequest('${p.sourceRequestID}')" style="color:#4f46e5">request</a>` : ''}
+                        <div style="margin-top:14px;padding-top:12px;border-top:1px solid #e2e8f0;font-size:11px;color:#94a3b8;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+                            <div>
+                                Pool created ${_fundTimeAgo(p.createdAt)} · Updated ${_fundTimeAgo(p.updatedAt)}
+                                ${p.sourceRequestID ? ` · From <a href="javascript:void(0)" onclick="this.closest('[style*=fixed]').remove();viewFundRequest('${p.sourceRequestID}')" style="color:#4f46e5">request</a>` : ''}
+                            </div>
+                            ${(p.status === 'Active' && bal.expenseCount === 0) ? `
+                                <button onclick="reverseDisbursement('${p.poolID}')" style="padding:5px 10px;background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer" title="Delete this pool (only allowed for active pools with zero expenses)">↩ Reverse Disbursement</button>
+                            ` : ''}
                         </div>
                     </div>
                 </div>
             </div>`;
             const div = document.createElement('div'); div.innerHTML = html;
             document.body.appendChild(div.firstElementChild);
+        }
+
+        // Reverse a disbursement — deletes the pool AND reverts the source request
+        // back to Approved (so admin can re-disburse properly).
+        // Only allowed for Active pools with zero linked expenses (to prevent data loss).
+        async function reverseDisbursement(poolID) {
+            const p = fundPools.find(x => x.poolID === poolID);
+            if (!p) return alert('Pool not found');
+            if (p.status !== 'Active') return alert('Only Active pools can be reversed');
+            const linkedCount = (projectExpenses||[]).filter(e => e.poolID === poolID).length;
+            if (linkedCount > 0) return alert(`Cannot reverse: ${linkedCount} expense${linkedCount===1?' is':'s are'} linked to this pool. Remove the expenses first.`);
+            if (!confirm(
+                `⚠ Reverse disbursement for ${poolID}?\n\n` +
+                `• Pool will be DELETED\n` +
+                `• Source request (if any) will revert to "Approved" status\n` +
+                `• You can then re-disburse with corrections\n\n` +
+                `This is intended for fixing accidental duplicates.\n\n` +
+                `Continue?`
+            )) return;
+
+            const poolSnapshot = JSON.parse(JSON.stringify(p));
+            let sourceReq = null, reqSnapshot = null;
+            if (p.sourceRequestID) {
+                sourceReq = fundRequests.find(r => r.requestID === p.sourceRequestID);
+                if (sourceReq) reqSnapshot = JSON.parse(JSON.stringify(sourceReq));
+            }
+
+            fundPools = fundPools.filter(x => x.poolID !== poolID);
+
+            if (sourceReq && sourceReq.status === 'Disbursed' && sourceReq.poolID === poolID) {
+                sourceReq.status         = 'Approved';
+                sourceReq.poolID         = '';
+                sourceReq.disbursedDate  = '';
+                sourceReq.disbursedFromBank = '';
+                sourceReq.transferRefNo  = '';
+                sourceReq.updatedAt      = new Date().toISOString();
+                if (sourceReq.notes) {
+                    sourceReq.notes = sourceReq.notes.replace(/\s*\|\s*Disb:[^|]*$/, '');
+                }
+            }
+
+            try {
+                await saveData('fundPools', fundPools);
+                if (sourceReq) await saveData('fundRequests', fundRequests);
+                document.querySelector('[style*=fixed]')?.remove();
+                if (typeof showToast === 'function') showToast(`✓ Reversed ${poolID} — request reverted to Approved`, 4500);
+                renderView();
+            } catch(err) {
+                fundPools.push(poolSnapshot);
+                if (sourceReq && reqSnapshot) {
+                    const idx = fundRequests.findIndex(x => x.requestID === reqSnapshot.requestID);
+                    if (idx >= 0) fundRequests[idx] = reqSnapshot;
+                }
+                alert('Reversal failed: ' + err.message + '\n\nRolled back. Please try again.');
+                renderView();
+            }
         }
 
         function renderDashboard(content) {
