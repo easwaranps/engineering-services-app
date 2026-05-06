@@ -2742,9 +2742,20 @@
                 directorExpenses    = Array.isArray(dirExpData)    ? dirExpData    : [];
                 payslips        = Array.isArray(payslipData)   ? payslipData   : [];
                 // Fund Request & Pool data (Field Tech fund tracking system)
-                const fundReqData   = await loadFileFromDrive('fundRequests.json');
+                // Auto-create on first run if missing — main app has folder access so this works
+                let fundReqData   = await loadFileFromDrive('fundRequests.json');
+                if (!fundReqData) {
+                    console.log('📄 Auto-creating fundRequests.json (first run)');
+                    try { await saveFileToDrive('fundRequests.json', []); fundReqData = []; }
+                    catch(e) { console.warn('Could not auto-create fundRequests.json:', e.message); }
+                }
                 fundRequests        = Array.isArray(fundReqData)   ? fundReqData   : [];
-                const fundPoolData  = await loadFileFromDrive('fundPools.json');
+                let fundPoolData  = await loadFileFromDrive('fundPools.json');
+                if (!fundPoolData) {
+                    console.log('📄 Auto-creating fundPools.json (first run)');
+                    try { await saveFileToDrive('fundPools.json', []); fundPoolData = []; }
+                    catch(e) { console.warn('Could not auto-create fundPools.json:', e.message); }
+                }
                 fundPools           = Array.isArray(fundPoolData)  ? fundPoolData  : [];
 
                 console.log('✅ Data loaded — transactions:', transactions.length,
