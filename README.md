@@ -3,8 +3,8 @@
 Web applications for IMSE Tech Services Pvt Ltd.
 
 ## Live URLs
-- **Main App** (office, accounts, directors): https://easwaranps.github.io/imse-ems/
-- **Field App** (technicians on-site):       https://easwaranps.github.io/imse-ems/field_app.html
+- **Main App** (office, accounts, directors): https://easwaranps.github.io/engineering-services-app
+- **Field App** (technicians on-site):       https://easwaranps.github.io/engineering-services-app/field_app
 
 ## Features
 - Staff management with multi-document attachments
