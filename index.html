@@ -2440,6 +2440,58 @@
 
         const _driveFileIdCache = {};
 
+        // ── DEVELOPER TOOL: Wipe fund tracking test data ──
+        // Clears fundRequests.json + fundPools.json AND removes poolID/paidByStaffID
+        // from all project expenses. Used to start fresh during pre-production testing.
+        async function wipeFundTestData() {
+            if (!confirm(
+                '⚠ WIPE FUND TEST DATA?\n\n' +
+                'This will:\n' +
+                '• Clear ALL fund requests (current: ' + (fundRequests||[]).length + ')\n' +
+                '• Clear ALL fund pools (current: ' + (fundPools||[]).length + ')\n' +
+                '• Remove poolID + paidByStaffID from ALL project expenses\n\n' +
+                'Files keep their IDs — no re-sharing needed.\n\n' +
+                'This is ONLY for pre-production cleanup. Continue?'
+            )) return;
+            // Second confirmation — type WIPE
+            const confirm2 = prompt('Type WIPE in capitals to confirm:');
+            if (confirm2 !== 'WIPE') {
+                if (typeof showToast === 'function') showToast('Cancelled — data unchanged', 3000);
+                return;
+            }
+            try {
+                // Snapshot for safety (rollback if save fails)
+                const reqSnap = JSON.stringify(fundRequests);
+                const poolSnap = JSON.stringify(fundPools);
+                const peSnap   = JSON.stringify(projectExpenses);
+                // Wipe in-memory
+                fundRequests = [];
+                fundPools = [];
+                // Strip poolID + paidByStaffID from project expenses
+                let strippedCount = 0;
+                projectExpenses = (projectExpenses||[]).map(e => {
+                    if (e.poolID || e.paidByStaffID || e.paidByName) {
+                        strippedCount++;
+                        const c = { ...e };
+                        delete c.poolID;
+                        delete c.paidByStaffID;
+                        delete c.paidByName;
+                        return c;
+                    }
+                    return e;
+                });
+                // Save all three files
+                await saveData('fundRequests', fundRequests);
+                await saveData('fundPools',    fundPools);
+                if (strippedCount > 0) await saveData('projectExpenses', projectExpenses);
+
+                if (typeof showToast === 'function') showToast(`✓ Wiped — Cleared all fund data + removed pool linkage from ${strippedCount} expense${strippedCount===1?'':'s'}`, 5000);
+                renderView();
+            } catch(err) {
+                alert('Wipe failed: ' + err.message + '\n\nIn-memory state may be partially changed. Refresh app to reload from Drive.');
+            }
+        }
+
         async function saveFileToDrive(fileName, fileData) {
             const folderId = await getOrCreateAppFolder();
 
@@ -2764,6 +2816,37 @@
                     '| expenses:', expenses.length,
                     '| fundRequests:', fundRequests.length,
                     '| fundPools:', fundPools.length);
+
+                // ── Phase C: Recompute pool status on load + auto-retry unallocated ──
+                // This corrects any stale runningBalance/status from field app saves
+                // (which can't write to fundPools.json — Viewer-only). Also runs auto-retry
+                // in case techs accumulated unallocated expenses.
+                try {
+                    let poolStatusChanged = false;
+                    (fundPools||[]).forEach(p => {
+                        const before = p.status + '|' + p.runningBalance;
+                        _recomputePool(p);
+                        if (before !== p.status + '|' + p.runningBalance) poolStatusChanged = true;
+                    });
+                    const retryResult = _autoRetryUnallocated();
+                    if (poolStatusChanged) {
+                        console.log('💱 Pool statuses updated from expense data');
+                    }
+                    if (retryResult.allocated > 0 || poolStatusChanged) {
+                        await saveData('fundPools', fundPools);
+                        if (retryResult.allocated > 0) {
+                            await saveData('projectExpenses', projectExpenses);
+                            console.log(`🔄 Auto-allocated ${retryResult.allocated} unallocated expense(s)`);
+                            // Show toast after app fully renders
+                            setTimeout(() => {
+                                const msg = _formatAutoRetryToast(retryResult);
+                                if (msg && typeof showToast === 'function') showToast(msg, 6000);
+                            }, 2000);
+                        }
+                    }
+                } catch(syncErr) {
+                    console.warn('Pool sync on load failed (non-critical):', syncErr.message);
+                }
 
                 startTokenRefreshTimer();  // Start proactive token refresh
                 renderApp();
@@ -4497,6 +4580,112 @@
             };
         }
 
+        // ════════════════════════════════════════════════════════════════
+        // PHASE C — FIFO ALLOCATION ENGINE
+        // ════════════════════════════════════════════════════════════════
+
+        // Recompute and persist pool.runningBalance + totalSpent + status from
+        // the source-of-truth (linked expenses). Called after any expense change.
+        // Returns true if pool status flipped (Active↔Closed) for caller awareness.
+        function _recomputePool(pool) {
+            if (!pool) return false;
+            const bal = _computePoolBalance(pool);
+            const wasActive = pool.status === 'Active';
+            pool.runningBalance = bal.balance;
+            pool.totalSpent     = bal.spent;
+            // Auto-close when balance hits 0 (or below — defensive)
+            if (bal.balance <= 0.01 && wasActive) {
+                pool.status     = 'Closed';
+                pool.closedDate = new Date().toISOString().slice(0,10);
+                pool.updatedAt  = new Date().toISOString();
+                return true; // flipped to Closed
+            }
+            // Auto-reopen if balance is > 0 but currently Closed (e.g., expense deleted/reduced)
+            if (bal.balance > 0.01 && pool.status === 'Closed') {
+                pool.status     = 'Active';
+                pool.closedDate = '';
+                pool.updatedAt  = new Date().toISOString();
+                return true; // flipped to Active
+            }
+            pool.updatedAt = new Date().toISOString();
+            return false;
+        }
+
+        // Recompute ALL pools — used after batch operations
+        function _recomputeAllPools() {
+            (fundPools||[]).forEach(p => _recomputePool(p));
+        }
+
+        // Find the FIFO oldest-fitting pool for a given amount.
+        // Returns the pool object or null if none can absorb the amount.
+        function _findFifoPool(amount, excludePoolID = null) {
+            const amt = parseFloat(amount) || 0;
+            if (amt <= 0) return null;
+            const candidates = (fundPools||[])
+                .filter(p => p.status === 'Active' && p.poolID !== excludePoolID)
+                .filter(p => _computePoolBalance(p).balance >= amt)
+                .sort((a, b) =>
+                    (a.disbursedDate || '').localeCompare(b.disbursedDate || '') ||
+                    (a.poolID || '').localeCompare(b.poolID || ''));
+            return candidates[0] || null;
+        }
+
+        // Get ALL active pools sorted by FIFO (oldest first), used for dropdown.
+        // Each entry includes live balance for display.
+        function _getActivePoolsForDropdown() {
+            return (fundPools||[])
+                .filter(p => p.status === 'Active')
+                .map(p => {
+                    const bal = _computePoolBalance(p);
+                    return {
+                        poolID: p.poolID,
+                        balance: bal.balance,
+                        disbursed: bal.disbursed,
+                        disbursedDate: p.disbursedDate,
+                        requestedByName: p.requestedByName,
+                        sortKey: (p.disbursedDate || '') + '|' + (p.poolID || '')
+                    };
+                })
+                .sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+        }
+
+        // ── AUTO-RETRY: Allocate unallocated expenses to active pools ──
+        // Called after disbursement (creates new pool) AND after each expense save.
+        // Strategy: For each unallocated expense (oldest first by date), try to find
+        // any active pool that can absorb it (FIFO oldest-fitting). Allocate if found.
+        // Returns { allocated: N, totalAmount, byPool: {poolID: count} } for toast.
+        function _autoRetryUnallocated() {
+            const unallocated = (projectExpenses||[])
+                .filter(e => !e.poolID && (parseFloat(e.amount) || 0) > 0)
+                .sort((a, b) =>
+                    (a.expDate || a.date || '').localeCompare(b.expDate || b.date || ''));
+
+            if (unallocated.length === 0) return { allocated: 0, totalAmount: 0, byPool: {} };
+
+            const result = { allocated: 0, totalAmount: 0, byPool: {} };
+            for (const exp of unallocated) {
+                const amt = parseFloat(exp.amount) || 0;
+                const pool = _findFifoPool(amt);
+                if (!pool) continue; // still can't allocate; leave for next retry
+                exp.poolID = pool.poolID;
+                exp.updatedAt = new Date().toISOString();
+                _recomputePool(pool); // updates balance + may auto-close
+                result.allocated++;
+                result.totalAmount += amt;
+                result.byPool[pool.poolID] = (result.byPool[pool.poolID] || 0) + 1;
+            }
+            return result;
+        }
+
+        // Helper: format auto-retry result for toast
+        function _formatAutoRetryToast(result) {
+            if (result.allocated === 0) return null;
+            const poolList = Object.entries(result.byPool)
+                .map(([id, n]) => n > 1 ? `${id} (×${n})` : id)
+                .join(', ');
+            return `🔄 Auto-allocated ${result.allocated} expense${result.allocated===1?'':'s'} (${_fmtFundAmt(result.totalAmount)}) → ${poolList}`;
+        }
+
         // Format helpers
         function _fmtFundAmt(n) {
             return '₹' + (+(n||0)).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
@@ -5031,6 +5220,24 @@
                     }
                     document.getElementById('_fundDisburseModal')?.remove();
                     if (typeof showToast === 'function') showToast(`✅ Pool ${newPool.poolID} created — ${_fmtFundAmt(dAmt)} now available for field expenses`, 5000);
+
+                    // ── Phase C: Auto-retry unallocated expenses ──
+                    // New pool just created — try to allocate any expenses that were
+                    // previously unallocated (saved when no pool could absorb them).
+                    try {
+                        const retryResult = _autoRetryUnallocated();
+                        if (retryResult.allocated > 0) {
+                            // Pools may have changed balances + maybe auto-closed
+                            await saveData('fundPools', fundPools);
+                            await saveData('projectExpenses', projectExpenses);
+                            const msg = _formatAutoRetryToast(retryResult);
+                            if (msg && typeof showToast === 'function') {
+                                setTimeout(() => showToast(msg, 6000), 1200); // chain after the disbursement toast
+                            }
+                        }
+                    } catch(retryErr) {
+                        console.warn('Auto-retry after disbursement failed (non-critical):', retryErr.message);
+                    }
                     renderView();
                 } catch(err) {
                     // fundPools save failed — rollback both
@@ -8113,7 +8320,29 @@
                     </div>
                 </div>
 
-                <!-- Wage Revisions -->
+                <!-- Developer / Pre-Production Tools -->
+                <div class="bg-white rounded-2xl shadow-lg p-6 mt-6 border-2 border-purple-200">
+                    <div class="flex justify-between items-center mb-2">
+                        <div>
+                            <h3 class="text-xl font-bold text-purple-700">🛠️ Developer Tools (Pre-Production)</h3>
+                            <p class="text-xs text-gray-500 mt-1">Use ONLY during testing. These actions are destructive and meant for cleaning up test data before going live. Hidden once you delete this section.</p>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                        <!-- Wipe Test Data -->
+                        <div class="border border-red-200 rounded-xl p-4 bg-red-50">
+                            <h4 class="text-sm font-bold text-red-700 mb-2">🧹 Wipe Test Data — Fund Tracking</h4>
+                            <p class="text-xs text-gray-600 mb-3">Clears <code>fundRequests.json</code>, <code>fundPools.json</code>, AND <code>poolID</code> + <code>paidByStaffID</code> on all project expenses. Files keep their IDs (no re-sharing needed).</p>
+                            <button onclick="wipeFundTestData()" class="w-full px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-bold">🧹 Wipe Fund Test Data</button>
+                        </div>
+                        <!-- Recover -->
+                        <div class="border border-amber-200 rounded-xl p-4 bg-amber-50">
+                            <h4 class="text-sm font-bold text-amber-700 mb-2">🔄 Data Recovery — Rolling Backups</h4>
+                            <p class="text-xs text-gray-600 mb-3">Restore any data file from a backup slot if it gets corrupted. The system keeps 5 rolling backups per file.</p>
+                            <button onclick="openDataRecoveryPanel()" class="w-full px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-sm font-bold">🔄 Open Recovery Panel</button>
+                        </div>
+                    </div>
+                </div>
                 <div class="bg-white rounded-2xl shadow-lg p-6 mt-6">
                     <div class="flex justify-between items-center mb-4">
                         <div><h3 class="text-xl font-bold text-green-700">💰 Wage & Salary Revisions</h3></div>
