@@ -265,7 +265,7 @@
                 <div class="grid grid-cols-2 gap-3 mt-3">
                     <div>
                         <label class="field-label">Amount (₹) <span class="text-red-500">*</span></label>
-                        <input type="number" id="eiAmt" class="field-input" required min="0" step="0.01" placeholder="0.00"/>
+                        <input type="number" id="eiAmt" class="field-input" required min="0" step="0.01" placeholder="0.00" oninput="_updatePoolSuggestion()"/>
                     </div>
                     <div>
                         <label class="field-label">Payment Mode</label>
@@ -275,6 +275,27 @@
                             <option value="Card">Card</option>
                             <option value="Bank Transfer">Bank Transfer</option>
                         </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Pool allocation + Paid By (Phase C) -->
+            <div style="background:#ecfdf5;border:1px solid #6ee7b7;border-radius:10px;padding:10px 14px">
+                <p class="field-label" style="color:#047857;margin-bottom:6px">💰 FUND POOL ALLOCATION</p>
+                <div class="grid grid-cols-1 gap-3">
+                    <div>
+                        <label class="field-label">Paid By <span class="text-red-500">*</span></label>
+                        <select id="eiPaidBy" class="field-input" required>
+                            <!-- populated by openExpItemModal -->
+                        </select>
+                        <p style="font-size:10px;color:#64748b;margin-top:2px">Which technician actually paid for this expense?</p>
+                    </div>
+                    <div>
+                        <label class="field-label">Use Pool <span class="text-red-500">*</span></label>
+                        <select id="eiPoolID" class="field-input" required>
+                            <!-- populated by _updatePoolSuggestion -->
+                        </select>
+                        <p id="eiPoolHint" style="font-size:10px;color:#64748b;margin-top:2px">Allocates this expense against the selected pool. FIFO suggestion: oldest pool with sufficient balance.</p>
                     </div>
                 </div>
             </div>
@@ -1547,14 +1568,128 @@
         return active[0] || null;
     }
 
-    // Compute pool's running balance (Phase A+B: cached value; Phase C: live recompute)
-    function getPoolRunningBalance(pool) {
-        if (!pool) return 0;
+    // ════════════════════════════════════════════════════════════════
+    // PHASE C — FIFO ENGINE (mirrors Main App logic)
+    // ════════════════════════════════════════════════════════════════
+
+    // Live pool balance from linked expenses (Phase C: flat expense.poolID)
+    function _fieldComputePoolBalance(pool) {
+        if (!pool) return { disbursed: 0, spent: 0, balance: 0, expenseCount: 0 };
         const disbursed = parseFloat(pool.disbursedAmount) || 0;
-        const linked = (projectExpenses||[]).filter(p => p.poolID === pool.poolID);
-        // Phase B: project-level "items" structure may still contain expenses; sum them
-        const spent = linked.reduce((s,p) => s + (p.items||[]).reduce((a,i) => a+(parseFloat(i.amount)||0), 0), 0);
-        return +(disbursed - spent).toFixed(2);
+        // Sum from BOTH legacy nested structure (p.items[]) AND new flat structure (poolID linkage)
+        // Phase C uses the flat structure exclusively for new expenses.
+        const linkedFlat = [];
+        (projectExpenses||[]).forEach(proj => {
+            (proj.items||[]).forEach(item => {
+                if (item.poolID === pool.poolID) linkedFlat.push(item);
+            });
+        });
+        const spent = linkedFlat.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
+        return {
+            disbursed,
+            spent,
+            balance: +(disbursed - spent).toFixed(2),
+            expenseCount: linkedFlat.length
+        };
+    }
+
+    // Convenience function for displays (returns just the balance number)
+    function getPoolRunningBalance(pool) {
+        return _fieldComputePoolBalance(pool).balance;
+    }
+
+    // Find FIFO oldest-fitting pool for an amount
+    function _fieldFindFifoPool(amount, excludePoolID = null) {
+        const amt = parseFloat(amount) || 0;
+        if (amt <= 0) return null;
+        const candidates = (fundPools||[])
+            .filter(p => p.status === 'Active' && p.poolID !== excludePoolID)
+            .filter(p => _fieldComputePoolBalance(p).balance >= amt)
+            .sort((a, b) =>
+                (a.disbursedDate || '').localeCompare(b.disbursedDate || '') ||
+                (a.poolID || '').localeCompare(b.poolID || ''));
+        return candidates[0] || null;
+    }
+
+    // Active pools for dropdown — sorted by FIFO oldest-first
+    function _fieldGetActivePoolsForDropdown() {
+        return (fundPools||[])
+            .filter(p => p.status === 'Active')
+            .map(p => {
+                const bal = _fieldComputePoolBalance(p);
+                return {
+                    poolID: p.poolID,
+                    balance: bal.balance,
+                    disbursed: bal.disbursed,
+                    disbursedDate: p.disbursedDate,
+                    requestedByName: p.requestedByName,
+                    project: p.project,
+                    sortKey: (p.disbursedDate || '') + '|' + (p.poolID || '')
+                };
+            })
+            .sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+    }
+
+    // Recompute pool status — auto-close at 0, auto-reopen if > 0
+    function _fieldRecomputePool(pool) {
+        if (!pool) return false;
+        const bal = _fieldComputePoolBalance(pool);
+        const wasActive = pool.status === 'Active';
+        pool.runningBalance = bal.balance;
+        pool.totalSpent     = bal.spent;
+        if (bal.balance <= 0.01 && wasActive) {
+            pool.status = 'Closed';
+            pool.closedDate = new Date().toISOString().slice(0,10);
+            pool.updatedAt = new Date().toISOString();
+            return true;
+        }
+        if (bal.balance > 0.01 && pool.status === 'Closed') {
+            pool.status = 'Active';
+            pool.closedDate = '';
+            pool.updatedAt = new Date().toISOString();
+            return true;
+        }
+        pool.updatedAt = new Date().toISOString();
+        return false;
+    }
+
+    // Auto-retry: allocate unallocated expenses (oldest first) to active pools
+    // Returns { allocated, totalAmount, byPool, modifiedPools (Set of poolIDs) }
+    function _fieldAutoRetryUnallocated() {
+        const unallocated = [];
+        (projectExpenses||[]).forEach(proj => {
+            (proj.items||[]).forEach(item => {
+                if (!item.poolID && (parseFloat(item.amount) || 0) > 0) {
+                    unallocated.push(item);
+                }
+            });
+        });
+        unallocated.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+
+        if (unallocated.length === 0) return { allocated: 0, totalAmount: 0, byPool: {}, modifiedPools: new Set() };
+
+        const result = { allocated: 0, totalAmount: 0, byPool: {}, modifiedPools: new Set() };
+        for (const item of unallocated) {
+            const amt = parseFloat(item.amount) || 0;
+            const pool = _fieldFindFifoPool(amt);
+            if (!pool) continue;
+            item.poolID = pool.poolID;
+            item.updatedAt = new Date().toISOString();
+            _fieldRecomputePool(pool);
+            result.allocated++;
+            result.totalAmount += amt;
+            result.byPool[pool.poolID] = (result.byPool[pool.poolID] || 0) + 1;
+            result.modifiedPools.add(pool.poolID);
+        }
+        return result;
+    }
+
+    function _formatFieldAutoRetryToast(result) {
+        if (result.allocated === 0) return null;
+        const poolList = Object.entries(result.byPool)
+            .map(([id, n]) => n > 1 ? `${id} (×${n})` : id)
+            .join(', ');
+        return `🔄 Auto-allocated ${result.allocated} unallocated expense${result.allocated===1?'':'s'} (${fmt(result.totalAmount)}) → ${poolList}`;
     }
 
     // Get the most recent fund request from the current user (or all techs in pooled view)
@@ -1759,7 +1894,87 @@
         else if (item?.billData)   _eiBillAttachments = [{data:item.billData,name:item.billName||'attachment'}];
         renderEiStaffRows();
         renderEiBillGrid();
+        // ── Phase C: populate Paid By dropdown (defaults to current user — soft) ──
+        const paidBySel = document.getElementById('eiPaidBy');
+        const techs = (staffList||[]).filter(s => (s.staffType||'').toLowerCase().includes('tech'));
+        const techList = techs.length ? techs : staffList;
+        const defaultPaidBy = item?.paidByStaffID || currentUser?.staffID || '';
+        paidBySel.innerHTML = '<option value="">— Select who paid —</option>' +
+            (techList||[]).map(s =>
+                `<option value="${s.staffID}" ${s.staffID===defaultPaidBy?'selected':''}>${s.name}${s.staffType?' ('+s.staffType+')':''}</option>`
+            ).join('');
+        // ── Populate pool dropdown via _updatePoolSuggestion (uses current amount) ──
+        // Pre-set selected pool: if editing, use existing poolID; otherwise FIFO suggestion
+        document.getElementById('eiPoolID').dataset.editingPoolID = item?.poolID || '';
+        _updatePoolSuggestion();
         document.getElementById('expItemModal').classList.add('show');
+    }
+
+    // Re-populate "Use Pool" dropdown live as amount changes.
+    // Marks the FIFO oldest-fitting pool with a [SUGGESTED] tag and pre-selects it.
+    function _updatePoolSuggestion() {
+        const poolSel = document.getElementById('eiPoolID');
+        if (!poolSel) return;
+        const amtRaw = document.getElementById('eiAmt')?.value;
+        const amt = parseFloat(amtRaw) || 0;
+        const editingPoolID = poolSel.dataset.editingPoolID || '';
+        const previouslySelected = poolSel.value;
+        // Determine FIFO suggestion (only when amount > 0)
+        const suggested = amt > 0 ? _fieldFindFifoPool(amt) : null;
+        const pools = _fieldGetActivePoolsForDropdown();
+        const hint = document.getElementById('eiPoolHint');
+
+        if (pools.length === 0) {
+            poolSel.innerHTML = '<option value="">⚠ No active pools — save as Unallocated</option>' +
+                                '<option value="UNALLOCATED" selected>Save as Unallocated (will auto-allocate when next pool is disbursed)</option>';
+            if (hint) hint.innerHTML = '<span style="color:#dc2626">⚠ No active pools available. Expense will be saved as Unallocated and auto-allocated when the office disburses the next fund request.</span>';
+            return;
+        }
+        // Build option list
+        const opts = ['<option value="">— Select a pool —</option>'];
+        // If editing existing AND that pool still active, keep it as a selectable option even if FIFO suggests another
+        let editingFound = false;
+        for (const p of pools) {
+            const isSuggested = suggested && suggested.poolID === p.poolID;
+            const isEditing   = editingPoolID === p.poolID;
+            if (isEditing) editingFound = true;
+            const fits   = p.balance >= amt;
+            const label  = `${p.poolID}  ·  ₹${p.balance.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})} left` +
+                           (isSuggested ? '  ✓ FIFO suggested' : '') +
+                           (isEditing && !isSuggested ? '  · current pool' : '') +
+                           (!fits && amt > 0 ? '  ⚠ insufficient' : '');
+            const disable = !fits && amt > 0 && !isEditing;  // can keep current pool even if amount grew slightly
+            opts.push(`<option value="${p.poolID}"${disable?' disabled':''}>${label}</option>`);
+        }
+        // Add Unallocated option (only enabled if no fitting pool and not editing a fixed pool)
+        const noFit = !suggested && amt > 0;
+        opts.push(`<option value="UNALLOCATED"${noFit?'':''}>Save as Unallocated (auto-retry later)</option>`);
+
+        poolSel.innerHTML = opts.join('');
+        // Decide selection priority: keep prev choice if still valid, else FIFO suggestion, else editing pool, else first option
+        let selected = '';
+        if (previouslySelected && Array.from(poolSel.options).some(o => o.value === previouslySelected && !o.disabled)) {
+            selected = previouslySelected;
+        } else if (suggested) {
+            selected = suggested.poolID;
+        } else if (editingFound && editingPoolID) {
+            selected = editingPoolID;
+        } else if (noFit) {
+            selected = 'UNALLOCATED';
+        }
+        poolSel.value = selected;
+        // Update hint
+        if (hint) {
+            if (amt <= 0) {
+                hint.textContent = 'Enter an amount to see FIFO pool suggestion. Oldest-fitting pool wins.';
+            } else if (selected === 'UNALLOCATED') {
+                hint.innerHTML = '<span style="color:#dc2626">⚠ No pool can absorb this amount. Will save as Unallocated and auto-link when the next pool is disbursed.</span>';
+            } else if (suggested && selected === suggested.poolID) {
+                hint.innerHTML = `<span style="color:#047857">✓ FIFO oldest-fitting pool selected.</span> You can change to a different pool if needed.`;
+            } else {
+                hint.innerHTML = '<span style="color:#92400e">ℹ Manual override — not the FIFO suggestion. That\'s OK if intentional.</span>';
+            }
+        }
     }
 
     function closeExpItemModal() {
@@ -1775,6 +1990,30 @@
         const idx    = projectExpenses.findIndex(x=>x.projExpID===projID);
         if (idx<0) return;
         if (!projectExpenses[idx].items) projectExpenses[idx].items=[];
+
+        // ── Phase C: validate Paid By ──
+        const paidByStaffID = document.getElementById('eiPaidBy').value;
+        if (!paidByStaffID) {
+            showToast('⚠ Please select who paid for this expense');
+            return;
+        }
+        const paidByStaff = (staffList||[]).find(s => s.staffID === paidByStaffID);
+        const paidByName  = paidByStaff?.name || '';
+
+        // ── Phase C: validate Pool selection ──
+        const poolChoice = document.getElementById('eiPoolID').value;
+        if (!poolChoice) {
+            showToast('⚠ Please select a pool (or "Save as Unallocated")');
+            return;
+        }
+        const newAmount = parseFloat(document.getElementById('eiAmt').value) || 0;
+        const newPoolID = poolChoice === 'UNALLOCATED' ? '' : poolChoice;
+
+        // If editing, find the OLD item to compare pool/amount changes
+        const oldItem = itemID ? projectExpenses[idx].items.find(i => i.itemID === itemID) : null;
+        const oldPoolID = oldItem?.poolID || '';
+        const oldAmount = parseFloat(oldItem?.amount) || 0;
+
         // Upload any staged (pending) bill files first
         if (_eiStagedFiles.length) {
             try { await uploadEiStagedFiles(); }
@@ -1786,15 +2025,20 @@
             date:            document.getElementById('eiDate').value,
             category:        document.getElementById('eiCat').value,
             description:     document.getElementById('eiDesc').value,
-            amount:          parseFloat(document.getElementById('eiAmt').value)||0,
+            amount:          newAmount,
             payMode:         document.getElementById('eiPayMode').value,
             vendor:          document.getElementById('eiVendor').value,
             technicians:     techs,
             staffName:       techs.map(t=>t.name).join(', '),
             billAttachments: [..._eiBillAttachments],
+            // Phase C: pool allocation fields
+            poolID:          newPoolID,
+            paidByStaffID:   paidByStaffID,
+            paidByName:      paidByName,
             addedBy:         currentUser?.name || 'Unknown',
             addedByID:       currentUser?.staffID || '',
-            addedAt:         new Date().toISOString()
+            addedAt:         oldItem?.addedAt || new Date().toISOString(),
+            updatedAt:       new Date().toISOString()
         };
         if (itemID) {
             const ei = projectExpenses[idx].items.findIndex(i=>i.itemID===itemID);
@@ -1802,17 +2046,63 @@
         } else {
             projectExpenses[idx].items.push(entry);
         }
-        await saveData('projectExpenses', projectExpenses);
-        closeExpItemModal(); renderView(); showToast('✅ Expense saved');
+
+        // ── Phase C: Recompute affected pools (auto-close at 0, auto-reopen if reduced) ──
+        const poolsToRecompute = new Set();
+        if (oldPoolID)     poolsToRecompute.add(oldPoolID);
+        if (newPoolID)     poolsToRecompute.add(newPoolID);
+        let anyPoolChanged = false;
+        poolsToRecompute.forEach(pid => {
+            const pool = (fundPools||[]).find(p => p.poolID === pid);
+            if (pool) { _fieldRecomputePool(pool); anyPoolChanged = true; }
+        });
+
+        // ── Phase C: Auto-retry unallocated expenses (every save) ──
+        const retry = _fieldAutoRetryUnallocated();
+        if (retry.allocated > 0) anyPoolChanged = true;
+
+        try {
+            await saveData('projectExpenses', projectExpenses);
+            // Field app cannot write fundPools (Viewer-only). Pool status changes will sync next time
+            // Main App admin reviews. The pool's runningBalance is just a cache — recomputed live.
+            // So we DON'T saveData('fundPools', ...) — that would fail with permission error.
+            closeExpItemModal();
+            renderView();
+            const baseToast = newPoolID
+                ? `✅ Expense saved · allocated to ${newPoolID}`
+                : `✅ Expense saved as Unallocated · will auto-allocate when next pool is disbursed`;
+            showToast(baseToast);
+            // Chain auto-retry toast if any expenses got allocated
+            const retryMsg = _formatFieldAutoRetryToast(retry);
+            if (retryMsg) setTimeout(() => showToast(retryMsg, 5000), 1400);
+        } catch(err) {
+            showToast('⚠ Save failed: ' + (err.message || 'try again'));
+        }
     }
 
     async function deleteExpItem(projID, itemID) {
         if (!confirm('Delete this expense entry?')) return;
         const idx = projectExpenses.findIndex(x=>x.projExpID===projID);
         if (idx<0) return;
+        // Phase C: remember which pool to recompute after delete
+        const oldItem = (projectExpenses[idx].items||[]).find(i => i.itemID === itemID);
+        const refundPoolID = oldItem?.poolID || '';
         projectExpenses[idx].items = (projectExpenses[idx].items||[]).filter(i=>i.itemID!==itemID);
-        await saveData('projectExpenses', projectExpenses);
-        renderView(); showToast('🗑️ Expense deleted');
+        // Recompute that pool — may auto-reopen if was Closed
+        if (refundPoolID) {
+            const pool = (fundPools||[]).find(p => p.poolID === refundPoolID);
+            if (pool) _fieldRecomputePool(pool);
+        }
+        try {
+            await saveData('projectExpenses', projectExpenses);
+            renderView();
+            const msg = refundPoolID
+                ? `🗑️ Expense deleted · ₹${(parseFloat(oldItem.amount)||0).toLocaleString('en-IN')} refunded to ${refundPoolID}`
+                : '🗑️ Expense deleted';
+            showToast(msg);
+        } catch(err) {
+            showToast('⚠ Delete failed: ' + err.message);
+        }
     }
 
     function viewExpAttachments(projID, itemID) {
