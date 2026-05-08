@@ -5665,36 +5665,53 @@
                 doc.text('No expenses linked to this pool.', PW/2, y+8, {align:'center'});
                 y += 16;
             } else {
-                const expRows = linked.map((e, idx) => [
-                    String(idx+1),
-                    e.date || e.expDate || '—',
-                    e._projectName || '—',
-                    e.paidByName || _fundStaffName(e.paidByStaffID) || '—',
-                    e.description || '—',
-                    e.category || '—',
-                    INR(e.amount)
-                ]);
+                // Track voucher attachment count for footer note
+                const vouchersWithFiles = linked.filter(e => e.tallyVoucherDriveId || e.tallyVoucherData).length;
+                const expRows = linked.map((e, idx) => {
+                    // Tally cell: voucher # + date if present, else "—"
+                    let tallyCell = '—';
+                    if (e.tallyVoucherNo || e.tallyVoucherDate) {
+                        tallyCell = '#' + (e.tallyVoucherNo || '?') + (e.tallyVoucherDate ? '\n' + e.tallyVoucherDate : '');
+                    }
+                    return [
+                        String(idx+1),
+                        e.date || e.expDate || '—',
+                        e._projectName || '—',
+                        e.paidByName || _fundStaffName(e.paidByStaffID) || '—',
+                        e.description || '—',
+                        e.category || '—',
+                        INR(e.amount),
+                        tallyCell
+                    ];
+                });
                 doc.autoTable({
                     startY: y+2, margin:{left:ML,right:MR}, theme:'striped',
-                    head: [['#', 'Date', 'Project', 'Paid By', 'Description', 'Head', 'Amount']],
+                    head: [['#', 'Date', 'Project', 'Paid By', 'Description', 'Head', 'Amount', 'Tally Vch']],
                     body: expRows,
-                    styles:{fontSize:8, cellPadding:1.8, overflow:'linebreak'},
-                    headStyles:{fillColor:[51,65,85], textColor:[255,255,255], fontStyle:'bold', fontSize:8.5},
+                    styles:{fontSize:7.5, cellPadding:1.6, overflow:'linebreak'},
+                    headStyles:{fillColor:[51,65,85], textColor:[255,255,255], fontStyle:'bold', fontSize:8},
                     columnStyles:{
-                        0:{cellWidth:8, halign:'center'},
-                        1:{cellWidth:20},
-                        2:{cellWidth:30},
-                        3:{cellWidth:25},
+                        0:{cellWidth:7,  halign:'center'},
+                        1:{cellWidth:18},
+                        2:{cellWidth:26},
+                        3:{cellWidth:22},
                         4:{cellWidth:'auto'},
-                        5:{cellWidth:25},
-                        6:{cellWidth:22, halign:'right', fontStyle:'bold'}
+                        5:{cellWidth:22},
+                        6:{cellWidth:20, halign:'right', fontStyle:'bold'},
+                        7:{cellWidth:22, halign:'center', fontSize:7, textColor:[5,150,105]}
                     },
                     foot:[[
                         {content:'TOTAL', colSpan:6, styles:{halign:'right', fontStyle:'bold', fillColor:[241,245,249], textColor:[15,23,42]}},
-                        {content:INR(bal.spent), styles:{halign:'right', fontStyle:'bold', fillColor:[241,245,249], textColor:[15,23,42]}}
+                        {content:INR(bal.spent), styles:{halign:'right', fontStyle:'bold', fillColor:[241,245,249], textColor:[15,23,42]}},
+                        {content:'', styles:{fillColor:[241,245,249]}}
                     ]],
                 });
-                y = doc.lastAutoTable.finalY + 6;
+                y = doc.lastAutoTable.finalY + 4;
+                // Quick stats line showing tally entry coverage
+                const tallyDoneCount = linked.filter(e => e.tallyVoucherNo).length;
+                doc.setFontSize(8); doc.setFont('helvetica','italic'); doc.setTextColor(100,116,139);
+                doc.text(`Tally entries recorded: ${tallyDoneCount} of ${linked.length}` + (vouchersWithFiles > 0 ? ` · ${vouchersWithFiles} voucher attachment(s) included in appendix` : ''), ML, y);
+                y += 5;
             }
 
             // ── FY BREAKDOWN ──
@@ -5771,29 +5788,58 @@
             y += 12;
 
             // ── BILL APPENDIX (Option C) ──
-            // Collect all attachments from linked expenses with their metadata
+            // Collect all attachments from linked expenses with their metadata.
+            // Includes BOTH bill attachments (proof of payment) AND tally voucher
+            // attachments (proof of accounting entry).
             const attachments = [];
             linked.forEach((e, idx) => {
-                const atts = e.billAttachments || (e.billDriveFileId ? [{ driveFileId:e.billDriveFileId, name:e.billName||'attachment', type:e.billMime||'image' }] : []);
-                atts.forEach((a, ai) => {
+                // Bill attachments — proof of expense
+                const bills = e.billAttachments || (e.billDriveFileId ? [{ driveFileId:e.billDriveFileId, name:e.billName||'attachment', type:e.billMime||'image' }] : []);
+                bills.forEach((a, ai) => {
                     attachments.push({
+                        kind: 'bill',
                         expIdx: idx + 1,
                         date: e.date || e.expDate || '—',
                         desc: e.description || '—',
                         amount: e.amount,
                         att: a,
                         attIdx: ai + 1,
-                        totalAttsForExp: atts.length
+                        totalAttsForExp: bills.length
                     });
                 });
+                // Tally voucher attachment — proof of accounting entry (single per expense)
+                if (e.tallyVoucherDriveId || e.tallyVoucherData) {
+                    attachments.push({
+                        kind: 'voucher',
+                        expIdx: idx + 1,
+                        date: e.date || e.expDate || '—',
+                        desc: e.description || '—',
+                        amount: e.amount,
+                        att: {
+                            driveFileId: e.tallyVoucherDriveId,
+                            data:        e.tallyVoucherData,
+                            name:        e.tallyVoucherName || 'tally-voucher',
+                            type:        e.tallyVoucherMime || 'image'
+                        },
+                        attIdx: 1,
+                        totalAttsForExp: 1,
+                        tallyVoucherNo:   e.tallyVoucherNo || '',
+                        tallyVoucherDate: e.tallyVoucherDate || ''
+                    });
+                }
             });
 
             if (attachments.length > 0) {
+                const billCount    = attachments.filter(a => a.kind === 'bill').length;
+                const voucherCount = attachments.filter(a => a.kind === 'voucher').length;
                 doc.addPage();
                 doc.setFontSize(14); doc.setFont('helvetica','bold'); doc.setTextColor(15,23,42);
-                doc.text('BILL APPENDIX', PW/2, 20, {align:'center'});
+                doc.text('SUPPORTING DOCUMENTS APPENDIX', PW/2, 20, {align:'center'});
                 doc.setFontSize(9); doc.setFont('helvetica','normal'); doc.setTextColor(100,116,139);
-                doc.text(attachments.length + ' supporting document' + (attachments.length===1?'':'s') + ' for ' + linked.length + ' expense entr' + (linked.length===1?'y':'ies'), PW/2, 27, {align:'center'});
+                const headerParts = [];
+                if (billCount > 0)    headerParts.push(billCount    + ' bill image' + (billCount===1?'':'s'));
+                if (voucherCount > 0) headerParts.push(voucherCount + ' Tally voucher' + (voucherCount===1?'':'s'));
+                doc.text(headerParts.join(' + ') + '  ·  for ' + linked.length + ' expense entr' + (linked.length===1?'y':'ies'), PW/2, 27, {align:'center'});
                 doc.setDrawColor(203,213,225); doc.line(ML, 32, PW-MR, 32);
 
                 // Embed each attachment on its own page
@@ -5802,9 +5848,18 @@
                     const item = attachments[i];
                     if (i > 0) { doc.addPage(); appendixY = 16; }
 
-                    // Attachment header
-                    doc.setFontSize(11); doc.setFont('helvetica','bold'); doc.setTextColor(15,23,42);
-                    doc.text(`Bill ${i+1} of ${attachments.length}`, ML, appendixY);
+                    // Attachment header — differs for bills vs Tally vouchers
+                    const isVoucher = item.kind === 'voucher';
+                    if (isVoucher) {
+                        // Tally voucher header — colored differently for visual separation
+                        doc.setFillColor(220, 252, 231); // emerald-100 band
+                        doc.rect(ML-2, appendixY-4, CW+4, 8, 'F');
+                        doc.setFontSize(11); doc.setFont('helvetica','bold'); doc.setTextColor(5, 95, 70); // emerald-800
+                        doc.text(`📋 TALLY VOUCHER ${i+1} of ${attachments.length}`, ML, appendixY+1);
+                    } else {
+                        doc.setFontSize(11); doc.setFont('helvetica','bold'); doc.setTextColor(15,23,42);
+                        doc.text(`Bill ${i+1} of ${attachments.length}`, ML, appendixY);
+                    }
                     doc.setFontSize(9); doc.setFont('helvetica','normal'); doc.setTextColor(71,85,105);
                     appendixY += 6;
                     doc.text(`Expense #${item.expIdx} · ${item.date} · ${INR(item.amount)}`, ML, appendixY);
@@ -5812,7 +5867,15 @@
                     const descLines = doc.splitTextToSize(item.desc, CW);
                     doc.text(descLines, ML, appendixY);
                     appendixY += 4 * descLines.length + 2;
-                    if (item.totalAttsForExp > 1) {
+                    // Voucher-specific metadata: voucher # + tally entry date
+                    if (isVoucher) {
+                        doc.setTextColor(5, 95, 70); doc.setFont('helvetica','bold');
+                        const vMeta = 'Voucher #' + (item.tallyVoucherNo || '?') +
+                                      (item.tallyVoucherDate ? '   ·   Entered on ' + item.tallyVoucherDate : '');
+                        doc.text(vMeta, ML, appendixY);
+                        appendixY += 5;
+                        doc.setFont('helvetica','normal');
+                    } else if (item.totalAttsForExp > 1) {
                         doc.setTextColor(124,58,237);
                         doc.text(`Attachment ${item.attIdx} of ${item.totalAttsForExp} for this expense`, ML, appendixY);
                         appendixY += 5;
