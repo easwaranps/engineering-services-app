@@ -1250,7 +1250,8 @@
         const lastReq      = getCurrentUserLastRequest();
         const totalActiveBal = (fundPools||[]).filter(p => p.status === 'Active')
                                 .reduce((s,p) => s + getPoolRunningBalance(p), 0);
-        const activePoolCount = (fundPools||[]).filter(p => p.status === 'Active').length;
+        const activePoolCount = (fundPools||[]).filter(p => p.status === 'Active' && _fieldComputePoolBalance(p).balance > 0.01).length;
+        const drainedActiveCount = (fundPools||[]).filter(p => p.status === 'Active' && _fieldComputePoolBalance(p).balance <= 0.01).length;
 
         // Status colors for last request
         const reqStatusInfo = lastReq ? (() => {
@@ -1562,10 +1563,14 @@
     // Compute the active pool for spending (oldest active pool — FIFO).
     // Phase A+B: returns first active pool. Phase C will plug FIFO logic here.
     function getActiveFundPool() {
-        const active = (fundPools||[]).filter(p => p.status === 'Active')
+        // Returns oldest active pool WITH balance > 0 (skips drained pools).
+        // If all active pools are drained, returns null (caller shows fresh-fund warning).
+        const candidates = (fundPools||[])
+            .filter(p => p.status === 'Active')
+            .filter(p => _fieldComputePoolBalance(p).balance > 0.01)
             .sort((a,b) => (a.disbursedDate||'').localeCompare(b.disbursedDate||'')
                         || (a.poolID||'').localeCompare(b.poolID||''));
-        return active[0] || null;
+        return candidates[0] || null;
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -1906,6 +1911,9 @@
         // ── Populate pool dropdown via _updatePoolSuggestion (uses current amount) ──
         // Pre-set selected pool: if editing, use existing poolID; otherwise FIFO suggestion
         document.getElementById('eiPoolID').dataset.editingPoolID = item?.poolID || '';
+        // Track original amount so when editing, dropdown can show TRUE available balance
+        // (current balance + original allocation, since that amount was already deducted)
+        document.getElementById('eiAmt').dataset.originalAmount = item ? String(parseFloat(item.amount) || 0) : '0';
         _updatePoolSuggestion();
         document.getElementById('expItemModal').classList.add('show');
     }
@@ -1938,12 +1946,28 @@
             const isSuggested = suggested && suggested.poolID === p.poolID;
             const isEditing   = editingPoolID === p.poolID;
             if (isEditing) editingFound = true;
-            const fits   = p.balance >= amt;
-            const label  = `${p.poolID}  ·  ₹${p.balance.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})} left` +
+            // When editing, the "real" available balance is the current balance + the original
+            // expense amount (since that amount was already deducted). Compute true available.
+            const effectiveAvailable = isEditing
+                ? p.balance + (parseFloat(document.getElementById('eiAmt')?.dataset.originalAmount) || 0)
+                : p.balance;
+            const fits   = effectiveAvailable >= amt;
+            // Show ONLY post-allocation balance when amount entered (Issue 3: hide before-balance)
+            // Otherwise show current balance (when amount not yet entered)
+            let balLabel;
+            if (amt > 0 && fits) {
+                const after = +(effectiveAvailable - amt).toFixed(2);
+                balLabel = `₹${after.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})} after`;
+            } else if (amt > 0 && !fits) {
+                balLabel = `only ₹${effectiveAvailable.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})} avail`;
+            } else {
+                balLabel = `₹${effectiveAvailable.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})} available`;
+            }
+            const label  = `${p.poolID}  ·  ${balLabel}` +
                            (isSuggested ? '  ✓ FIFO suggested' : '') +
                            (isEditing && !isSuggested ? '  · current pool' : '') +
                            (!fits && amt > 0 ? '  ⚠ insufficient' : '');
-            const disable = !fits && amt > 0 && !isEditing;  // can keep current pool even if amount grew slightly
+            const disable = !fits && amt > 0 && !isEditing;
             opts.push(`<option value="${p.poolID}"${disable?' disabled':''}>${label}</option>`);
         }
         // Add Unallocated option (only enabled if no fitting pool and not editing a fixed pool)
