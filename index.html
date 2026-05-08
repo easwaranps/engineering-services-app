@@ -5458,6 +5458,9 @@
                                     </tr>`).join('')}</tbody>
                                 </table>`}
                         </div>
+                        <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+                            <button onclick="poolReconciliationPDF('${p.poolID}')" style="padding:9px 16px;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 2px 8px rgba(124,58,237,.25)" title="Generate full reconciliation PDF with bill appendix">📄 Generate Reconciliation PDF</button>
+                        </div>
                         <div style="margin-top:14px;padding-top:12px;border-top:1px solid #e2e8f0;font-size:11px;color:#94a3b8;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
                             <div>
                                 Pool created ${_fundTimeAgo(p.createdAt)} · Updated ${_fundTimeAgo(p.updatedAt)}
@@ -5535,6 +5538,362 @@
                 alert('Reversal failed: ' + err.message + '\n\nRolled back. Please try again.');
                 renderView();
             }
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        // PHASE C2 — POOL RECONCILIATION PDF
+        // ════════════════════════════════════════════════════════════════
+        // Generates a per-pool statement with:
+        //   • Header: pool ID, status, disbursement details, bank info
+        //   • Expense table (across all projects), grouped by project
+        //   • FY breakdown (subtotals if pool spans multiple FYs)
+        //   • Accounting head summary (% of total)
+        //   • Bill appendix (one image per page) — Option C from design
+        //   • Active pools watermarked "INTERIM"; closed pools "FINAL"
+        async function poolReconciliationPDF(poolID) {
+            const p = (fundPools||[]).find(x => x.poolID === poolID);
+            if (!p) return alert('Pool not found: ' + poolID);
+            const bal = _computePoolBalance(p);
+
+            // Gather linked expenses across all projects, with project context
+            const linked = [];
+            (projectExpenses||[]).forEach(proj => {
+                (proj.items||[]).forEach(it => {
+                    if (it.poolID === poolID) {
+                        linked.push({
+                            ...it,
+                            _projectName: proj.projectName || proj.name || '—',
+                            _projectRef:  proj.projectRef  || ''
+                        });
+                    }
+                });
+                if (proj.poolID === poolID) {
+                    linked.push({
+                        ...proj,
+                        _projectName: proj.projectName || proj.name || '—',
+                        _projectRef:  proj.projectRef  || ''
+                    });
+                }
+            });
+            linked.sort((a,b) => (a.date||a.expDate||'').localeCompare(b.date||b.expDate||''));
+
+            if (linked.length === 0 && p.status === 'Closed') {
+                if (!confirm('This pool has no linked expenses but is Closed. PDF will be mostly empty. Continue?')) return;
+            }
+
+            // Lazy-load PDF libraries (already in head, but defensive)
+            if (!window.jspdf) {
+                await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+                await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+            }
+
+            if (typeof showToast === 'function') showToast('📄 Generating reconciliation PDF…', 3000);
+
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF({ orientation:'portrait', unit:'mm', format:'a4' });
+            const ML=14, MR=14, PW=210, CW=PW-ML-MR;
+            const INR = n => 'Rs.' + (+(n||0)).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
+
+            const isClosed = p.status === 'Closed';
+            const statusLabel = isClosed ? 'FINAL STATEMENT' : 'INTERIM STATEMENT';
+            const headerColor = isClosed ? [21, 128, 61] : [217, 119, 6];  // green or amber
+            const accentColor = isClosed ? [187, 247, 208] : [253, 230, 138];
+
+            // ── HEADER ──
+            doc.setFillColor(...headerColor); doc.rect(0,0,210,42,'F');
+            doc.setFontSize(16); doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255);
+            doc.text('FUND POOL RECONCILIATION', PW/2, 12, {align:'center'});
+            doc.setFontSize(10); doc.setFont('helvetica','normal');
+            doc.text(statusLabel, PW/2, 19, {align:'center'});
+            doc.setFontSize(9); doc.setTextColor(...accentColor);
+            doc.text((settings.companyName||'IMSE Tech Services Pvt Ltd')+'  |  Generated: '+new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}), PW/2, 26, {align:'center'});
+            doc.setFontSize(11); doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255);
+            doc.text(p.poolID, PW/2, 34, {align:'center'});
+            // Status accent line
+            doc.setFillColor(...(isClosed ? [22, 163, 74] : [245, 158, 11])); doc.rect(0,41,210,2,'F');
+
+            // INTERIM watermark for active pools
+            if (!isClosed) {
+                doc.setFontSize(60); doc.setFont('helvetica','bold');
+                doc.setTextColor(252, 211, 77);  // amber-300, faded
+                doc.text('INTERIM', PW/2, 150, {align:'center', angle:-30});
+                doc.setTextColor(0,0,0);
+            }
+
+            let y = 50;
+
+            // ── POOL DETAILS TABLE ──
+            const techStaff = staff.find(s => s.staffID === p.requestedBy);
+            const bd = techStaff?.bankDetails || {};
+            doc.autoTable({
+                startY: y, margin:{left:ML,right:MR}, theme:'grid',
+                styles:{fontSize:9, cellPadding:2.5},
+                headStyles:{fillColor:[241,245,249], textColor:[51,65,85], fontStyle:'bold'},
+                columnStyles:{0:{cellWidth:55, fontStyle:'bold', fillColor:[248,250,252]}, 1:{cellWidth:CW-55}},
+                body: [
+                    ['Pool ID', p.poolID],
+                    ['Status', p.status + (isClosed ? ' (Closed on '+(p.closedDate||'—')+')' : ' (Spending in progress)')],
+                    ['Requested By', (p.requestedByName || _fundStaffName(p.requestedBy) || '—') + (techStaff?.staffID ? ' ['+techStaff.staffID+']' : '')],
+                    ['Disbursed Amount', INR(p.disbursedAmount)],
+                    ['Disbursed Date', p.disbursedDate + ' (' + _fyLabel(p.fy) + ')'],
+                    ['From Bank', p.disbursedFromBank || '—'],
+                    ['To Account', (bd.bankName ? bd.bankName + ' · ' : '') + (p.disbursedToBank ? '****'+String(p.disbursedToBank).slice(-4) : '—') + (p.disbursedToIFSC ? ' · IFSC: '+p.disbursedToIFSC : '')],
+                    ['Bank Reference', p.transferRefNo || '—'],
+                    ['Purpose', p.purpose || '—'],
+                    ['Project (intent)', p.project || '—'],
+                    ['Tally Voucher', p.tallyVoucher || '— not yet entered —']
+                ]
+            });
+            y = doc.lastAutoTable.finalY + 4;
+
+            // ── SUMMARY BOX ──
+            doc.autoTable({
+                startY: y, margin:{left:ML,right:MR}, theme:'grid',
+                styles:{fontSize:10, cellPadding:3, fontStyle:'bold', halign:'center'},
+                columnStyles:{0:{cellWidth:CW/3, fillColor:[240,253,244], textColor:[21,128,61]}, 1:{cellWidth:CW/3, fillColor:[254,243,199], textColor:[120,53,15]}, 2:{cellWidth:CW/3, fillColor:[219,234,254], textColor:[30,58,138]}},
+                body:[[`Disbursed: ${INR(bal.disbursed)}`, `Spent: ${INR(bal.spent)}`, `Balance: ${INR(bal.balance)}`]]
+            });
+            y = doc.lastAutoTable.finalY + 6;
+
+            // ── EXPENSE DETAILS ──
+            doc.setFontSize(11); doc.setFont('helvetica','bold'); doc.setTextColor(15,23,42);
+            doc.text('EXPENSE DETAILS — ' + linked.length + (linked.length===1?' entry':' entries'), ML, y);
+            y += 2;
+
+            if (linked.length === 0) {
+                doc.setFontSize(10); doc.setFont('helvetica','italic'); doc.setTextColor(148,163,184);
+                doc.text('No expenses linked to this pool.', PW/2, y+8, {align:'center'});
+                y += 16;
+            } else {
+                const expRows = linked.map((e, idx) => [
+                    String(idx+1),
+                    e.date || e.expDate || '—',
+                    e._projectName || '—',
+                    e.paidByName || _fundStaffName(e.paidByStaffID) || '—',
+                    e.description || '—',
+                    e.category || '—',
+                    INR(e.amount)
+                ]);
+                doc.autoTable({
+                    startY: y+2, margin:{left:ML,right:MR}, theme:'striped',
+                    head: [['#', 'Date', 'Project', 'Paid By', 'Description', 'Head', 'Amount']],
+                    body: expRows,
+                    styles:{fontSize:8, cellPadding:1.8, overflow:'linebreak'},
+                    headStyles:{fillColor:[51,65,85], textColor:[255,255,255], fontStyle:'bold', fontSize:8.5},
+                    columnStyles:{
+                        0:{cellWidth:8, halign:'center'},
+                        1:{cellWidth:20},
+                        2:{cellWidth:30},
+                        3:{cellWidth:25},
+                        4:{cellWidth:'auto'},
+                        5:{cellWidth:25},
+                        6:{cellWidth:22, halign:'right', fontStyle:'bold'}
+                    },
+                    foot:[[
+                        {content:'TOTAL', colSpan:6, styles:{halign:'right', fontStyle:'bold', fillColor:[241,245,249], textColor:[15,23,42]}},
+                        {content:INR(bal.spent), styles:{halign:'right', fontStyle:'bold', fillColor:[241,245,249], textColor:[15,23,42]}}
+                    ]],
+                });
+                y = doc.lastAutoTable.finalY + 6;
+            }
+
+            // ── FY BREAKDOWN ──
+            const fyMap = {};
+            linked.forEach(e => {
+                const dateStr = e.date || e.expDate || '';
+                const fy = _fyOf(dateStr);
+                if (!fyMap[fy]) fyMap[fy] = { count:0, amount:0 };
+                fyMap[fy].count++;
+                fyMap[fy].amount += parseFloat(e.amount) || 0;
+            });
+            const fyKeys = Object.keys(fyMap).sort();
+            if (fyKeys.length > 0) {
+                if (y > 240) { doc.addPage(); y = 16; }
+                doc.setFontSize(11); doc.setFont('helvetica','bold'); doc.setTextColor(15,23,42);
+                doc.text('FINANCIAL YEAR BREAKDOWN', ML, y);
+                doc.autoTable({
+                    startY: y+2, margin:{left:ML,right:MR}, theme:'grid',
+                    head: [['Financial Year', 'Entries', 'Amount']],
+                    body: fyKeys.map(fy => [_fyLabel(fy), String(fyMap[fy].count), INR(fyMap[fy].amount)]),
+                    foot: [[
+                        {content:'GRAND TOTAL', styles:{fontStyle:'bold', fillColor:[241,245,249]}},
+                        {content:String(linked.length), styles:{fontStyle:'bold', halign:'center', fillColor:[241,245,249]}},
+                        {content:INR(bal.spent), styles:{fontStyle:'bold', halign:'right', fillColor:[241,245,249]}}
+                    ]],
+                    styles:{fontSize:9, cellPadding:2.5},
+                    headStyles:{fillColor:[71,85,105], textColor:[255,255,255]},
+                    columnStyles:{1:{halign:'center'}, 2:{halign:'right'}}
+                });
+                y = doc.lastAutoTable.finalY + 6;
+            }
+
+            // ── ACCOUNTING HEAD SUMMARY ──
+            const headMap = {};
+            linked.forEach(e => {
+                const cat = e.category || '— Uncategorised —';
+                if (!headMap[cat]) headMap[cat] = { count:0, amount:0 };
+                headMap[cat].count++;
+                headMap[cat].amount += parseFloat(e.amount) || 0;
+            });
+            const headEntries = Object.entries(headMap).sort((a,b) => b[1].amount - a[1].amount);
+            if (headEntries.length > 0) {
+                if (y > 230) { doc.addPage(); y = 16; }
+                doc.setFontSize(11); doc.setFont('helvetica','bold'); doc.setTextColor(15,23,42);
+                doc.text('ACCOUNTING HEAD SUMMARY', ML, y);
+                const total = bal.spent || 1;
+                doc.autoTable({
+                    startY: y+2, margin:{left:ML,right:MR}, theme:'grid',
+                    head: [['Accounting Head', 'Entries', 'Amount', '% of Total']],
+                    body: headEntries.map(([head, info]) => [
+                        head,
+                        String(info.count),
+                        INR(info.amount),
+                        ((info.amount/total)*100).toFixed(1) + '%'
+                    ]),
+                    foot: [[
+                        {content:'TOTAL', styles:{fontStyle:'bold', fillColor:[241,245,249]}},
+                        {content:String(linked.length), styles:{fontStyle:'bold', halign:'center', fillColor:[241,245,249]}},
+                        {content:INR(bal.spent), styles:{fontStyle:'bold', halign:'right', fillColor:[241,245,249]}},
+                        {content:'100.0%', styles:{fontStyle:'bold', halign:'right', fillColor:[241,245,249]}}
+                    ]],
+                    styles:{fontSize:9, cellPadding:2.5},
+                    headStyles:{fillColor:[71,85,105], textColor:[255,255,255]},
+                    columnStyles:{1:{halign:'center'}, 2:{halign:'right'}, 3:{halign:'right'}}
+                });
+                y = doc.lastAutoTable.finalY + 6;
+            }
+
+            // ── TALLY VOUCHER LINE ──
+            if (y > 270) { doc.addPage(); y = 16; }
+            doc.setFontSize(9); doc.setFont('helvetica','normal'); doc.setTextColor(71,85,105);
+            doc.text('Tally Voucher: ' + (p.tallyVoucher || '_______________'), ML, y+5);
+            doc.text('Date: _____________', PW-MR-30, y+5);
+            y += 12;
+
+            // ── BILL APPENDIX (Option C) ──
+            // Collect all attachments from linked expenses with their metadata
+            const attachments = [];
+            linked.forEach((e, idx) => {
+                const atts = e.billAttachments || (e.billDriveFileId ? [{ driveFileId:e.billDriveFileId, name:e.billName||'attachment', type:e.billMime||'image' }] : []);
+                atts.forEach((a, ai) => {
+                    attachments.push({
+                        expIdx: idx + 1,
+                        date: e.date || e.expDate || '—',
+                        desc: e.description || '—',
+                        amount: e.amount,
+                        att: a,
+                        attIdx: ai + 1,
+                        totalAttsForExp: atts.length
+                    });
+                });
+            });
+
+            if (attachments.length > 0) {
+                doc.addPage();
+                doc.setFontSize(14); doc.setFont('helvetica','bold'); doc.setTextColor(15,23,42);
+                doc.text('BILL APPENDIX', PW/2, 20, {align:'center'});
+                doc.setFontSize(9); doc.setFont('helvetica','normal'); doc.setTextColor(100,116,139);
+                doc.text(attachments.length + ' supporting document' + (attachments.length===1?'':'s') + ' for ' + linked.length + ' expense entr' + (linked.length===1?'y':'ies'), PW/2, 27, {align:'center'});
+                doc.setDrawColor(203,213,225); doc.line(ML, 32, PW-MR, 32);
+
+                // Embed each attachment on its own page
+                let appendixY = 38;
+                for (let i = 0; i < attachments.length; i++) {
+                    const item = attachments[i];
+                    if (i > 0) { doc.addPage(); appendixY = 16; }
+
+                    // Attachment header
+                    doc.setFontSize(11); doc.setFont('helvetica','bold'); doc.setTextColor(15,23,42);
+                    doc.text(`Bill ${i+1} of ${attachments.length}`, ML, appendixY);
+                    doc.setFontSize(9); doc.setFont('helvetica','normal'); doc.setTextColor(71,85,105);
+                    appendixY += 6;
+                    doc.text(`Expense #${item.expIdx} · ${item.date} · ${INR(item.amount)}`, ML, appendixY);
+                    appendixY += 5;
+                    const descLines = doc.splitTextToSize(item.desc, CW);
+                    doc.text(descLines, ML, appendixY);
+                    appendixY += 4 * descLines.length + 2;
+                    if (item.totalAttsForExp > 1) {
+                        doc.setTextColor(124,58,237);
+                        doc.text(`Attachment ${item.attIdx} of ${item.totalAttsForExp} for this expense`, ML, appendixY);
+                        appendixY += 5;
+                    }
+                    doc.setDrawColor(226,232,240); doc.line(ML, appendixY, PW-MR, appendixY);
+                    appendixY += 4;
+
+                    // Render the attachment
+                    try {
+                        const att = item.att;
+                        let imgData = att.data;  // base64 already in memory?
+
+                        // If only Drive file ID, attempt to fetch
+                        if (!imgData && att.driveFileId) {
+                            try {
+                                const r = await fetch(`https://www.googleapis.com/drive/v3/files/${att.driveFileId}?alt=media`, { headers: { Authorization: `Bearer ${accessToken}` } });
+                                if (r.ok) {
+                                    const blob = await r.blob();
+                                    imgData = await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(blob); });
+                                }
+                            } catch(fetchErr) {
+                                console.warn('Could not fetch attachment ' + att.driveFileId, fetchErr);
+                            }
+                        }
+
+                        if (imgData && imgData.startsWith('data:image')) {
+                            // Compute scaling — fit within available space
+                            const maxW = CW;
+                            const maxH = 297 - appendixY - 16; // leave 16mm at bottom
+                            // Use temp Image to read aspect ratio
+                            const ratio = await new Promise((res) => {
+                                const img = new Image();
+                                img.onload = () => res(img.width / img.height);
+                                img.onerror = () => res(1);
+                                img.src = imgData;
+                            });
+                            let w = maxW, h = maxW / ratio;
+                            if (h > maxH) { h = maxH; w = maxH * ratio; }
+                            const x = ML + (CW - w) / 2;
+                            try {
+                                doc.addImage(imgData, x, appendixY, w, h, undefined, 'FAST');
+                            } catch(addErr) {
+                                doc.setFontSize(10); doc.setTextColor(220,38,38);
+                                doc.text('⚠ Could not embed image: ' + (addErr.message || 'unknown error'), ML, appendixY+10);
+                                doc.setFontSize(9); doc.setTextColor(100,116,139);
+                                doc.text('File: ' + (att.name||'attachment'), ML, appendixY+18);
+                            }
+                        } else if (imgData && imgData.startsWith('data:application/pdf')) {
+                            doc.setFontSize(10); doc.setTextColor(100,116,139);
+                            doc.text('📎 PDF attachment: ' + (att.name || 'document.pdf'), ML, appendixY+8);
+                            doc.setFontSize(8); doc.setTextColor(148,163,184);
+                            doc.text('PDF embedding not supported. Open the original file from Drive.', ML, appendixY+15);
+                            if (att.driveFileId) doc.text('Drive ID: ' + att.driveFileId, ML, appendixY+22);
+                        } else {
+                            doc.setFontSize(10); doc.setTextColor(220,38,38);
+                            doc.text('⚠ Attachment data not available offline', ML, appendixY+8);
+                            doc.setFontSize(9); doc.setTextColor(100,116,139);
+                            doc.text('File: ' + (att.name || 'attachment') + (att.driveFileId ? ' (Drive: '+att.driveFileId+')' : ''), ML, appendixY+15);
+                        }
+                    } catch(rendErr) {
+                        console.warn('Render error for attachment', rendErr);
+                        doc.setFontSize(10); doc.setTextColor(220,38,38);
+                        doc.text('⚠ Render error: ' + rendErr.message, ML, appendixY+8);
+                    }
+                }
+            }
+
+            // ── PAGE FOOTERS ──
+            const totalPages = doc.internal.getNumberOfPages();
+            for (let i = 1; i <= totalPages; i++) {
+                doc.setPage(i);
+                doc.setFontSize(7); doc.setFont('helvetica','normal'); doc.setTextColor(148,163,184);
+                doc.text(`${p.poolID} · ${statusLabel} · Generated by ${currentUser?.email || 'IMSE EMS'}`, PW/2, 290, {align:'center'});
+                doc.text(`Page ${i} of ${totalPages}`, PW-MR, 290, {align:'right'});
+            }
+
+            // ── SAVE ──
+            const safePoolID = p.poolID.replace(/[^a-zA-Z0-9-]/g, '-');
+            const fname = `${safePoolID}_${isClosed?'Final':'Interim'}_${new Date().toISOString().slice(0,10)}.pdf`;
+            doc.save(fname);
+            if (typeof showToast === 'function') showToast(`✅ ${fname} downloaded`, 4000);
         }
 
         function renderDashboard(content) {
@@ -15210,14 +15569,14 @@ Automated WFH alert — ${company} Attendance System.`;
                         </div>
                         ${poolEntries.length || unallocatedCount > 0 ? `
                         <div class="mt-3 pt-3 border-t border-gray-100">
-                            <p class="text-xs font-bold text-emerald-700 uppercase tracking-wide mb-2">💰 Pool Allocation Breakdown</p>
+                            <p class="text-xs font-bold text-emerald-700 uppercase tracking-wide mb-2">💰 Pool Allocation Breakdown <span class="text-gray-400 font-normal normal-case">(click a pool to view full reconciliation)</span></p>
                             <div class="flex flex-wrap gap-2">
                                 ${poolEntries.map(([poolID, info]) => {
                                     const pool = (fundPools||[]).find(fp => fp.poolID === poolID);
                                     const isClosed = pool && pool.status === 'Closed';
-                                    return `<span class="text-xs px-2 py-1 rounded-lg border ${isClosed?'bg-gray-100 text-gray-600 border-gray-300':'bg-emerald-50 text-emerald-700 border-emerald-200'}" title="${isClosed?'Closed pool':'Active pool'}">
+                                    return `<button onclick="viewPoolDetail('${poolID}')" class="text-xs px-2 py-1 rounded-lg border ${isClosed?'bg-gray-100 text-gray-600 border-gray-300 hover:bg-gray-200':'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'} cursor-pointer transition-colors" title="${isClosed?'Closed pool — click to view reconciliation':'Active pool — click to view'}">
                                         <span class="font-mono font-semibold">${poolID}</span>: ${fmt(info.amount)} <span class="text-gray-500">(${info.count})</span>${isClosed?' ✓':''}
-                                    </span>`;
+                                    </button>`;
                                 }).join('')}
                                 ${unallocatedCount > 0 ? `<span class="text-xs px-2 py-1 rounded-lg bg-amber-50 text-amber-700 border border-amber-300 font-medium">
                                     ⚠ Unallocated: ${fmt(unallocatedAmt)} <span class="text-gray-500">(${unallocatedCount})</span>
