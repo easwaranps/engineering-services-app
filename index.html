@@ -2492,6 +2492,66 @@
             }
         }
 
+        // ── DEVELOPER TOOL: Heavy Wipe ──
+        // Everything Light Wipe does, PLUS deletes all expense items, fund transfers, fund
+        // requests, and totalFunds inside every project. Project shells (id, name) stay.
+        // Use ONLY for true fresh start before going live.
+        async function wipeFieldExpensesHeavy() {
+            // Count what will be lost
+            let totalItems = 0, totalProjects = (projectExpenses||[]).length;
+            let totalLegacyTransfers = 0, totalLegacyReqs = 0, totalLegacyFunds = 0;
+            (projectExpenses||[]).forEach(p => {
+                totalItems += (p.items||[]).length;
+                totalLegacyTransfers += (p.fundTransfers||[]).length;
+                totalLegacyReqs      += (p.fundRequests||[]).length;
+                if (parseFloat(p.totalFunds)||0) totalLegacyFunds++;
+            });
+
+            if (!confirm(
+                '🔥 HEAVY WIPE — TRULY FRESH START?\n\n' +
+                'This is MORE destructive than Light Wipe. It will:\n\n' +
+                '• Clear ALL ' + (fundRequests||[]).length + ' fund requests\n' +
+                '• Clear ALL ' + (fundPools||[]).length + ' fund pools\n' +
+                '• DELETE ' + totalItems + ' field expense entries inside ' + totalProjects + ' project(s)\n' +
+                '• Clear ' + totalLegacyTransfers + ' legacy fund transfers\n' +
+                '• Clear ' + totalLegacyReqs + ' legacy per-project fund requests\n' +
+                '• Reset totalFunds on ' + totalLegacyFunds + ' project(s)\n\n' +
+                'Project shells (name/ID) WILL be kept.\n' +
+                'Other modules (staff, expenses, transactions, directors, payslips) are UNTOUCHED.\n\n' +
+                'This CANNOT be undone (except via rolling backup recovery).\n\n' +
+                'Continue?'
+            )) return;
+
+            const c2 = prompt('Type HEAVY-WIPE in capitals to confirm:');
+            if (c2 !== 'HEAVY-WIPE') {
+                if (typeof showToast === 'function') showToast('Cancelled — data unchanged', 3000);
+                return;
+            }
+
+            try {
+                fundRequests = [];
+                fundPools = [];
+                // Clear inside each project but keep project shell intact
+                projectExpenses = (projectExpenses||[]).map(p => {
+                    const cleaned = { ...p };
+                    cleaned.items = [];
+                    cleaned.fundRequests = [];
+                    cleaned.fundTransfers = [];
+                    cleaned.totalFunds = 0;
+                    return cleaned;
+                });
+
+                await saveData('fundRequests', fundRequests);
+                await saveData('fundPools',    fundPools);
+                await saveData('projectExpenses', projectExpenses);
+
+                if (typeof showToast === 'function') showToast(`✅ Heavy Wipe done — All field expense data cleared. ${totalProjects} project shell${totalProjects===1?'':'s'} preserved.`, 6000);
+                renderView();
+            } catch(err) {
+                alert('Heavy Wipe failed: ' + err.message + '\n\nIn-memory state may be partially changed. Refresh app to reload from Drive.');
+            }
+        }
+
         async function saveFileToDrive(fileName, fileData) {
             const folderId = await getOrCreateAppFolder();
 
@@ -4569,14 +4629,29 @@
         // Phase C will use poolID linkage; for Phase A+B, balance = disbursed - 0 (no expenses linked yet)
         function _computePoolBalance(pool) {
             const disbursed = parseFloat(pool.disbursedAmount) || 0;
-            // In Phase A+B, no expenses are linked yet — balance = full disbursement
-            const linked = (projectExpenses||[]).filter(e => e.poolID === pool.poolID);
-            const spent  = linked.reduce((s,e) => s + (parseFloat(e.amount) || 0), 0);
+            // Field expenses live nested under projectExpenses[i].items[j] — iterate both
+            // the top-level (legacy/forward-compatible) AND the nested item arrays.
+            let linkedCount = 0;
+            let spent = 0;
+            (projectExpenses||[]).forEach(proj => {
+                // Flat-level (for forward compatibility if schema ever flattens)
+                if (proj.poolID === pool.poolID) {
+                    linkedCount++;
+                    spent += parseFloat(proj.amount) || 0;
+                }
+                // Nested items array (the actual current schema)
+                (proj.items||[]).forEach(it => {
+                    if (it.poolID === pool.poolID) {
+                        linkedCount++;
+                        spent += parseFloat(it.amount) || 0;
+                    }
+                });
+            });
             return {
                 disbursed,
                 spent,
                 balance: +(disbursed - spent).toFixed(2),
-                expenseCount: linked.length
+                expenseCount: linkedCount
             };
         }
 
@@ -4655,23 +4730,36 @@
         // any active pool that can absorb it (FIFO oldest-fitting). Allocate if found.
         // Returns { allocated: N, totalAmount, byPool: {poolID: count} } for toast.
         function _autoRetryUnallocated() {
-            const unallocated = (projectExpenses||[])
-                .filter(e => !e.poolID && (parseFloat(e.amount) || 0) > 0)
-                .sort((a, b) =>
-                    (a.expDate || a.date || '').localeCompare(b.expDate || b.date || ''));
+            // Gather unallocated expense items from BOTH top-level and nested locations.
+            // Each entry includes a reference back to the original item for mutation.
+            const unallocated = [];
+            (projectExpenses||[]).forEach(proj => {
+                // Top-level (rarely used but supported)
+                if (proj.poolID === undefined && (parseFloat(proj.amount) || 0) > 0 && proj.amount !== undefined) {
+                    if (!proj.poolID) {
+                        unallocated.push({ ref: proj, dateKey: proj.expDate || proj.date || '', amount: parseFloat(proj.amount) || 0 });
+                    }
+                }
+                // Nested items
+                (proj.items||[]).forEach(it => {
+                    if (!it.poolID && (parseFloat(it.amount) || 0) > 0) {
+                        unallocated.push({ ref: it, dateKey: it.date || it.expDate || '', amount: parseFloat(it.amount) || 0 });
+                    }
+                });
+            });
+            unallocated.sort((a, b) => a.dateKey.localeCompare(b.dateKey));
 
             if (unallocated.length === 0) return { allocated: 0, totalAmount: 0, byPool: {} };
 
             const result = { allocated: 0, totalAmount: 0, byPool: {} };
-            for (const exp of unallocated) {
-                const amt = parseFloat(exp.amount) || 0;
-                const pool = _findFifoPool(amt);
+            for (const u of unallocated) {
+                const pool = _findFifoPool(u.amount);
                 if (!pool) continue; // still can't allocate; leave for next retry
-                exp.poolID = pool.poolID;
-                exp.updatedAt = new Date().toISOString();
+                u.ref.poolID = pool.poolID;
+                u.ref.updatedAt = new Date().toISOString();
                 _recomputePool(pool); // updates balance + may auto-close
                 result.allocated++;
-                result.totalAmount += amt;
+                result.totalAmount += u.amount;
                 result.byPool[pool.poolID] = (result.byPool[pool.poolID] || 0) + 1;
             }
             return result;
@@ -5297,8 +5385,16 @@
             const p = fundPools.find(x => x.poolID === poolID);
             if (!p) return alert('Pool not found');
             const bal = _computePoolBalance(p);
-            const linked = (projectExpenses||[]).filter(e => e.poolID === poolID)
-                .sort((a,b) => (a.expDate||a.date||'').localeCompare(b.expDate||b.date||''));
+            // Gather linked expenses from BOTH top-level and nested items, with
+            // project context attached so we can show project name in the table.
+            const linked = [];
+            (projectExpenses||[]).forEach(proj => {
+                if (proj.poolID === poolID) linked.push({ ...proj, _projectName: proj.projectName||proj.name||'—' });
+                (proj.items||[]).forEach(it => {
+                    if (it.poolID === poolID) linked.push({ ...it, _projectName: proj.projectName||proj.name||'—' });
+                });
+            });
+            linked.sort((a,b) => (a.expDate||a.date||'').localeCompare(b.expDate||b.date||''));
             const html = `<div style="position:fixed;inset:0;background:rgba(15,23,42,.65);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px" onclick="if(event.target===this)this.remove()">
                 <div style="background:#fff;border-radius:18px;width:min(720px,96vw);max-height:90vh;overflow-y:auto" onclick="event.stopPropagation()">
                     <div style="background:linear-gradient(135deg,${p.status==='Active'?'#10b981,#059669':'#64748b,#475569'});padding:16px 20px;color:#fff;display:flex;justify-content:space-between;align-items:center">
@@ -5346,6 +5442,7 @@
                                 : `<table style="width:100%;font-size:11.5px;border-collapse:collapse">
                                     <thead><tr style="background:#f1f5f9">
                                         <th style="text-align:left;padding:6px;color:#475569">Date</th>
+                                        <th style="text-align:left;padding:6px;color:#475569">Project</th>
                                         <th style="text-align:left;padding:6px;color:#475569">Paid By</th>
                                         <th style="text-align:left;padding:6px;color:#475569">Description</th>
                                         <th style="text-align:left;padding:6px;color:#475569">Head</th>
@@ -5353,6 +5450,7 @@
                                     </tr></thead>
                                     <tbody>${linked.map(e => `<tr style="border-top:1px solid #e2e8f0">
                                         <td style="padding:6px">${e.expDate||e.date||'—'}</td>
+                                        <td style="padding:6px;font-size:10.5px;color:#475569">${e._projectName||'—'}</td>
                                         <td style="padding:6px">${e.paidByName||_fundStaffName(e.paidByStaffID)||'—'}</td>
                                         <td style="padding:6px">${e.description||'—'}</td>
                                         <td style="padding:6px"><span style="font-size:10px;padding:1px 6px;background:#e0e7ff;color:#3730a3;border-radius:3px">${e.category||'—'}</span></td>
@@ -5383,7 +5481,14 @@
             const p = fundPools.find(x => x.poolID === poolID);
             if (!p) return alert('Pool not found');
             if (p.status !== 'Active') return alert('Only Active pools can be reversed');
-            const linkedCount = (projectExpenses||[]).filter(e => e.poolID === poolID).length;
+            const linkedCount = (() => {
+                let n = 0;
+                (projectExpenses||[]).forEach(proj => {
+                    if (proj.poolID === poolID) n++;
+                    (proj.items||[]).forEach(it => { if (it.poolID === poolID) n++; });
+                });
+                return n;
+            })();
             if (linkedCount > 0) return alert(`Cannot reverse: ${linkedCount} expense${linkedCount===1?' is':'s are'} linked to this pool. Remove the expenses first.`);
             if (!confirm(
                 `⚠ Reverse disbursement for ${poolID}?\n\n` +
@@ -8328,18 +8433,24 @@
                             <p class="text-xs text-gray-500 mt-1">Use ONLY during testing. These actions are destructive and meant for cleaning up test data before going live. Hidden once you delete this section.</p>
                         </div>
                     </div>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-                        <!-- Wipe Test Data -->
-                        <div class="border border-red-200 rounded-xl p-4 bg-red-50">
-                            <h4 class="text-sm font-bold text-red-700 mb-2">🧹 Wipe Test Data — Fund Tracking</h4>
-                            <p class="text-xs text-gray-600 mb-3">Clears <code>fundRequests.json</code>, <code>fundPools.json</code>, AND <code>poolID</code> + <code>paidByStaffID</code> on all project expenses. Files keep their IDs (no re-sharing needed).</p>
-                            <button onclick="wipeFundTestData()" class="w-full px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-bold">🧹 Wipe Fund Test Data</button>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+                        <!-- Light Wipe -->
+                        <div class="border border-amber-300 rounded-xl p-4 bg-amber-50">
+                            <h4 class="text-sm font-bold text-amber-800 mb-2">🧹 Light Wipe — Fund Data Only</h4>
+                            <p class="text-xs text-gray-600 mb-3">Clears <code>fundRequests.json</code>, <code>fundPools.json</code>, AND <code>poolID</code>/<code>paidByStaffID</code>/<code>paidByName</code> from all expense items. <b>Preserves all expense entries</b> (dates, amounts, descriptions, attachments) — they become "Unallocated" until next disbursement, then auto-retry allocates them.</p>
+                            <button onclick="wipeFundTestData()" class="w-full px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-sm font-bold">🧹 Light Wipe</button>
+                        </div>
+                        <!-- Heavy Wipe -->
+                        <div class="border border-red-300 rounded-xl p-4 bg-red-50">
+                            <h4 class="text-sm font-bold text-red-800 mb-2">🔥 Heavy Wipe — Truly Fresh Start</h4>
+                            <p class="text-xs text-gray-600 mb-3">Everything Light Wipe does, PLUS <b>deletes all expense items, fund transfers, and fund requests inside every project</b> (clears <code>p.items[]</code>, <code>p.fundRequests[]</code>, <code>p.fundTransfers[]</code>, <code>p.totalFunds</code>). Project shells (name/ID) stay. Use only for total reset.</p>
+                            <button onclick="wipeFieldExpensesHeavy()" class="w-full px-3 py-2 bg-red-700 hover:bg-red-800 text-white rounded-lg text-sm font-bold">🔥 Heavy Wipe</button>
                         </div>
                         <!-- Recover -->
-                        <div class="border border-amber-200 rounded-xl p-4 bg-amber-50">
-                            <h4 class="text-sm font-bold text-amber-700 mb-2">🔄 Data Recovery — Rolling Backups</h4>
-                            <p class="text-xs text-gray-600 mb-3">Restore any data file from a backup slot if it gets corrupted. The system keeps 5 rolling backups per file.</p>
-                            <button onclick="openDataRecoveryPanel()" class="w-full px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-sm font-bold">🔄 Open Recovery Panel</button>
+                        <div class="border border-emerald-300 rounded-xl p-4 bg-emerald-50">
+                            <h4 class="text-sm font-bold text-emerald-800 mb-2">🔄 Data Recovery — Rolling Backups</h4>
+                            <p class="text-xs text-gray-600 mb-3">Restore any data file from a backup slot if it gets corrupted. The system keeps 5 rolling backups per file — restore lets you roll back to a previous version of any module.</p>
+                            <button onclick="openDataRecoveryPanel()" class="w-full px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-bold">🔄 Open Recovery Panel</button>
                         </div>
                     </div>
                 </div>
@@ -14966,7 +15077,9 @@ Automated WFH alert — ${company} Attendance System.`;
         function renderProjectExpenses(content) {
             const fmt = n => '₹' + (+n||0).toLocaleString('en-IN', {minimumFractionDigits:2});
 
-            // Collect all pending fund requests across all projects
+            // Collect all pending/approved fund requests across all projects (legacy data, kept for migration awareness)
+            // NOTE: Phase C moved fund requests to dedicated 💰 Funds tab. Legacy nested requests
+            // shown here only if they exist in old test data — pure visibility, no actions.
             const allPending = [];
             projectExpenses.forEach(p => {
                 (p.fundRequests||[]).forEach(r => {
@@ -14977,17 +15090,16 @@ Automated WFH alert — ${company} Attendance System.`;
             });
             allPending.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
 
-            // Summary totals
-            const totalFunds  = projectExpenses.reduce((s,p)=>s+(parseFloat(p.totalFunds)||0),0);
+            // Summary totals — Phase C: spend is the only meaningful per-project metric
+            // (totalFunds + balance moved to 💰 Funds tab as pool concept).
             const totalSpent  = projectExpenses.reduce((s,p)=>s+(p.items||[]).reduce((a,i)=>a+(parseFloat(i.amount)||0),0),0);
-            const totalTfIn   = projectExpenses.reduce((s,p)=>s+(p.fundTransfers||[]).filter(t=>t.direction==='in').reduce((a,t)=>a+(parseFloat(t.amount)||0),0),0);
-            const totalTfOut  = projectExpenses.reduce((s,p)=>s+(p.fundTransfers||[]).filter(t=>t.direction==='out').reduce((a,t)=>a+(parseFloat(t.amount)||0),0),0);
+            const totalEntries = projectExpenses.reduce((s,p)=>s+(p.items||[]).length, 0);
 
             content.innerHTML = `
             <div class="flex items-center justify-between mb-6">
                 <div>
                     <h2 class="text-3xl font-bold text-gray-800">🧳 Projects & Field Expenses</h2>
-                    <p class="text-gray-500 text-sm mt-1">Manage projects, approve fund requests and view field expenses</p>
+                    <p class="text-gray-500 text-sm mt-1">Manage project sites and view field expense entries · Fund flow is in <a href="javascript:void(0)" onclick="switchView('funds')" class="text-emerald-600 font-semibold hover:underline">💰 Funds tab</a></p>
                 </div>
                 <div class="flex gap-2">
                     <button onclick="exportAllProjExpCSV()" class="px-4 py-2 bg-green-600 text-white rounded-xl hover:bg-green-700 font-medium text-sm">📊 Export CSV</button>
@@ -14996,36 +15108,36 @@ Automated WFH alert — ${company} Attendance System.`;
                 </div>
             </div>
 
-            <!-- Summary -->
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-                <div class="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-xl p-4 text-white shadow">
-                    <p class="text-xs opacity-80">Total Office Funds</p>
-                    <p class="text-2xl font-bold">${fmt(totalFunds)}</p>
-                </div>
+            <!-- Summary — 3 metrics (Phase C: removed legacy Office Funds + Balance + Pending) -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
                 <div class="bg-gradient-to-br from-red-500 to-pink-600 rounded-xl p-4 text-white shadow">
-                    <p class="text-xs opacity-80">Total Spent by Field</p>
+                    <p class="text-xs opacity-80">Total Field Expenses</p>
                     <p class="text-2xl font-bold">${fmt(totalSpent)}</p>
-                    <p class="text-xs opacity-80 mt-1">Balance: ${fmt(totalFunds-totalSpent)}</p>
+                    <p class="text-xs opacity-80 mt-1">Across ${projectExpenses.length} project${projectExpenses.length===1?'':'s'}</p>
                 </div>
-                <div class="bg-gradient-to-br from-amber-500 to-orange-600 rounded-xl p-4 text-white shadow">
-                    <p class="text-xs opacity-80">Pending Fund Requests</p>
-                    <p class="text-2xl font-bold">${allPending.filter(r=>r.status==='Pending').length}</p>
-                    <p class="text-xs opacity-80 mt-1">${fmt(allPending.filter(r=>r.status==='Pending').reduce((a,r)=>a+(parseFloat(r.amount)||0),0))}</p>
+                <div class="bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl p-4 text-white shadow">
+                    <p class="text-xs opacity-80">Expense Entries</p>
+                    <p class="text-2xl font-bold">${totalEntries}</p>
+                    <p class="text-xs opacity-80 mt-1">Total logged</p>
                 </div>
                 <div class="bg-gradient-to-br from-green-500 to-teal-600 rounded-xl p-4 text-white shadow">
                     <p class="text-xs opacity-80">Total Projects</p>
                     <p class="text-2xl font-bold">${projectExpenses.length}</p>
+                    <p class="text-xs opacity-80 mt-1">Active sites</p>
                 </div>
             </div>
 
-            <!-- ── PENDING FUND REQUESTS PANEL ── -->
+            <!-- ── LEGACY PENDING — visibility only, action in 💰 Funds tab ── -->
             ${allPending.length ? `
             <div class="bg-white border-2 border-amber-300 rounded-xl shadow-sm mb-6 overflow-hidden">
-                <div class="bg-amber-50 px-5 py-3 border-b border-amber-200 flex items-center justify-between">
-                    <div class="flex items-center gap-2">
-                        <span class="text-lg">💰</span>
-                        <h3 class="font-bold text-amber-800">Fund Requests Awaiting Action</h3>
-                        <span class="px-2 py-0.5 bg-amber-200 text-amber-800 rounded-full text-xs font-bold">${allPending.length}</span>
+                <div class="bg-amber-50 px-5 py-3 border-b border-amber-200 flex items-start justify-between">
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-lg">⚠️</span>
+                            <h3 class="font-bold text-amber-800">Legacy Fund Requests (deprecated)</h3>
+                            <span class="px-2 py-0.5 bg-amber-200 text-amber-800 rounded-full text-xs font-bold">${allPending.length}</span>
+                        </div>
+                        <p class="text-xs text-amber-700 mt-1">These are pre-Phase-C fund requests stored inside projects. New fund requests live in the <a href="javascript:void(0)" onclick="switchView('funds')" class="font-semibold underline">💰 Funds tab</a>. Use Heavy Wipe in Settings → Developer Tools to clean up legacy data when ready.</p>
                     </div>
                 </div>
                 <table class="w-full text-sm">
@@ -15034,135 +15146,85 @@ Automated WFH alert — ${company} Attendance System.`;
                             <th class="px-4 py-2 text-left">Project</th>
                             <th class="px-4 py-2 text-left">Date</th>
                             <th class="px-4 py-2 text-left">Purpose</th>
-                            <th class="px-4 py-2 text-left">Requested by</th>
                             <th class="px-4 py-2 text-right">Amount</th>
                             <th class="px-4 py-2 text-center">Status</th>
-                            <th class="px-4 py-2 text-center">Action</th>
                         </tr>
                     </thead>
                     <tbody>
                         ${allPending.map(r=>`
-                        <tr class="border-t hover:bg-amber-50">
+                        <tr class="border-t">
                             <td class="px-4 py-2">
                                 <p class="font-medium text-gray-800">${r.projectName}</p>
                                 ${r.projectRef?`<p class="text-xs text-gray-400">${r.projectRef}</p>`:''}
                             </td>
-                            <td class="px-4 py-2 text-xs text-gray-500">${r.date}</td>
+                            <td class="px-4 py-2 text-xs text-gray-500">${r.date||'—'}</td>
                             <td class="px-4 py-2">
-                                <span class="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs">${r.purpose}</span>
-                                ${r.remarks?`<p class="text-xs text-gray-400 mt-0.5">${r.remarks}</p>`:''}
+                                <span class="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs">${r.purpose||'—'}</span>
                             </td>
-                            <td class="px-4 py-2 text-xs text-gray-500">${r.addedBy||'—'}</td>
                             <td class="px-4 py-2 text-right font-bold text-gray-800">${fmt(r.amount)}</td>
                             <td class="px-4 py-2 text-center">
                                 <span class="px-2 py-1 rounded-full text-xs font-semibold ${r.status==='Approved'?'bg-blue-100 text-blue-700':'bg-amber-100 text-amber-700'}">${r.status}</span>
                             </td>
-                            <td class="px-4 py-2 text-center">
-                                <div class="flex gap-1 justify-center flex-wrap">
-                                    ${r.status==='Pending'?`
-                                    <button onclick="approveFundRequest('${r.projExpID}','${r.frID}')"
-                                        class="px-2 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 font-medium">✓ Approve</button>
-                                    <button onclick="rejectFundRequest('${r.projExpID}','${r.frID}')"
-                                        class="px-2 py-1 bg-red-100 text-red-600 rounded text-xs hover:bg-red-200 font-medium">✗ Reject</button>
-                                    `:`
-                                    <button onclick="openReleaseFundsModal('${r.projExpID}','${r.frID}',${r.amount})"
-                                        class="px-2 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700 font-medium">💸 Release Funds</button>
-                                    `}
-                                    ${r.paymentReceipts?.length?`<button onclick="viewPaymentReceipts('${r.projExpID}','${r.frID}')" class="px-2 py-1 bg-indigo-100 text-indigo-700 rounded text-xs hover:bg-indigo-200 font-medium">📎 Receipt</button>`:''}
-                                </div>
-                            </td>
                         </tr>`).join('')}
                     </tbody>
                 </table>
-            </div>` : `
-            <div class="bg-green-50 border border-green-200 rounded-xl p-4 mb-6 flex items-center gap-3">
-                <span class="text-2xl">✅</span>
-                <p class="text-green-700 font-medium">No pending fund requests — all requests have been actioned.</p>
-            </div>`}
+            </div>` : ''}
 
             <!-- ── PROJECT LIST ── -->
-            ${!projectExpenses.length ? `<div class="text-center py-16 text-gray-400"><div class="text-5xl mb-4">🧳</div><p>No project expenses yet.</p></div>` :
+            ${!projectExpenses.length ? `<div class="text-center py-16 text-gray-400"><div class="text-5xl mb-4">🧳</div><p>No projects yet. Click <b>+ New Project</b> to add one.</p></div>` :
             projectExpenses.map(p => {
                 const spent   = (p.items||[]).reduce((a,i)=>a+(parseFloat(i.amount)||0),0);
-                const tfIn    = (p.fundTransfers||[]).filter(t=>t.direction==='in').reduce((a,t)=>a+(parseFloat(t.amount)||0),0);
-                const tfOut   = (p.fundTransfers||[]).filter(t=>t.direction==='out').reduce((a,t)=>a+(parseFloat(t.amount)||0),0);
-                const funds   = parseFloat(p.totalFunds)||0;
-                const balance = funds + tfIn - spent - tfOut;
-                const pct     = (funds+tfIn)>0 ? Math.min(100,(spent+tfOut)/(funds+tfIn)*100) : 0;
-                const projPending = (p.fundRequests||[]).filter(r=>r.status==='Pending'||r.status==='Approved').length;
-                const projReqs    = (p.fundRequests||[]);
+                // Phase C: compute pool allocation breakdown for this project's items
+                const poolBreakdown = {};
+                let unallocatedAmt = 0, unallocatedCount = 0;
+                (p.items||[]).forEach(it => {
+                    const amt = parseFloat(it.amount) || 0;
+                    if (it.poolID) {
+                        if (!poolBreakdown[it.poolID]) poolBreakdown[it.poolID] = { amount: 0, count: 0 };
+                        poolBreakdown[it.poolID].amount += amt;
+                        poolBreakdown[it.poolID].count++;
+                    } else {
+                        unallocatedAmt += amt;
+                        unallocatedCount++;
+                    }
+                });
+                const poolEntries = Object.entries(poolBreakdown);
                 return `
                 <div class="bg-white border border-gray-200 rounded-xl shadow-sm mb-4 overflow-hidden">
                     <!-- Project header -->
                     <div class="p-4">
-                        <div class="flex justify-between items-start mb-3">
+                        <div class="flex justify-between items-start mb-2">
                             <div>
                                 <p class="font-bold text-gray-800 text-lg">${p.projectName}</p>
                                 <p class="text-xs text-gray-500">${p.projectRef||''} · ${p.startDate||''} ${p.endDate?'→ '+p.endDate:''}</p>
                                 <p class="text-xs text-gray-400 mt-0.5">${p.description||''}</p>
                             </div>
                             <div class="flex gap-2 items-start">
-                                ${projPending>0?`<span class="px-2 py-1 bg-amber-100 text-amber-700 rounded-lg text-xs font-bold">⏳ ${projPending} pending</span>`:''}
                                 <button onclick="editProjExp('${p.projExpID}')" class="px-3 py-1.5 border text-gray-600 rounded-lg text-xs hover:bg-gray-50">Edit</button>
                                 ${settings.allowProjectDelete?`<button onclick="deleteProjExp('${p.projExpID}')" class="text-red-500 hover:text-red-700 text-xs px-2" title="Delete Project">🗑️</button>`:''}
                             </div>
                         </div>
-                        <div class="flex justify-between text-xs text-gray-500 mb-1">
-                            <span>Fund: <strong>${fmt(funds)}</strong>${tfIn>0?` <span class="text-green-600">+${fmt(tfIn)} transferred in</span>`:''}</span>
-                            <span>Spent: <strong class="text-red-600">${fmt(spent)}</strong>${tfOut>0?` + ${fmt(tfOut)} out`:''}</span>
-                            <span>Balance: <strong class="${balance>=0?'text-green-700':'text-red-700'}">${fmt(balance)}</strong></span>
+                        <div class="flex justify-between items-center text-xs text-gray-500 mt-2 pt-2 border-t border-gray-100">
+                            <span>${(p.items||[]).length} expense ${((p.items||[]).length===1?'entry':'entries')}</span>
+                            <span>Total spent: <strong class="text-red-600">${fmt(spent)}</strong></span>
                         </div>
-                        <div class="w-full bg-gray-200 rounded-full h-2 mb-3">
-                            <div class="bg-${pct>90?'red':pct>70?'yellow':'green'}-500 h-2 rounded-full" style="width:${pct}%"></div>
-                        </div>
-                    </div>
-
-                    <!-- Fund requests for this project -->
-                    ${projReqs.length ? `
-                    <div class="border-t">
-                        <div class="px-4 py-2 bg-blue-50 flex items-center justify-between">
-                            <span class="text-xs font-bold text-blue-700 uppercase tracking-wide">Fund Requests (${projReqs.length}) · Total Released: ${fmt(projReqs.reduce((a,r)=>a+(parseFloat(r.releasedAmount)||0),0))}</span>
-                        </div>
-                        ${projReqs.map((r,ri)=>`
-                        <div class="border-t ${r.status==='Received'?'bg-green-50':r.status==='Rejected'?'bg-red-50':'bg-white'}">
-                            <!-- Request header row -->
-                            <div class="px-4 py-2 flex justify-between items-start flex-wrap gap-2">
-                                <div class="flex-1 min-w-0">
-                                    <div class="flex items-center gap-2 flex-wrap">
-                                        <span class="font-semibold text-xs text-gray-800">#${ri+1} · ${r.purpose}</span>
-                                        <span class="px-2 py-0.5 rounded-full text-xs font-semibold
-                                            ${r.status==='Received'?'bg-green-200 text-green-800':
-                                              r.status==='Approved'?'bg-blue-100 text-blue-700':
-                                              r.status==='Rejected'?'bg-red-100 text-red-700':
-                                              'bg-amber-100 text-amber-700'}">${r.status}</span>
-                                        ${r.paymentReceipts?.length?`<span class="text-xs text-indigo-600">📎 ${r.paymentReceipts.length} receipt(s)</span>`:''}
-                                    </div>
-                                    <div class="text-xs text-gray-500 mt-0.5 flex flex-wrap gap-3">
-                                        <span>📅 Requested: ${r.date}${r.addedBy?' by <strong>'+r.addedBy+'</strong>':''}</span>
-                                        <span>💰 Requested: <strong>${fmt(r.amount)}</strong></span>
-                                        ${r.releasedAmount?`<span class="text-green-700">✅ Released: <strong>${fmt(r.releasedAmount)}</strong>${r.releasedDate?' on '+r.releasedDate:''}${r.releaseMode?' via '+r.releaseMode:''}</span>`:''}
-                                        ${r.officeRemarks?`<span class="text-gray-400">📝 ${r.officeRemarks}</span>`:''}
-                                    </div>
-                                    ${r.remarks?`<p class="text-xs text-gray-400 mt-0.5 italic">"${r.remarks}"</p>`:''}
-                                </div>
-                                <!-- Action buttons -->
-                                <div class="flex gap-1 flex-wrap items-center">
-                                    ${r.status==='Pending'?`
-                                        <button onclick="approveFundRequest('${p.projExpID}','${r.frID}')" class="px-2 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 font-medium">✓ Approve</button>
-                                        <button onclick="rejectFundRequest('${p.projExpID}','${r.frID}')" class="px-2 py-1 bg-red-100 text-red-600 rounded text-xs hover:bg-red-200">✗ Reject</button>`
-                                    :r.status==='Approved'?`
-                                        <button onclick="openReleaseFundsModal('${p.projExpID}','${r.frID}',${r.amount})" class="px-2 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700 font-medium">💸 Release</button>`
-                                    :r.status==='Received'?`
-                                        <button onclick="openAttachReceiptModal('${p.projExpID}','${r.frID}')" class="px-2 py-1 ${r.paymentReceipts?.length?'bg-indigo-100 text-indigo-700':'bg-amber-100 text-amber-700'} rounded text-xs hover:bg-indigo-200 font-medium">📎 ${r.paymentReceipts?.length?r.paymentReceipts.length+' receipt(s)':'Attach Receipt'}</button>
-                                        ${r.paymentReceipts?.length?`
-                                        <button onclick="viewPaymentReceipts('${p.projExpID}','${r.frID}')" class="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs hover:bg-blue-200 font-medium">👁 View</button>
-                                        <button onclick="deleteReceiptByIndex('${p.projExpID}','${r.frID}')" class="px-2 py-1 bg-red-100 text-red-600 rounded text-xs hover:bg-red-200 font-medium">🗑 Del</button>`:''}
-                                        <button onclick="fundStatementPDF('${p.projExpID}','${r.frID}')" class="px-2 py-1 bg-purple-600 text-white rounded text-xs hover:bg-purple-700 font-medium" title="Generate Fund Disbursement Statement PDF">📄 Statement</button>`
-                                    :`<span class="text-gray-300 text-xs">—</span>`}
-                                </div>
+                        ${poolEntries.length || unallocatedCount > 0 ? `
+                        <div class="mt-3 pt-3 border-t border-gray-100">
+                            <p class="text-xs font-bold text-emerald-700 uppercase tracking-wide mb-2">💰 Pool Allocation Breakdown</p>
+                            <div class="flex flex-wrap gap-2">
+                                ${poolEntries.map(([poolID, info]) => {
+                                    const pool = (fundPools||[]).find(fp => fp.poolID === poolID);
+                                    const isClosed = pool && pool.status === 'Closed';
+                                    return `<span class="text-xs px-2 py-1 rounded-lg border ${isClosed?'bg-gray-100 text-gray-600 border-gray-300':'bg-emerald-50 text-emerald-700 border-emerald-200'}" title="${isClosed?'Closed pool':'Active pool'}">
+                                        <span class="font-mono font-semibold">${poolID}</span>: ${fmt(info.amount)} <span class="text-gray-500">(${info.count})</span>${isClosed?' ✓':''}
+                                    </span>`;
+                                }).join('')}
+                                ${unallocatedCount > 0 ? `<span class="text-xs px-2 py-1 rounded-lg bg-amber-50 text-amber-700 border border-amber-300 font-medium">
+                                    ⚠ Unallocated: ${fmt(unallocatedAmt)} <span class="text-gray-500">(${unallocatedCount})</span>
+                                </span>` : ''}
                             </div>
-                        </div>`).join('')}
-                    </div>` : ''}
+                        </div>` : ''}
+                    </div>
 
                     <!-- Field expense entries -->
                     ${(p.items||[]).length ? `
@@ -15291,16 +15353,17 @@ Automated WFH alert — ${company} Attendance System.`;
                         <div class="grid grid-cols-2 gap-4">
                             <div class="col-span-2"><label class="block text-xs font-semibold text-gray-600 mb-1">Project Name *</label>
                                 <input type="text" id="peProjectName" class="w-full px-3 py-2 border rounded-lg text-sm" required/></div>
-                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Project Reference / PO</label>
+                            <div class="col-span-2"><label class="block text-xs font-semibold text-gray-600 mb-1">Project Reference / PO</label>
                                 <input type="text" id="peProjectRef" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
-                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Total Funds Received (₹)</label>
-                                <input type="number" id="peFunds" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                             <div><label class="block text-xs font-semibold text-gray-600 mb-1">Start Date</label>
                                 <input type="date" id="peStartDate" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                             <div><label class="block text-xs font-semibold text-gray-600 mb-1">End Date</label>
                                 <input type="date" id="peEndDate" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                             <div class="col-span-2"><label class="block text-xs font-semibold text-gray-600 mb-1">Description</label>
                                 <textarea id="peDescription" rows="2" class="w-full px-3 py-2 border rounded-lg text-sm"></textarea></div>
+                        </div>
+                        <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-2.5 text-xs text-emerald-700">
+                            💡 <b>Note:</b> Funds are no longer attached to projects. Field technicians spend from common pools (managed in <b>💰 Funds tab</b>). Each expense is allocated to an active pool via FIFO.
                         </div>
                         <div class="flex gap-3 justify-end">
                             <button type="button" onclick="closeProjExpModal()" class="px-5 py-2 border rounded-xl text-gray-600">Cancel</button>
@@ -15359,7 +15422,6 @@ Automated WFH alert — ${company} Attendance System.`;
             if (p) {
                 document.getElementById('peProjectName').value = p.projectName||'';
                 document.getElementById('peProjectRef').value  = p.projectRef||'';
-                document.getElementById('peFunds').value       = p.totalFunds||'';
                 document.getElementById('peStartDate').value   = p.startDate||'';
                 document.getElementById('peEndDate').value     = p.endDate||'';
                 document.getElementById('peDescription').value = p.description||'';
@@ -15375,11 +15437,16 @@ Automated WFH alert — ${company} Attendance System.`;
                 projExpID:   currentProjExp?.projExpID || 'PE' + Date.now(),
                 projectName: document.getElementById('peProjectName').value,
                 projectRef:  document.getElementById('peProjectRef').value,
-                totalFunds:  parseFloat(document.getElementById('peFunds').value)||0,
+                // totalFunds: legacy field (per Option A — leave stale value untouched on save).
+                // New projects start with 0; edits preserve whatever was there.
+                totalFunds:  currentProjExp ? (parseFloat(currentProjExp.totalFunds)||0) : 0,
                 startDate:   document.getElementById('peStartDate').value,
                 endDate:     document.getElementById('peEndDate').value,
                 description: document.getElementById('peDescription').value,
                 items:       currentProjExp?.items || [],
+                // Preserve any other legacy fields untouched
+                fundRequests:  currentProjExp?.fundRequests  || [],
+                fundTransfers: currentProjExp?.fundTransfers || [],
                 createdAt:   currentProjExp?.createdAt || new Date().toISOString()
             };
             if (currentProjExp) { const i = projectExpenses.findIndex(x => x.projExpID === currentProjExp.projExpID); if (i>=0) projectExpenses[i] = obj; }
