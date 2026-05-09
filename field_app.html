@@ -419,7 +419,8 @@
                             <option value="Valve Seat">Valve Seat (Width / Angle)</option>
                             <option value="Camshaft Bearing">Camshaft Bearing (Clearance)</option>
                             <option value="Turbocharger Bearing">Turbocharger Bearing (Clearance)</option>
-                            <option value="Other">Other (Custom)</option>
+                            <option value="Other">Other (Generic 6-column template)</option>
+                            <option value="Custom Table">🆕 Custom Table (build your own)</option>
                         </select>
                     </div>
                     <div>
@@ -2615,20 +2616,43 @@
             ]
         },
 
-        // ── OTHER (CUSTOM) ─────────────────────────────────────────
+        // ── OTHER (GENERIC 6-COL) ──────────────────────────────────
         'Other': {
             colHeaders: ['Item / Position','Measurement 1','Measurement 2','Standard','Limit','Result'],
             rowKeys:    ['item','m1','m2','std','limit','result'],
             defaultRows:[{item:''}]
+        },
+
+        // ── CUSTOM TABLE (FREE-FORM) ───────────────────────────────
+        // User-defined columns and rows. Tech adds/removes columns and rows
+        // and types in any cell. _isCustom flag tells renderer to use builder UI.
+        'Custom Table': {
+            _isCustom: true,
+            colHeaders: ['Column 1','Column 2'],
+            rowKeys:    ['c0','c1'],
+            defaultRows:[{c0:'',c1:''}, {c0:'',c1:''}, {c0:'',c1:''}]
         }
     };
 
     let _calibRows = [];
     let _calibTemplate = null;
+    // Custom Table state (only used when component === 'Custom Table')
+    let _customColHeaders = [];
+    let _customColKeys    = [];  // auto-generated 'c0','c1','c2'... keys
+    let _customTitle      = '';
 
     function onCalibComponentChange(comp) {
-        _calibTemplate = CALIB_TEMPLATES[comp] || CALIB_TEMPLATES['Other'];
-        _calibRows = _calibTemplate.defaultRows.map(r=>({...r}));
+        const tpl = CALIB_TEMPLATES[comp] || CALIB_TEMPLATES['Other'];
+        _calibTemplate = tpl;
+        if (tpl._isCustom) {
+            // Initialize a fresh custom table — 2 cols, 3 rows
+            _customColHeaders = [...tpl.colHeaders];
+            _customColKeys    = [...tpl.rowKeys];
+            _customTitle      = '';
+            _calibRows        = tpl.defaultRows.map(r => ({...r}));
+        } else {
+            _calibRows = tpl.defaultRows.map(r => ({...r}));
+        }
         renderCalibTable();
     }
 
@@ -2639,6 +2663,65 @@
         if (!thead || !tbody) return;
 
         const thStyle = 'padding:6px 8px;background:#1e3a5f;color:#fff;font-size:11px;font-weight:600;white-space:nowrap;border:1px solid #334155';
+
+        // ── CUSTOM TABLE BUILDER MODE ────────────────────────────
+        if (_calibTemplate._isCustom) {
+            // Header: editable column labels + remove button + "+Col" button
+            const headerCells = _customColHeaders.map((h, ci) => `
+                <th style="${thStyle};min-width:90px">
+                    <div style="display:flex;align-items:center;gap:4px">
+                        <input type="text" value="${(h||'').replace(/"/g,'&quot;')}"
+                            placeholder="Column ${ci+1}"
+                            onchange="_customColHeaders[${ci}]=this.value;renderCalibTable()"
+                            style="flex:1;border:1px solid #475569;background:rgba(255,255,255,.1);color:#fff;font-size:11px;padding:3px 5px;border-radius:3px;outline:none"/>
+                        ${_customColHeaders.length > 1 ? `<button type="button" onclick="removeCustomCol(${ci})" title="Remove column" style="color:#fca5a5;background:none;border:none;cursor:pointer;font-size:13px;line-height:1;padding:0 2px">✕</button>` : ''}
+                    </div>
+                </th>`).join('');
+            thead.innerHTML = `<tr>${headerCells}<th style="${thStyle};width:60px">
+                <button type="button" onclick="addCustomCol()" title="Add column" style="background:#10b981;color:#fff;border:none;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:11px;font-weight:600">+ Col</button>
+            </th></tr>`;
+
+            tbody.innerHTML = _calibRows.map((row, ri) => {
+                const cells = _customColKeys.map((key, ci) => {
+                    const val = row[key] || '';
+                    return `<td style="padding:3px 4px;border:1px solid #e2e8f0;min-width:90px">
+                        <input type="text" value="${val.replace(/"/g,'&quot;')}"
+                            placeholder=""
+                            onchange="_calibRows[${ri}]['${key}']=this.value"
+                            style="width:100%;border:none;background:transparent;font-size:11px;padding:3px 4px;outline:none;color:#1e3a5f"/>
+                    </td>`;
+                }).join('');
+                return `<tr>${cells}<td style="padding:3px 6px;border:1px solid #e2e8f0;text-align:center">
+                    <button type="button" onclick="_calibRows.splice(${ri},1);renderCalibTable()" title="Remove row" style="color:#dc2626;background:none;border:none;cursor:pointer;font-size:14px;line-height:1">✕</button>
+                </td></tr>`;
+            }).join('');
+
+            // Show table-title input + tip below the table
+            const tipID = 'customTableTip';
+            let tipEl = document.getElementById(tipID);
+            if (!tipEl) {
+                tipEl = document.createElement('div');
+                tipEl.id = tipID;
+                tipEl.style.cssText = 'margin-top:8px;padding:8px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;font-size:11px;color:#1e40af';
+                tbody.parentElement.parentElement.appendChild(tipEl);
+            }
+            tipEl.innerHTML = `
+                <div style="margin-bottom:6px">
+                    <label style="display:block;font-weight:600;color:#1e40af;margin-bottom:3px">Table Title (optional)</label>
+                    <input type="text" value="${(_customTitle||'').replace(/"/g,'&quot;')}"
+                        placeholder="e.g., Bearing Clearance Check, Custom Inspection"
+                        onchange="_customTitle=this.value"
+                        style="width:100%;padding:5px 8px;border:1px solid #93c5fd;border-radius:4px;font-size:12px;background:#fff"/>
+                </div>
+                <div>💡 <b>Tip:</b> Click column headers to rename. Use ✕ on rows/columns to remove. Click "+ Col" to add a new column. Type any value into any cell.</div>`;
+            return;
+        }
+
+        // Hide custom-tip if exists (when switching from custom to template)
+        const customTip = document.getElementById('customTableTip');
+        if (customTip) customTip.remove();
+
+        // ── STANDARD TEMPLATE MODE (existing behavior) ────────────
         thead.innerHTML = '<tr>' + _calibTemplate.colHeaders.map(h=>`<th style="${thStyle}">${h}</th>`).join('') + '<th style="'+thStyle+'">Del</th></tr>';
 
         tbody.innerHTML = _calibRows.map((row,ri) => {
@@ -2666,6 +2749,28 @@
         }).join('');
     }
 
+    // Custom Table column operations
+    function addCustomCol() {
+        const newKey = 'c' + Date.now().toString(36);
+        const newLabel = 'Column ' + (_customColHeaders.length + 1);
+        _customColHeaders.push(newLabel);
+        _customColKeys.push(newKey);
+        // Initialize new column to empty in all existing rows
+        _calibRows.forEach(r => { r[newKey] = ''; });
+        renderCalibTable();
+    }
+    function removeCustomCol(ci) {
+        if (_customColHeaders.length <= 1) {
+            showToast('⚠️ At least one column required');
+            return;
+        }
+        const removedKey = _customColKeys[ci];
+        _customColHeaders.splice(ci, 1);
+        _customColKeys.splice(ci, 1);
+        _calibRows.forEach(r => { delete r[removedKey]; });
+        renderCalibTable();
+    }
+
     function getCalibResult(row) {
         // Determine pass/fail based on actual vs wear limit
         const wearLimitEl = document.getElementById('calibWearLimit');
@@ -2683,7 +2788,13 @@
 
     function addCalibRow() {
         if (!_calibTemplate) return;
-        _calibRows.push({});
+        if (_calibTemplate._isCustom) {
+            const newRow = {};
+            _customColKeys.forEach(k => { newRow[k] = ''; });
+            _calibRows.push(newRow);
+        } else {
+            _calibRows.push({});
+        }
         renderCalibTable();
     }
 
@@ -2698,9 +2809,12 @@
         });
         document.getElementById('calibOverall').value='PASS';
         _calibRows=[]; _calibTemplate=null;
+        _customColHeaders=[]; _customColKeys=[]; _customTitle='';
         const thead=document.getElementById('calibTableHead');
         const tbody=document.getElementById('calibTableBody');
         if(thead)thead.innerHTML=''; if(tbody)tbody.innerHTML='';
+        // Clear any leftover custom tip
+        const tip0 = document.getElementById('customTableTip'); if (tip0) tip0.remove();
 
         // If editing, prefill
         if (calibID) {
@@ -2718,6 +2832,12 @@
                 document.getElementById('calibOverall').value    = rec.overall||'PASS';
                 document.getElementById('calibRemarks').value    = rec.remarks||'';
                 _calibTemplate = CALIB_TEMPLATES[rec.component]||CALIB_TEMPLATES['Other'];
+                if (rec._isCustom) {
+                    // Restore the saved column structure
+                    _customColHeaders = rec.columns ? [...rec.columns] : ['Column 1','Column 2'];
+                    _customColKeys    = rec.rowKeys ? [...rec.rowKeys] : ['c0','c1'];
+                    _customTitle      = rec.customTitle || '';
+                }
                 _calibRows = rec.rows ? rec.rows.map(r=>({...r})) : [];
                 renderCalibTable();
             }
@@ -2728,6 +2848,9 @@
     function closeCalibModal() {
         document.getElementById('calibModal').classList.remove('show');
         _calibRows=[]; _calibTemplate=null;
+        _customColHeaders=[]; _customColKeys=[]; _customTitle='';
+        // Remove the custom tip element if present
+        const tip = document.getElementById('customTableTip'); if (tip) tip.remove();
     }
 
     async function saveCalibRecord() {
@@ -2737,6 +2860,7 @@
         const comp    = document.getElementById('calibComponent').value;
         if (!comp) { showToast('⚠️ Please select a component'); return; }
 
+        const isCustom = !!_calibTemplate?._isCustom;
         const rec = {
             calibID:    calibID || ('CAL'+Date.now()),
             component:  comp,
@@ -2748,9 +2872,15 @@
             instrument: document.getElementById('calibInstrument').value,
             overall:    document.getElementById('calibOverall').value,
             remarks:    document.getElementById('calibRemarks').value,
-            columns:    _calibTemplate?.colHeaders||[],
-            rowKeys:    _calibTemplate?.rowKeys||[],
-            rows:       _calibRows.map(r=>({...r, result:getCalibResult(r)}))
+            // Custom Table: use the user-built columns; otherwise use template's
+            columns:    isCustom ? [..._customColHeaders] : (_calibTemplate?.colHeaders||[]),
+            rowKeys:    isCustom ? [..._customColKeys]    : (_calibTemplate?.rowKeys||[]),
+            rows:       isCustom
+                            ? _calibRows.map(r => ({...r}))                  // no auto-result for custom
+                            : _calibRows.map(r => ({...r, result:getCalibResult(r)})),
+            // Custom Table-specific fields
+            _isCustom:  isCustom,
+            customTitle: isCustom ? (_customTitle || '') : ''
         };
 
         const wlIdx = workLogs.findIndex(x=>x.wlID===wlID);
@@ -2893,7 +3023,9 @@
                                 ${d.calibrations.map(c=>`
                                 <div style="background:#faf5ff;border:1px solid #e9d5ff;border-radius:8px;padding:8px 10px;margin-bottom:6px">
                                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-                                        <span style="font-size:12px;font-weight:600;color:#7c3aed">${c.component}${c.unitNo?' — '+c.unitNo:''}</span>
+                                        <span style="font-size:12px;font-weight:600;color:#7c3aed">
+                                            ${c._isCustom ? '🆕 ' : ''}${c.component}${c.unitNo?' — '+c.unitNo:''}${c._isCustom && c.customTitle ? ' · ' + c.customTitle : ''}
+                                        </span>
                                         <div style="display:flex;gap:4px;align-items:center">
                                             <span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;background:${c.overall==='PASS'?'#dcfce7':c.overall==='FAIL'?'#fee2e2':'#fef3c7'};color:${c.overall==='PASS'?'#15803d':c.overall==='FAIL'?'#dc2626':'#b45309'}">${c.overall}</span>
                                             <button onclick="openCalibModal('${w.wlID}','${d.entryID}','${c.calibID}')" style="font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid var(--border);background:#fff;cursor:pointer;color:var(--muted)">✏️</button>
@@ -2919,10 +3051,15 @@
                             <!-- Photos -->
                             ${(d.photos||[]).length?`<div style="margin-top:8px">
                                 <p style="font-size:10px;font-weight:700;color:var(--muted);margin-bottom:4px">📷 PHOTOS (${d.photos.length})</p>
-                                <div style="display:flex;gap:6px;flex-wrap:wrap">${d.photos.map((ph,i)=>{
-                                            const src=typeof ph==='string'?ph:(ph.thumb||fieldDriveViewUrl(ph.driveFileId,false));
-                                            return `<img src="${src}" class="photo-thumb" onclick="viewDayPhoto('${w.wlID}','${d.entryID}',${i})" style="width:60px;height:60px;border-radius:8px;object-fit:cover;cursor:pointer;border:2px solid var(--border)"
-                                                onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2260%22 height=%2260%22><rect width=%2260%22 height=%2260%22 fill=%22%23e0f2fe%22/><text x=%2250%%22 y=%2265%%22 text-anchor=%22middle%22 font-size=%2226%22>📷</text></svg>'"/>`;
+                                <div style="display:flex;gap:8px;flex-wrap:wrap">${d.photos.map((ph,i)=>{
+                                            const src=_photoSrc(ph);
+                                            const title=_photoTitle(ph);
+                                            const hasTitle=!!title;
+                                            return `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;max-width:60px">
+                                                <img src="${src}" onclick="viewDayPhoto('${w.wlID}','${d.entryID}',${i})" style="width:60px;height:60px;border-radius:8px;object-fit:cover;cursor:pointer;border:2px solid ${hasTitle?'#10b981':'var(--border)'}" title="${title||'Untitled'}"
+                                                    onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2260%22 height=%2260%22><rect width=%2260%22 height=%2260%22 fill=%22%23e0f2fe%22/><text x=%2250%%22 y=%2265%%22 text-anchor=%22middle%22 font-size=%2226%22>📷</text></svg>'"/>
+                                                <div style="font-size:9px;color:${hasTitle?'#0f172a':'#94a3b8'};font-style:${hasTitle?'normal':'italic'};max-width:60px;line-height:1.1;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${title||'Untitled'}</div>
+                                            </div>`;
                                         }).join('')}</div>
                             </div>`:''}
                         </div>`;
@@ -3038,37 +3175,100 @@
         _dayStaffRows.push({name:'',staffID:''});renderDayStaffRows(wlID);
     }
 
+    // ── PHOTO HELPERS (Phase 2: titles) ──────────────────────────────
+    // Photos can be in 3 shapes (legacy + new):
+    //   1. string  — base64 data URL (legacy, no title)
+    //   2. {data:str, title?, name?}                — base64 + metadata
+    //   3. {driveFileId, thumb, name, title?}        — uploaded to Drive + metadata
+    //   4. {_staged:true, file, name, size, title?, previewUrl} — pending upload
+    // _photoSrc: returns displayable src (data URL or thumb URL)
+    // _photoTitle: returns the title (empty string if none set)
+    function _photoSrc(ph) {
+        if (typeof ph === 'string') return ph;
+        if (!ph) return '';
+        if (ph.data) return ph.data;
+        if (ph.previewUrl) return ph.previewUrl;
+        if (ph.thumb) return ph.thumb;
+        if (ph.driveFileId) return fieldDriveViewUrl(ph.driveFileId, false);
+        return '';
+    }
+    function _photoTitle(ph) {
+        if (typeof ph === 'string') return '';
+        return (ph && ph.title) || '';
+    }
+    function _photoSetTitle(ph, title) {
+        // Normalize legacy string to object with title; leave object shapes alone but set title
+        if (typeof ph === 'string') return { data: ph, title: title || '' };
+        return { ...ph, title: title || '' };
+    }
+
     function renderDayPhotoGrid(){
         const grid=document.getElementById('dayPhotoGrid');if(!grid)return;
         const saved  = _dayPhotos.filter(ph=>typeof ph!=='object'||!ph._staged);
         const staged = _dayPhotos.filter(ph=>typeof ph==='object'&&ph._staged);
 
-        const savedHtml = saved.map((ph,i)=>{
+        // Count uncaptioned photos for the visual hint
+        const uncaptionedCount = _dayPhotos.filter(ph => !_photoTitle(ph)).length;
+
+        const savedHtml = saved.map((ph)=>{
             const realIdx = _dayPhotos.indexOf(ph);
-            const src = typeof ph==='string' ? ph : (ph.thumb||fieldDriveViewUrl(ph.driveFileId,false));
-            const label = typeof ph==='object' ? (ph.name||'photo') : '';
-            return `<div style="position:relative">
-                <img src="${src}" class="photo-thumb" title="${label}"
-                    onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2260%22 height=%2260%22><rect width=%2260%22 height=%2260%22 fill=%22%23f0f9ff%22/><text x=%2250%%22 y=%2260%%22 text-anchor=%22middle%22 font-size=%2224%22>📷</text></svg>'"/>
-                <button type="button" onclick="removeDayPhoto(${realIdx})"
-                    style="position:absolute;top:-4px;right:-4px;background:#dc2626;color:#fff;border:none;border-radius:99px;width:18px;height:18px;font-size:10px;cursor:pointer;line-height:1">✕</button>
+            const src = _photoSrc(ph);
+            const title = _photoTitle(ph);
+            const hasTitle = !!title;
+            const titleDisplay = title || 'Untitled';
+            // Border color: green if captioned, gray if not
+            const borderColor = hasTitle ? '#10b981' : '#cbd5e1';
+            return `<div style="position:relative;display:flex;flex-direction:column;align-items:center;gap:2px">
+                <div style="position:relative">
+                    <img src="${src}" class="photo-thumb" title="${title||'Tap to add title'}"
+                        onclick="editDayPhotoTitle(${realIdx})"
+                        style="border:2px solid ${borderColor};cursor:pointer"
+                        onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2260%22 height=%2260%22><rect width=%2260%22 height=%2260%22 fill=%22%23f0f9ff%22/><text x=%2250%%22 y=%2260%%22 text-anchor=%22middle%22 font-size=%2224%22>📷</text></svg>'"/>
+                    <button type="button" onclick="event.stopPropagation();removeDayPhoto(${realIdx})"
+                        style="position:absolute;top:-4px;right:-4px;background:#dc2626;color:#fff;border:none;border-radius:99px;width:18px;height:18px;font-size:10px;cursor:pointer;line-height:1">✕</button>
+                </div>
+                <div onclick="editDayPhotoTitle(${realIdx})"
+                    style="font-size:10px;color:${hasTitle?'#0f172a':'#94a3b8'};font-style:${hasTitle?'normal':'italic'};max-width:64px;text-align:center;line-height:1.1;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                    title="Tap to ${hasTitle?'edit':'add'} title">${titleDisplay}</div>
             </div>`;
         }).join('');
 
         const stagedHtml = staged.map((ph)=>{
             const realIdx = _dayPhotos.indexOf(ph);
             const src = ph.previewUrl||'';
-            return `<div style="position:relative">
-                ${src?`<img src="${src}" class="photo-thumb" style="opacity:.75"/>`
-                     :`<div class="photo-thumb" style="background:#eff6ff;display:flex;align-items:center;justify-content:center;font-size:22px">🖼️</div>`}
-                <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(29,78,216,.8);color:#fff;font-size:8px;text-align:center;border-radius:0 0 6px 6px;padding:2px">⏳</div>
-                <button type="button" onclick="removeDayPhoto(${realIdx})"
-                    style="position:absolute;top:-4px;right:-4px;background:#dc2626;color:#fff;border:none;border-radius:99px;width:18px;height:18px;font-size:10px;cursor:pointer;line-height:1">✕</button>
+            const title = _photoTitle(ph);
+            return `<div style="position:relative;display:flex;flex-direction:column;align-items:center;gap:2px">
+                <div style="position:relative">
+                    ${src?`<img src="${src}" class="photo-thumb" style="opacity:.75;border:2px solid ${title?'#10b981':'#cbd5e1'}" onclick="editDayPhotoTitle(${realIdx})"/>`
+                         :`<div class="photo-thumb" style="background:#eff6ff;display:flex;align-items:center;justify-content:center;font-size:22px;border:2px solid ${title?'#10b981':'#cbd5e1'}">🖼️</div>`}
+                    <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(29,78,216,.8);color:#fff;font-size:8px;text-align:center;border-radius:0 0 6px 6px;padding:2px">⏳</div>
+                    <button type="button" onclick="event.stopPropagation();removeDayPhoto(${realIdx})"
+                        style="position:absolute;top:-4px;right:-4px;background:#dc2626;color:#fff;border:none;border-radius:99px;width:18px;height:18px;font-size:10px;cursor:pointer;line-height:1">✕</button>
+                </div>
+                <div onclick="editDayPhotoTitle(${realIdx})"
+                    style="font-size:10px;color:${title?'#0f172a':'#94a3b8'};font-style:${title?'normal':'italic'};max-width:64px;text-align:center;line-height:1.1;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                    title="Tap to ${title?'edit':'add'} title">${title||'Untitled'}</div>
             </div>`;
         }).join('');
 
-        grid.innerHTML = savedHtml + stagedHtml +
-            (_dayPhotos.length<10?`<div class="photo-add" onclick="document.getElementById('dayPhotoFile').value='';document.getElementById('dayPhotoFile').click()">📷<br><span style="font-size:9px">Add</span></div>`:'');
+        const addBtn = (_dayPhotos.length<10?`<div class="photo-add" onclick="document.getElementById('dayPhotoFile').value='';document.getElementById('dayPhotoFile').click()" style="align-self:flex-start">📷<br><span style="font-size:9px">Add</span></div>`:'');
+
+        const hintBadge = uncaptionedCount > 0
+            ? `<div style="font-size:11px;color:#92400e;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:4px 8px;margin-bottom:6px;display:inline-flex;align-items:center;gap:4px">⚠️ ${uncaptionedCount} photo${uncaptionedCount===1?'':'s'} without title — tap thumbnail to add</div>`
+            : (_dayPhotos.length > 0 ? `<div style="font-size:11px;color:#047857;margin-bottom:6px">✓ All photos titled</div>` : '');
+
+        grid.innerHTML = hintBadge + `<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start">${savedHtml}${stagedHtml}${addBtn}</div>`;
+    }
+
+    // Tap-to-edit photo title (Phase 2)
+    function editDayPhotoTitle(idx) {
+        const ph = _dayPhotos[idx];
+        if (!ph) return;
+        const currentTitle = _photoTitle(ph);
+        const newTitle = prompt('Photo title (e.g., "Bearing wear", "Compressor failure"):', currentTitle);
+        if (newTitle === null) return; // cancelled
+        _dayPhotos[idx] = _photoSetTitle(ph, newTitle.trim().slice(0, 80)); // cap at 80 chars
+        renderDayPhotoGrid();
     }
 
     function handleDayPhoto(input){
@@ -3097,7 +3297,7 @@
                 const idx = _dayPhotos.indexOf(ph);
                 if (idx>=0) {
                     if (ph.previewUrl) URL.revokeObjectURL(ph.previewUrl);
-                    _dayPhotos[idx] = { driveFileId:att.driveFileId, name:att.name, thumb:fieldDriveViewUrl(att.driveFileId,false) };
+                    _dayPhotos[idx] = { driveFileId:att.driveFileId, name:att.name, thumb:fieldDriveViewUrl(att.driveFileId,false), title: ph.title || '' };
                 }
             } catch(err) {
                 showToast('❌ Photo upload failed: '+err.message);
@@ -3197,8 +3397,14 @@
         const wl=workLogs.find(x=>x.wlID===wlID);
         const entry=(wl?.dailyEntries||[]).find(e=>e.entryID===entryID);
         if(!entry?.photos?.[idx])return;
+        const ph = entry.photos[idx];
+        const src = _photoSrc(ph);
+        const title = _photoTitle(ph) || `Photo ${idx+1}`;
         const win=window.open();
-        win.document.write(`<html><body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${entry.photos[idx]}" style="max-width:100%;max-height:100vh;object-fit:contain"/></body></html>`);
+        win.document.write(`<html><head><title>${title.replace(/[<>"']/g,'')}</title></head><body style="margin:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh">
+            <div style="color:#fff;padding:12px 16px;background:rgba(0,0,0,.7);position:fixed;top:0;left:0;right:0;font-family:system-ui,sans-serif;font-size:14px;text-align:center;z-index:1">${title}</div>
+            <img src="${src}" style="max-width:100%;max-height:100vh;object-fit:contain;margin-top:40px"/>
+        </body></html>`);
     }
 
     // ── WORK LOG PDF — Full Project Report ───────────────────────
@@ -3436,10 +3642,16 @@
                 d.calibrations.forEach((cal,ci)=>{
                     if(y+16>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=42;}
                     const oCol=cal.overall==='PASS'?[21,128,61]:cal.overall==='FAIL'?[220,38,38]:[180,83,9];
+                    const headerTitle = (ci+1) + '. ' +
+                        (cal._isCustom ? '[Custom] ' : '') +
+                        cal.component +
+                        (cal.unitNo ? ' — ' + cal.unitNo : '') +
+                        (cal.maker ? ' | ' + cal.maker : '') +
+                        (cal._isCustom && cal.customTitle ? ' · ' + cal.customTitle : '');
                     doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
                         styles:{fontSize:8,cellPadding:2.5},
                         headStyles:{fillColor:[88,28,135],textColor:[255,255,255],fontStyle:'bold',fontSize:8},
-                        head:[[{content:(ci+1)+'. '+cal.component+(cal.unitNo?' — '+cal.unitNo:'')+(cal.maker?' | '+cal.maker:''),colSpan:4}]],
+                        head:[[{content:headerTitle,colSpan:4}]],
                         body:[[
                             {content:'Standard (mm)',styles:{fontStyle:'bold',fillColor:[248,245,255]}},cal.stdValue||'—',
                             {content:'Wear Limit (mm)',styles:{fontStyle:'bold',fillColor:[248,245,255]}},cal.wearLimit||'—'
@@ -3483,16 +3695,33 @@
                 y+=10;
                 const imgW=(CW-6)/3;let col=0;
                 for(let pi=0;pi<d.photos.length;pi++){
-                    const imgH=46,xPos=ML+col*(imgW+3);
-                    if(y+imgH>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=42;col=0;}
-                    try{const fmt=d.photos[pi].startsWith('data:image/png')?'PNG':'JPEG';
-                        doc.addImage(d.photos[pi],fmt,xPos,y,imgW,imgH,'','MEDIUM');
+                    const ph = d.photos[pi];
+                    const src = _photoSrc(ph);
+                    const title = _photoTitle(ph);
+                    const captionLines = title ? 2 : 1; // title + photo number = 2 lines, else just number
+                    const imgH=46;
+                    const blockH = imgH + 3 + (captionLines * 3) + 4;
+                    const xPos=ML+col*(imgW+3);
+                    if(y+blockH>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=42;col=0;}
+                    try{
+                        // Detect format from data URL prefix; default JPEG
+                        const fmt = (typeof src === 'string' && src.startsWith('data:image/png')) ? 'PNG' : 'JPEG';
+                        doc.addImage(src,fmt,xPos,y,imgW,imgH,'','MEDIUM');
+                        // Caption: photo number + title (if any)
+                        let captionY = y + imgH + 3;
+                        if (title) {
+                            doc.setFontSize(7);doc.setFont('helvetica','bold');doc.setTextColor(15,23,42);
+                            // Wrap title if too long
+                            const titleLines = doc.splitTextToSize(title, imgW - 2);
+                            doc.text(titleLines.slice(0,1), xPos+imgW/2, captionY, {align:'center'}); // limit to 1 line on PDF
+                            captionY += 3;
+                        }
                         doc.setFontSize(6.5);doc.setFont('helvetica','normal');doc.setTextColor(100,100,100);
-                        doc.text(dateStr+' · Photo '+(pi+1),xPos+imgW/2,y+imgH+3,{align:'center'});
+                        doc.text(dateStr+' · Photo '+(pi+1), xPos+imgW/2, captionY, {align:'center'});
                     }catch(e){doc.setFontSize(7);doc.setTextColor(180,0,0);doc.text('[Photo error]',xPos+2,y+imgH/2);}
-                    col++;if(col===3){col=0;y+=imgH+6;}
+                    col++;if(col===3){col=0;y+=blockH+2;}
                 }
-                if(col>0)y+=46+6;y+=4;
+                if(col>0)y+=46+10;y+=4;
             }
             y+=4;
         });
