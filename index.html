@@ -5431,12 +5431,20 @@
                             <div style="color:#64748b">Purpose:</div><div>${p.purpose||'—'}</div>
                             ${p.project ? `<div style="color:#64748b">Project:</div><div>${p.project}</div>` : ''}
                             ${p.status==='Closed' ? `<div style="color:#64748b">Closed on:</div><div>${p.closedDate||'—'}</div>` : ''}
-                            <div style="color:#64748b">Tally voucher:</div><div>${p.tallyVoucher||'<span style="color:#dc2626">⚠ Not yet entered</span>'}</div>
                             ${p.notes ? `<div style="color:#64748b">Notes:</div><div>${p.notes}</div>` : ''}
                         </div>
                         <!-- Linked expenses -->
                         <div style="border-top:1px solid #e2e8f0;padding-top:12px">
-                            <div style="font-size:13px;font-weight:700;color:#0f172a;margin-bottom:8px">📋 Linked Expenses (${linked.length})</div>
+                            ${(() => {
+                                const tDone = linked.filter(e => e.tallyVoucherNo).length;
+                                const vAtt  = linked.filter(e => e.tallyVoucherDriveId || e.tallyVoucherData).length;
+                                return `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+                                    <div style="font-size:13px;font-weight:700;color:#0f172a">📋 Linked Expenses (${linked.length})</div>
+                                    ${linked.length > 0 ? `<div style="font-size:11px;color:#64748b">
+                                        Tally entries: <b style="color:${tDone===linked.length?'#15803d':tDone>0?'#92400e':'#94a3b8'}">${tDone} of ${linked.length}</b>${vAtt>0?` · ${vAtt} voucher attachment${vAtt===1?'':'s'}`:''}
+                                    </div>` : ''}
+                                </div>`;
+                            })()}
                             ${linked.length === 0
                                 ? `<div style="text-align:center;padding:20px;color:#94a3b8;font-size:12px;font-style:italic;background:#f8fafc;border-radius:8px">No expenses linked yet. Once technicians log project expenses, they will auto-allocate to active pools (Phase C feature).</div>`
                                 : `<table style="width:100%;font-size:11.5px;border-collapse:collapse">
@@ -5447,15 +5455,26 @@
                                         <th style="text-align:left;padding:6px;color:#475569">Description</th>
                                         <th style="text-align:left;padding:6px;color:#475569">Head</th>
                                         <th style="text-align:right;padding:6px;color:#475569">Amount</th>
+                                        <th style="text-align:center;padding:6px;color:#475569">Tally Vch</th>
                                     </tr></thead>
-                                    <tbody>${linked.map(e => `<tr style="border-top:1px solid #e2e8f0">
-                                        <td style="padding:6px">${e.expDate||e.date||'—'}</td>
-                                        <td style="padding:6px;font-size:10.5px;color:#475569">${e._projectName||'—'}</td>
-                                        <td style="padding:6px">${e.paidByName||_fundStaffName(e.paidByStaffID)||'—'}</td>
-                                        <td style="padding:6px">${e.description||'—'}</td>
-                                        <td style="padding:6px"><span style="font-size:10px;padding:1px 6px;background:#e0e7ff;color:#3730a3;border-radius:3px">${e.category||'—'}</span></td>
-                                        <td style="padding:6px;text-align:right;font-weight:600">${_fmtFundAmt(e.amount)}</td>
-                                    </tr>`).join('')}</tbody>
+                                    <tbody>${linked.map(e => {
+                                        let tallyHtml = '<span style="color:#cbd5e1">—</span>';
+                                        if (e.tallyVoucherNo || e.tallyVoucherDate) {
+                                            const num = e.tallyVoucherNo ? '#'+e.tallyVoucherNo : '#?';
+                                            const date = e.tallyVoucherDate ? `<div style="font-size:9.5px;color:#64748b">${e.tallyVoucherDate}</div>` : '';
+                                            const att  = (e.tallyVoucherDriveId || e.tallyVoucherData) ? ' 📎' : '';
+                                            tallyHtml = `<div style="color:#15803d;font-weight:600">${num}${att}</div>${date}`;
+                                        }
+                                        return `<tr style="border-top:1px solid #e2e8f0">
+                                            <td style="padding:6px">${e.expDate||e.date||'—'}</td>
+                                            <td style="padding:6px;font-size:10.5px;color:#475569">${e._projectName||'—'}</td>
+                                            <td style="padding:6px">${e.paidByName||_fundStaffName(e.paidByStaffID)||'—'}</td>
+                                            <td style="padding:6px">${e.description||'—'}</td>
+                                            <td style="padding:6px"><span style="font-size:10px;padding:1px 6px;background:#e0e7ff;color:#3730a3;border-radius:3px">${e.category||'—'}</span></td>
+                                            <td style="padding:6px;text-align:right;font-weight:600">${_fmtFundAmt(e.amount)}</td>
+                                            <td style="padding:6px;text-align:center">${tallyHtml}</td>
+                                        </tr>`;
+                                    }).join('')}</tbody>
                                 </table>`}
                         </div>
                         <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
@@ -5855,7 +5874,7 @@
                         doc.setFillColor(220, 252, 231); // emerald-100 band
                         doc.rect(ML-2, appendixY-4, CW+4, 8, 'F');
                         doc.setFontSize(11); doc.setFont('helvetica','bold'); doc.setTextColor(5, 95, 70); // emerald-800
-                        doc.text(`📋 TALLY VOUCHER ${i+1} of ${attachments.length}`, ML, appendixY+1);
+                        doc.text(`TALLY VOUCHER ${i+1} of ${attachments.length}`, ML, appendixY+1);
                     } else {
                         doc.setFontSize(11); doc.setFont('helvetica','bold'); doc.setTextColor(15,23,42);
                         doc.text(`Bill ${i+1} of ${attachments.length}`, ML, appendixY);
@@ -5925,7 +5944,7 @@
                             }
                         } else if (imgData && imgData.startsWith('data:application/pdf')) {
                             doc.setFontSize(10); doc.setTextColor(100,116,139);
-                            doc.text('📎 PDF attachment: ' + (att.name || 'document.pdf'), ML, appendixY+8);
+                            doc.text('[PDF attachment] ' + (att.name || 'document.pdf'), ML, appendixY+8);
                             doc.setFontSize(8); doc.setTextColor(148,163,184);
                             doc.text('PDF embedding not supported. Open the original file from Drive.', ML, appendixY+15);
                             if (att.driveFileId) doc.text('Drive ID: ' + att.driveFileId, ML, appendixY+22);
