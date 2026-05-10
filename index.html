@@ -13751,8 +13751,24 @@ Automated WFH alert — ${company} Attendance System.`;
         let _dirSearchTimer = null;
         function dirExpSearchInput(val) {
             window._dirFilter = {...(window._dirFilter||{}), search: val};
+            // Track caret position so we can restore after re-render
+            const inp = event?.target;
+            const caretPos = inp?.selectionStart;
             clearTimeout(_dirSearchTimer);
-            _dirSearchTimer = setTimeout(() => renderView(), 350);
+            _dirSearchTimer = setTimeout(() => {
+                renderView();
+                // After re-render, find the new search input by its placeholder + restore focus + caret
+                requestAnimationFrame(() => {
+                    const newInp = Array.from(document.querySelectorAll('input[type="text"]'))
+                        .find(el => (el.placeholder||'').indexOf('description / vendor / project') !== -1);
+                    if (newInp) {
+                        newInp.focus();
+                        if (typeof caretPos === 'number') {
+                            try { newInp.setSelectionRange(caretPos, caretPos); } catch(e) {}
+                        }
+                    }
+                });
+            }, 350);
         }
         function renderDirectorExpenses(content) {
             const dirs = getDirNames();
@@ -14036,6 +14052,7 @@ Automated WFH alert — ${company} Attendance System.`;
                                 ${d.billNo?`<p style="font-size:11px;color:#6b7280">Bill No: ${d.billNo} ${d.billDate||''}</p>`:''}
                                 ` : `<p style="font-size:12px;color:#9ca3af">No GST bill</p>`}
                                                 <p style="font-size:12px"><span class="text-gray-500">Mode:</span> ${d.payMode||'—'}${d.cardLast4?' ****'+d.cardLast4:''}</p>
+                                                ${d.paymentAccount?`<p style="font-size:12px"><span class="text-gray-500">Account:</span> <span class="text-amber-700 font-medium">${d.paymentAccount}</span></p>`:''}
                                                 ${d.refNo?`<p style="font-size:12px"><span class="text-gray-500">Ref/TXN No:</span> ${d.refNo}</p>`:''}
                                             </div>
                                             <div>
@@ -14246,6 +14263,29 @@ Automated WFH alert — ${company} Attendance System.`;
                         <div>
                             <label class="block text-xs font-semibold text-gray-600 mb-1">Payment Date</label>
                             <input type="date" id="dePayDate" max="${today}" value="${exp?.payDate||''}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                    </div>
+
+                    <!-- Payment Account / Source — for routing reimbursement back -->
+                    <div class="bg-amber-50 border border-amber-200 rounded-xl p-3">
+                        <div class="flex items-start gap-2">
+                            <span style="font-size:18px">💳</span>
+                            <div class="flex-1">
+                                <label class="block text-xs font-semibold text-amber-800 mb-1">Payment Account / Source <span class="text-gray-400 font-normal">(for reimbursement routing)</span></label>
+                                <input type="text" id="dePayAccount" value="${(exp?.paymentAccount||'').replace(/"/g,'&quot;')}" list="dePayAccountList" placeholder="e.g. HDFC Credit Card 1234, SBI Savings, ICICI CC, Personal Cash" class="w-full px-3 py-2 border border-amber-300 rounded-lg text-sm bg-white"/>
+                                <datalist id="dePayAccountList">
+                                    ${(() => {
+                                        // Suggest accounts the director has used before
+                                        const dirVal = exp?.director || '';
+                                        const used = new Set();
+                                        (directorExpenses||[]).forEach(e => {
+                                            if ((!dirVal || e.director === dirVal) && e.paymentAccount) used.add(e.paymentAccount);
+                                        });
+                                        return Array.from(used).map(a => `<option value="${a.replace(/"/g,'&quot;')}"></option>`).join('');
+                                    })()}
+                                </datalist>
+                                <p class="text-xs text-amber-700 mt-1">When you settle this expense, the reimbursement will route back to this account. Use the same name consistently (it appears as a suggestion next time).</p>
+                            </div>
                         </div>
                     </div>
 
@@ -14561,6 +14601,7 @@ Automated WFH alert — ${company} Attendance System.`;
                     projectNo:      document.getElementById('deProjectNo').value,
                     payMode:        document.getElementById('dePayMode').value,
                     cardLast4:      document.getElementById('deCardLast4')?.value||'',
+                    paymentAccount: (document.getElementById('dePayAccount')?.value||'').trim(),
                     refNo:          document.getElementById('deRefNo').value,
                     payDate:        document.getElementById('dePayDate').value,
                     reimbursed:     document.getElementById('deReimbursed').checked,
@@ -15053,14 +15094,17 @@ Automated WFH alert — ${company} Attendance System.`;
             }
 
             const today = new Date().toISOString().split('T')[0];
-            const dirColor = dirKey === 'dir1' ? 'rose' : 'indigo';
+
+            // Default to PICK mode (selectedIDs initially empty — user opts in)
+            // Stash state for live preview
+            window._dsState = { dirKey, monthYM, mode: 'pick', selectedIDs: new Set() };
 
             document.getElementById('dirSettleModal').innerHTML = `
             <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl m-4 max-h-[92vh] overflow-y-auto">
                 <div class="bg-gradient-to-r from-emerald-600 to-teal-600 p-5 text-white flex justify-between items-center sticky top-0 z-10">
                     <div>
                         <h2 class="text-lg font-bold">💰 Settle Reimbursement — ${dirName}</h2>
-                        <p class="text-xs opacity-80 mt-0.5">FIFO settlement: oldest unpaid expenses cleared first</p>
+                        <p class="text-xs opacity-80 mt-0.5">Pick which expenses to settle, or use FIFO auto</p>
                     </div>
                     <button onclick="closeDirSettleModal()" class="text-white text-2xl font-bold leading-none">✕</button>
                 </div>
@@ -15084,6 +15128,19 @@ Automated WFH alert — ${company} Attendance System.`;
                         </div>
                     </div>
 
+                    <!-- Mode toggle -->
+                    <div class="bg-indigo-50 border border-indigo-200 rounded-xl p-3 flex items-center gap-4 flex-wrap">
+                        <span class="text-xs font-bold text-indigo-700">SETTLEMENT MODE:</span>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="radio" name="dsMode" value="pick" checked onchange="dsSwitchMode('pick')" class="accent-indigo-600"/>
+                            <span class="text-sm font-medium">🎯 Pick Specific Expenses</span>
+                        </label>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="radio" name="dsMode" value="fifo" onchange="dsSwitchMode('fifo')" class="accent-indigo-600"/>
+                            <span class="text-sm font-medium">⏩ FIFO Auto (oldest first)</span>
+                        </label>
+                    </div>
+
                     <form id="dirSettleForm" onsubmit="confirmDirSettle(event,'${dirKey}','${monthYM}')" class="space-y-3">
                         <div class="grid grid-cols-2 gap-3">
                             <div>
@@ -15093,8 +15150,8 @@ Automated WFH alert — ${company} Attendance System.`;
                             </div>
                             <div>
                                 <label class="block text-xs font-semibold text-gray-600 mb-1">Reimbursement Amount <span class="text-red-500">*</span></label>
-                                <input type="number" id="dsAmount" value="${totalOutstanding.toFixed(2)}" min="0" step="0.01" required onchange="dirSettlePreview()" oninput="dirSettlePreview()" class="w-full px-3 py-2 border rounded-lg text-sm font-bold text-emerald-700"/>
-                                <p class="text-[11px] text-gray-400 mt-1">Default = full outstanding (editable for partial)</p>
+                                <input type="number" id="dsAmount" value="0.00" min="0" step="0.01" required onchange="dirSettlePreview()" oninput="dirSettlePreview()" class="w-full px-3 py-2 border rounded-lg text-sm font-bold text-emerald-700"/>
+                                <p class="text-[11px] text-gray-400 mt-1" id="dsAmtHint">Auto-summed from selection (Pick mode) · editable in FIFO mode</p>
                             </div>
                         </div>
                         <div class="grid grid-cols-3 gap-3">
@@ -15104,7 +15161,7 @@ Automated WFH alert — ${company} Attendance System.`;
                             </div>
                             <div>
                                 <label class="block text-xs font-semibold text-gray-600 mb-1">Payment Mode</label>
-                                <select id="dsMode" class="w-full px-3 py-2 border rounded-lg text-sm">
+                                <select id="dsMode2" class="w-full px-3 py-2 border rounded-lg text-sm">
                                     <option value="Bank Transfer">Bank Transfer</option>
                                     <option value="NEFT">NEFT</option>
                                     <option value="RTGS">RTGS</option>
@@ -15124,13 +15181,13 @@ Automated WFH alert — ${company} Attendance System.`;
                             <input type="text" id="dsNotes" placeholder="e.g. End-of-month reimbursement for ${monthYM}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
                         </div>
 
-                        <!-- FIFO Preview -->
+                        <!-- Settlement Preview / Picker -->
                         <div class="border border-gray-200 rounded-xl overflow-hidden">
-                            <div class="bg-gray-50 px-3 py-2 text-xs font-bold text-gray-700 flex items-center justify-between">
-                                <span>📋 FIFO Settlement Preview</span>
+                            <div class="bg-gray-50 px-3 py-2 text-xs font-bold text-gray-700 flex items-center justify-between flex-wrap gap-2">
+                                <span id="dsPreviewTitle">📋 Pick Expenses to Settle</span>
                                 <span id="dsPreviewSummary" class="text-emerald-600">—</span>
                             </div>
-                            <div id="dsPreviewBody" class="max-h-72 overflow-y-auto">
+                            <div id="dsPreviewBody" class="max-h-80 overflow-y-auto">
                                 <!-- preview rows injected -->
                             </div>
                         </div>
@@ -15143,29 +15200,104 @@ Automated WFH alert — ${company} Attendance System.`;
                 </div>
             </div>`;
             document.getElementById('dirSettleModal').classList.add('show');
-            // Stash state for live preview
-            window._dsState = { dirKey, monthYM };
             dirSettlePreview();
         }
         function closeDirSettleModal() {
             document.getElementById('dirSettleModal').classList.remove('show');
+            window._dsState = null;
+        }
+        // Switch between Pick and FIFO modes
+        function dsSwitchMode(mode) {
+            if (!window._dsState) return;
+            window._dsState.mode = mode;
+            const amtField = document.getElementById('dsAmount');
+            const amtHint  = document.getElementById('dsAmtHint');
+            const titleEl  = document.getElementById('dsPreviewTitle');
+            if (mode === 'pick') {
+                amtField.readOnly = true;
+                amtField.classList.add('bg-gray-50');
+                amtHint.textContent = 'Auto-summed from selected expenses below';
+                titleEl.textContent = '📋 Pick Expenses to Settle';
+                // Recompute amount from current selection
+            } else {
+                amtField.readOnly = false;
+                amtField.classList.remove('bg-gray-50');
+                amtHint.textContent = 'Editable — FIFO will allocate to oldest fitting expenses';
+                titleEl.textContent = '📋 FIFO Settlement Preview';
+                window._dsState.selectedIDs = new Set(); // reset selection in FIFO mode
+                // Set amount to total outstanding by default
+                const through = document.getElementById('dsThrough').value;
+                const { dirKey } = window._dsState;
+                const unpaid = (directorExpenses||[]).filter(d =>
+                    d.director===dirKey && !d.reimbursed && (d.expDate||'') <= through
+                );
+                amtField.value = unpaid.reduce((s,d)=>s+(parseFloat(d.amount)||0),0).toFixed(2);
+            }
+            dirSettlePreview();
+        }
+        // Toggle a single expense in pick mode
+        function dsTogglePick(deID) {
+            if (!window._dsState) return;
+            const set = window._dsState.selectedIDs;
+            if (set.has(deID)) set.delete(deID); else set.add(deID);
+            dsRecomputePickAmount();
+            dirSettlePreview();
+        }
+        // Toggle ALL expenses for a given account group
+        function dsToggleAccount(accountKey) {
+            if (!window._dsState) return;
+            const through = document.getElementById('dsThrough').value;
+            const { dirKey } = window._dsState;
+            const groupIDs = (directorExpenses||[]).filter(d =>
+                d.director===dirKey && !d.reimbursed && (d.expDate||'') <= through
+                && (d.paymentAccount||'(no account)') === accountKey
+            ).map(d => d.deID);
+            const set = window._dsState.selectedIDs;
+            const allSelected = groupIDs.every(id => set.has(id));
+            if (allSelected) groupIDs.forEach(id => set.delete(id));
+            else groupIDs.forEach(id => set.add(id));
+            dsRecomputePickAmount();
+            dirSettlePreview();
+        }
+        // Recompute reimbursement amount from selected expenses (pick mode)
+        function dsRecomputePickAmount() {
+            if (!window._dsState || window._dsState.mode !== 'pick') return;
+            const set = window._dsState.selectedIDs;
+            const total = (directorExpenses||[])
+                .filter(d => set.has(d.deID))
+                .reduce((s,d) => s + (parseFloat(d.amount)||0), 0);
+            const amtField = document.getElementById('dsAmount');
+            if (amtField) amtField.value = total.toFixed(2);
         }
         // Refresh modal when "Settle Through" date changes (re-fetches unpaid list)
         function dirSettleRefresh(dirKey, monthYM) {
             const through = document.getElementById('dsThrough').value;
             const amtField = document.getElementById('dsAmount');
+            const mode = window._dsState?.mode || 'fifo';
             // Recompute outstanding total for new through-date
             const unpaid = (directorExpenses||[]).filter(d =>
                 d.director===dirKey && !d.reimbursed && (d.expDate||'') <= through
             );
             const totalOutstanding = unpaid.reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
-            amtField.value = totalOutstanding.toFixed(2);
+            if (mode === 'fifo') {
+                // In FIFO mode, default amount is full outstanding
+                amtField.value = totalOutstanding.toFixed(2);
+            } else {
+                // In pick mode, prune any selectedIDs that fell outside the new through-date filter
+                const validIDs = new Set(unpaid.map(d => d.deID));
+                if (window._dsState?.selectedIDs) {
+                    Array.from(window._dsState.selectedIDs).forEach(id => {
+                        if (!validIDs.has(id)) window._dsState.selectedIDs.delete(id);
+                    });
+                }
+                dsRecomputePickAmount();
+            }
             dirSettlePreview();
         }
         // Live FIFO preview as user changes amount
         function dirSettlePreview() {
             if (!window._dsState) return;
-            const { dirKey } = window._dsState;
+            const { dirKey, mode, selectedIDs } = window._dsState;
             const through = document.getElementById('dsThrough').value;
             const settleAmt = parseFloat(document.getElementById('dsAmount').value) || 0;
             const fmt = n => '₹'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
@@ -15173,6 +15305,77 @@ Automated WFH alert — ${company} Attendance System.`;
                 d.director===dirKey && !d.reimbursed && (d.expDate||'') <= through
             ).sort((a,b)=>(a.expDate||'').localeCompare(b.expDate||'') || (a.deID||'').localeCompare(b.deID||''));
 
+            const body = document.getElementById('dsPreviewBody');
+            const sum  = document.getElementById('dsPreviewSummary');
+
+            if (!unpaid.length) {
+                body.innerHTML = '<div class="p-4 text-center text-xs text-gray-400">No unpaid entries up to selected date.</div>';
+                sum.textContent = '—';
+                return;
+            }
+
+            // ════ PICK MODE — group by payment account, checkboxes ════
+            if (mode === 'pick') {
+                const groups = {};
+                unpaid.forEach(d => {
+                    const k = d.paymentAccount || '(no account specified)';
+                    if (!groups[k]) groups[k] = { account: k, items: [], total: 0 };
+                    groups[k].items.push(d);
+                    groups[k].total += parseFloat(d.amount)||0;
+                });
+                const groupList = Object.values(groups).sort((a,b) => a.account.localeCompare(b.account));
+
+                const totalSelected = unpaid.filter(d => selectedIDs.has(d.deID))
+                    .reduce((s,d) => s + (parseFloat(d.amount)||0), 0);
+                const selectedCount = unpaid.filter(d => selectedIDs.has(d.deID)).length;
+                sum.textContent = `${selectedCount} selected · ${fmt(totalSelected)}`;
+                sum.className = selectedCount > 0 ? 'text-emerald-600 font-bold' : 'text-gray-400';
+
+                body.innerHTML = groupList.map(g => {
+                    const groupSelected = g.items.every(d => selectedIDs.has(d.deID));
+                    const groupPartial  = !groupSelected && g.items.some(d => selectedIDs.has(d.deID));
+                    const groupSelectedAmt = g.items.filter(d => selectedIDs.has(d.deID))
+                        .reduce((s,d) => s + (parseFloat(d.amount)||0), 0);
+                    const accountKeyEsc = g.account.replace(/'/g,"\\'");
+                    return `<div class="border-b border-gray-100">
+                        <div class="bg-amber-50 border-b border-amber-200 px-3 py-2 flex items-center justify-between sticky top-0 z-[1]">
+                            <div class="flex items-center gap-2 flex-1 min-w-0">
+                                <input type="checkbox" ${groupSelected?'checked':''} ${groupPartial?'data-partial="1"':''}
+                                    onchange="dsToggleAccount('${accountKeyEsc}')"
+                                    class="w-4 h-4 accent-emerald-600 cursor-pointer"/>
+                                <span class="text-xs font-bold text-amber-800 uppercase tracking-wide">💳 ${g.account}</span>
+                                <span class="text-xs text-amber-600">(${g.items.length} entries · ${fmt(g.total)})</span>
+                            </div>
+                            ${groupSelectedAmt > 0 ? `<span class="text-xs font-bold text-emerald-700">${fmt(groupSelectedAmt)} selected</span>` : ''}
+                        </div>
+                        <table class="w-full text-xs">
+                            <tbody>
+                                ${g.items.map((d,i) => {
+                                    const checked = selectedIDs.has(d.deID);
+                                    return `<tr class="${checked?'bg-emerald-50/60':'hover:bg-gray-50'} border-t border-gray-100">
+                                        <td class="px-2 py-1.5 w-6 text-center">
+                                            <input type="checkbox" ${checked?'checked':''}
+                                                onchange="dsTogglePick('${d.deID}')"
+                                                class="w-4 h-4 accent-emerald-600 cursor-pointer"/>
+                                        </td>
+                                        <td class="px-2 py-1.5 font-mono text-gray-700">${d.expDate||'—'}</td>
+                                        <td class="px-2 py-1.5 text-gray-700">${(d.description||d.category||'—').substring(0,40)}${d.payMode?` <span class="text-gray-400">[${d.payMode}]</span>`:''}</td>
+                                        <td class="px-2 py-1.5 text-right font-semibold">${fmt(d.amount)}</td>
+                                    </tr>`;
+                                }).join('')}
+                            </tbody>
+                        </table>
+                    </div>`;
+                }).join('');
+
+                // Indeterminate state for partial-group checkboxes
+                requestAnimationFrame(() => {
+                    body.querySelectorAll('input[type=checkbox][data-partial="1"]').forEach(cb => { cb.indeterminate = true; });
+                });
+                return;
+            }
+
+            // ════ FIFO MODE — auto allocate ════
             // FIFO allocation
             let remaining = settleAmt;
             const allocs = unpaid.map(d => {
@@ -15187,15 +15390,9 @@ Automated WFH alert — ${company} Attendance System.`;
             const unallocated = settleAmt - totalAllocated;
             const carryForward = unpaid.reduce((s,d)=>s+(parseFloat(d.amount)||0),0) - totalAllocated;
 
-            const body = document.getElementById('dsPreviewBody');
-            const sum  = document.getElementById('dsPreviewSummary');
             sum.textContent = `Settling ${settledCount} of ${unpaid.length} entries · ${fmt(totalAllocated)} allocated · ${fmt(carryForward)} carry forward`;
             sum.className = carryForward > 0 ? 'text-amber-600' : 'text-emerald-600';
 
-            if (!unpaid.length) {
-                body.innerHTML = '<div class="p-4 text-center text-xs text-gray-400">No unpaid entries up to selected date.</div>';
-                return;
-            }
             body.innerHTML = `
                 <table class="w-full text-xs">
                     <thead class="bg-gray-100 sticky top-0">
@@ -15203,6 +15400,7 @@ Automated WFH alert — ${company} Attendance System.`;
                             <th class="text-left px-2 py-1.5">#</th>
                             <th class="text-left px-2 py-1.5">Date</th>
                             <th class="text-left px-2 py-1.5">Description</th>
+                            <th class="text-left px-2 py-1.5">Account</th>
                             <th class="text-right px-2 py-1.5">Amount</th>
                             <th class="text-center px-2 py-1.5">Action</th>
                         </tr>
@@ -15213,7 +15411,8 @@ Automated WFH alert — ${company} Attendance System.`;
                             return `<tr class="${settled?'bg-emerald-50':'bg-amber-50/40'} border-t border-gray-100">
                                 <td class="px-2 py-1.5 text-gray-500">${i+1}</td>
                                 <td class="px-2 py-1.5 font-mono text-gray-700">${a.exp.expDate||'—'}</td>
-                                <td class="px-2 py-1.5 text-gray-700">${(a.exp.description||a.exp.category||'—').substring(0,40)}</td>
+                                <td class="px-2 py-1.5 text-gray-700">${(a.exp.description||a.exp.category||'—').substring(0,32)}</td>
+                                <td class="px-2 py-1.5 text-amber-700 text-[11px]">${a.exp.paymentAccount||'—'}</td>
                                 <td class="px-2 py-1.5 text-right font-semibold">${fmt(a.exp.amount)}</td>
                                 <td class="px-2 py-1.5 text-center">
                                     ${settled
@@ -15234,32 +15433,55 @@ Automated WFH alert — ${company} Attendance System.`;
             const through  = document.getElementById('dsThrough').value;
             const settleAmt= parseFloat(document.getElementById('dsAmount').value)||0;
             const payDate  = document.getElementById('dsDate').value;
-            const payMode  = document.getElementById('dsMode').value;
+            const payMode  = document.getElementById('dsMode2').value;
             const refNo    = document.getElementById('dsRef').value.trim() || ('REIMB-'+monthYM+'-'+dirKey.toUpperCase());
             const notes    = document.getElementById('dsNotes').value.trim();
+            const mode     = window._dsState?.mode || 'fifo';
 
             const unpaid = (directorExpenses||[]).filter(d =>
                 d.director===dirKey && !d.reimbursed && (d.expDate||'') <= through
             ).sort((a,b)=>(a.expDate||'').localeCompare(b.expDate||'') || (a.deID||'').localeCompare(b.deID||''));
 
-            // FIFO allocation — only fully settle entries whose amount fits
-            let remaining = settleAmt;
-            const toSettle = [];
-            for (const d of unpaid) {
-                const amt = parseFloat(d.amount)||0;
-                if (remaining + 0.01 >= amt) { toSettle.push(d); remaining -= amt; }
-                else break;
-            }
-            if (!toSettle.length) {
-                alert('Reimbursement amount is less than the smallest unpaid entry. No expenses can be fully settled.\n\nReduce the amount or wait until you can cover at least one full entry.');
-                window._dsSaving = false; return;
+            let toSettle = [];
+            if (mode === 'pick') {
+                // Use the user's selection
+                const set = window._dsState.selectedIDs || new Set();
+                toSettle = unpaid.filter(d => set.has(d.deID));
+                if (!toSettle.length) {
+                    alert('No expenses selected. Tick the checkboxes next to expenses you want to settle.');
+                    window._dsSaving = false; return;
+                }
+            } else {
+                // FIFO allocation — only fully settle entries whose amount fits
+                let remaining = settleAmt;
+                for (const d of unpaid) {
+                    const amt = parseFloat(d.amount)||0;
+                    if (remaining + 0.01 >= amt) { toSettle.push(d); remaining -= amt; }
+                    else break;
+                }
+                if (!toSettle.length) {
+                    alert('Reimbursement amount is less than the smallest unpaid entry. No expenses can be fully settled.\n\nReduce the amount or wait until you can cover at least one full entry.');
+                    window._dsSaving = false; return;
+                }
             }
             const totalSettled = toSettle.reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
             const carry = unpaid.reduce((s,d)=>s+(parseFloat(d.amount)||0),0) - totalSettled;
 
+            // Group settled by paymentAccount for display in confirmation
+            const accountGroups = {};
+            toSettle.forEach(d => {
+                const k = d.paymentAccount || '(no account)';
+                accountGroups[k] = (accountGroups[k]||0) + (parseFloat(d.amount)||0);
+            });
+            const accountSummary = Object.entries(accountGroups)
+                .map(([k,v]) => `   • ${k}: ₹${v.toLocaleString('en-IN',{minimumFractionDigits:2})}`)
+                .join('\n');
+
             if (!confirm('Confirm settlement?\n\n'
+                +'• Mode: '+(mode==='pick' ? 'Pick Specific' : 'FIFO Auto')+'\n'
                 +'• '+toSettle.length+' of '+unpaid.length+' entries will be marked Reimbursed\n'
                 +'• Total settled: ₹'+totalSettled.toLocaleString('en-IN',{minimumFractionDigits:2})+'\n'
+                +(Object.keys(accountGroups).length > 1 ? '• Routed by account:\n'+accountSummary+'\n' : '')
                 +(carry>0 ? '• Carry forward to next month: ₹'+carry.toLocaleString('en-IN',{minimumFractionDigits:2})+'\n' : '')
                 +'• Voucher: '+refNo+'\n'
                 +'• Date: '+payDate+'\n\nProceed?')) {
