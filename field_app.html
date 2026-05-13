@@ -692,7 +692,13 @@
         staff:           '1JFS8ZZNkCXx8sIx6ssZzCbtbciRUrK3v',
         // Fund tracking files — share with imsetechnician@gmail.com:
         fundRequests:    '1HMZBIrE59L6ZpXBa-94uWPaK2S2GG3N7',  // Editor (tech writes new requests)
-        fundPools:       '1x1NniCFB4hba29FxsO9b5rmKoMHE3J8s'   // Viewer (tech reads pool balances)
+        fundPools:       '1x1NniCFB4hba29FxsO9b5rmKoMHE3J8s',  // Viewer (tech reads pool balances)
+        // ── Attachments parent folder ─────────────────────────────────
+        // Folder where "Attachments/SitePhotos" will be created for photo uploads.
+        // REQUIRED if shared files are at the root of a Shared Drive (parents lookup fails there).
+        // To get the ID: open the folder in Drive → copy the value after /folders/ in the URL.
+        // The folder must be writable by every technician.
+        attachmentsParent: '1YnLS43bDRN85WYoN_mEncuijLGL6FxqS'
         // settings: 'PASTE_SETTINGS_FILE_ID_HERE'  ← optional: add settings.json file ID from main app Drive folder
     };
 
@@ -913,33 +919,38 @@
 
     async function getFieldAttachFolder(subName) {
         if (_fieldAttFolderCache[subName]) return _fieldAttFolderCache[subName];
-        // Find parent folder by trying each known shared file in order.
-        // Files at the root of a Shared Drive don't have parents populated, so we
-        // try multiple files — at least one is usually nested in a folder.
+        // Find parent folder.
+        // 1) Use SHARED_FILE_IDS.attachmentsParent if admin configured it (preferred — works in Shared Drive roots).
+        // 2) Otherwise derive from the parent of one of the shared files.
+        //    Files at the root of a Shared Drive don't have parents populated, so we try multiple.
         let parentId = _fieldAttFolderCache['__parent'];
         if (!parentId) {
-            const candidates = [
-                SHARED_FILE_IDS.workLogs,
-                SHARED_FILE_IDS.staff,
-                SHARED_FILE_IDS.projectExpenses,
-                SHARED_FILE_IDS.fundRequests,
-                SHARED_FILE_IDS.fundPools
-            ].filter(id => id && !id.startsWith('PASTE_'));
-            let lastErr = null;
-            for (const fileId of candidates) {
-                try {
-                    const r = await fetch(
-                        `https://www.googleapis.com/drive/v3/files/${fileId}?fields=parents&supportsAllDrives=true&includeItemsFromAllDrives=true`,
-                        { headers: { Authorization: `Bearer ${accessToken}` } }
-                    );
-                    if (!r.ok) { lastErr = new Error('HTTP ' + r.status); continue; }
-                    const d = await r.json();
-                    const p = (d.parents||[])[0];
-                    if (p) { parentId = p; break; }
-                } catch(e) { lastErr = e; }
+            const configured = SHARED_FILE_IDS.attachmentsParent;
+            if (configured && !configured.startsWith('PASTE_')) {
+                parentId = configured;
+            } else {
+                const candidates = [
+                    SHARED_FILE_IDS.workLogs,
+                    SHARED_FILE_IDS.staff,
+                    SHARED_FILE_IDS.projectExpenses,
+                    SHARED_FILE_IDS.fundRequests,
+                    SHARED_FILE_IDS.fundPools
+                ].filter(id => id && !id.startsWith('PASTE_'));
+                for (const fileId of candidates) {
+                    try {
+                        const r = await fetch(
+                            `https://www.googleapis.com/drive/v3/files/${fileId}?fields=parents&supportsAllDrives=true&includeItemsFromAllDrives=true`,
+                            { headers: { Authorization: `Bearer ${accessToken}` } }
+                        );
+                        if (!r.ok) continue;
+                        const d = await r.json();
+                        const p = (d.parents||[])[0];
+                        if (p) { parentId = p; break; }
+                    } catch(e) { /* try next */ }
+                }
             }
             if (!parentId) {
-                throw new Error('No parent folder found — your shared files appear to be at the root of a Shared Drive. Ask your admin to move them into a folder, or share the parent folder ID.');
+                throw new Error('Attachments folder not configured. Ask your admin to set SHARED_FILE_IDS.attachmentsParent in field_app.html to a Drive folder ID where photos can be saved.');
             }
             _fieldAttFolderCache['__parent'] = parentId;
         }
