@@ -1019,6 +1019,21 @@
         return URL.createObjectURL(await res.blob());
     }
 
+    // Fetch a Drive file and return a base64 data URL. Used to embed Drive-stored
+    // photos into jsPDF (which cannot fetch remote URLs during PDF construction).
+    async function fieldDriveFileAsDataUrl(fileId) {
+        const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`,
+            { headers: {'Authorization':`Bearer ${accessToken}`} });
+        if (!res.ok) throw new Error('Drive fetch failed: HTTP ' + res.status);
+        const blob = await res.blob();
+        return await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload  = () => resolve(reader.result);
+            reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
+            reader.readAsDataURL(blob);
+        });
+    }
+
 
     // Default logo — set to null; logo loads from settings.json when shared with technician account
     // To hardcode: paste the base64 logo string from main app Settings → browser console → copy(settings.logoData)
@@ -3484,6 +3499,36 @@
         }
         const {jsPDF}=window.jspdf;
         const doc=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+
+        // ── Pre-fetch Drive-hosted photos as base64 data URLs ──────────────
+        // jsPDF's addImage() cannot fetch remote URLs; it needs raw bytes or
+        // a data URL. Photos stored on Drive (with driveFileId) must be fetched
+        // and converted to data URLs before the render loop. We do this in
+        // parallel for speed. Failed fetches stay as null so the render loop
+        // can show a placeholder instead of crashing.
+        const driveFileIdsNeeded = [];
+        for (const d of days) {
+            for (const ph of (d.photos||[])) {
+                if (ph && typeof ph === 'object' && ph.driveFileId && !ph.data) {
+                    driveFileIdsNeeded.push(ph.driveFileId);
+                }
+            }
+        }
+        const drivePhotoData = new Map(); // fileId → data URL (or null on error)
+        if (driveFileIdsNeeded.length) {
+            const uniqueIds = [...new Set(driveFileIdsNeeded)];
+            showToast(`⏳ Fetching ${uniqueIds.length} photo${uniqueIds.length===1?'':'s'} from Drive…`, 30000);
+            await Promise.all(uniqueIds.map(async fileId => {
+                try {
+                    drivePhotoData.set(fileId, await fieldDriveFileAsDataUrl(fileId));
+                } catch (e) {
+                    console.warn('Photo fetch failed for', fileId, ':', e.message);
+                    drivePhotoData.set(fileId, null);
+                }
+            }));
+            const ok = [...drivePhotoData.values()].filter(v=>v).length;
+            showToast(`⏳ ${ok}/${uniqueIds.length} photos ready — generating PDF…`, 8000);
+        }
         const ML=14,MR=14,CW=210-ML-MR,PW=210;
         let y=0;
         const vessel  =wl.vesselName||wl.location||'—';
@@ -3762,7 +3807,16 @@
                 const imgW=(CW-6)/3;let col=0;
                 for(let pi=0;pi<d.photos.length;pi++){
                     const ph = d.photos[pi];
-                    const src = _photoSrc(ph);
+                    // Resolve the image source: prefer inline data, then pre-fetched Drive data URL, then _photoSrc fallback.
+                    // jsPDF.addImage cannot fetch remote URLs, so Drive thumbs/lh3 URLs would silently render as empty space.
+                    let src;
+                    if (ph && typeof ph === 'object' && ph.data) {
+                        src = ph.data;
+                    } else if (ph && typeof ph === 'object' && ph.driveFileId && drivePhotoData.has(ph.driveFileId)) {
+                        src = drivePhotoData.get(ph.driveFileId);
+                    } else {
+                        src = _photoSrc(ph);
+                    }
                     const title = _photoTitle(ph);
                     const captionLines = title ? 2 : 1; // title + photo number = 2 lines, else just number
                     const imgH=46;
@@ -3770,8 +3824,12 @@
                     const xPos=ML+col*(imgW+3);
                     if(y+blockH>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=42;col=0;}
                     try{
+                        if (!src || (typeof src === 'string' && !src.startsWith('data:'))) {
+                            // No usable image data (Drive fetch failed, or non-data URL)
+                            throw new Error('image data unavailable');
+                        }
                         // Detect format from data URL prefix; default JPEG
-                        const fmt = (typeof src === 'string' && src.startsWith('data:image/png')) ? 'PNG' : 'JPEG';
+                        const fmt = src.startsWith('data:image/png') ? 'PNG' : 'JPEG';
                         doc.addImage(src,fmt,xPos,y,imgW,imgH,'','MEDIUM');
                         // Caption: photo number + title (if any)
                         let captionY = y + imgH + 3;
@@ -3784,7 +3842,15 @@
                         }
                         doc.setFontSize(6.5);doc.setFont('helvetica','normal');doc.setTextColor(100,100,100);
                         doc.text(dateStr+' · Photo '+(pi+1), xPos+imgW/2, captionY, {align:'center'});
-                    }catch(e){doc.setFontSize(7);doc.setTextColor(180,0,0);doc.text('[Photo error]',xPos+2,y+imgH/2);}
+                    }catch(e){
+                        // Draw a placeholder box so the layout doesn't collapse
+                        doc.setDrawColor(200,200,200); doc.setFillColor(248,248,250);
+                        doc.rect(xPos, y, imgW, imgH, 'FD');
+                        doc.setFontSize(7); doc.setTextColor(150,150,150);
+                        doc.text('[Photo unavailable]', xPos+imgW/2, y+imgH/2, {align:'center'});
+                        doc.setFontSize(6.5); doc.setTextColor(120,120,120);
+                        doc.text(dateStr+' · Photo '+(pi+1), xPos+imgW/2, y+imgH+5, {align:'center'});
+                    }
                     col++;if(col===3){col=0;y+=blockH+2;}
                 }
                 if(col>0)y+=46+10;y+=4;
