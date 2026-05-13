@@ -316,11 +316,29 @@
                 <div id="expGSTSection">
                     <!-- GST Input Claimable toggle (only for SUPPLIER) -->
                     <div id="expGSTInputToggleWrap" class="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-4 hidden">
-                        <label class="flex items-center gap-2 cursor-pointer">
-                            <input type="checkbox" id="expGSTInputClaimable" class="w-4 h-4 accent-blue-600" checked/>
-                            <span class="text-sm font-semibold text-blue-800">Include this bill's GST for ITC (Input Tax Credit)</span>
-                            <span class="text-xs text-blue-600 ml-2">Uncheck for blocked credits, ineligible vendors, personal-use items, etc. GST values stay recorded but won't roll into the Tax tab's GST Input summary.</span>
+                        <label class="flex items-start gap-2 cursor-pointer">
+                            <input type="checkbox" id="expGSTInputClaimable" class="w-4 h-4 mt-0.5 accent-blue-600" onchange="onGSTInputToggle()" checked/>
+                            <div class="flex-1">
+                                <div class="text-sm font-semibold text-blue-800">Include this bill's GST for ITC (Input Tax Credit)</div>
+                                <div class="text-xs text-blue-600">Uncheck for blocked credits, ineligible vendors, personal-use items, etc. GST values stay recorded but won't roll into the Tax tab's GST Input summary.</div>
+                            </div>
                         </label>
+                        <!-- Vendor GSTIN — required when ITC is ON -->
+                        <div id="expVendorGSTINWrap" class="mt-3 pt-3 border-t border-blue-200 grid grid-cols-1 md:grid-cols-3 gap-3">
+                            <div>
+                                <label class="block text-xs font-semibold text-blue-800 mb-1">Vendor GSTIN <span class="text-red-500">*</span></label>
+                                <input type="text" id="expVendorGSTIN" placeholder="e.g. 33ABCDE1234F1Z5" maxlength="15"
+                                       class="field-editable w-full px-3 py-2 border border-blue-300 rounded-lg text-sm uppercase tracking-wide"
+                                       oninput="this.value=this.value.toUpperCase(); onVendorGSTINChange()"/>
+                                <div id="expGSTINError" class="text-xs text-red-600 mt-1 hidden">Invalid GSTIN format. Should be 15 characters (e.g. 33ABCDE1234F1Z5).</div>
+                            </div>
+                            <div class="md:col-span-2">
+                                <label class="block text-xs font-semibold text-blue-800 mb-1">Place of Supply <span class="text-gray-500 font-normal">(auto from GSTIN)</span></label>
+                                <div id="expGSTHint" class="field-computed w-full px-3 py-2 border border-blue-300 rounded-lg text-sm min-h-[38px] flex items-center text-gray-500">
+                                    Enter Vendor GSTIN to detect place of supply
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
@@ -7078,6 +7096,8 @@
                     const gst = document.getElementById('expGSTInputClaimable');
                     if (gst) gst.checked = false;
                 }
+                // Vendor GSTIN (ITC)
+                if (exp.vendorGSTIN) document.getElementById('expVendorGSTIN').value = exp.vendorGSTIN;
                 // Inter-bank fields
                 if (exp.fromBankAccountId) document.getElementById('expFromBankAccount').value = exp.fromBankAccountId;
                 if (exp.toBankAccountId)   document.getElementById('expToBankAccount').value   = exp.toBankAccountId;
@@ -7132,6 +7152,8 @@
             }
             // Apply conditional bill-type rendering (must run last, after all values are set)
             applyBillType();
+            // Init ITC sub-section visibility + run GSTIN detection if value is present
+            onGSTInputToggle();
             document.getElementById('expenseModal').classList.add('show');
         }
 
@@ -7321,6 +7343,8 @@
 
             // Re-compute amounts (statutory amount may now drive totals)
             calcExpAmounts();
+            // Sync ITC sub-section visibility (depends on outer GST section visibility)
+            if (typeof onGSTInputToggle === 'function') onGSTInputToggle();
         }
 
         // Populate Inter-Bank From/To dropdowns (active accounts of any type)
@@ -7343,6 +7367,135 @@
                 : [];
             sel.innerHTML = '<option value="">-- Select Staff --</option>' +
                 activeStaff.map(s => `<option value="${s.staffID}">${s.name} (${s.staffType || ''})</option>`).join('');
+        }
+
+        // ─── GST State Code Map (EXP-003 / ITC GSTIN) ──────────────────────
+        // GSTIN positions 1-2 encode the state. Used for IGST vs CGST/SGST detection.
+        const GST_STATE_CODES = {
+            '01':'Jammu & Kashmir','02':'Himachal Pradesh','03':'Punjab','04':'Chandigarh',
+            '05':'Uttarakhand','06':'Haryana','07':'Delhi','08':'Rajasthan','09':'Uttar Pradesh',
+            '10':'Bihar','11':'Sikkim','12':'Arunachal Pradesh','13':'Nagaland','14':'Manipur',
+            '15':'Mizoram','16':'Tripura','17':'Meghalaya','18':'Assam','19':'West Bengal',
+            '20':'Jharkhand','21':'Odisha','22':'Chhattisgarh','23':'Madhya Pradesh','24':'Gujarat',
+            '25':'Daman & Diu','26':'Dadra & Nagar Haveli','27':'Maharashtra','28':'Andhra Pradesh (Old)',
+            '29':'Karnataka','30':'Goa','31':'Lakshadweep','32':'Kerala','33':'Tamil Nadu',
+            '34':'Puducherry','35':'Andaman & Nicobar','36':'Telangana','37':'Andhra Pradesh',
+            '38':'Ladakh','97':'Other Territory','99':'Centre Jurisdiction'
+        };
+
+        // GSTIN format: 2-digit state + 10-char PAN + 1-digit entity + Z + 1-char checksum
+        const GSTIN_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+
+        // Toggle for the ITC checkbox — show/hide the GSTIN sub-section and set required
+        function onGSTInputToggle() {
+            const on = document.getElementById('expGSTInputClaimable')?.checked;
+            const wrap = document.getElementById('expVendorGSTINWrap');
+            const input = document.getElementById('expVendorGSTIN');
+            if (wrap)  wrap.classList.toggle('hidden', !on);
+            if (input) {
+                if (on) input.setAttribute('required', '');
+                else    input.removeAttribute('required');
+            }
+            // If turning off, clear any field-locked styling on GST inputs
+            if (!on) {
+                ['expCGST','expSGST','expIGST'].forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el) { el.classList.remove('field-locked'); el.removeAttribute('readonly'); el.title = ''; }
+                });
+                const hint = document.getElementById('expGSTHint');
+                if (hint) { hint.textContent = 'Enter Vendor GSTIN to detect place of supply'; hint.className = 'field-computed w-full px-3 py-2 border border-blue-300 rounded-lg text-sm min-h-[38px] flex items-center text-gray-500'; }
+            } else {
+                // Re-run detection in case GSTIN already has a value
+                onVendorGSTINChange();
+            }
+        }
+
+        // Vendor GSTIN onchange — validate format, detect state, lock the wrong GST side
+        function onVendorGSTINChange() {
+            const input   = document.getElementById('expVendorGSTIN');
+            const errEl   = document.getElementById('expGSTINError');
+            const hintEl  = document.getElementById('expGSTHint');
+            const itcOn   = document.getElementById('expGSTInputClaimable')?.checked;
+            const cgstEl  = document.getElementById('expCGST');
+            const sgstEl  = document.getElementById('expSGST');
+            const igstEl  = document.getElementById('expIGST');
+
+            // Helper: reset all GST inputs to editable
+            const unlockAll = () => {
+                [cgstEl, sgstEl, igstEl].forEach(el => {
+                    if (!el) return;
+                    el.classList.remove('field-locked');
+                    el.removeAttribute('readonly');
+                    el.title = '';
+                });
+            };
+            // Helper: lock specific inputs (and clear their values so totals stay clean)
+            const lock = (els, reason) => {
+                els.forEach(el => {
+                    if (!el) return;
+                    el.value = '';
+                    el.classList.add('field-locked');
+                    el.setAttribute('readonly', 'readonly');
+                    el.title = reason;
+                });
+            };
+
+            const val = (input?.value || '').trim().toUpperCase();
+            if (!val) {
+                if (errEl) errEl.classList.add('hidden');
+                if (hintEl) { hintEl.textContent = 'Enter Vendor GSTIN to detect place of supply'; hintEl.className = 'field-computed w-full px-3 py-2 border border-blue-300 rounded-lg text-sm min-h-[38px] flex items-center text-gray-500'; }
+                unlockAll();
+                return;
+            }
+
+            // Validate length first (15 chars). Only run full regex once length is complete.
+            if (val.length < 15) {
+                if (errEl) errEl.classList.add('hidden');
+                if (hintEl) { hintEl.textContent = `Typing… (${val.length}/15 characters)`; hintEl.className = 'field-computed w-full px-3 py-2 border border-blue-300 rounded-lg text-sm min-h-[38px] flex items-center text-gray-500'; }
+                unlockAll();
+                return;
+            }
+            if (!GSTIN_REGEX.test(val)) {
+                if (errEl) errEl.classList.remove('hidden');
+                if (hintEl) { hintEl.textContent = '⚠ Invalid GSTIN — check format'; hintEl.className = 'field-computed w-full px-3 py-2 border border-red-400 rounded-lg text-sm min-h-[38px] flex items-center text-red-700 bg-red-50'; }
+                unlockAll();
+                return;
+            }
+            if (errEl) errEl.classList.add('hidden');
+
+            // Valid GSTIN — detect state and decide IGST vs CGST/SGST
+            const partyStateCode = getStateFromGST(val);
+            const partyState     = GST_STATE_CODES[partyStateCode] || `State code ${partyStateCode}`;
+            const companyGST     = (typeof settings !== 'undefined' && settings?.gstNumber) || '';
+            const companyState   = companyGST ? (GST_STATE_CODES[getStateFromGST(companyGST)] || '') : '';
+
+            if (!companyGST) {
+                if (hintEl) {
+                    hintEl.textContent = `${partyState} — set your company GSTIN in Settings to enable auto IGST/CGST detection`;
+                    hintEl.className = 'field-computed w-full px-3 py-2 border border-yellow-400 rounded-lg text-sm min-h-[38px] flex items-center text-yellow-800 bg-yellow-50';
+                }
+                unlockAll();
+                return;
+            }
+
+            const interState = shouldUseIGST(companyGST, val);
+            unlockAll();
+            if (interState) {
+                // Inter-state: IGST applies, lock CGST + SGST
+                lock([cgstEl, sgstEl], 'Inter-state supply — use IGST only');
+                if (hintEl) {
+                    hintEl.innerHTML = `🌐 <b>Inter-state</b> (${companyState} → ${partyState}) — fill <b>IGST only</b>`;
+                    hintEl.className = 'field-computed w-full px-3 py-2 border border-purple-400 rounded-lg text-sm min-h-[38px] flex items-center text-purple-800 bg-purple-50';
+                }
+            } else {
+                // Intra-state: CGST+SGST applies, lock IGST
+                lock([igstEl], 'Intra-state supply — use CGST + SGST only');
+                if (hintEl) {
+                    hintEl.innerHTML = `🏠 <b>Intra-state</b> (${partyState}) — fill <b>CGST + SGST</b>`;
+                    hintEl.className = 'field-computed w-full px-3 py-2 border border-green-400 rounded-lg text-sm min-h-[38px] flex items-center text-green-800 bg-green-50';
+                }
+            }
+            calcExpAmounts();
         }
 
         document.getElementById('expTDSApplicable')?.addEventListener('change', function() {
@@ -7406,6 +7559,25 @@
                     if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Expense'; }
                     window._expSaving = false;
                     return;
+                }
+                // ITC claim requires a valid vendor GSTIN
+                const itcOn   = document.getElementById('expGSTInputClaimable')?.checked;
+                const vGSTIN  = (document.getElementById('expVendorGSTIN')?.value || '').trim().toUpperCase();
+                if (itcOn) {
+                    if (!vGSTIN) {
+                        alert('Vendor GSTIN required:\n\nYou checked "Include this bill\'s GST for ITC".\nEnter the vendor\'s GSTIN, or uncheck the ITC option.');
+                        document.getElementById('expVendorGSTIN')?.focus();
+                        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Expense'; }
+                        window._expSaving = false;
+                        return;
+                    }
+                    if (!GSTIN_REGEX.test(vGSTIN)) {
+                        alert('Invalid GSTIN:\n\n"' + vGSTIN + '" is not a valid GSTIN format.\nExpected 15 characters like: 33ABCDE1234F1Z5');
+                        document.getElementById('expVendorGSTIN')?.focus();
+                        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Expense'; }
+                        window._expSaving = false;
+                        return;
+                    }
                 }
             }
 
@@ -7528,6 +7700,10 @@
                 // GST Input Claimable (SUPPLIER only). Default true; explicit false means user opted out.
                 gstInputClaimable: billType === 'SUPPLIER'
                     ? (document.getElementById('expGSTInputClaimable')?.checked !== false)
+                    : null,
+                // Vendor GSTIN — captured when ITC is claimed (SUPPLIER + ITC on)
+                vendorGSTIN: (billType === 'SUPPLIER' && document.getElementById('expGSTInputClaimable')?.checked)
+                    ? (document.getElementById('expVendorGSTIN')?.value || '').trim().toUpperCase()
                     : null,
                 // Inter-bank transfer fields
                 fromBankAccountId: billType === 'INTERBANK' ? document.getElementById('expFromBankAccount').value : null,
