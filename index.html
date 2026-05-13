@@ -126,6 +126,31 @@
         .att-day-ot { width:100%; font-size:10px; text-align:center; border:1.5px solid #c4b5fd; border-radius:4px; padding:2px 0; color:#6d28d9; background:#fff; font-family:inherit; box-sizing:border-box; display:block; min-width:0; }
         .att-day-ot:focus { outline:none; border-color:#7c3aed; background:#f5f3ff; }
         .att-day-ot.has-ot { border-color:#7c3aed; background:#f5f3ff; font-weight:700; }
+
+        /* ── Field Color Coding (UX-005) ──────────────────────────────────
+           Visual distinction between user-entered fields and system-computed
+           fields. Applied to inputs / selects / textareas inside forms.
+           Use !important to override Tailwind's bg-* utilities where needed. */
+        .field-editable {
+            background-color: #FEF9C3 !important;  /* warm yellow — "your turn" */
+        }
+        .field-editable:focus {
+            background-color: #FEF3A1 !important;  /* slightly stronger on focus */
+            outline: 2px solid #EAB308;
+            outline-offset: -1px;
+        }
+        .field-computed {
+            background-color: #F1F5F9 !important;  /* cool gray — "system-calculated" */
+            color: #475569;
+            font-weight: 600;
+        }
+        .field-computed:focus { outline: none; }   /* read-only — no focus ring */
+        /* Locked / disabled by conditional logic (e.g. bill-type hides a section) */
+        .field-locked {
+            background-color: #F8FAFC !important;
+            color: #94A3B8;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 <body class="bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 min-h-screen">
@@ -211,87 +236,166 @@
                 </div>
             </div>
             <form id="expenseForm" onsubmit="saveExpense(event)" class="p-6">
-                <!-- Row 1: Voucher / Bill info -->
+                <!-- Row 1: Voucher / Bill Type / Bill info -->
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
                     <div>
                         <label class="block text-xs font-semibold text-gray-600 mb-1">Bill Log Ref No</label>
-                        <input type="text" id="expVoucherNo" placeholder="Auto / Manual" class="w-full px-3 py-2 border rounded-lg text-sm" />
+                        <input type="text" id="expVoucherNo" placeholder="Auto / Manual" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" />
                     </div>
                     <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">Supporting / Bill No</label>
-                        <input type="text" id="expBillNo" placeholder="Bill / Invoice No" class="w-full px-3 py-2 border rounded-lg text-sm" required/>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Bill Type <span class="text-red-500">*</span></label>
+                        <select id="expBillType" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" onchange="applyBillType()" required>
+                            <option value="">-- Select Type --</option>
+                            <option value="SUPPLIER">Bills from Supplier / Subcontractor</option>
+                            <option value="STATUTORY">Statutory Payment</option>
+                            <option value="SALARY">Salary or Wages</option>
+                            <option value="INTERBANK">Inter-Bank Transfer</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1" id="expBillNoLabel">Supporting / Bill No <span class="text-red-500">*</span></label>
+                        <input type="text" id="expBillNo" placeholder="Bill / Invoice No" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" required/>
                     </div>
                     <div>
                         <label class="block text-xs font-semibold text-gray-600 mb-1">Bill Date <span class="text-red-500">*</span></label>
-                        <input type="date" id="expBillDate" class="w-full px-3 py-2 border rounded-lg text-sm" required onchange="updateVoucherDateMin()"/>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">Company / Vendor Name <span class="text-red-500">*</span></label>
-                        <input type="text" id="expCompanyName" placeholder="Vendor / Supplier" class="w-full px-3 py-2 border rounded-lg text-sm" required/>
+                        <input type="date" id="expBillDate" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" required onchange="updateVoucherDateMin()"/>
                     </div>
                 </div>
 
-                <!-- Row 2: Description + Currency + Amounts -->
+                <!-- Row 2: Vendor / Description / Currency -->
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                    <div class="md:col-span-2">
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">Description <span class="text-red-500">*</span></label>
-                        <input type="text" id="expDescription" placeholder="Nature of expense" class="w-full px-3 py-2 border rounded-lg text-sm" required/>
+                    <div id="expVendorWrap">
+                        <label class="block text-xs font-semibold text-gray-600 mb-1" id="expCompanyLabel">Company / Vendor Name <span class="text-red-500">*</span></label>
+                        <input type="text" id="expCompanyName" placeholder="Vendor / Supplier" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" required/>
                     </div>
-                    <div>
+                    <!-- Salary-only: Employee dropdown (shown when Bill Type = SALARY) -->
+                    <div id="expEmployeeWrap" class="hidden">
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Employee / Staff <span class="text-red-500">*</span></label>
+                        <select id="expEmployeeId" class="field-editable w-full px-3 py-2 border rounded-lg text-sm">
+                            <option value="">-- Select Staff --</option>
+                        </select>
+                    </div>
+                    <!-- Salary-only: Salary Month -->
+                    <div id="expSalaryMonthWrap" class="hidden">
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Salary Month <span class="text-red-500">*</span></label>
+                        <input type="month" id="expSalaryMonth" class="field-editable w-full px-3 py-2 border rounded-lg text-sm"/>
+                    </div>
+                    <!-- Statutory-only: Statutory Type -->
+                    <div id="expStatutoryTypeWrap" class="hidden">
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Statutory Type <span class="text-red-500">*</span></label>
+                        <select id="expStatutoryType" class="field-editable w-full px-3 py-2 border rounded-lg text-sm">
+                            <option value="">-- Select --</option>
+                            <option value="PF">Provident Fund (PF)</option>
+                            <option value="ESIC">ESIC</option>
+                            <option value="TDS">TDS</option>
+                            <option value="PROF_TAX">Professional Tax</option>
+                            <option value="GST_LIABILITY">GST Tax Liability</option>
+                            <option value="OTHER">Other</option>
+                        </select>
+                    </div>
+                    <div class="md:col-span-2" id="expDescriptionWrap">
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Description <span class="text-red-500">*</span></label>
+                        <input type="text" id="expDescription" placeholder="Nature of expense" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" required/>
+                    </div>
+                    <div id="expCurrencyWrap">
                         <label class="block text-xs font-semibold text-gray-600 mb-1">Currency</label>
-                        <select id="expCurrency" class="w-full px-3 py-2 border rounded-lg text-sm" onchange="calcExpAmounts()">
+                        <select id="expCurrency" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" onchange="calcExpAmounts()">
                             <option value="INR">INR</option>
                             <option value="USD">USD</option>
                             <option value="GBP">GBP</option>
                             <option value="SGD">SGD</option>
                         </select>
                     </div>
-                    <div>
+                    <div id="expExchRateWrap">
                         <label class="block text-xs font-semibold text-gray-600 mb-1">Exchange Rate</label>
-                        <input type="number" id="expExchRate" value="1" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
+                        <input type="number" id="expExchRate" value="1" min="0" step="0.01" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
                     </div>
                 </div>
 
-                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                    <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">Taxable Amount <span class="text-red-500">*</span></label>
-                        <input type="number" id="expBillAmount" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()" required/>
+                <!-- GST Section (hidden for STATUTORY / SALARY / INTERBANK bill types) -->
+                <div id="expGSTSection">
+                    <!-- GST Input Claimable toggle (only for SUPPLIER) -->
+                    <div id="expGSTInputToggleWrap" class="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-4 hidden">
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" id="expGSTInputClaimable" class="w-4 h-4 accent-blue-600" checked/>
+                            <span class="text-sm font-semibold text-blue-800">Include this bill's GST for ITC (Input Tax Credit)</span>
+                            <span class="text-xs text-blue-600 ml-2">Uncheck for blocked credits, ineligible vendors, personal-use items, etc. GST values stay recorded but won't roll into the Tax tab's GST Input summary.</span>
+                        </label>
                     </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">Bill Amount in INR <span class="text-gray-400 font-normal">(auto)</span></label>
-                        <input type="number" id="expBillAmtINR" placeholder="Auto" class="w-full px-3 py-2 border rounded-lg bg-gray-50 text-sm" readonly/>
+
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Taxable Amount <span class="text-red-500">*</span></label>
+                            <input type="number" id="expBillAmount" placeholder="0.00" min="0" step="0.01" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()" required/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Bill Amount in INR <span class="text-gray-400 font-normal">(auto)</span></label>
+                            <input type="number" id="expBillAmtINR" placeholder="Auto" class="field-computed w-full px-3 py-2 border rounded-lg text-sm" readonly/>
+                        </div>
+                        <div id="expCGSTWrap">
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">CGST Amount</label>
+                            <input type="number" id="expCGST" placeholder="0.00" min="0" step="0.01" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
+                        </div>
+                        <div id="expSGSTWrap">
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">SGST Amount</label>
+                            <input type="number" id="expSGST" placeholder="0.00" min="0" step="0.01" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
+                        </div>
                     </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">CGST Amount</label>
-                        <input type="number" id="expCGST" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">SGST Amount</label>
-                        <input type="number" id="expSGST" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
+
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                        <div id="expIGSTWrap">
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">IGST Amount</label>
+                            <input type="number" id="expIGST" placeholder="0.00" min="0" step="0.01" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Total Bill Amount <span class="text-gray-400 font-normal">(Taxable + GST, auto)</span></label>
+                            <input type="number" id="expTotalBillAmt" placeholder="Auto" class="field-computed w-full px-3 py-2 border rounded-lg text-sm" readonly/>
+                        </div>
+                        <div id="expCreditNoteWrap">
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Credit Note / Discount</label>
+                            <input type="number" id="expCreditNote" placeholder="0.00" min="0" step="0.01" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
+                        </div>
+                        <div id="expCreditNoteDetailsWrap">
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Credit Note / Discount Details</label>
+                            <input type="text" id="expCreditNoteDetails" placeholder="Reference / description of credit note" class="field-editable w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
                     </div>
                 </div>
 
-                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                <!-- Statutory-only: simple amount block (used when GST section is hidden) -->
+                <div id="expStatutoryAmountWrap" class="hidden grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
                     <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">IGST Amount</label>
-                        <input type="number" id="expIGST" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Amount <span class="text-red-500">*</span></label>
+                        <input type="number" id="expStatutoryAmount" placeholder="0.00" min="0" step="0.01" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
                     </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">Total Bill Amount <span class="text-gray-400 font-normal">(Taxable + GST, auto)</span></label>
-                        <input type="number" id="expTotalBillAmt" placeholder="Auto" class="w-full px-3 py-2 border rounded-lg text-sm font-semibold bg-blue-50 border-blue-200" readonly/>
+                </div>
+
+                <!-- Inter-Bank Transfer: From / To Account block -->
+                <div id="expInterBankWrap" class="hidden bg-cyan-50 border border-cyan-200 rounded-xl p-4 mb-4">
+                    <p class="text-xs font-semibold text-cyan-800 mb-3">🔁 INTER-BANK TRANSFER DETAILS</p>
+                    <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">From Bank Account <span class="text-red-500">*</span></label>
+                            <select id="expFromBankAccount" class="field-editable w-full px-3 py-2 border rounded-lg text-sm">
+                                <option value="">-- Select Source --</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">To Bank Account <span class="text-red-500">*</span></label>
+                            <select id="expToBankAccount" class="field-editable w-full px-3 py-2 border rounded-lg text-sm">
+                                <option value="">-- Select Destination --</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Transfer Amount <span class="text-red-500">*</span></label>
+                            <input type="number" id="expTransferAmount" placeholder="0.00" min="0" step="0.01" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
+                        </div>
                     </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">Credit Note / Discount</label>
-                        <input type="number" id="expCreditNote" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">Credit Note / Discount Details</label>
-                        <input type="text" id="expCreditNoteDetails" placeholder="Reference / description of credit note" class="w-full px-3 py-2 border rounded-lg text-sm"/>
-                    </div>
+                    <p class="text-xs text-cyan-700 mt-2">This appears as an outflow on the source account and an inflow on the destination account in the bank statement view.</p>
                 </div>
 
                 <!-- TDS Section -->
-                <div class="bg-yellow-50 border border-yellow-200 rounded-xl p-4 mb-4">
+                <div id="expTDSSection" class="bg-yellow-50 border border-yellow-200 rounded-xl p-4 mb-4">
                     <div class="flex items-center gap-3 mb-3">
                         <label class="flex items-center gap-2 cursor-pointer">
                             <input type="checkbox" id="expTDSApplicable" onchange="calcExpAmounts()" class="w-4 h-4 accent-yellow-600"/>
@@ -301,11 +405,11 @@
                     <div id="expTDSFields" class="grid grid-cols-2 md:grid-cols-4 gap-4 hidden">
                         <div>
                             <label class="block text-xs font-semibold text-gray-600 mb-1" id="expTaxableAmtLabel">Taxable Amount in INR</label>
-                            <input type="number" id="expTaxableAmt" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
+                            <input type="number" id="expTaxableAmt" placeholder="0.00" min="0" step="0.01" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
                         </div>
                         <div>
                             <label class="block text-xs font-semibold text-gray-600 mb-1">TDS %</label>
-                            <select id="expTDSPct" class="w-full px-3 py-2 border rounded-lg text-sm" onchange="onTDSPctChange()">
+                            <select id="expTDSPct" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" onchange="onTDSPctChange()">
                                 <option value="1">1%</option>
                                 <option value="2" selected>2%</option>
                                 <option value="5">5%</option>
@@ -316,21 +420,21 @@
                         </div>
                         <div id="expTDSCustomPctWrap" class="hidden">
                             <label class="block text-xs font-semibold text-gray-600 mb-1">Custom TDS %</label>
-                            <input type="number" id="expTDSCustomPct" placeholder="e.g. 7.5" min="0" max="100" step="0.01" class="w-full px-3 py-2 border border-yellow-400 rounded-lg text-sm" oninput="calcExpAmounts()"/>
+                            <input type="number" id="expTDSCustomPct" placeholder="e.g. 7.5" min="0" max="100" step="0.01" class="field-editable w-full px-3 py-2 border border-yellow-400 rounded-lg text-sm" oninput="calcExpAmounts()"/>
                         </div>
                         <div>
                             <label class="block text-xs font-semibold text-gray-600 mb-1">TDS Amount</label>
-                            <input type="number" id="expTDSAmt" placeholder="Auto" class="w-full px-3 py-2 border rounded-lg bg-gray-50 text-sm" readonly/>
+                            <input type="number" id="expTDSAmt" placeholder="Auto" class="field-computed w-full px-3 py-2 border rounded-lg text-sm" readonly/>
                         </div>
                         <div>
                             <label class="block text-xs font-semibold text-gray-600 mb-1">Net Amount (after TDS)</label>
-                            <input type="number" id="expNetAmt" placeholder="Auto" class="w-full px-3 py-2 border rounded-lg bg-gray-50 text-sm" readonly/>
+                            <input type="number" id="expNetAmt" placeholder="Auto" class="field-computed w-full px-3 py-2 border rounded-lg text-sm" readonly/>
                         </div>
                     </div>
                 </div>
 
                 <!-- Deductions Section -->
-                <div class="bg-purple-50 border border-purple-200 rounded-xl p-4 mb-4">
+                <div id="expDeductionsSection" class="bg-purple-50 border border-purple-200 rounded-xl p-4 mb-4">
                     <div class="flex items-center gap-3 mb-3">
                         <label class="flex items-center gap-2 cursor-pointer">
                             <input type="checkbox" id="expDeductionsApplicable" onchange="toggleDeductionFields(); calcExpAmounts();" class="w-4 h-4 accent-purple-600"/>
@@ -340,48 +444,48 @@
                     <div id="expDeductionFields" class="grid grid-cols-2 md:grid-cols-4 gap-4 hidden">
                         <div>
                             <label class="block text-xs font-semibold text-gray-600 mb-1">Provident Fund (PF)</label>
-                            <input type="number" id="expPF" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
+                            <input type="number" id="expPF" placeholder="0.00" min="0" step="0.01" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
                         </div>
                         <div>
                             <label class="block text-xs font-semibold text-gray-600 mb-1">Professional Tax (PT)</label>
-                            <input type="number" id="expPT" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
+                            <input type="number" id="expPT" placeholder="0.00" min="0" step="0.01" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
                         </div>
                         <div>
                             <label class="block text-xs font-semibold text-gray-600 mb-1">ESIC</label>
-                            <input type="number" id="expESIC" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
+                            <input type="number" id="expESIC" placeholder="0.00" min="0" step="0.01" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
                         </div>
                         <div>
                             <label class="block text-xs font-semibold text-gray-600 mb-1">Other Deduction</label>
-                            <input type="number" id="expOtherDeduction" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
+                            <input type="number" id="expOtherDeduction" placeholder="0.00" min="0" step="0.01" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
                         </div>
                         <div class="md:col-span-2">
                             <label class="block text-xs font-semibold text-gray-600 mb-1">Other Deduction Details</label>
-                            <input type="text" id="expOtherDeductionDetails" placeholder="Description of other deduction" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                            <input type="text" id="expOtherDeductionDetails" placeholder="Description of other deduction" class="field-editable w-full px-3 py-2 border rounded-lg text-sm"/>
                         </div>
                         <div>
                             <label class="block text-xs font-semibold text-gray-600 mb-1">Total Deductions</label>
-                            <input type="number" id="expTotalDeductions" placeholder="Auto" class="w-full px-3 py-2 border rounded-lg bg-gray-50 text-sm" readonly/>
+                            <input type="number" id="expTotalDeductions" placeholder="Auto" class="field-computed w-full px-3 py-2 border rounded-lg text-sm" readonly/>
                         </div>
                     </div>
                 </div>
 
                 <!-- Advance + Payment -->
-                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                    <div>
+                <div id="expAdvanceSection" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                    <div id="expAdvanceAmtWrap">
                         <label class="block text-xs font-semibold text-gray-600 mb-1">Advance Paid Amount</label>
-                        <input type="number" id="expAdvanceAmt" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
+                        <input type="number" id="expAdvanceAmt" placeholder="0.00" min="0" step="0.01" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
                     </div>
-                    <div>
+                    <div id="expAdvanceDateWrap">
                         <label class="block text-xs font-semibold text-gray-600 mb-1">Advance Paid Date</label>
-                        <input type="date" id="expAdvanceDate" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        <input type="date" id="expAdvanceDate" class="field-editable w-full px-3 py-2 border rounded-lg text-sm"/>
                     </div>
-                    <div>
+                    <div id="expBalanceWrap">
                         <label class="block text-xs font-semibold text-gray-600 mb-1">Balance to Pay</label>
-                        <input type="number" id="expBalanceAmt" placeholder="Auto" class="w-full px-3 py-2 border rounded-lg bg-gray-50 text-sm" readonly/>
+                        <input type="number" id="expBalanceAmt" placeholder="Auto" class="field-computed w-full px-3 py-2 border rounded-lg text-sm" readonly/>
                     </div>
                     <div>
                         <label class="block text-xs font-semibold text-gray-600 mb-1">Payment Status <span class="text-red-500">*</span></label>
-                        <select id="expPayStatus" class="w-full px-3 py-2 border rounded-lg text-sm" required>
+                        <select id="expPayStatus" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" required>
                             <option value="Pending">Pending</option>
                             <option value="Partial">Partial</option>
                             <option value="Paid">Paid</option>
@@ -390,10 +494,10 @@
                 </div>
 
                 <!-- Payment Mode -->
-                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                <div id="expPaymentModeSection" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
                     <div>
                         <label class="block text-xs font-semibold text-gray-600 mb-1">Payment Mode</label>
-                        <select id="expPayMode" class="w-full px-3 py-2 border rounded-lg text-sm" onchange="toggleChequeFields()">
+                        <select id="expPayMode" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" onchange="toggleChequeFields()">
                             <option value="">-- Select --</option>
                             <option value="Cash">Cash</option>
                             <option value="Cheque">Cheque</option>
@@ -405,15 +509,15 @@
                     </div>
                     <div id="chequeNoField">
                         <label class="block text-xs font-semibold text-gray-600 mb-1">Cheque No</label>
-                        <input type="text" id="expChequeNo" placeholder="Cheque number" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        <input type="text" id="expChequeNo" placeholder="Cheque number" class="field-editable w-full px-3 py-2 border rounded-lg text-sm"/>
                     </div>
                     <div>
                         <label class="block text-xs font-semibold text-gray-600 mb-1">Cheque / Online Paid Date</label>
-                        <input type="date" id="expPayDate" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        <input type="date" id="expPayDate" class="field-editable w-full px-3 py-2 border rounded-lg text-sm"/>
                     </div>
                     <div>
                         <label class="block text-xs font-semibold text-gray-600 mb-1">Paid From Bank Account</label>
-                        <select id="expBankAccount" class="w-full px-3 py-2 border rounded-lg text-sm">
+                        <select id="expBankAccount" class="field-editable w-full px-3 py-2 border rounded-lg text-sm">
                             <option value="">-- Select Account --</option>
                         </select>
                     </div>
@@ -6444,7 +6548,19 @@
                     ${e.billNo ? `<br><span class="text-xs text-gray-400">${e.billNo}</span>` : ''}
                 </td>
                 <td class="px-3 py-2 whitespace-nowrap text-xs">${e.billDate||'—'}</td>
-                <td class="px-3 py-2 font-medium" style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${e.companyName||''}">${e.companyName||'—'}</td>
+                <td class="px-3 py-2 font-medium" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(e.companyName||e.staffName||(e.fromBankName&&e.toBankName?e.fromBankName+' → '+e.toBankName:''))||''}">
+                    ${(() => {
+                        const bt = e.billType || '';
+                        const badge = bt === 'SALARY'    ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-teal-100 text-teal-700 mr-1">SAL</span>'
+                                    : bt === 'STATUTORY' ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 mr-1">STAT</span>'
+                                    : bt === 'INTERBANK' ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-cyan-100 text-cyan-700 mr-1">XFER</span>'
+                                    : '';
+                        const label = bt === 'SALARY'    ? (e.staffName || 'Salary')
+                                    : bt === 'INTERBANK' ? ((e.fromBankName||'?')+' → '+(e.toBankName||'?'))
+                                    : (e.companyName || '—');
+                        return badge + label;
+                    })()}
+                </td>
                 <td class="px-3 py-2${tallyDone?' text-teal-700 font-medium':''}" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${e.description||''}">${e.description||'—'}</td>
                 <td class="px-3 py-2 text-right font-semibold">${fmt(e.netPayable)}</td>
                 <td class="px-3 py-2 text-center"><span class="px-2 py-0.5 rounded-full text-xs ${statusCls}">${e.payStatus}</span></td>
@@ -6896,6 +7012,15 @@
                 bankAccounts.filter(ba => ba.isActive && (ba.type === 'Expense' || ba.type === 'Both'))
                 .map(ba => `<option value="${ba.id}">${ba.accountName} (${ba.currency})</option>`).join('');
 
+            // Populate Inter-Bank From/To dropdowns (all active accounts)
+            populateInterBankDropdowns();
+            // Populate Salary employee dropdown
+            populateExpEmployeeDropdown();
+
+            // Default GST Input toggle ON for new entries
+            const gstInputEl = document.getElementById('expGSTInputClaimable');
+            if (gstInputEl) gstInputEl.checked = true;
+
             // Auto-generate voucher number
             if (!exp) {
                 const fyCode = getFinancialYearCode(new Date());
@@ -6947,6 +7072,22 @@
                 document.getElementById('expPayDate').value       = exp.payDate||'';
                 if (exp.bankAccountId) document.getElementById('expBankAccount').value = exp.bankAccountId;
                 document.getElementById('expRemark').value        = exp.remark||'';
+                // ── Bill Type fields (EXP-003) ─────────────────────────────
+                document.getElementById('expBillType').value = exp.billType || '';
+                if (exp.gstInputClaimable === false) {
+                    const gst = document.getElementById('expGSTInputClaimable');
+                    if (gst) gst.checked = false;
+                }
+                // Inter-bank fields
+                if (exp.fromBankAccountId) document.getElementById('expFromBankAccount').value = exp.fromBankAccountId;
+                if (exp.toBankAccountId)   document.getElementById('expToBankAccount').value   = exp.toBankAccountId;
+                if (exp.transferAmount)    document.getElementById('expTransferAmount').value  = exp.transferAmount;
+                // Salary fields
+                if (exp.staffID)       document.getElementById('expEmployeeId').value  = exp.staffID;
+                if (exp.salaryMonth)   document.getElementById('expSalaryMonth').value = exp.salaryMonth;
+                // Statutory fields
+                if (exp.statutoryType)   document.getElementById('expStatutoryType').value   = exp.statutoryType;
+                if (exp.statutoryAmount) document.getElementById('expStatutoryAmount').value = exp.statutoryAmount;
                 // Show existing multi-attachments
                 renderExpAttachList();
                 // Backward compat: migrate old single billPhotoData to billAttachments
@@ -6989,6 +7130,8 @@
                     if (tdsCustomPct) tdsCustomPct.value = pctVal;
                 }
             }
+            // Apply conditional bill-type rendering (must run last, after all values are set)
+            applyBillType();
             document.getElementById('expenseModal').classList.add('show');
         }
 
@@ -7094,6 +7237,114 @@
             if (el) el.classList.toggle('hidden', mode !== 'Cheque');
         }
 
+        // ─── Bill Type Controller (EXP-003) ────────────────────────────────
+        // Drives conditional show/hide of form sections based on Bill Type.
+        // Four bill types: SUPPLIER (default/full), STATUTORY, SALARY, INTERBANK.
+        // Empty value ('') is treated as SUPPLIER-like so the form looks complete
+        // before the user makes a selection. Existing (legacy) entries with no
+        // billType field will hit this path on edit.
+        function applyBillType() {
+            const btRaw = document.getElementById('expBillType')?.value || '';
+            // Treat empty as SUPPLIER for layout purposes (but don't save it as SUPPLIER)
+            const bt = btRaw || 'SUPPLIER';
+            const show = (id, on) => {
+                const el = document.getElementById(id);
+                if (el) el.classList.toggle('hidden', !on);
+            };
+            // Field-level required-attribute helpers (so HTML5 validation respects bill type)
+            const setRequired = (id, req) => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                if (req) el.setAttribute('required', '');
+                else el.removeAttribute('required');
+            };
+
+            // Defaults — assume SUPPLIER layout, then override per type
+            show('expVendorWrap',          bt !== 'SALARY' && bt !== 'INTERBANK');
+            show('expEmployeeWrap',        bt === 'SALARY');
+            show('expSalaryMonthWrap',     bt === 'SALARY');
+            show('expStatutoryTypeWrap',   bt === 'STATUTORY');
+            show('expDescriptionWrap',     bt !== 'INTERBANK');
+            show('expCurrencyWrap',        bt !== 'STATUTORY' && bt !== 'INTERBANK');
+            show('expExchRateWrap',        bt !== 'STATUTORY' && bt !== 'INTERBANK');
+
+            // GST section — shown for SUPPLIER (and empty-default)
+            show('expGSTSection',          bt === 'SUPPLIER');
+            show('expGSTInputToggleWrap',  bt === 'SUPPLIER');
+
+            // Statutory amount block — shown only for STATUTORY
+            show('expStatutoryAmountWrap', bt === 'STATUTORY');
+
+            // Inter-bank transfer block — shown only for INTERBANK
+            show('expInterBankWrap',       bt === 'INTERBANK');
+
+            // TDS section — relevant for SUPPLIER + SALARY (TDS on salary). Hide for STATUTORY/INTERBANK.
+            show('expTDSSection',          bt === 'SUPPLIER' || bt === 'SALARY');
+
+            // Deductions section (PF/PT/ESIC) — useful for SUPPLIER (contractor) + SALARY. Hide for STATUTORY/INTERBANK.
+            show('expDeductionsSection',   bt === 'SUPPLIER' || bt === 'SALARY');
+
+            // Advance / Balance — hide for STATUTORY and INTERBANK (no advance concept there)
+            show('expAdvanceAmtWrap',      bt !== 'STATUTORY' && bt !== 'INTERBANK');
+            show('expAdvanceDateWrap',     bt !== 'STATUTORY' && bt !== 'INTERBANK');
+            show('expBalanceWrap',         bt !== 'STATUTORY' && bt !== 'INTERBANK');
+
+            // Payment Mode section — hide for INTERBANK (transfer mode is implicit)
+            show('expPaymentModeSection',  bt !== 'INTERBANK');
+
+            // Required-attribute toggling — HTML5 validation should match visible fields
+            // Note: empty selection is allowed (user must still pick), so required uses btRaw
+            setRequired('expBillAmount',       btRaw === 'SUPPLIER' || btRaw === '');
+            setRequired('expStatutoryAmount',  btRaw === 'STATUTORY');
+            setRequired('expEmployeeId',       btRaw === 'SALARY');
+            setRequired('expSalaryMonth',      btRaw === 'SALARY');
+            setRequired('expStatutoryType',    btRaw === 'STATUTORY');
+            setRequired('expFromBankAccount',  btRaw === 'INTERBANK');
+            setRequired('expToBankAccount',    btRaw === 'INTERBANK');
+            setRequired('expTransferAmount',   btRaw === 'INTERBANK');
+            setRequired('expCompanyName',      btRaw !== 'SALARY' && btRaw !== 'INTERBANK');
+            setRequired('expBillNo',           btRaw === 'SUPPLIER');
+
+            // Adjust label text per bill type for clarity
+            const compLabel = document.getElementById('expCompanyLabel');
+            const billNoLabel = document.getElementById('expBillNoLabel');
+            if (compLabel) {
+                if (btRaw === 'STATUTORY') compLabel.innerHTML = 'Authority / Department <span class="text-red-500">*</span>';
+                else compLabel.innerHTML = 'Company / Vendor Name <span class="text-red-500">*</span>';
+            }
+            if (billNoLabel) {
+                if (btRaw === 'STATUTORY') billNoLabel.innerHTML = 'Challan / Reference No';
+                else if (btRaw === 'SALARY') billNoLabel.innerHTML = 'Payslip / Ref No';
+                else if (btRaw === 'INTERBANK') billNoLabel.innerHTML = 'Transfer Ref / UTR No';
+                else billNoLabel.innerHTML = 'Supporting / Bill No <span class="text-red-500">*</span>';
+            }
+
+            // Re-compute amounts (statutory amount may now drive totals)
+            calcExpAmounts();
+        }
+
+        // Populate Inter-Bank From/To dropdowns (active accounts of any type)
+        function populateInterBankDropdowns() {
+            const opts = '<option value="">-- Select Account --</option>' +
+                bankAccounts.filter(ba => ba.isActive)
+                    .map(ba => `<option value="${ba.id}">${ba.accountName} (${ba.currency})</option>`).join('');
+            const fromEl = document.getElementById('expFromBankAccount');
+            const toEl   = document.getElementById('expToBankAccount');
+            if (fromEl) fromEl.innerHTML = opts;
+            if (toEl)   toEl.innerHTML   = opts;
+        }
+
+        // Populate Salary Employee dropdown from staff array
+        function populateExpEmployeeDropdown() {
+            const sel = document.getElementById('expEmployeeId');
+            if (!sel) return;
+            const activeStaff = (typeof staff !== 'undefined' && Array.isArray(staff))
+                ? staff.filter(s => s.status === 'Active')
+                : [];
+            sel.innerHTML = '<option value="">-- Select Staff --</option>' +
+                activeStaff.map(s => `<option value="${s.staffID}">${s.name} (${s.staffType || ''})</option>`).join('');
+        }
+
         document.getElementById('expTDSApplicable')?.addEventListener('change', function() {
             document.getElementById('expTDSFields').classList.toggle('hidden', !this.checked);
             if (!this.checked) {
@@ -7142,14 +7393,52 @@
             const _hideSaveToast = () => { const t=document.getElementById('_expSaveToast'); if(t){t.style.opacity='0';setTimeout(()=>t.remove(),300);} };
             if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
             try {
+            // ── Bill Type — read first so we can branch validation (EXP-003) ─
+            const billType = document.getElementById('expBillType').value || '';
+
+            // IGST vs CGST/SGST mutual-exclusion guardrail (SUPPLIER bills only)
+            if (billType === 'SUPPLIER') {
+                const _cgst = parseFloat(document.getElementById('expCGST').value)||0;
+                const _sgst = parseFloat(document.getElementById('expSGST').value)||0;
+                const _igst = parseFloat(document.getElementById('expIGST').value)||0;
+                if (_igst > 0 && (_cgst > 0 || _sgst > 0)) {
+                    alert('GST entry error:\n\nIGST cannot be entered together with CGST/SGST.\n• Intra-state bills → use CGST + SGST only\n• Inter-state bills → use IGST only\n\nClear one side before saving.');
+                    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Expense'; }
+                    window._expSaving = false;
+                    return;
+                }
+            }
+
+            // Inter-bank: From and To must differ
+            if (billType === 'INTERBANK') {
+                const fromId = document.getElementById('expFromBankAccount').value;
+                const toId   = document.getElementById('expToBankAccount').value;
+                if (fromId && toId && fromId === toId) {
+                    alert('Inter-bank transfer error:\n\nFrom Account and To Account must be different banks.');
+                    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Expense'; }
+                    window._expSaving = false;
+                    return;
+                }
+            }
+
             const tdsOn = document.getElementById('expTDSApplicable').checked;
-            const bill  = parseFloat(document.getElementById('expBillAmount').value)||0;
+            // Branch primary bill amount based on bill type
+            let bill;
+            if (billType === 'STATUTORY') {
+                bill = parseFloat(document.getElementById('expStatutoryAmount').value)||0;
+            } else if (billType === 'INTERBANK') {
+                bill = parseFloat(document.getElementById('expTransferAmount').value)||0;
+            } else {
+                bill = parseFloat(document.getElementById('expBillAmount').value)||0;
+            }
             const rate  = parseFloat(document.getElementById('expExchRate').value)||1;
-            const cgst  = parseFloat(document.getElementById('expCGST').value)||0;
-            const sgst  = parseFloat(document.getElementById('expSGST').value)||0;
-            const igst  = parseFloat(document.getElementById('expIGST').value)||0;
-            const cn    = parseFloat(document.getElementById('expCreditNote').value)||0;
-            const adv   = parseFloat(document.getElementById('expAdvanceAmt').value)||0;
+            // GST values only when SUPPLIER; zero out otherwise
+            const cgst  = billType === 'SUPPLIER' ? (parseFloat(document.getElementById('expCGST').value)||0) : 0;
+            const sgst  = billType === 'SUPPLIER' ? (parseFloat(document.getElementById('expSGST').value)||0) : 0;
+            const igst  = billType === 'SUPPLIER' ? (parseFloat(document.getElementById('expIGST').value)||0) : 0;
+            const cn    = billType === 'SUPPLIER' ? (parseFloat(document.getElementById('expCreditNote').value)||0) : 0;
+            const adv   = (billType === 'SUPPLIER' || billType === 'SALARY' || billType === '')
+                          ? (parseFloat(document.getElementById('expAdvanceAmt').value)||0) : 0;
             const billINR = bill * rate;
             const tdsAmt  = tdsOn ? (parseFloat(document.getElementById('expTDSAmt').value)||0) : 0;
             const totalTax = cgst + sgst + igst;
@@ -7234,6 +7523,31 @@
                 bankAccountId:     document.getElementById('expBankAccount').value,
                 bankName:          (() => { const ba = bankAccounts.find(b => b.id === document.getElementById('expBankAccount').value); return ba ? ba.accountName : ''; })(),
                 remark:            document.getElementById('expRemark').value,
+                // ── Bill Type fields (EXP-003) ────────────────────────────────
+                billType,
+                // GST Input Claimable (SUPPLIER only). Default true; explicit false means user opted out.
+                gstInputClaimable: billType === 'SUPPLIER'
+                    ? (document.getElementById('expGSTInputClaimable')?.checked !== false)
+                    : null,
+                // Inter-bank transfer fields
+                fromBankAccountId: billType === 'INTERBANK' ? document.getElementById('expFromBankAccount').value : null,
+                fromBankName:      billType === 'INTERBANK'
+                    ? (() => { const ba = bankAccounts.find(b => b.id === document.getElementById('expFromBankAccount').value); return ba ? ba.accountName : ''; })()
+                    : null,
+                toBankAccountId:   billType === 'INTERBANK' ? document.getElementById('expToBankAccount').value : null,
+                toBankName:        billType === 'INTERBANK'
+                    ? (() => { const ba = bankAccounts.find(b => b.id === document.getElementById('expToBankAccount').value); return ba ? ba.accountName : ''; })()
+                    : null,
+                transferAmount:    billType === 'INTERBANK' ? bill : null,
+                // Salary fields
+                staffID:           billType === 'SALARY' ? document.getElementById('expEmployeeId').value : null,
+                staffName:         billType === 'SALARY'
+                    ? (() => { const s = staff.find(x => x.staffID === document.getElementById('expEmployeeId').value); return s ? s.name : ''; })()
+                    : null,
+                salaryMonth:       billType === 'SALARY' ? document.getElementById('expSalaryMonth').value : null,
+                // Statutory fields
+                statutoryType:     billType === 'STATUTORY' ? document.getElementById('expStatutoryType').value : null,
+                statutoryAmount:   billType === 'STATUTORY' ? bill : null,
                 billAttachments,
                 // Keep legacy field populated with first attachment for backward compat
                 billPhotoData:     billAttachments[0]?.data || null,
@@ -7394,9 +7708,14 @@
             });
 
             // ── GST Input from Expenses (CGST+SGST+IGST we paid to vendors) ─
+            // EXP-003: respect gstInputClaimable flag — when explicitly false, the
+            // bill's GST is recorded but excluded from the ITC summary (blocked
+            // credits, ineligible vendors, personal-use items, etc.). Bills
+            // without the flag (legacy entries) default to claimable.
             const gstInputExps = expenses.filter(e => {
                 const hasTax = (parseFloat(e.cgst)||0)+(parseFloat(e.sgst)||0)+(parseFloat(e.igst)||0) > 0;
-                return hasTax && (e.billDate||'').startsWith(pfx);
+                const claimable = e.gstInputClaimable !== false;   // legacy entries: default true
+                return hasTax && claimable && (e.billDate||'').startsWith(pfx);
             });
 
             // ── Outgoing Invoices for the period ────────────────────────────
