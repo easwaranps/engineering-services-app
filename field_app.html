@@ -913,17 +913,34 @@
 
     async function getFieldAttachFolder(subName) {
         if (_fieldAttFolderCache[subName]) return _fieldAttFolderCache[subName];
-        // Find parent folder of the workLogs file
+        // Find parent folder by trying each known shared file in order.
+        // Files at the root of a Shared Drive don't have parents populated, so we
+        // try multiple files — at least one is usually nested in a folder.
         let parentId = _fieldAttFolderCache['__parent'];
         if (!parentId) {
-            const r = await fetch(
-                `https://www.googleapis.com/drive/v3/files/${SHARED_FILE_IDS.workLogs}?fields=parents&supportsAllDrives=true&includeItemsFromAllDrives=true`,
-                { headers: { Authorization: `Bearer ${accessToken}` } }
-            );
-            if (!r.ok) throw new Error('Cannot find parent folder');
-            const d = await r.json();
-            parentId = (d.parents||[])[0];
-            if (!parentId) throw new Error('No parent folder found');
+            const candidates = [
+                SHARED_FILE_IDS.workLogs,
+                SHARED_FILE_IDS.staff,
+                SHARED_FILE_IDS.projectExpenses,
+                SHARED_FILE_IDS.fundRequests,
+                SHARED_FILE_IDS.fundPools
+            ].filter(id => id && !id.startsWith('PASTE_'));
+            let lastErr = null;
+            for (const fileId of candidates) {
+                try {
+                    const r = await fetch(
+                        `https://www.googleapis.com/drive/v3/files/${fileId}?fields=parents&supportsAllDrives=true&includeItemsFromAllDrives=true`,
+                        { headers: { Authorization: `Bearer ${accessToken}` } }
+                    );
+                    if (!r.ok) { lastErr = new Error('HTTP ' + r.status); continue; }
+                    const d = await r.json();
+                    const p = (d.parents||[])[0];
+                    if (p) { parentId = p; break; }
+                } catch(e) { lastErr = e; }
+            }
+            if (!parentId) {
+                throw new Error('No parent folder found — your shared files appear to be at the root of a Shared Drive. Ask your admin to move them into a folder, or share the parent folder ID.');
+            }
             _fieldAttFolderCache['__parent'] = parentId;
         }
         // Find or create "Attachments" root
@@ -3371,7 +3388,21 @@
         const hasStagedPhotos = _dayPhotos.some(ph=>ph._staged);
         if (hasStagedPhotos) {
             try { await uploadStagedPhotos(); }
-            catch(err) { return; } // error toast already shown
+            catch(err) {
+                // Photo upload failed (e.g. Drive folder issue). Offer to save the entry without the photos
+                // so the technician's work isn't lost. Staged photos remain in _dayPhotos for retry.
+                const stagedCount = _dayPhotos.filter(ph=>ph._staged).length;
+                const proceed = confirm(
+                    `⚠️ Photo upload failed:\n${err.message}\n\n` +
+                    `${stagedCount} photo${stagedCount===1?'':'s'} could not be uploaded.\n\n` +
+                    `• Click OK to save the entry WITHOUT the staged photos (you can retry later)\n` +
+                    `• Click Cancel to keep the form open and retry`
+                );
+                if (!proceed) return;
+                // Drop staged photos so the save can proceed; keep already-uploaded ones
+                _dayPhotos = _dayPhotos.filter(ph => !ph._staged);
+                renderDayPhotoGrid();
+            }
         }
         const entryID=document.getElementById('dayEntryID').value;
         const wlIdx=workLogs.findIndex(x=>x.wlID===wlID);if(wlIdx<0)return;
