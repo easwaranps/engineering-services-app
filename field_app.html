@@ -3275,6 +3275,24 @@
         renderDayPhotoGrid();
     }
 
+    // Remove photo from the day-log entry (FIX: was missing, caused save-with-photo to fail)
+    // For staged photos (not yet uploaded): revoke object URL + drop from array.
+    // For saved photos (already on Drive): drop from array — file stays on Drive,
+    // but the entry's photos[] list will no longer reference it after save.
+    function removeDayPhoto(idx) {
+        const ph = _dayPhotos[idx];
+        if (!ph) return;
+        const isStaged = typeof ph === 'object' && ph._staged;
+        const label = _photoTitle(ph) || (isStaged ? (ph.name || 'staged photo') : 'this photo');
+        if (!confirm(`Remove ${label}?`)) return;
+        // Free the object URL to avoid memory leaks
+        if (isStaged && ph.previewUrl && ph.previewUrl.startsWith('blob:')) {
+            try { URL.revokeObjectURL(ph.previewUrl); } catch(e) { /* no-op */ }
+        }
+        _dayPhotos.splice(idx, 1);
+        renderDayPhotoGrid();
+    }
+
     function handleDayPhoto(input){
         const files = Array.from(input.files||[]);
         input.value='';
