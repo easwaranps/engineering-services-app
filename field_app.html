@@ -3540,8 +3540,9 @@
         const dateRange=wl.workStartDate&&wl.workEndDate
             ?wl.workStartDate.split('-').reverse().join('.')+' to '+wl.workEndDate.split('-').reverse().join('.')
             :wl.workStartDate?wl.workStartDate.split('-').reverse().join('.'):'—';
-        const SIG_H=26;
-        const CONTENT_BOTTOM=297-SIG_H-8;
+        const SIG_H=20;                              // footer band height (was 26)
+        const FOOTER_SAFETY=4;                        // extra gap above footer
+        const CONTENT_BOTTOM=297-SIG_H-FOOTER_SAFETY; // bottom Y where content must stop
 
         // ── Pre-load logo: try direct JPEG first, canvas PNG as fallback ──────
         let logoPng = null;
@@ -3618,34 +3619,35 @@
         }
 
         function drawSignatureFooter(p,total){
-            // Thin separator line
+            // Footer band — kept within 20mm so it never collides with content above.
+            // Layout (from fY top): separator | label@4 | sig-line@12 | "Signature & Date"@15.5 | page-no@18.5
             const fY=297-SIG_H-2;
             doc.setDrawColor(15,58,95);doc.setLineWidth(0.4);doc.line(ML,fY,210-MR,fY);
             const colW=CW/3;
-            // Three signature columns — name + signature line only
+            // Three signature columns — compact layout
             ['CHIEF ENGINEER / CLIENT','2ND ENGINEER / CLIENT','IMSE AUTHORISED ENGINEER'].forEach((lbl,i)=>{
                 const x=ML+i*colW;
                 // Column label
-                doc.setFontSize(7.5);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
-                doc.text(lbl,x+colW/2,fY+5,{align:'center'});
+                doc.setFontSize(7);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
+                doc.text(lbl,x+colW/2,fY+4,{align:'center'});
                 // Signature line
                 doc.setDrawColor(100,100,100);doc.setLineWidth(0.3);
-                doc.line(x+4,fY+15,x+colW-6,fY+15);
-                doc.setFontSize(6.5);doc.setFont('helvetica','normal');doc.setTextColor(130,130,130);
-                doc.text('Signature & Date',x+colW/2,fY+19,{align:'center'});
+                doc.line(x+4,fY+12,x+colW-6,fY+12);
+                doc.setFontSize(6);doc.setFont('helvetica','normal');doc.setTextColor(130,130,130);
+                doc.text('Signature & Date',x+colW/2,fY+15.5,{align:'center'});
                 // Vertical divider between columns
                 if(i<2){doc.setDrawColor(200,200,200);doc.setLineWidth(0.3);doc.line(x+colW,fY,x+colW,fY+SIG_H);}
             });
-            // Page number centred
-            doc.setFontSize(7);doc.setFont('helvetica','italic');doc.setTextColor(130,130,130);
-            doc.text(co+' — Page '+p+' of '+total,PW/2,fY+SIG_H-1,{align:'center'});
+            // Page number centred at bottom
+            doc.setFontSize(6.5);doc.setFont('helvetica','italic');doc.setTextColor(130,130,130);
+            doc.text(co+' — Page '+p+' of '+total,PW/2,fY+18.5,{align:'center'});
         }
 
         // Page 1
         drawPageHeader();y=42;
 
         // Project details
-        doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+        doc.autoTable({startY:y,margin:{left:ML,right:MR,bottom:SIG_H+FOOTER_SAFETY+2},theme:'grid',
             styles:{fontSize:9.5,cellPadding:3.5},
             body:[
                 [{content:'Vessel Name',styles:{fontStyle:'bold',fillColor:[241,245,249]}},{content:vessel}],
@@ -3654,7 +3656,8 @@
                 [{content:'Date',       styles:{fontStyle:'bold',fillColor:[241,245,249]}},{content:dateRange}],
                 ...(wl.scopeOfWork?[[{content:'Scope of Work',styles:{fontStyle:'bold',fillColor:[241,245,249]}},{content:wl.scopeOfWork}]]:[]),
             ],
-            columnStyles:{0:{cellWidth:40},1:{cellWidth:CW-40}}
+            columnStyles:{0:{cellWidth:40},1:{cellWidth:CW-40}},
+            didDrawPage:(data)=>{ if(data.pageNumber>1) drawPageHeader(); }
         });
         y=doc.lastAutoTable.finalY+10;
 
@@ -3679,7 +3682,7 @@
         });
 
         if(timeLogRows.length){
-            doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+            doc.autoTable({startY:y,margin:{left:ML,right:MR,bottom:SIG_H+FOOTER_SAFETY+2},theme:'grid',
                 styles:{fontSize:8,cellPadding:2.5},
                 headStyles:{fillColor:[30,58,138],textColor:[255,255,255],fontStyle:'bold',fontSize:8},
                 head:[[
@@ -3722,23 +3725,26 @@
              {title:'Recommendations',            text:d.recommendations,col:[21,128,61]}
             ].filter(s=>s.text&&s.text.trim()).forEach(s=>{
                 if(y+16>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=42;}
-                doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+                doc.autoTable({startY:y,margin:{left:ML,right:MR,bottom:SIG_H+FOOTER_SAFETY+2},theme:'grid',
                     styles:{fontSize:8.5,cellPadding:3},
                     headStyles:{fillColor:s.col,textColor:[255,255,255],fontStyle:'bold',fontSize:8},
-                    head:[[s.title]],body:[[s.text]],columnStyles:{0:{cellWidth:CW}}});
+                    head:[[s.title]],body:[[s.text]],columnStyles:{0:{cellWidth:CW}},
+                    didDrawPage:(data)=>{ if(data.pageNumber>1) drawPageHeader(); }
+                });
                 y=doc.lastAutoTable.finalY+3;
             });
 
             // Witness
             if(d.witnessName){
                 if(y+10>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=42;}
-                doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+                doc.autoTable({startY:y,margin:{left:ML,right:MR,bottom:SIG_H+FOOTER_SAFETY+2},theme:'grid',
                     styles:{fontSize:8,cellPadding:2.5},
                     body:[[{content:'Witnessed By',styles:{fontStyle:'bold',fillColor:[255,241,242],cellWidth:35}},
                            {content:d.witnessName+(d.witnessDesig?' — '+d.witnessDesig:'')},
                            {content:'Remarks',styles:{fontStyle:'bold',fillColor:[255,241,242],cellWidth:25}},
                            {content:d.witnessRemarks||'—'}]],
-                    columnStyles:{0:{cellWidth:35},1:{cellWidth:CW/2-35},2:{cellWidth:25},3:{cellWidth:CW/2-25}}
+                    columnStyles:{0:{cellWidth:35},1:{cellWidth:CW/2-35},2:{cellWidth:25},3:{cellWidth:CW/2-25}},
+                    didDrawPage:(data)=>{ if(data.pageNumber>1) drawPageHeader(); }
                 });
                 y=doc.lastAutoTable.finalY+3;
             }
@@ -3759,7 +3765,7 @@
                         (cal.unitNo ? ' — ' + cal.unitNo : '') +
                         (cal.maker ? ' | ' + cal.maker : '') +
                         (cal._isCustom && cal.customTitle ? ' · ' + cal.customTitle : '');
-                    doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+                    doc.autoTable({startY:y,margin:{left:ML,right:MR,bottom:SIG_H+FOOTER_SAFETY+2},theme:'grid',
                         styles:{fontSize:8,cellPadding:2.5},
                         headStyles:{fillColor:[88,28,135],textColor:[255,255,255],fontStyle:'bold',fontSize:8},
                         head:[[{content:headerTitle,colSpan:4}]],
@@ -3771,7 +3777,8 @@
                             {content:'Overall',styles:{fontStyle:'bold',fillColor:[248,245,255]}},
                             {content:cal.overall||'—',styles:{fontStyle:'bold',textColor:oCol}}
                         ]],
-                        columnStyles:{0:{cellWidth:30},1:{cellWidth:CW/2-30},2:{cellWidth:30},3:{cellWidth:CW/2-30}}
+                        columnStyles:{0:{cellWidth:30},1:{cellWidth:CW/2-30},2:{cellWidth:30},3:{cellWidth:CW/2-30}},
+                        didDrawPage:(data)=>{ if(data.pageNumber>1) drawPageHeader(); }
                     });
                     y=doc.lastAutoTable.finalY+2;
                     if(cal.remarks){doc.setFontSize(7.5);doc.setFont('helvetica','italic');doc.setTextColor(80,80,80);doc.text('Remarks: '+cal.remarks,ML+2,y+4);y+=7;}
@@ -3780,7 +3787,7 @@
                         const colW=Math.min(24,CW/cal.columns.length);
                         const cs={};cal.columns.forEach((_,i)=>{cs[i]={cellWidth:colW,halign:'center'};});
                         cs[0]={cellWidth:colW,halign:'left'};if(cal.columns.length>1)cs[1]={cellWidth:colW,halign:'left'};
-                        doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+                        doc.autoTable({startY:y,margin:{left:ML,right:MR,bottom:SIG_H+FOOTER_SAFETY+2},theme:'grid',
                             styles:{fontSize:7.5,cellPadding:2},
                             headStyles:{fillColor:[30,58,138],textColor:[255,255,255],fontStyle:'bold',fontSize:7.5},
                             head:[cal.columns.map(h=>({content:h,styles:{halign:'center'}}))],
@@ -3790,7 +3797,8 @@
                                     textColor:v==='PASS'?[21,128,61]:v==='FAIL'?[220,38,38]:[100,100,100],
                                     fillColor:v==='PASS'?[220,252,231]:v==='FAIL'?[254,226,226]:[255,255,255]}};
                                 return{content:v,styles:{halign:ki<2?'left':'center'}};
-                            })),columnStyles:cs
+                            })),columnStyles:cs,
+                            didDrawPage:(data)=>{ if(data.pageNumber>1) drawPageHeader(); }
                         });
                         y=doc.lastAutoTable.finalY+6;
                     }
