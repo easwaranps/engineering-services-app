@@ -3647,7 +3647,7 @@
         drawPageHeader();y=42;
 
         // Project details
-        doc.autoTable({startY:y,margin:{left:ML,right:MR,bottom:SIG_H+FOOTER_SAFETY+2},theme:'grid',
+        doc.autoTable({startY:y,margin:{top:42,left:ML,right:MR,bottom:SIG_H+FOOTER_SAFETY+2},theme:'grid',
             styles:{fontSize:9.5,cellPadding:3.5},
             body:[
                 [{content:'Vessel Name',styles:{fontStyle:'bold',fillColor:[241,245,249]}},{content:vessel}],
@@ -3682,7 +3682,7 @@
         });
 
         if(timeLogRows.length){
-            doc.autoTable({startY:y,margin:{left:ML,right:MR,bottom:SIG_H+FOOTER_SAFETY+2},theme:'grid',
+            doc.autoTable({startY:y,margin:{top:42,left:ML,right:MR,bottom:SIG_H+FOOTER_SAFETY+2},theme:'grid',
                 styles:{fontSize:8,cellPadding:2.5},
                 headStyles:{fillColor:[30,58,138],textColor:[255,255,255],fontStyle:'bold',fontSize:8},
                 head:[[
@@ -3725,7 +3725,7 @@
              {title:'Recommendations',            text:d.recommendations,col:[21,128,61]}
             ].filter(s=>s.text&&s.text.trim()).forEach(s=>{
                 if(y+16>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=42;}
-                doc.autoTable({startY:y,margin:{left:ML,right:MR,bottom:SIG_H+FOOTER_SAFETY+2},theme:'grid',
+                doc.autoTable({startY:y,margin:{top:42,left:ML,right:MR,bottom:SIG_H+FOOTER_SAFETY+2},theme:'grid',
                     styles:{fontSize:8.5,cellPadding:3},
                     headStyles:{fillColor:s.col,textColor:[255,255,255],fontStyle:'bold',fontSize:8},
                     head:[[s.title]],body:[[s.text]],columnStyles:{0:{cellWidth:CW}},
@@ -3737,7 +3737,7 @@
             // Witness
             if(d.witnessName){
                 if(y+10>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=42;}
-                doc.autoTable({startY:y,margin:{left:ML,right:MR,bottom:SIG_H+FOOTER_SAFETY+2},theme:'grid',
+                doc.autoTable({startY:y,margin:{top:42,left:ML,right:MR,bottom:SIG_H+FOOTER_SAFETY+2},theme:'grid',
                     styles:{fontSize:8,cellPadding:2.5},
                     body:[[{content:'Witnessed By',styles:{fontStyle:'bold',fillColor:[255,241,242],cellWidth:35}},
                            {content:d.witnessName+(d.witnessDesig?' — '+d.witnessDesig:'')},
@@ -3765,7 +3765,7 @@
                         (cal.unitNo ? ' — ' + cal.unitNo : '') +
                         (cal.maker ? ' | ' + cal.maker : '') +
                         (cal._isCustom && cal.customTitle ? ' · ' + cal.customTitle : '');
-                    doc.autoTable({startY:y,margin:{left:ML,right:MR,bottom:SIG_H+FOOTER_SAFETY+2},theme:'grid',
+                    doc.autoTable({startY:y,margin:{top:42,left:ML,right:MR,bottom:SIG_H+FOOTER_SAFETY+2},theme:'grid',
                         styles:{fontSize:8,cellPadding:2.5},
                         headStyles:{fillColor:[88,28,135],textColor:[255,255,255],fontStyle:'bold',fontSize:8},
                         head:[[{content:headerTitle,colSpan:4}]],
@@ -3787,7 +3787,7 @@
                         const colW=Math.min(24,CW/cal.columns.length);
                         const cs={};cal.columns.forEach((_,i)=>{cs[i]={cellWidth:colW,halign:'center'};});
                         cs[0]={cellWidth:colW,halign:'left'};if(cal.columns.length>1)cs[1]={cellWidth:colW,halign:'left'};
-                        doc.autoTable({startY:y,margin:{left:ML,right:MR,bottom:SIG_H+FOOTER_SAFETY+2},theme:'grid',
+                        doc.autoTable({startY:y,margin:{top:42,left:ML,right:MR,bottom:SIG_H+FOOTER_SAFETY+2},theme:'grid',
                             styles:{fontSize:7.5,cellPadding:2},
                             headStyles:{fillColor:[30,58,138],textColor:[255,255,255],fontStyle:'bold',fontSize:7.5},
                             head:[cal.columns.map(h=>({content:h,styles:{halign:'center'}}))],
