@@ -7403,12 +7403,18 @@
         // Toggle for the ITC checkbox — show/hide the GSTIN sub-section and set required
         function onGSTInputToggle() {
             const on = document.getElementById('expGSTInputClaimable')?.checked;
+            // Required ONLY when SUPPLIER bill type AND ITC checkbox is on.
+            // For non-SUPPLIER bill types, the entire GST section is hidden — required
+            // on a hidden input causes "invalid form control is not focusable" on save.
+            const billType = document.getElementById('expBillType')?.value || '';
+            const isSupplier = billType === 'SUPPLIER' || billType === '';
+            const shouldRequire = isSupplier && on;
             const wrap = document.getElementById('expVendorGSTINWrap');
             const input = document.getElementById('expVendorGSTIN');
             if (wrap)  wrap.classList.toggle('hidden', !on);
             if (input) {
-                if (on) input.setAttribute('required', '');
-                else    input.removeAttribute('required');
+                if (shouldRequire) input.setAttribute('required', '');
+                else               input.removeAttribute('required');
             }
             // If turning off, clear any field-locked styling on GST inputs
             if (!on) {
