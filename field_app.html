@@ -709,6 +709,7 @@
     let currentView = 'projexp';  // 'projexp' | 'worklogs'
     let _wlPhotos = [], _editWlID = null;
     let currentUser = null;  // { name, staffID } — set after login, persists for session
+    let _signedInEmail = '';  // Google OAuth email (device-level), used for record stamping
 
     // ── ALLOWED EMAILS — only these accounts can access the Field App ──
     const ALLOWED_EMAILS = [
@@ -757,6 +758,7 @@
                             const userInfo = await userResp.json();
                             userEmail = (userInfo.email || '').toLowerCase();
                             emailVerified = true;
+                            _signedInEmail = userEmail;
                             if (!ALLOWED_EMAILS.includes(userEmail)) {
                                 // Not authorised — revoke and show error
                                 google.accounts.oauth2.revoke(accessToken, ()=>{});
@@ -796,10 +798,13 @@
 
     function handleSignOut() {
         stopTokenRefresh();
+        // Level 2 concurrency: stop polling
+        try { if (_concur.timer) { clearInterval(_concur.timer); _concur.timer = null; } } catch(e) {}
         const t = accessToken; accessToken = null;
         gapi.client.setToken(null);
         if (t) google.accounts.oauth2.revoke(t, () => {});
         projectExpenses = []; workLogs = []; staffList = [];
+        _signedInEmail = '';
         renderLogin();
     }
 
@@ -868,6 +873,290 @@
         }
     }
 
+    // ════════════════════════════════════════════════════════════════
+    // LEVEL 2 CONCURRENCY — Polling + Record-Level Optimistic Locking
+    // ────────────────────────────────────────────────────────────────
+    // Mirrors the Main App (index.html) module, adapted for the field app:
+    //  • Field app accesses files by Drive fileId directly (not by folder list).
+    //  • Watched files: projectExpenses, workLogs, fundRequests, fundPools, staff.
+    //  • Identity for stamping = picked technician name + device OAuth email.
+    //  • For work logs, the LOCK UNIT is each dailyEntry (per spec), not the
+    //    whole work log. The recordPath for a dailyEntry edit is:
+    //      [{ id: wlID, idKey: 'wlID' },
+    //       { id: entryID, idKey: 'entryID', container: 'dailyEntries' }]
+    //  • Poll cadence: 30s idle, 10s while a modal is open.
+    //  • Background polls fetch modifiedTime ONLY (single field) — full file
+    //    fetch happens only when modifiedTime changes.
+    //  • Legacy records (no lastModifiedAt) treated as safe on first save.
+    // ════════════════════════════════════════════════════════════════
+    const _concur = {
+        watched: [
+            { type: 'projectExpenses', fileIdKey: 'projectExpenses', getMem: () => projectExpenses, setMem: d => { projectExpenses = d; } },
+            { type: 'workLogs',        fileIdKey: 'workLogs',        getMem: () => workLogs,        setMem: d => { workLogs = d; } },
+            { type: 'staff',           fileIdKey: 'staff',           getMem: () => staffList,       setMem: d => { staffList = Array.isArray(d) ? d.filter(s => s.status === 'Active') : []; } },
+            { type: 'fundRequests',    fileIdKey: 'fundRequests',    getMem: () => fundRequests,    setMem: d => { fundRequests = d; } },
+            { type: 'fundPools',       fileIdKey: 'fundPools',       getMem: () => fundPools,       setMem: d => { fundPools = d; } }
+        ],
+        lastModTimes: {},        // { type: ISO mtime }
+        lastSyncAt: null,        // Date of last successful poll
+        timer: null,
+        openEdit: null,          // { type, recordPath, snapshotMtime, snapshotMby, isNew }
+        externalChangeBanner: false,
+        suppressFor: {}          // { type: epoch_ms } — skip one poll after a self-save
+    };
+
+    // Identity used for stamping records (the technician who edited).
+    function _concurWhoAmI() {
+        // Prefer the picked technician's name + device email for full attribution.
+        // Falls back to email-only if no technician is selected yet (shouldn't happen during edits).
+        const tech = currentUser?.name;
+        if (tech && _signedInEmail) return `${tech} <${_signedInEmail}>`;
+        if (tech) return tech;
+        return _signedInEmail || 'unknown';
+    }
+
+    // Stamp a single record in place.
+    function _stampRecord(rec) {
+        if (!rec || typeof rec !== 'object') return rec;
+        rec.lastModifiedAt = new Date().toISOString();
+        rec.lastModifiedBy = _concurWhoAmI();
+        return rec;
+    }
+
+    // Walk a recordPath into an in-memory dataset; returns the record (or null).
+    function _findRecordByPath(dataset, path) {
+        if (!Array.isArray(dataset) || !Array.isArray(path) || !path.length) return null;
+        let arr = dataset, rec = null;
+        for (let i = 0; i < path.length; i++) {
+            const step = path[i];
+            if (i > 0 && step.container) {
+                arr = (rec && rec[step.container]) || [];
+            }
+            rec = arr.find(r => r && r[step.idKey] === step.id) || null;
+            if (!rec) return null;
+        }
+        return rec;
+    }
+
+    // Capture the (mtime, mby) of the record at the path; null if absent.
+    function _snapshotRecord(type, path) {
+        const w = _concur.watched.find(x => x.type === type);
+        if (!w) return { mtime: null, mby: null, missing: true };
+        const rec = _findRecordByPath(w.getMem(), path);
+        if (!rec) return { mtime: null, mby: null, missing: true };
+        return { mtime: rec.lastModifiedAt || null, mby: rec.lastModifiedBy || null, missing: false };
+    }
+
+    // Register the open-edit context. Call from modal openers.
+    // For new records, pass an empty path → no staleness check on save.
+    function _concurBeginEdit(type, path) {
+        if (!type || !Array.isArray(path) || !path.length) {
+            _concur.openEdit = { type: type || null, recordPath: [], snapshotMtime: null, snapshotMby: null, isNew: true };
+        } else {
+            const snap = _snapshotRecord(type, path);
+            _concur.openEdit = {
+                type, recordPath: path,
+                snapshotMtime: snap.mtime,
+                snapshotMby: snap.mby,
+                isNew: snap.missing || !snap.mtime
+            };
+        }
+        _concur.externalChangeBanner = false;
+        _hideExternalChangeBanner();
+        _restartPollTimer();
+    }
+
+    function _concurEndEdit() {
+        _concur.openEdit = null;
+        _concur.externalChangeBanner = false;
+        _hideExternalChangeBanner();
+        _restartPollTimer();
+    }
+
+    // Fetch only the modifiedTime for one file (cheap).
+    async function _fetchModTime(fileId) {
+        try {
+            const r = await fetch(
+                `https://www.googleapis.com/drive/v3/files/${fileId}?fields=modifiedTime&supportsAllDrives=true`,
+                { headers: { Authorization: `Bearer ${accessToken}` } }
+            );
+            if (!r.ok) return null;
+            const d = await r.json();
+            return d.modifiedTime || null;
+        } catch(e) { return null; }
+    }
+
+    // Pre-save staleness check. Returns { stale, by, atIso } | { stale:false }.
+    // For new records, passes through. For edits, fetches the current server-side
+    // copy of the file and inspects the target record.
+    async function _concurCheckStale(type, path) {
+        if (!path || !path.length) return { stale: false };
+        if (!_concur.openEdit || _concur.openEdit.isNew) return { stale: false };
+        const me = _concurWhoAmI();
+        const snapMtime = _concur.openEdit.snapshotMtime;
+        if (!snapMtime) return { stale: false };   // legacy / first save → safe
+        const fileId = SHARED_FILE_IDS[type];
+        if (!fileId || fileId.startsWith('PASTE_')) return { stale: false };
+        try {
+            const fresh = await readFile(fileId);
+            if (!Array.isArray(fresh)) return { stale: false };
+            const rec = _findRecordByPath(fresh, path);
+            if (!rec) return { stale: false };
+            const serverMtime = rec.lastModifiedAt || null;
+            const serverBy    = rec.lastModifiedBy || null;
+            if (!serverMtime || serverMtime === snapMtime) return { stale: false };
+            if (serverBy && serverBy !== me) {
+                return { stale: true, by: serverBy, atIso: serverMtime };
+            }
+            return { stale: false };
+        } catch(e) {
+            console.warn('Staleness check failed (non-blocking):', e.message);
+            return { stale: false };  // fail open
+        }
+    }
+
+    // Show the spec-mandated block message and return true to short-circuit save.
+    async function _concurBlockIfStale(type, path) {
+        const stale = await _concurCheckStale(type, path);
+        if (!stale.stale) return false;
+        const when = stale.atIso
+            ? new Date(stale.atIso).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })
+            : 'just now';
+        showToast(`⛔ Modified by ${stale.by || 'someone else'} at ${when}. Refresh and re-apply.`, 6000);
+        return true;
+    }
+
+    // ── EXTERNAL CHANGE BANNER (non-blocking, inside modal) ─────────
+    function _showExternalChangeBanner(by) {
+        let el = document.getElementById('_externalChangeBanner');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = '_externalChangeBanner';
+            el.style.cssText = 'position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:60;'
+                             + 'background:#fef3c7;border:1.5px solid #f59e0b;color:#92400e;'
+                             + 'padding:10px 14px;border-radius:12px;font-size:12px;font-weight:600;'
+                             + 'box-shadow:0 6px 24px rgba(0,0,0,.18);display:flex;align-items:center;gap:10px;max-width:92vw';
+            document.body.appendChild(el);
+        }
+        const byTxt = by ? ` by ${by}` : '';
+        el.innerHTML = `<span>⚠ This record was updated${byTxt} by someone else.</span>`
+                     + `<button onclick="_concurViewExternalChanges()" style="background:#d97706;color:#fff;border:none;border-radius:8px;padding:5px 10px;font-weight:700;font-size:11px;cursor:pointer">View changes</button>`;
+        el.style.display = 'flex';
+    }
+    function _hideExternalChangeBanner() {
+        const el = document.getElementById('_externalChangeBanner');
+        if (el) el.style.display = 'none';
+    }
+    async function _concurViewExternalChanges() {
+        // Refresh in-memory data from Drive, then re-render. Modal stays open.
+        try {
+            const promises = [
+                readFile(SHARED_FILE_IDS.projectExpenses),
+                readFile(SHARED_FILE_IDS.workLogs),
+                readFile(SHARED_FILE_IDS.staff)
+            ];
+            const [pe, wl, sf] = await Promise.all(promises);
+            if (Array.isArray(pe)) projectExpenses = pe;
+            if (Array.isArray(wl)) workLogs        = wl;
+            if (Array.isArray(sf)) staffList       = sf.filter(s => s.status === 'Active');
+            await loadFundData();
+            _hideExternalChangeBanner();
+            showToast('🔄 Latest data loaded — close & reopen this record to see updates', 4500);
+        } catch(e) {
+            showToast('Refresh failed: ' + e.message);
+        }
+    }
+
+    // ── LAST-SYNC INDICATOR ─────────────────────────────────────────
+    function _updateSyncIndicator() {
+        const el = document.getElementById('syncIndicator');
+        if (!el) return;
+        if (!_concur.lastSyncAt) { el.textContent = '⏳ Sync: never'; return; }
+        const secs = Math.round((Date.now() - _concur.lastSyncAt.getTime()) / 1000);
+        let txt;
+        if (secs < 5)         txt = 'just now';
+        else if (secs < 60)   txt = `${secs}s ago`;
+        else if (secs < 3600) txt = `${Math.round(secs/60)}m ago`;
+        else                  txt = `${Math.round(secs/3600)}h ago`;
+        el.textContent = '🔄 ' + txt;
+    }
+    setInterval(_updateSyncIndicator, 1000);
+
+    // ── POLLING ─────────────────────────────────────────────────────
+    async function _concurPollOnce() {
+        if (!accessToken || !currentUser) return;
+        if (document.visibilityState !== 'visible') return;
+
+        // Build list of (type, fileId) for watched files that are configured.
+        const targets = _concur.watched
+            .map(w => ({ type: w.type, fileId: SHARED_FILE_IDS[w.fileIdKey], w }))
+            .filter(t => t.fileId && !t.fileId.startsWith('PASTE_'));
+        if (!targets.length) return;
+
+        const changed = [];
+        for (const t of targets) {
+            const mt = await _fetchModTime(t.fileId);
+            if (!mt) continue;
+            if (_concur.suppressFor[t.type] && _concur.suppressFor[t.type] > Date.now()) {
+                // We just saved this file — skip one cycle to avoid self-triggered banners.
+                _concur.lastModTimes[t.type] = mt;
+                continue;
+            }
+            const prev = _concur.lastModTimes[t.type];
+            if (!prev) { _concur.lastModTimes[t.type] = mt; continue; }
+            if (mt !== prev) changed.push({ ...t, mt });
+        }
+        _concur.lastSyncAt = new Date();
+        _updateSyncIndicator();
+
+        // For each changed file, fetch full content and merge.
+        for (const c of changed) {
+            try {
+                const parsed = await readFile(c.fileId);
+                if (parsed == null) continue;
+                // Check whether the currently-open edit's record changed
+                if (_concur.openEdit && _concur.openEdit.type === c.type
+                    && _concur.openEdit.recordPath?.length) {
+                    const oldRec = _findRecordByPath(c.w.getMem(), _concur.openEdit.recordPath);
+                    const newRec = _findRecordByPath(parsed, _concur.openEdit.recordPath);
+                    const oldMt = oldRec?.lastModifiedAt || _concur.openEdit.snapshotMtime || null;
+                    const newMt = newRec?.lastModifiedAt || null;
+                    const newBy = newRec?.lastModifiedBy || null;
+                    if (newMt && oldMt !== newMt && newBy !== _concurWhoAmI()) {
+                        _concur.externalChangeBanner = true;
+                        _showExternalChangeBanner(newBy);
+                    }
+                }
+                // Merge into memory unless we're mid-edit on this file (avoid clobber).
+                if (!_concur.openEdit || _concur.openEdit.type !== c.type) {
+                    c.w.setMem(parsed);
+                    _concur.lastModTimes[c.type] = c.mt;
+                    try { if (typeof renderView === 'function') renderView(); } catch(e) {}
+                } else {
+                    // Don't merge yet; update mtime so we don't refire repeatedly.
+                    _concur.lastModTimes[c.type] = c.mt;
+                }
+            } catch(e) { /* silent */ }
+        }
+    }
+    function _restartPollTimer() {
+        if (_concur.timer) clearInterval(_concur.timer);
+        const ms = _concur.openEdit ? 10000 : 30000;
+        _concur.timer = setInterval(_concurPollOnce, ms);
+    }
+    function _startConcurrencyPolling() {
+        if (!accessToken) return;
+        _restartPollTimer();
+        setTimeout(_concurPollOnce, 1500);  // baseline poll soon after start
+    }
+    // Called from saveData() after a successful write — suppress one poll cycle
+    // so we don't self-trigger an "external change" banner from our own save.
+    function _concurMarkLocalSave(type) {
+        _concur.suppressFor[type] = Date.now() + 8000;
+        _concur.lastSyncAt = new Date();
+        _updateSyncIndicator();
+    }
+
     // ── FUND TRACKING DATA — Pool-based fund system (Phase A+B) ──
     // Architecture: Main App creates fundRequests.json + fundPools.json in the
     // shared folder, then shares each individually with imsetechnician@gmail.com.
@@ -910,6 +1199,7 @@
             throw new Error('FUND_NOT_CONFIGURED');
         }
         await writeFile(id, fundRequests);
+        try { _concurMarkLocalSave('fundRequests'); } catch(e) {}
     }
 
     // ── LOAD / SAVE ───────────────────────────────────────────────
@@ -1143,6 +1433,8 @@
         const fileId = idMap[type];
         if (!fileId || fileId.startsWith('PASTE_')) { showToast('⚠️ File ID not configured'); return; }
         await writeFile(fileId, data);
+        // Level 2 concurrency: suppress next poll for this file (avoid self-trigger)
+        try { _concurMarkLocalSave(type); } catch(e) {}
     }
 
     // ── TOAST ─────────────────────────────────────────────────────
@@ -1184,6 +1476,8 @@
     function selectUser(staffID, name) {
         currentUser = { staffID, name };
         renderApp();
+        // Level 2 concurrency: start background polling once we know who's editing
+        try { _startConcurrencyPolling(); } catch(e) { console.warn('Concurrency poll start failed:', e); }
     }
 
     function renderLogin() {
@@ -1226,10 +1520,14 @@
                             : `<p style="font-size:10px;color:#94a3b8">Field Staff Portal</p>`}
                     </div>
                 </div>
-                <button onclick="syncData(this)" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold" style="background:rgba(255,255,255,.12);color:#e2e8f0">
-                    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0019.49 15"/></svg>
-                    Sync
-                </button>
+                <div class="flex items-center gap-2">
+                    <!-- Level 2 concurrency: last-sync indicator -->
+                    <span id="syncIndicator" title="Background sync from Drive" style="font-size:10px;font-weight:600;padding:3px 8px;border-radius:6px;background:rgba(255,255,255,.12);color:#a5d8ff">🔄 just now</span>
+                    <button onclick="syncData(this)" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold" style="background:rgba(255,255,255,.12);color:#e2e8f0">
+                        <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0019.49 15"/></svg>
+                        Sync
+                    </button>
+                </div>
             </div>
         </header>
 
@@ -1486,9 +1784,12 @@
         _updateFundReqBankPreview();
         techSel.onchange = _updateFundReqBankPreview;
         document.getElementById('fundReqModal').classList.add('show');
+        // Level 2 concurrency — new request, no existing record to guard
+        _concurBeginEdit('fundRequests', []);
     }
     function closeFundReqModal() {
         document.getElementById('fundReqModal').classList.remove('show');
+        _concurEndEdit();
     }
     function _updateFundReqBankPreview() {
         const sid = document.getElementById('frRequester').value;
@@ -1551,6 +1852,7 @@
             createdAt:        now.toISOString(),
             updatedAt:        now.toISOString()
         };
+        _stampRecord(newReq);
         fundRequests.push(newReq);
         try {
             await saveFundRequests();
@@ -1581,9 +1883,12 @@
             showToast('⚠ Cannot cancel — request is already ' + r.status.toLowerCase());
             return;
         }
+        // Level 2 concurrency — guard against the office having approved/rejected this since we last saw it
+        if (await _concurBlockIfStale('fundRequests', [{ id: reqID, idKey: 'requestID' }])) return;
         r.status = 'Cancelled';
         r.cancelledReason = 'Cancelled by technician';
         r.updatedAt = new Date().toISOString();
+        _stampRecord(r);
         try {
             await saveFundRequests();
             renderView();
@@ -1964,6 +2269,15 @@
         document.getElementById('eiAmt').dataset.originalAmount = item ? String(parseFloat(item.amount) || 0) : '0';
         _updatePoolSuggestion();
         document.getElementById('expItemModal').classList.add('show');
+        // Level 2 concurrency: lock unit is the nested expense item
+        if (itemID) {
+            _concurBeginEdit('projectExpenses', [
+                { id: projID, idKey: 'projExpID' },
+                { id: itemID, idKey: 'itemID', container: 'items' }
+            ]);
+        } else {
+            _concurBeginEdit('projectExpenses', []);
+        }
     }
 
     // Re-populate "Use Pool" dropdown live as amount changes.
@@ -2053,6 +2367,7 @@
         document.getElementById('expItemModal').classList.remove('show');
         _eiStaffRows=[]; _eiBillAttachments=[]; _eiStagedFiles=[];
         const sg=document.getElementById('eiStagedGrid'); if(sg) sg.innerHTML='';
+        _concurEndEdit();
     }
 
     async function saveExpItem(e) {
@@ -2062,6 +2377,15 @@
         const idx    = projectExpenses.findIndex(x=>x.projExpID===projID);
         if (idx<0) return;
         if (!projectExpenses[idx].items) projectExpenses[idx].items=[];
+
+        // ── Level 2 concurrency: pre-save staleness check on the item being edited ──
+        if (itemID) {
+            const stalePath = [
+                { id: projID, idKey: 'projExpID' },
+                { id: itemID, idKey: 'itemID', container: 'items' }
+            ];
+            if (await _concurBlockIfStale('projectExpenses', stalePath)) return;
+        }
 
         // ── Phase C: validate Paid By ──
         const paidByStaffID = document.getElementById('eiPaidBy').value;
@@ -2112,12 +2436,15 @@
             addedAt:         oldItem?.addedAt || new Date().toISOString(),
             updatedAt:       new Date().toISOString()
         };
+        _stampRecord(entry);
         if (itemID) {
             const ei = projectExpenses[idx].items.findIndex(i=>i.itemID===itemID);
             if (ei>=0) projectExpenses[idx].items[ei]=entry; else projectExpenses[idx].items.push(entry);
         } else {
             projectExpenses[idx].items.push(entry);
         }
+        // Also stamp the parent project — its items[] changed
+        _stampRecord(projectExpenses[idx]);
 
         // ── Phase C: Recompute affected pools (auto-close at 0, auto-reopen if reduced) ──
         const poolsToRecompute = new Set();
@@ -2138,6 +2465,7 @@
             // Field app cannot write fundPools (Viewer-only). Pool status changes will sync next time
             // Main App admin reviews. The pool's runningBalance is just a cache — recomputed live.
             // So we DON'T saveData('fundPools', ...) — that would fail with permission error.
+            _concurEndEdit();
             closeExpItemModal();
             renderView();
             const baseToast = newPoolID
@@ -2156,6 +2484,11 @@
         if (!confirm('Delete this expense entry?')) return;
         const idx = projectExpenses.findIndex(x=>x.projExpID===projID);
         if (idx<0) return;
+        // Level 2 concurrency — block stale delete on the nested item
+        if (await _concurBlockIfStale('projectExpenses', [
+            { id: projID, idKey: 'projExpID' },
+            { id: itemID, idKey: 'itemID', container: 'items' }
+        ])) return;
         // Phase C: remember which pool to recompute after delete
         const oldItem = (projectExpenses[idx].items||[]).find(i => i.itemID === itemID);
         const refundPoolID = oldItem?.poolID || '';
@@ -2165,6 +2498,7 @@
             const pool = (fundPools||[]).find(p => p.poolID === refundPoolID);
             if (pool) _fieldRecomputePool(pool);
         }
+        _stampRecord(projectExpenses[idx]);
         try {
             await saveData('projectExpenses', projectExpenses);
             renderView();
@@ -2890,6 +3224,11 @@
             }
         }
         document.getElementById('calibModal').classList.add('show');
+        // Level 2 concurrency — lock unit is the parent dailyEntry per spec
+        _concurBeginEdit('workLogs', [
+            { id: wlID, idKey: 'wlID' },
+            { id: entryID, idKey: 'entryID', container: 'dailyEntries' }
+        ]);
     }
 
     function closeCalibModal() {
@@ -2898,6 +3237,7 @@
         _customColHeaders=[]; _customColKeys=[]; _customTitle='';
         // Remove the custom tip element if present
         const tip = document.getElementById('customTableTip'); if (tip) tip.remove();
+        _concurEndEdit();
     }
 
     async function saveCalibRecord() {
@@ -2906,6 +3246,13 @@
         const calibID = document.getElementById('calibEditID').value;
         const comp    = document.getElementById('calibComponent').value;
         if (!comp) { showToast('⚠️ Please select a component'); return; }
+
+        // ── Level 2 concurrency: lock unit is the parent dailyEntry ──
+        const stalePath = [
+            { id: wlID, idKey: 'wlID' },
+            { id: entryID, idKey: 'entryID', container: 'dailyEntries' }
+        ];
+        if (await _concurBlockIfStale('workLogs', stalePath)) return;
 
         const isCustom = !!_calibTemplate?._isCustom;
         const rec = {
@@ -2929,6 +3276,7 @@
             _isCustom:  isCustom,
             customTitle: isCustom ? (_customTitle || '') : ''
         };
+        _stampRecord(rec);
 
         const wlIdx = workLogs.findIndex(x=>x.wlID===wlID);
         if (wlIdx<0) return;
@@ -2943,7 +3291,10 @@
         } else {
             workLogs[wlIdx].dailyEntries[ei].calibrations.push(rec);
         }
+        // Bubble lastModified up to parent dailyEntry — the calibration is part of it
+        _stampRecord(workLogs[wlIdx].dailyEntries[ei]);
         await saveData('workLogs', workLogs);
+        _concurEndEdit();
         closeCalibModal();
         renderView();
         showToast('✅ Calibration record saved');
@@ -2953,8 +3304,14 @@
         if (!confirm('Delete this calibration record?')) return;
         const wlIdx=workLogs.findIndex(x=>x.wlID===wlID);if(wlIdx<0)return;
         const ei=workLogs[wlIdx].dailyEntries.findIndex(e=>e.entryID===entryID);if(ei<0)return;
+        // Level 2 concurrency — parent dailyEntry is the lock unit
+        if (await _concurBlockIfStale('workLogs', [
+            { id: wlID, idKey: 'wlID' },
+            { id: entryID, idKey: 'entryID', container: 'dailyEntries' }
+        ])) return;
         workLogs[wlIdx].dailyEntries[ei].calibrations=
             (workLogs[wlIdx].dailyEntries[ei].calibrations||[]).filter(c=>c.calibID!==calibID);
+        _stampRecord(workLogs[wlIdx].dailyEntries[ei]);
         await saveData('workLogs',workLogs);
         renderView();
         showToast('🗑️ Calibration record deleted');
@@ -3167,12 +3524,22 @@
         else _wlStaffRows=[{name:'',staffID:''}];
         renderWlStaffRows();
         document.getElementById('wlModal').classList.add('show');
+        // Level 2 concurrency: register the open-edit context
+        _concurBeginEdit('workLogs', id ? [{ id, idKey: 'wlID' }] : []);
     }
-    function closeWlModal(){document.getElementById('wlModal').classList.remove('show');_editWlID=null;_wlStaffRows=[];}
+    function closeWlModal(){
+        document.getElementById('wlModal').classList.remove('show');
+        _editWlID=null;_wlStaffRows=[];
+        _concurEndEdit();
+    }
     function editWorkLog(id){openWlModal(id);}
 
     async function saveWorkLog(e){
         e.preventDefault();
+        // Level 2 concurrency: pre-save staleness check (edits only)
+        if (_editWlID) {
+            if (await _concurBlockIfStale('workLogs', [{ id: _editWlID, idKey: 'wlID' }])) return;
+        }
         const techs=_wlStaffRows.filter(r=>r.name).map(r=>({name:r.name,staffID:r.staffID||staffList.find(s=>s.name===r.name)?.staffID||''}));
         const existing=_editWlID?workLogs.find(x=>x.wlID===_editWlID):null;
         const obj={
@@ -3190,14 +3557,17 @@
             dailyEntries: existing?.dailyEntries||[],
             createdAt:    existing?.createdAt||new Date().toISOString()
         };
+        _stampRecord(obj);
         if(_editWlID){const i=workLogs.findIndex(x=>x.wlID===_editWlID);if(i>=0)workLogs[i]=obj;else workLogs.push(obj);}
         else workLogs.push(obj);
         await saveData('workLogs',workLogs);
+        _concurEndEdit();
         closeWlModal();renderView();showToast('✅ Work log saved');
     }
 
     async function deleteWorkLog(id){
         if(!confirm('Delete this project work log and ALL daily entries? This cannot be undone.'))return;
+        if (await _concurBlockIfStale('workLogs', [{ id, idKey: 'wlID' }])) return;
         workLogs=workLogs.filter(x=>x.wlID!==id);
         await saveData('workLogs',workLogs);renderView();showToast('🗑️ Work log deleted');
     }
@@ -3398,11 +3768,23 @@
         if(entry?.photos)_dayPhotos=[...entry.photos];
         renderDayPhotoGrid();
         document.getElementById('dayModal').classList.add('show');
+        // Level 2 concurrency: lock unit for a daily entry = the entry itself,
+        // not the parent work log. Path walks parent → child.
+        if (entryID) {
+            _concurBeginEdit('workLogs', [
+                { id: wlID,    idKey: 'wlID' },
+                { id: entryID, idKey: 'entryID', container: 'dailyEntries' }
+            ]);
+        } else {
+            // New entry — no staleness check, but speed up polling.
+            _concurBeginEdit('workLogs', []);
+        }
     }
 
     function closeDayModal(){
         document.getElementById('dayModal').classList.remove('show');
         _editEntryID=null;_dayPhotos=[];_dayStaffRows=[];
+        _concurEndEdit();
     }
 
     function editDayEntry(wlID,entryID){openDayModal(wlID,entryID);}
@@ -3410,6 +3792,15 @@
     async function saveDayEntry(e){
         e.preventDefault();
         const wlID=document.getElementById('dayWlID').value;
+        const entryID=document.getElementById('dayEntryID').value;
+        // Level 2 concurrency: pre-save staleness check on the dailyEntry record
+        if (entryID) {
+            const path = [
+                { id: wlID,    idKey: 'wlID' },
+                { id: entryID, idKey: 'entryID', container: 'dailyEntries' }
+            ];
+            if (await _concurBlockIfStale('workLogs', path)) return;
+        }
         // Upload any staged photos first
         const hasStagedPhotos = _dayPhotos.some(ph=>ph._staged);
         if (hasStagedPhotos) {
@@ -3430,7 +3821,6 @@
                 renderDayPhotoGrid();
             }
         }
-        const entryID=document.getElementById('dayEntryID').value;
         const wlIdx=workLogs.findIndex(x=>x.wlID===wlID);if(wlIdx<0)return;
         if(!workLogs[wlIdx].dailyEntries)workLogs[wlIdx].dailyEntries=[];
         const techs=_dayStaffRows.filter(r=>r.name).map(r=>({name:r.name,staffID:r.staffID||staffList.find(s=>s.name===r.name)?.staffID||''}));
@@ -3456,6 +3846,8 @@
             const existingEntry = workLogs[wlIdx]?.dailyEntries?.find(x=>x.entryID===entryID);
             if(existingEntry?.calibrations) entry.calibrations = existingEntry.calibrations;
         }
+        // Stamp the daily entry itself — this is the lock unit
+        _stampRecord(entry);
         if(entryID){
             const ei=workLogs[wlIdx].dailyEntries.findIndex(x=>x.entryID===entryID);
             if(ei>=0)workLogs[wlIdx].dailyEntries[ei]=entry;else workLogs[wlIdx].dailyEntries.push(entry);
@@ -3464,12 +3856,19 @@
         }
         // Auto-update project status if all days have a last entry with Completed
         await saveData('workLogs',workLogs);
+        _concurEndEdit();
         closeDayModal();renderView();showToast('✅ Daily entry saved');
     }
 
     async function deleteDayEntry(wlID,entryID){
         if(!confirm('Delete this daily entry?'))return;
         const i=workLogs.findIndex(x=>x.wlID===wlID);if(i<0)return;
+        // Level 2 concurrency: pre-delete staleness check on the dailyEntry itself
+        const path = [
+            { id: wlID,    idKey: 'wlID' },
+            { id: entryID, idKey: 'entryID', container: 'dailyEntries' }
+        ];
+        if (await _concurBlockIfStale('workLogs', path)) return;
         workLogs[i].dailyEntries=(workLogs[i].dailyEntries||[]).filter(e=>e.entryID!==entryID);
         await saveData('workLogs',workLogs);renderView();showToast('🗑️ Entry deleted');
     }
