@@ -2289,6 +2289,337 @@
             } catch(e) { /* silent */ }
         }
 
+        // ════════════════════════════════════════════════════════════════
+        // LEVEL 2 CONCURRENCY — Polling + Record-Level Optimistic Locking
+        // ────────────────────────────────────────────────────────────────
+        // Strategy:
+        //  • Every record carries lastModifiedAt + lastModifiedBy after save.
+        //  • Background polling fetches Drive metadata (modifiedTime) only;
+        //    a full file fetch happens only when modifiedTime changed.
+        //  • Poll interval: 30s normally, 10s while any modal is open.
+        //  • When a modal is open and the record it edits changes server-side,
+        //    a non-blocking banner appears: "⚠ This record was updated by
+        //    someone else. [View changes]".
+        //  • On save, the record's current server-side lastModifiedAt is
+        //    compared against the snapshot captured at modal open. If they
+        //    differ AND lastModifiedBy is someone else, the save is blocked
+        //    with: "Modified by [user] at [time]. Refresh and re-apply."
+        //  • Legacy records (no lastModifiedAt) are treated as safe on first
+        //    save — we simply stamp them.
+        // ════════════════════════════════════════════════════════════════
+        const _concur = {
+            // Files watched by the poller (logical type → in-memory variable getter).
+            // Order matters only for display; everything is independent.
+            watched: [
+                { type: 'projectExpenses', getMem: () => projectExpenses, setMem: (d) => { projectExpenses = d; } },
+                { type: 'workLogs',        getMem: () => workLogs,        setMem: (d) => { workLogs = d; } },
+                { type: 'expenses',        getMem: () => expenses,        setMem: (d) => { expenses = d; } },
+                { type: 'transactions',    getMem: () => transactions,    setMem: (d) => { transactions = d; } },
+                { type: 'staff',           getMem: () => staff,           setMem: (d) => { staff = d; } },
+                { type: 'directorExpenses',getMem: () => directorExpenses,setMem: (d) => { directorExpenses = d; } },
+                { type: 'payslips',        getMem: () => payslips,        setMem: (d) => { payslips = d; } },
+                { type: 'fundRequests',    getMem: () => fundRequests,    setMem: (d) => { fundRequests = d; } },
+                { type: 'fundPools',       getMem: () => fundPools,       setMem: (d) => { fundPools = d; } },
+                { type: 'parties',         getMem: () => parties,         setMem: (d) => { parties = d; } },
+                { type: 'bankAccounts',    getMem: () => bankAccounts,    setMem: (d) => { bankAccounts = d; } },
+                { type: 'settings',        getMem: () => settings,        setMem: (d) => { settings = d; } }
+            ],
+            // Drive modifiedTime we last observed per file (ISO string)
+            lastModTimes: {},
+            // Last time we successfully polled (any file) — drives the indicator
+            lastSyncAt: null,
+            // Polling timer
+            timer: null,
+            // Currently open editing context
+            //   { type, recordPath: [{ collection, id, idKey }...], snapshotMtime, snapshotMby }
+            // recordPath is a chain into nested records — for daily entries it's
+            //   [{ id: wlID, idKey: 'wlID' }, { id: entryID, idKey: 'entryID', container: 'dailyEntries' }]
+            openEdit: null,
+            // Set to true when a watched file changed and the change touched the open record
+            externalChangeBanner: false,
+            // Suppress the next poll fetch after we just saved (we already have the latest)
+            suppressFor: {}
+        };
+
+        // Identity used for stamping records — falls back to email if name missing.
+        function _concurWhoAmI() {
+            return (currentUser?.email || '').toLowerCase() || 'unknown';
+        }
+
+        // Stamp a single record with last-modified metadata.
+        // Mutates the object in place.
+        function _stampRecord(rec) {
+            if (!rec || typeof rec !== 'object') return rec;
+            rec.lastModifiedAt = new Date().toISOString();
+            rec.lastModifiedBy = _concurWhoAmI();
+            return rec;
+        }
+
+        // Find a record inside an in-memory dataset by path.
+        // path = [{ id, idKey, container? }, ...]   container is the nested array name.
+        function _findRecordByPath(dataset, path) {
+            if (!Array.isArray(dataset) || !Array.isArray(path) || !path.length) return null;
+            let arr = dataset, rec = null;
+            for (let i = 0; i < path.length; i++) {
+                const step = path[i];
+                if (i > 0 && step.container) {
+                    arr = (rec && rec[step.container]) || [];
+                }
+                rec = arr.find(r => r && r[step.idKey] === step.id) || null;
+                if (!rec) return null;
+            }
+            return rec;
+        }
+
+        // Take a snapshot of (lastModifiedAt, lastModifiedBy) for the path; null if record absent or unmodified.
+        function _snapshotRecord(type, path) {
+            const w = _concur.watched.find(x => x.type === type);
+            if (!w) return { mtime: null, mby: null, missing: true };
+            const rec = _findRecordByPath(w.getMem(), path);
+            if (!rec) return { mtime: null, mby: null, missing: true };
+            return { mtime: rec.lastModifiedAt || null, mby: rec.lastModifiedBy || null, missing: false };
+        }
+
+        // Public — called by modal openers to register the open-edit context.
+        // pass null/empty for new records (no staleness check).
+        function _concurBeginEdit(type, path) {
+            if (!type || !Array.isArray(path) || !path.length) {
+                _concur.openEdit = { type: type || null, recordPath: [], snapshotMtime: null, snapshotMby: null, isNew: true };
+            } else {
+                const snap = _snapshotRecord(type, path);
+                _concur.openEdit = {
+                    type, recordPath: path,
+                    snapshotMtime: snap.mtime,
+                    snapshotMby: snap.mby,
+                    isNew: snap.missing || !snap.mtime
+                };
+            }
+            _concur.externalChangeBanner = false;
+            _hideExternalChangeBanner();
+            _restartPollTimer();
+        }
+
+        function _concurEndEdit() {
+            _concur.openEdit = null;
+            _concur.externalChangeBanner = false;
+            _hideExternalChangeBanner();
+            _restartPollTimer();
+        }
+
+        // ── PRE-SAVE STALENESS CHECK ────────────────────────────────────
+        // Compare the current server-side record's lastModifiedAt against the
+        // snapshot taken at modal-open. If newer AND by someone else → block.
+        // For new records or legacy records (no lastModifiedAt), pass through.
+        //
+        // Returns { stale: false }  → safe to save
+        //         { stale: true, by, atIso }  → block save, show message
+        async function _concurCheckStale(type, path) {
+            if (!path || !path.length) return { stale: false };       // new record
+            if (!_concur.openEdit || _concur.openEdit.isNew) return { stale: false };
+            const me = _concurWhoAmI();
+            const snapMtime = _concur.openEdit.snapshotMtime;
+            // If there was no prior mtime (legacy), accept this save and let it stamp.
+            if (!snapMtime) return { stale: false };
+            // Pull the freshest server copy to inspect — only one file's worth.
+            try {
+                const fresh = await loadFileFromDrive(`${type}.json`);
+                if (!Array.isArray(fresh)) return { stale: false };
+                const rec = _findRecordByPath(fresh, path);
+                if (!rec) return { stale: false };
+                const serverMtime = rec.lastModifiedAt || null;
+                const serverBy    = rec.lastModifiedBy || null;
+                if (!serverMtime) return { stale: false };
+                if (serverMtime === snapMtime) return { stale: false };
+                // Modified — only block if by someone else
+                if (serverBy && serverBy !== me) {
+                    return { stale: true, by: serverBy, atIso: serverMtime, fresh };
+                }
+                return { stale: false };
+            } catch(e) {
+                // On network error, fail open (don't block the save)
+                console.warn('Staleness check failed (non-blocking):', e.message);
+                return { stale: false };
+            }
+        }
+
+        // Convenience: shows the spec-mandated stale-save block message.
+        // Returns true if the save should be blocked, false if it can proceed.
+        // Call pattern:
+        //   if (await _concurBlockIfStale('workLogs', path)) return;
+        async function _concurBlockIfStale(type, path) {
+            const stale = await _concurCheckStale(type, path);
+            if (!stale.stale) return false;
+            const when = stale.atIso ? new Date(stale.atIso).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : 'just now';
+            const msg = `Modified by ${stale.by || 'another user'} at ${when}. Refresh and re-apply.`;
+            _showToast('⛔ ' + msg, '#dc2626', 6000);
+            return true;
+        }
+
+        // ── EXTERNAL CHANGE BANNER (non-blocking, inside modal) ─────────
+        function _showExternalChangeBanner(by) {
+            let el = document.getElementById('_externalChangeBanner');
+            if (!el) {
+                el = document.createElement('div');
+                el.id = '_externalChangeBanner';
+                el.style.cssText = 'position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:60;'
+                                 + 'background:#fef3c7;border:1.5px solid #f59e0b;color:#92400e;'
+                                 + 'padding:10px 16px;border-radius:12px;font-size:13px;font-weight:600;'
+                                 + 'box-shadow:0 6px 24px rgba(0,0,0,.18);display:flex;align-items:center;gap:12px;max-width:520px';
+                document.body.appendChild(el);
+            }
+            const byTxt = by ? ` by ${by}` : '';
+            el.innerHTML = `<span>⚠ This record was updated${byTxt} by someone else.</span>`
+                         + `<button onclick="_concurViewExternalChanges()" style="background:#d97706;color:#fff;border:none;border-radius:8px;padding:6px 12px;font-weight:700;font-size:12px;cursor:pointer">View changes</button>`;
+            el.style.display = 'flex';
+        }
+        function _hideExternalChangeBanner() {
+            const el = document.getElementById('_externalChangeBanner');
+            if (el) el.style.display = 'none';
+        }
+        // Click handler — refreshes the in-memory data and re-renders the views.
+        // The modal stays open so the user can decide; they can cancel or proceed.
+        async function _concurViewExternalChanges() {
+            try {
+                await refreshDataFromDrive();
+                _hideExternalChangeBanner();
+                _showToast('🔄 Latest data loaded — close & reopen this record to see updates', '#0ea5e9', 4500);
+            } catch(e) { _showToast('Refresh failed: ' + e.message, '#dc2626'); }
+        }
+
+        // ── LAST-SYNC INDICATOR ─────────────────────────────────────────
+        function _updateSyncIndicator() {
+            const el = document.getElementById('syncIndicator');
+            if (!el) return;
+            if (!_concur.lastSyncAt) { el.textContent = '⏳ Sync: never'; return; }
+            const secs = Math.round((Date.now() - _concur.lastSyncAt.getTime()) / 1000);
+            let txt;
+            if (secs < 5)         txt = 'just now';
+            else if (secs < 60)   txt = `${secs}s ago`;
+            else if (secs < 3600) txt = `${Math.round(secs/60)}m ago`;
+            else                  txt = `${Math.round(secs/3600)}h ago`;
+            el.textContent = '🔄 Last sync: ' + txt;
+        }
+        // Tick the indicator every second so the "X seconds ago" text updates live.
+        setInterval(_updateSyncIndicator, 1000);
+
+        // ── POLLING ─────────────────────────────────────────────────────
+        // Fetch only modifiedTime for each watched file. If changed since we
+        // last saw it, fetch full content and merge into memory.
+        async function _concurPollOnce() {
+            if (!accessToken || !currentUser?.email) return;
+            if (document.visibilityState !== 'visible') return;
+            let folderId;
+            try { folderId = await getOrCreateAppFolder(); }
+            catch(e) { return; }
+            const authHdr = { 'Authorization': `Bearer ${accessToken}` };
+
+            // Single LIST query for all watched JSON files — much faster than N individual queries.
+            const types = _concur.watched.map(w => w.type);
+            const q = encodeURIComponent(
+                `'${folderId}' in parents and trashed=false and (` +
+                types.map(t => `name='${t}.json'`).join(' or ') + `)`
+            );
+            let listData;
+            try {
+                const r = await fetch(
+                    `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime)&spaces=drive&pageSize=50`,
+                    { headers: authHdr }
+                );
+                if (!r.ok) return;
+                listData = await r.json();
+            } catch(e) { return; }
+            const files = listData.files || [];
+            const changedTypes = [];
+            for (const f of files) {
+                const type = f.name.replace(/\.json$/, '');
+                const w = _concur.watched.find(x => x.type === type);
+                if (!w) continue;
+                if (_concur.suppressFor[type] && _concur.suppressFor[type] > Date.now()) {
+                    // We just saved this file; skip one cycle to avoid false-positive change.
+                    _concur.lastModTimes[type] = f.modifiedTime;
+                    continue;
+                }
+                const prev = _concur.lastModTimes[type];
+                if (!prev) {
+                    // First poll — just record the time, don't refetch
+                    _concur.lastModTimes[type] = f.modifiedTime;
+                    continue;
+                }
+                if (f.modifiedTime !== prev) {
+                    changedTypes.push({ type, fileId: f.id, mt: f.modifiedTime, w });
+                }
+            }
+            // Mark a successful poll (metadata-only) before any fetches
+            _concur.lastSyncAt = new Date();
+            _updateSyncIndicator();
+
+            // For each changed type, fetch full content and merge.
+            for (const c of changedTypes) {
+                try {
+                    const dlRes = await fetch(
+                        `https://www.googleapis.com/drive/v3/files/${c.fileId}?alt=media`,
+                        { headers: authHdr }
+                    );
+                    if (!dlRes.ok) continue;
+                    const text = await dlRes.text();
+                    if (!text) continue;
+                    const parsed = JSON.parse(text);
+                    // If a modal is currently editing a record from this type,
+                    // check whether THAT record changed — show non-blocking banner.
+                    if (_concur.openEdit && _concur.openEdit.type === c.type
+                        && _concur.openEdit.recordPath?.length) {
+                        const oldRec = _findRecordByPath(c.w.getMem(), _concur.openEdit.recordPath);
+                        const newRec = _findRecordByPath(parsed, _concur.openEdit.recordPath);
+                        const oldMt = oldRec?.lastModifiedAt || _concur.openEdit.snapshotMtime || null;
+                        const newMt = newRec?.lastModifiedAt || null;
+                        const newBy = newRec?.lastModifiedBy || null;
+                        if (newMt && oldMt !== newMt && newBy !== _concurWhoAmI()) {
+                            _concur.externalChangeBanner = true;
+                            _showExternalChangeBanner(newBy);
+                        }
+                    }
+                    // Merge into memory (last-write-wins — same convention as existing code).
+                    // We only update if no modal-edit is in progress for this type, to
+                    // avoid clobbering the user's in-progress edits in adjacent records.
+                    // The user can click "View changes" in the banner to manually refresh.
+                    if (!_concur.openEdit || _concur.openEdit.type !== c.type) {
+                        // Massage settings (object vs array)
+                        if (c.type === 'settings') {
+                            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) c.w.setMem(parsed);
+                        } else if (Array.isArray(parsed)) {
+                            c.w.setMem(parsed);
+                        }
+                        _concur.lastModTimes[c.type] = c.mt;
+                        // Re-render if user is currently viewing a relevant tab — cheap call.
+                        try { if (typeof renderView === 'function') renderView(); } catch(e) {}
+                    } else {
+                        // Don't overwrite memory while the user is editing; just update mtime
+                        // so we don't keep re-firing. The banner already alerted them.
+                        _concur.lastModTimes[c.type] = c.mt;
+                    }
+                } catch(e) { /* silent */ }
+            }
+        }
+        // Set up polling cadence. Slower when idle, faster when a modal is open.
+        function _restartPollTimer() {
+            if (_concur.timer) clearInterval(_concur.timer);
+            const ms = _concur.openEdit ? 10000 : 30000;
+            _concur.timer = setInterval(_concurPollOnce, ms);
+        }
+        function _startConcurrencyPolling() {
+            if (!accessToken) return;
+            _restartPollTimer();
+            // Run one quick poll so we capture baseline modifiedTimes immediately.
+            setTimeout(_concurPollOnce, 1500);
+        }
+        // Convenience — call from saveData after a successful write to suppress
+        // the next poll firing a self-triggered "external change" for that file.
+        function _concurMarkLocalSave(type) {
+            _concur.suppressFor[type] = Date.now() + 8000; // 8s suppress window
+            _concur.lastSyncAt = new Date();
+            _updateSyncIndicator();
+        }
+
         // ── 3. CHANGE TRACKING & DIRTY FLAG ────────────────────────────
         // Called every time data is modified in memory
         function _markDirty(type) {
@@ -3032,6 +3363,8 @@
 
                 startTokenRefreshTimer();  // Start proactive token refresh
                 renderApp();
+                // Level 2 concurrency: begin background polling for record-level changes
+                try { _startConcurrencyPolling(); } catch(e) { console.warn('Concurrency poll start failed:', e); }
 
             } catch (error) {
                 console.error('❌ Error loading data from Drive:', error);
@@ -3129,6 +3462,8 @@
                 _saveInProgress[type] = false;
                 if (!window._lastLoadTime) window._lastLoadTime = {};
                 window._lastLoadTime[type] = Date.now(); // update our "loaded at" timestamp
+                // Level 2 concurrency: suppress next poll for this file (we know it's our own write)
+                try { _concurMarkLocalSave(type); } catch(e) {}
                 _showSaveIndicator(type, 'saved');
                 // If this save was for a queued type, clear the queue entry
                 if (_pendingSaveQueue[type]) {
@@ -4632,6 +4967,8 @@
                                 </div>
                                 <!-- Save indicator -->
                                 <div id="saveIndicator" style="display:none;font-size:12px;font-weight:600;padding:4px 12px;border-radius:8px;background:#f0fdf4;border:1px solid #bbf7d0"></div>
+                                <!-- Last-sync indicator (Level 2 concurrency) -->
+                                <div id="syncIndicator" title="Background sync from Drive (Level 2 concurrency)" style="font-size:11px;font-weight:600;padding:4px 12px;border-radius:8px;background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8">🔄 Last sync: just now</div>
                                 <!-- Lock banner -->
                                 <div id="lockBanner" style="display:none;font-size:11px;font-weight:600;padding:4px 12px;border-radius:8px;background:#fef9c3;border:1px solid #fde68a;color:#92400e;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>
                                 <!-- User avatar + name -->
@@ -6289,7 +6626,10 @@
             if (!confirm(`Change status from "${oldStatus}" to "${newStatus}"?`)) {
                 renderView(); return;   // reset dropdown
             }
+            // Level 2 concurrency: pre-save staleness check
+            if (await _concurBlockIfStale('transactions', [{ id: txnID, idKey: 'txnID' }])) { renderView(); return; }
             transactions[idx].status = newStatus;
+            _stampRecord(transactions[idx]);
             await saveData('transactions', transactions);
             renderView();
         }
@@ -6407,15 +6747,22 @@
                 document.getElementById('baActive').value = 'true';
             }
             document.getElementById('bankAccountModal').classList.add('show');
+            // Level 2 concurrency
+            _concurBeginEdit('bankAccounts', ba?.id ? [{ id: ba.id, idKey: 'id' }] : []);
         }
 
         function closeBankAccountModal() {
             document.getElementById('bankAccountModal').classList.remove('show');
             currentBankAccount = null;
+            _concurEndEdit();
         }
 
         async function saveBankAccount(e) {
             e.preventDefault();
+            // Level 2 concurrency: pre-save staleness check
+            if (currentBankAccount?.id) {
+                if (await _concurBlockIfStale('bankAccounts', [{ id: currentBankAccount.id, idKey: 'id' }])) return;
+            }
             const ba = {
                 id:             currentBankAccount?.id || 'BA' + String(bankAccounts.length + 1).padStart(3, '0'),
                 accountName:    document.getElementById('baAccountName').value,
@@ -6427,6 +6774,7 @@
                 isActive:       document.getElementById('baActive').value === 'true',
                 branchAddress:  document.getElementById('baBranchAddress').value
             };
+            _stampRecord(ba);
 
             if (currentBankAccount) {
                 const idx = bankAccounts.findIndex(b => b.id === currentBankAccount.id);
@@ -6436,6 +6784,7 @@
             }
 
             await saveData('bankAccounts', bankAccounts);
+            _concurEndEdit();
             closeBankAccountModal();
             renderView(); // Refresh settings view
         }
@@ -6444,6 +6793,7 @@
 
         async function deleteBankAccount(id) {
             if (!confirm('Delete this bank account?')) return;
+            if (await _concurBlockIfStale('bankAccounts', [{ id, idKey: 'id' }])) return;
             bankAccounts = bankAccounts.filter(b => b.id !== id);
             await saveData('bankAccounts', bankAccounts);
             renderView();
@@ -7156,6 +7506,8 @@
             // Init ITC sub-section visibility + run GSTIN detection if value is present
             onGSTInputToggle();
             document.getElementById('expenseModal').classList.add('show');
+            // ── Level 2 concurrency: register edit context ──
+            _concurBeginEdit('expenses', exp?.expID ? [{ id: exp.expID, idKey: 'expID' }] : []);
         }
 
         function closeExpenseModal() {
@@ -7164,6 +7516,8 @@
             _stagedExpFiles = [];
             const staged = document.getElementById('expStagedFiles');
             if (staged) staged.innerHTML = '';
+            // ── Level 2 concurrency: clear edit context ──
+            _concurEndEdit();
         }
 
         function calcExpAmounts() {
@@ -7556,6 +7910,11 @@
         async function saveExpense(e) {
             e.preventDefault();
             if (window._expSaving) return;
+            // ── Level 2 concurrency: pre-save staleness check (existing record only) ──
+            if (currentExpense?.expID) {
+                const path = [{ id: currentExpense.expID, idKey: 'expID' }];
+                if (await _concurBlockIfStale('expenses', path)) return;
+            }
             window._expSaving = true;
             const saveBtn = document.querySelector('#expenseForm button[type="submit"]');
             const _showSaveToast = (msg) => {
@@ -7753,6 +8112,9 @@
                 createdAt:         currentExpense?.createdAt || new Date().toISOString()
             };
 
+            // ── Level 2 concurrency: stamp record ──
+            _stampRecord(expObj);
+
             if (currentExpense) {
                 const idx = expenses.findIndex(x => x.expID === currentExpense.expID);
                 if (idx >= 0) expenses[idx] = expObj;
@@ -7761,6 +8123,7 @@
             }
                 _stagedExpFiles = []; // clear staged queue after successful save
                 await saveData('expenses', expenses);
+                _concurEndEdit();
                 closeExpenseModal();
                 renderView();
             } catch(err) {
@@ -7782,6 +8145,8 @@
 
         async function deleteExpense(expID) {
             if (!confirm('Delete this expense record?')) return;
+            // ── Level 2 concurrency: pre-delete staleness check ──
+            if (await _concurBlockIfStale('expenses', [{ id: expID, idKey: 'expID' }])) return;
             expenses = expenses.filter(x => x.expID !== expID);
             await saveData('expenses', expenses);
             renderView();
@@ -8425,10 +8790,13 @@
         async function saveTDSPayment(expID, paid) {
             const idx = expenses.findIndex(e => e.expID === expID);
             if (idx < 0) return;
+            // Level 2 concurrency
+            if (await _concurBlockIfStale('expenses', [{ id: expID, idKey: 'expID' }])) return;
             expenses[idx].tdsPaid        = paid;
             expenses[idx].tdsChallan     = document.getElementById('tdsChallanInput')?.value?.trim() || expenses[idx].tdsChallan || '';
             expenses[idx].tdsPayDate     = document.getElementById('tdsPayDateInput')?.value || '';
             expenses[idx].tdsPayRemarks  = document.getElementById('tdsPayRemarksInput')?.value?.trim() || '';
+            _stampRecord(expenses[idx]);
             await saveData('expenses', expenses);
             document.getElementById('tdsPayModal')?.remove();
             refreshTax();
@@ -9904,12 +10272,15 @@
             toggleSupportingDocs();
             updateTxnBankSection();  // Show/hide and populate bank dropdown
             document.getElementById('transactionModal').classList.add('show');
+            // Level 2 concurrency
+            _concurBeginEdit('transactions', txn?.txnID ? [{ id: txn.txnID, idKey: 'txnID' }] : []);
         }
 
         function closeTransactionModal() {
             document.getElementById('transactionModal').classList.remove('show');
             document.getElementById('transactionForm').reset();
             lineItemCounter = 0;
+            _concurEndEdit();
         }
 
         function updatePartyDropdown() {
@@ -10096,6 +10467,10 @@
             e.preventDefault();
             
             try {
+                // Level 2 concurrency: pre-save staleness check
+                if (currentTransaction?.txnID) {
+                    if (await _concurBlockIfStale('transactions', [{ id: currentTransaction.txnID, idKey: 'txnID' }])) return;
+                }
                 const items = Array.from(document.getElementById('lineItems').children).map((row, idx) => ({
                     itemID: `item-${idx + 1}`,
                     description: row.querySelector('.item-desc').value,
@@ -10143,6 +10518,7 @@
                     convertedToInvoice: currentTransaction?.convertedToInvoice,
                     convertedFromProforma: currentTransaction?.convertedFromProforma
                 };
+                _stampRecord(txnData);
                 
                 if (currentTransaction) {
                     const index = transactions.findIndex(t => t.txnID === currentTransaction.txnID);
@@ -10161,6 +10537,7 @@
                 submitBtn.textContent = originalText;
                 submitBtn.disabled = false;
                 
+                _concurEndEdit();
                 closeTransactionModal();
                 renderView();
             } catch (error) {
@@ -10271,6 +10648,7 @@
 
         async function deleteTransaction(txnID) {
             if (confirm('Delete this transaction?')) {
+                if (await _concurBlockIfStale('transactions', [{ id: txnID, idKey: 'txnID' }])) return;
                 transactions = transactions.filter(t => t.txnID !== txnID);
                 await saveData('transactions', transactions);
                 renderView();
@@ -10294,15 +10672,22 @@
             }
             
             document.getElementById('partyModal').classList.add('show');
+            // Level 2 concurrency
+            _concurBeginEdit('parties', party?.partyID ? [{ id: party.partyID, idKey: 'partyID' }] : []);
         }
 
         function closePartyModal() {
             document.getElementById('partyModal').classList.remove('show');
             document.getElementById('partyForm').reset();
+            _concurEndEdit();
         }
 
         document.getElementById('partyForm').addEventListener('submit', async (e) => {
             e.preventDefault();
+            // Level 2 concurrency: pre-save staleness check
+            if (currentParty?.partyID) {
+                if (await _concurBlockIfStale('parties', [{ id: currentParty.partyID, idKey: 'partyID' }])) return;
+            }
             
             const partyData = {
                 partyID: currentParty?.partyID || Date.now().toString(36),
@@ -10315,6 +10700,7 @@
                 email: document.getElementById('partyEmail').value,
                 mobile: document.getElementById('partyMobile').value
             };
+            _stampRecord(partyData);
             
             if (currentParty) {
                 const index = parties.findIndex(p => p.partyID === currentParty.partyID);
@@ -10324,6 +10710,7 @@
             }
             
             await saveData('parties', parties);
+            _concurEndEdit();
             closePartyModal();
             renderView();
         });
@@ -10334,6 +10721,7 @@
 
         async function deleteParty(partyID) {
             if (confirm('Delete this party?')) {
+                if (await _concurBlockIfStale('parties', [{ id: partyID, idKey: 'partyID' }])) return;
                 parties = parties.filter(p => p.partyID !== partyID);
                 await saveData('parties', parties);
                 renderView();
@@ -10550,6 +10938,7 @@
                                     return p1 || settings.adminPin || '';
                                 })()
                 };
+                _stampRecord(settings);
                 
                 console.log('Saving settings:', settings);
                 await saveData('settings', settings);
@@ -11262,7 +11651,9 @@
                 if (!st.attendance) st.attendance = [];
                 const ei = st.attendance.findIndex(a=>a.date===today);
                 const rec = { attID: ei>=0?st.attendance[ei].attID:'ATT'+Date.now()+'_'+st.staffID, staffID:st.staffID, date:today, status, checkIn, checkOut, lateMinutes, earlyMins, extraWorkMins, project:'', remarks:'' };
+                _stampRecord(rec);
                 if (ei>=0) st.attendance[ei]=rec; else st.attendance.push(rec);
+                _stampRecord(st);
             });
             btn.disabled=true; btn.textContent='Saving…';
             try {
@@ -11768,16 +12159,21 @@ ${'─'.repeat(50)}
             if(!sid||days<=0||!date){alert('Please fill in all required fields.');return;}
             const idx = staff.findIndex(x=>x.staffID===sid);
             if(idx<0)return;
+            // Level 2 concurrency
+            if (await _concurBlockIfStale('staff', [{ id: sid, idKey: 'staffID' }])) return;
             if(!staff[idx].leaveEncashments) staff[idx].leaveEncashments=[];
-            staff[idx].leaveEncashments.push({
+            const encRec = {
                 id:'ENC'+Date.now(), date, days, amount, remarks,
                 encashedBy: currentUser?.name||'Admin',
                 encashedAt: new Date().toISOString()
-            });
+            };
+            _stampRecord(encRec);
+            staff[idx].leaveEncashments.push(encRec);
             // Reduce carried leave / opening balance by encashed days
             const currentBalance = +(staff[idx].leaveOpening||0)+(staff[idx].carriedLeave||0);
             const newBalance = Math.max(0, currentBalance - days);
             staff[idx].carriedLeave = newBalance;
+            _stampRecord(staff[idx]);
             await saveData('staff', staff);
             document.getElementById('leaveEncashModal')?.remove();
             renderView();
@@ -12746,6 +13142,8 @@ ${'─'.repeat(50)}
             _staffDocsBuf = (s && Array.isArray(s.documents)) ? JSON.parse(JSON.stringify(s.documents)) : [];
             staffDocsRender();
             document.getElementById('staffModal').classList.add('show');
+            // ── Level 2 concurrency: register edit context ──
+            _concurBeginEdit('staff', s?.staffID ? [{ id: s.staffID, idKey: 'staffID' }] : []);
         }
 
         function sAutoCalcWages(){
@@ -13045,10 +13443,15 @@ ${'─'.repeat(50)}
             document.body.appendChild(a); a.click(); a.remove();
         }
 
-        function closeStaffModal() { document.getElementById('staffModal').classList.remove('show'); currentStaff = null; _staffDocsBuf = []; }
+        function closeStaffModal() { document.getElementById('staffModal').classList.remove('show'); currentStaff = null; _staffDocsBuf = []; _concurEndEdit(); }
 
         async function saveStaff(e) {
             e.preventDefault();
+            // ── Level 2 concurrency: pre-save staleness check (existing record only) ──
+            if (currentStaff?.staffID) {
+                const path = [{ id: currentStaff.staffID, idKey: 'staffID' }];
+                if (await _concurBlockIfStale('staff', path)) return;
+            }
             const obj = {
                 staffID:        currentStaff?.staffID || 'STF' + Date.now(),
                 empCode:        document.getElementById('sEmpCode')?.value?.trim() || currentStaff?.empCode || '',
@@ -13124,9 +13527,12 @@ ${'─'.repeat(50)}
                 },
                 createdAt:      currentStaff?.createdAt || new Date().toISOString()
             };
+            // ── Level 2 concurrency: stamp record ──
+            _stampRecord(obj);
             if (currentStaff) { const i = staff.findIndex(x => x.staffID === currentStaff.staffID); if (i>=0) staff[i] = obj; }
             else staff.push(obj);
             await saveData('staff', staff);
+            _concurEndEdit();
             closeStaffModal();
             renderView();
         }
@@ -13135,6 +13541,8 @@ ${'─'.repeat(50)}
 
         async function deleteStaff(id) {
             if (!confirm('Delete this staff member and all their records?')) return;
+            // ── Level 2 concurrency: pre-delete staleness check ──
+            if (await _concurBlockIfStale('staff', [{ id, idKey: 'staffID' }])) return;
             staff = staff.filter(x => x.staffID !== id);
             await saveData('staff', staff);
             renderView();
@@ -13704,6 +14112,8 @@ Automated WFH alert — ${company} Attendance System.`;
             onAttStaffChange(sel.value);
             document.getElementById('attRemarks').value='';
             modal.classList.add('show');
+            // Level 2 concurrency — register the staff record being edited (no record yet → new entry)
+            _concurBeginEdit('staff', prefillSID ? [{ id: prefillSID, idKey: 'staffID' }] : []);
         }
         function closeAttendanceModal(){
             const modal=document.getElementById('attendanceModal');
@@ -13711,6 +14121,7 @@ Automated WFH alert — ${company} Attendance System.`;
             document.getElementById('attDate').readOnly=false;
             document.getElementById('attStaff').disabled=false;
             modal.classList.remove('show');
+            _concurEndEdit();
         }
         function editAttendance(staffID,attID){
             const st=staff.find(x=>x.staffID===staffID);
@@ -13737,10 +14148,14 @@ Automated WFH alert — ${company} Attendance System.`;
             const modal=document.getElementById('attendanceModal');
             modal.dataset.editAttID=attID;
             modal.classList.add('show');
+            // Level 2 concurrency — register parent staff record as the lock unit
+            _concurBeginEdit('staff', [{ id: staffID, idKey: 'staffID' }]);
         }
         async function saveAttendance(e){
             e.preventDefault();
             const sid=document.getElementById('attStaff').value;
+            // Level 2 concurrency: block save if parent staff record changed externally
+            if (sid && await _concurBlockIfStale('staff', [{ id: sid, idKey: 'staffID' }])) return;
             const idx=staff.findIndex(x=>x.staffID===sid);if(idx<0)return;
             if(!staff[idx].attendance)staff[idx].attendance=[];
             const dateVal=document.getElementById('attDate').value;
@@ -13801,6 +14216,9 @@ Automated WFH alert — ${company} Attendance System.`;
                 checkIn, checkOut, lateMinutes, effectiveMins,
                 wfhTask: document.getElementById('attWFHTask')?.value||''
             };
+            // Level 2 concurrency: attendance records live inside staff[].attendance[].
+            // Treat the parent staff record as the lock unit — block + stamp.
+            _stampRecord(newRec);
             if(editAttID){
                 const ei=staff[idx].attendance.findIndex(a=>a.attID===editAttID);
                 if(ei>=0)staff[idx].attendance[ei]=newRec;else staff[idx].attendance.push(newRec);
@@ -13808,6 +14226,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 const ei=staff[idx].attendance.findIndex(a=>a.date===dateVal);
                 if(ei>=0)staff[idx].attendance[ei]=newRec;else staff[idx].attendance.push(newRec);
             }
+            _stampRecord(staff[idx]);
             await saveData('staff',staff);
             // reset modal state
             document.getElementById('attendanceModal').dataset.editAttID='';
@@ -13817,7 +14236,9 @@ Automated WFH alert — ${company} Attendance System.`;
         }
         async function deleteAttendance(staffID,attID){
             const idx=staff.findIndex(x=>x.staffID===staffID);if(idx<0)return;
+            if (await _concurBlockIfStale('staff', [{ id: staffID, idKey: 'staffID' }])) return;
             staff[idx].attendance=(staff[idx].attendance||[]).filter(a=>a.attID!==attID);
+            _stampRecord(staff[idx]);
             await saveData('staff',staff);renderView();
         }
 
@@ -13972,6 +14393,8 @@ Automated WFH alert — ${company} Attendance System.`;
                 // ── Expenses tab ──────────────────────────────────
                 const idx = expenses.findIndex(e => e.expID === itemID);
                 if (idx < 0) return;
+                // Level 2 concurrency
+                if (await _concurBlockIfStale('expenses', [{ id: itemID, idKey: 'expID' }])) return;
                 if (vNo)   expenses[idx].tallyVoucherNo   = vNo;
                 if (vDate) expenses[idx].tallyVoucherDate = vDate;
                 if (_tvAttachment) {
@@ -13982,6 +14405,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 }
                 expenses[idx].tallyUpdated   = true;
                 expenses[idx].tallyUpdatedAt = new Date().toISOString();
+                _stampRecord(expenses[idx]);
                 await saveData('expenses', expenses);
             } else {
                 // ── Projects tab ──────────────────────────────────
@@ -13989,6 +14413,8 @@ Automated WFH alert — ${company} Attendance System.`;
                 if (idx < 0) return;
                 const ii = projectExpenses[idx].items.findIndex(i => i.itemID === itemID);
                 if (ii < 0) return;
+                // Level 2 concurrency — lock unit is the parent project expense
+                if (await _concurBlockIfStale('projectExpenses', [{ id: projID, idKey: 'projExpID' }])) return;
                 const item = projectExpenses[idx].items[ii];
                 if (vNo)   item.tallyVoucherNo   = vNo;
                 if (vDate) item.tallyVoucherDate = vDate;
@@ -14000,6 +14426,8 @@ Automated WFH alert — ${company} Attendance System.`;
                 }
                 item.tallyUpdated   = true;
                 item.tallyUpdatedAt = new Date().toISOString();
+                _stampRecord(item);
+                _stampRecord(projectExpenses[idx]);
                 await saveData('projectExpenses', projectExpenses);
             }
             _tvAttachment = null;
@@ -14192,6 +14620,8 @@ Automated WFH alert — ${company} Attendance System.`;
         async function saveWageRevision(e){
             if(e&&e.preventDefault)e.preventDefault();const sid=document.getElementById('wagStaff').value;if(!sid)return;
             const idx=staff.findIndex(x=>x.staffID===sid);if(idx<0)return;if(!staff[idx].wageRevisions)staff[idx].wageRevisions=[];
+            // Level 2 concurrency: wage revisions live inside staff[]; check parent
+            if (await _concurBlockIfStale('staff', [{ id: sid, idKey: 'staffID' }])) return;
             const pf=id=>parseFloat(document.getElementById(id)?.value)||0,pn=id=>{const v=document.getElementById(id)?.value;return(v!==''&&v!=null)?parseFloat(v):undefined;},ps=id=>document.getElementById(id)?.value?.trim()||'';
             const newDate=ps('wagDate');if(!newDate){alert('Please enter an effective date.');return;}
             const selSt=staff.find(x=>x.staffID===sid),isTech=selSt&&selSt.staffType==='Technician';
@@ -14205,6 +14635,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 pfPct:pn('wagPFPct'),tdsMonthly:pf('wagTDSMonthly'),
                 recordedBy: currentUser?.name||currentUser?.email||'Admin',
                 recordedAt: new Date().toISOString()};
+            _stampRecord(revRecord);
             if(_editWageRevID){const ri=staff[idx].wageRevisions.findIndex(r=>r.revID===_editWageRevID);if(ri>=0)Object.assign(staff[idx].wageRevisions[ri],revRecord);}else{revRecord.revID='REV'+Date.now();staff[idx].wageRevisions.push(revRecord);}
             const sync=(k,v)=>{if(v!==undefined&&v!==null)staff[idx][k]=v;};
             sync('basicSalary',revRecord.basicSalary||undefined);
@@ -14220,9 +14651,10 @@ Automated WFH alert — ${company} Attendance System.`;
                 sync('medical',revRecord.medical);sync('variable',revRecord.variable);
                 sync('pfPct',revRecord.pfPct);staff[idx].tdsMonthly=revRecord.tdsMonthly;
             }
+            _stampRecord(staff[idx]);
             await saveData('staff',staff);closeWageModal();renderView();
         }
-        async function deleteWageRevision(staffID,revID){if(!confirm('Delete this wage revision?'))return;const idx=staff.findIndex(x=>x.staffID===staffID);if(idx<0)return;staff[idx].wageRevisions=(staff[idx].wageRevisions||[]).filter(r=>r.revID!==revID);await saveData('staff',staff);renderView();}
+        async function deleteWageRevision(staffID,revID){if(!confirm('Delete this wage revision?'))return;const idx=staff.findIndex(x=>x.staffID===staffID);if(idx<0)return;if(await _concurBlockIfStale('staff',[{id:staffID,idKey:'staffID'}]))return;staff[idx].wageRevisions=(staff[idx].wageRevisions||[]).filter(r=>r.revID!==revID);_stampRecord(staff[idx]);await saveData('staff',staff);renderView();}
         // ════════════════════════════════════════════════════════════════════
         //  MODULE 2 — PROJECT EXPENSES (Food, Travel, Reimbursement)
         // ════════════════════════════════════════════════════════════════════
@@ -14864,11 +15296,15 @@ Automated WFH alert — ${company} Attendance System.`;
             toggleDeGSTFields();   // show/hide GST fields + CGST/SGST vs IGST
             renderDeAttachList();
             if (exp?.amount) calcDirExpNet();
+            // ── Level 2 concurrency: register edit context ──
+            _concurBeginEdit('directorExpenses', deID ? [{ id: deID, idKey: 'deID' }] : []);
         }
 
         function closeDirExpModal() {
             document.getElementById('dirExpModal').classList.remove('show');
             _currentDirExp = null;
+            // ── Level 2 concurrency: clear edit context ──
+            _concurEndEdit();
         }
 
         function calcDirExpNet() {
@@ -15070,6 +15506,11 @@ Automated WFH alert — ${company} Attendance System.`;
         async function saveDirExp(e) {
             e.preventDefault();
             if (window._deSaving) return;
+            // ── Level 2 concurrency: pre-save staleness check (existing record only) ──
+            if (_currentDirExp?.deID) {
+                const path = [{ id: _currentDirExp.deID, idKey: 'deID' }];
+                if (await _concurBlockIfStale('directorExpenses', path)) return;
+            }
             window._deSaving = true;
             const saveBtn = document.getElementById('deSaveBtn');
             if (saveBtn) { saveBtn.disabled=true; saveBtn.textContent='Saving…'; }
@@ -15127,6 +15568,8 @@ Automated WFH alert — ${company} Attendance System.`;
                     attachments,
                     createdAt:      _currentDirExp?.createdAt || new Date().toISOString()
                 };
+                // ── Level 2 concurrency: stamp record ──
+                _stampRecord(expObj);
                 if (_currentDirExp) {
                     const idx = directorExpenses.findIndex(d=>d.deID===_currentDirExp.deID);
                     if (idx>=0) directorExpenses[idx] = expObj; else directorExpenses.push(expObj);
@@ -15134,6 +15577,7 @@ Automated WFH alert — ${company} Attendance System.`;
                     directorExpenses.push(expObj);
                 }
                 await saveData('directorExpenses', directorExpenses);
+                _concurEndEdit();
                 closeDirExpModal();
                 renderView();
             } catch(err) { alert('Save failed: '+err.message); }
@@ -15142,6 +15586,8 @@ Automated WFH alert — ${company} Attendance System.`;
 
         async function deleteDirExp(deID) {
             if (!confirm('Delete this director expense entry?')) return;
+            // ── Level 2 concurrency: pre-delete staleness check ──
+            if (await _concurBlockIfStale('directorExpenses', [{ id: deID, idKey: 'deID' }])) return;
             directorExpenses = directorExpenses.filter(d=>d.deID!==deID);
             await saveData('directorExpenses', directorExpenses);
             renderView();
@@ -16605,12 +17051,23 @@ Automated WFH alert — ${company} Attendance System.`;
                 document.getElementById('peDescription').value = p.description||'';
             }
             document.getElementById('projExpModal').classList.add('show');
+            // ── Level 2 concurrency: register edit context ──
+            _concurBeginEdit('projectExpenses', p?.projExpID ? [{ id: p.projExpID, idKey: 'projExpID' }] : []);
         }
-        function closeProjExpModal() { document.getElementById('projExpModal').classList.remove('show'); currentProjExp = null; }
+        function closeProjExpModal() {
+            document.getElementById('projExpModal').classList.remove('show');
+            currentProjExp = null;
+            _concurEndEdit();
+        }
         function editProjExp(id) { const p = projectExpenses.find(x => x.projExpID === id); if (p) openProjExpModal(p); }
 
         async function saveProjExp(e) {
             e.preventDefault();
+            // ── Level 2 concurrency: pre-save staleness check ──
+            if (currentProjExp?.projExpID) {
+                const path = [{ id: currentProjExp.projExpID, idKey: 'projExpID' }];
+                if (await _concurBlockIfStale('projectExpenses', path)) return;
+            }
             const obj = {
                 projExpID:   currentProjExp?.projExpID || 'PE' + Date.now(),
                 projectName: document.getElementById('peProjectName').value,
@@ -16627,15 +17084,20 @@ Automated WFH alert — ${company} Attendance System.`;
                 fundTransfers: currentProjExp?.fundTransfers || [],
                 createdAt:   currentProjExp?.createdAt || new Date().toISOString()
             };
+            // ── Level 2 concurrency: stamp record ──
+            _stampRecord(obj);
             if (currentProjExp) { const i = projectExpenses.findIndex(x => x.projExpID === currentProjExp.projExpID); if (i>=0) projectExpenses[i] = obj; }
             else projectExpenses.push(obj);
             await saveData('projectExpenses', projectExpenses);
+            _concurEndEdit();
             closeProjExpModal();
             renderView();
         }
 
         async function deleteProjExp(id) {
             if (!confirm('Delete this project and all expense entries?')) return;
+            // ── Level 2 concurrency: pre-delete staleness check ──
+            if (await _concurBlockIfStale('projectExpenses', [{ id, idKey: 'projExpID' }])) return;
             projectExpenses = projectExpenses.filter(x => x.projExpID !== id);
             await saveData('projectExpenses', projectExpenses);
             renderView();
@@ -16646,14 +17108,22 @@ Automated WFH alert — ${company} Attendance System.`;
             document.getElementById('peiProjectID').value = projID;
             document.getElementById('peiDate').value = new Date().toISOString().split('T')[0];
             document.getElementById('projExpItemModal').classList.add('show');
+            // ── Level 2 concurrency: register edit context (new item under existing project) ──
+            // We track the parent project so external changes to the project still alert.
+            _concurBeginEdit('projectExpenses', projID ? [{ id: projID, idKey: 'projExpID' }] : []);
         }
-        function closeProjExpItemModal() { document.getElementById('projExpItemModal').classList.remove('show'); }
+        function closeProjExpItemModal() {
+            document.getElementById('projExpItemModal').classList.remove('show');
+            _concurEndEdit();
+        }
 
         async function saveProjExpItem(e) {
             e.preventDefault();
             const projID = document.getElementById('peiProjectID').value;
             const idx = projectExpenses.findIndex(x => x.projExpID === projID);
             if (idx < 0) return;
+            // ── Level 2 concurrency: staleness check against parent project ──
+            if (await _concurBlockIfStale('projectExpenses', [{ id: projID, idKey: 'projExpID' }])) return;
             const staffSel = document.getElementById('peiStaff');
             const staffName = staffSel.options[staffSel.selectedIndex]?.dataset.name || '';
             let billData = null, billName = null, billDriveFileId = null;
@@ -16667,7 +17137,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 } catch(err) { alert('Bill upload failed: ' + err.message); return; }
             }
             if (!projectExpenses[idx].items) projectExpenses[idx].items = [];
-            projectExpenses[idx].items.push({
+            const newItem = {
                 itemID: 'PEI' + Date.now(),
                 date: document.getElementById('peiDate').value,
                 category: document.getElementById('peiCategory').value,
@@ -16675,8 +17145,13 @@ Automated WFH alert — ${company} Attendance System.`;
                 staffID: document.getElementById('peiStaff').value,
                 staffName, amount: parseFloat(document.getElementById('peiAmount').value)||0,
                 billData, billName, billDriveFileId
-            });
+            };
+            // ── Level 2 concurrency: stamp item AND parent project ──
+            _stampRecord(newItem);
+            _stampRecord(projectExpenses[idx]);
+            projectExpenses[idx].items.push(newItem);
             await saveData('projectExpenses', projectExpenses);
+            _concurEndEdit();
             closeProjExpItemModal();
             renderView();
         }
@@ -17451,12 +17926,24 @@ Automated WFH alert — ${company} Attendance System.`;
                 (wl.photos||[]).forEach(p => { const img = document.createElement('img'); img.src=p; img.className='h-20 w-20 object-cover rounded-lg border'; preview.appendChild(img); });
             }
             document.getElementById('workLogModal').classList.add('show');
+            // ── Level 2 concurrency: register the open-edit context ──
+            _concurBeginEdit('workLogs', wl?.wlID ? [{ id: wl.wlID, idKey: 'wlID' }] : []);
         }
-        function closeWorkLogModal() { document.getElementById('workLogModal').classList.remove('show'); currentWorkLog = null; }
+        function closeWorkLogModal() {
+            document.getElementById('workLogModal').classList.remove('show');
+            currentWorkLog = null;
+            // ── Level 2 concurrency: clear open-edit context ──
+            _concurEndEdit();
+        }
         function editWorkLog(id) { const w = workLogs.find(x => x.wlID === id); if (w) openWorkLogModal(w); }
 
         async function saveWorkLog(e) {
             e.preventDefault();
+            // ── Level 2 concurrency: pre-save staleness check (existing record only) ──
+            if (currentWorkLog?.wlID) {
+                const path = [{ id: currentWorkLog.wlID, idKey: 'wlID' }];
+                if (await _concurBlockIfStale('workLogs', path)) return;
+            }
             const staffSel = document.getElementById('wlStaff');
             const staffName = staffSel.options[staffSel.selectedIndex]?.dataset.name || '';
             // Process new photos
@@ -17482,15 +17969,21 @@ Automated WFH alert — ${company} Attendance System.`;
                 photos,
                 createdAt:       currentWorkLog?.createdAt || new Date().toISOString()
             };
+            // ── Level 2 concurrency: stamp the record ──
+            _stampRecord(obj);
             if (currentWorkLog) { const i = workLogs.findIndex(x => x.wlID === currentWorkLog.wlID); if (i>=0) workLogs[i] = obj; }
             else workLogs.push(obj);
             await saveData('workLogs', workLogs);
+            _concurEndEdit();
             closeWorkLogModal();
             renderView();
         }
 
         async function deleteWorkLog(id) {
             if (!confirm('Delete this work log?')) return;
+            // ── Level 2 concurrency: pre-delete staleness check ──
+            const path = [{ id, idKey: 'wlID' }];
+            if (await _concurBlockIfStale('workLogs', path)) return;
             workLogs = workLogs.filter(x => x.wlID !== id);
             await saveData('workLogs', workLogs);
             renderView();
