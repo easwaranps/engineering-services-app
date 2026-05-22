@@ -6070,6 +6070,7 @@
                                         <th style="text-align:left;padding:6px;color:#475569">Date</th>
                                         <th style="text-align:left;padding:6px;color:#475569">Project</th>
                                         <th style="text-align:left;padding:6px;color:#475569">Paid By</th>
+                                        <th style="text-align:left;padding:6px;color:#475569">Technicians</th>
                                         <th style="text-align:left;padding:6px;color:#475569">Description</th>
                                         <th style="text-align:left;padding:6px;color:#475569">Head</th>
                                         <th style="text-align:right;padding:6px;color:#475569">Amount</th>
@@ -6083,10 +6084,13 @@
                                             const att  = (e.tallyVoucherDriveId || e.tallyVoucherData) ? ' 📎' : '';
                                             tallyHtml = `<div style="color:#15803d;font-weight:600">${num}${att}</div>${date}`;
                                         }
+                                        // Technicians who benefited from this expense
+                                        const techs = (e.technicians||[]).map(t => t.name).join(', ') || e.staffName || '—';
                                         return `<tr style="border-top:1px solid #e2e8f0">
                                             <td style="padding:6px">${e.expDate||e.date||'—'}</td>
                                             <td style="padding:6px;font-size:10.5px;color:#475569">${e._projectName||'—'}</td>
                                             <td style="padding:6px">${e.paidByName||_fundStaffName(e.paidByStaffID)||'—'}</td>
+                                            <td style="padding:6px;font-size:10.5px;color:#475569">${techs}</td>
                                             <td style="padding:6px">${e.description||'—'}</td>
                                             <td style="padding:6px"><span style="font-size:10px;padding:1px 6px;background:#e0e7ff;color:#3730a3;border-radius:3px">${e.category||'—'}</span></td>
                                             <td style="padding:6px;text-align:right;font-weight:600">${_fmtFundAmt(e.amount)}</td>
@@ -6315,6 +6319,8 @@
                         e.date || e.expDate || '—',
                         e._projectName || '—',
                         e.paidByName || _fundStaffName(e.paidByStaffID) || '—',
+                        // Technicians who benefited from this expense
+                        (e.technicians||[]).map(t=>t.name).join(', ') || e.staffName || '—',
                         e.description || '—',
                         e.category || '—',
                         INR(e.amount),
@@ -6323,22 +6329,23 @@
                 });
                 doc.autoTable({
                     startY: y+2, margin:{left:ML,right:MR}, theme:'striped',
-                    head: [['#', 'Date', 'Project', 'Paid By', 'Description', 'Head', 'Amount', 'Tally Vch']],
+                    head: [['#', 'Date', 'Project', 'Paid By', 'Technicians', 'Description', 'Head', 'Amount', 'Tally Vch']],
                     body: expRows,
                     styles:{fontSize:7.5, cellPadding:1.6, overflow:'linebreak'},
                     headStyles:{fillColor:[51,65,85], textColor:[255,255,255], fontStyle:'bold', fontSize:8},
                     columnStyles:{
                         0:{cellWidth:7,  halign:'center'},
                         1:{cellWidth:18},
-                        2:{cellWidth:26},
-                        3:{cellWidth:22},
-                        4:{cellWidth:'auto'},
-                        5:{cellWidth:22},
-                        6:{cellWidth:20, halign:'right', fontStyle:'bold'},
-                        7:{cellWidth:22, halign:'center', fontSize:7, textColor:[5,150,105]}
+                        2:{cellWidth:22},
+                        3:{cellWidth:18},
+                        4:{cellWidth:22, fontSize:7},   // Technicians — tighter font
+                        5:{cellWidth:'auto'},           // Description gets remaining slack
+                        6:{cellWidth:18},
+                        7:{cellWidth:20, halign:'right', fontStyle:'bold'},
+                        8:{cellWidth:18, halign:'center', fontSize:7, textColor:[5,150,105]}
                     },
                     foot:[[
-                        {content:'TOTAL', colSpan:6, styles:{halign:'right', fontStyle:'bold', fillColor:[241,245,249], textColor:[15,23,42]}},
+                        {content:'TOTAL', colSpan:7, styles:{halign:'right', fontStyle:'bold', fillColor:[241,245,249], textColor:[15,23,42]}},
                         {content:INR(bal.spent), styles:{halign:'right', fontStyle:'bold', fillColor:[241,245,249], textColor:[15,23,42]}},
                         {content:'', styles:{fillColor:[241,245,249]}}
                     ]],
@@ -17165,20 +17172,39 @@ Automated WFH alert — ${company} Attendance System.`;
             return projWithFiltered.map(({ p, matched }) => {
                 const poolBreakdown = {};
                 let unallocatedAmt = 0, unallocatedCount = 0;
+                const unallocatedTechs = new Set();   // dedupe across unallocated items
                 (p.items||[]).forEach(it => {
                     const amt = parseFloat(it.amount) || 0;
+                    // Collect technicians from this item — prefer the multi-tech list,
+                    // fall back to legacy single staffName. Names are de-duplicated.
+                    const names = ((it.technicians||[]).map(t => t.name).filter(Boolean));
+                    if (!names.length && it.staffName) names.push(it.staffName);
                     if (it.poolID) {
-                        if (!poolBreakdown[it.poolID]) poolBreakdown[it.poolID] = { amount: 0, count: 0 };
+                        if (!poolBreakdown[it.poolID]) poolBreakdown[it.poolID] = { amount: 0, count: 0, techs: new Set() };
                         poolBreakdown[it.poolID].amount += amt;
                         poolBreakdown[it.poolID].count++;
+                        names.forEach(n => poolBreakdown[it.poolID].techs.add(n));
                     } else {
                         unallocatedAmt += amt;
                         unallocatedCount++;
+                        names.forEach(n => unallocatedTechs.add(n));
                     }
                 });
                 const poolEntries = Object.entries(poolBreakdown);
                 const displayItems = entryQ ? matched : (p.items || []);
                 const spent = (p.items||[]).reduce((a,i)=>a+(parseFloat(i.amount)||0),0);
+                // Helper: render the "first 2 + N more" inline label plus the full
+                // list for the title attribute. Returns { inline, tooltip }.
+                const _formatTechs = (techSet) => {
+                    const techs = Array.from(techSet).sort();
+                    if (!techs.length) return { inline: '', tooltip: '' };
+                    const inline = techs.length <= 2
+                        ? techs.join(', ')
+                        : techs.slice(0,2).join(', ') + ' +' + (techs.length-2) + ' more';
+                    const tooltip = 'Technicians (' + techs.length + '): ' + techs.join(', ');
+                    return { inline, tooltip };
+                };
+                const _attrEscape = s => String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
                 return `
                 <div class="bg-white border border-gray-200 rounded-xl shadow-sm mb-4 overflow-hidden">
                     <!-- Project header -->
@@ -17205,13 +17231,21 @@ Automated WFH alert — ${company} Attendance System.`;
                                 ${poolEntries.map(([poolID, info]) => {
                                     const pool = (fundPools||[]).find(fp => fp.poolID === poolID);
                                     const isClosed = pool && pool.status === 'Closed';
-                                    return `<button onclick="viewPoolDetail('${poolID}')" class="text-xs px-2 py-1 rounded-lg border ${isClosed?'bg-gray-100 text-gray-600 border-gray-300 hover:bg-gray-200':'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'} cursor-pointer transition-colors" title="${isClosed?'Closed pool — click to view reconciliation':'Active pool — click to view'}">
-                                        <span class="font-mono font-semibold">${poolID}</span>: ${fmt(info.amount)} <span class="text-gray-500">(${info.count})</span>${isClosed?' ✓':''}
+                                    const techLabel = _formatTechs(info.techs);
+                                    // Tooltip combines pool status + full tech list (line-break in title is honoured by most browsers)
+                                    const tipBase = isClosed ? 'Closed pool — click to view reconciliation' : 'Active pool — click to view';
+                                    const tip = techLabel.tooltip ? tipBase + '\n' + techLabel.tooltip : tipBase;
+                                    return `<button onclick="viewPoolDetail('${poolID}')" class="text-xs px-2 py-1 rounded-lg border ${isClosed?'bg-gray-100 text-gray-600 border-gray-300 hover:bg-gray-200':'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'} cursor-pointer transition-colors" title="${_attrEscape(tip)}">
+                                        <span class="font-mono font-semibold">${poolID}</span>: ${fmt(info.amount)} <span class="text-gray-500">(${info.count})</span>${isClosed?' ✓':''}${techLabel.inline?` <span class="text-gray-500" style="font-weight:normal">· 👷 ${techLabel.inline}</span>`:''}
                                     </button>`;
                                 }).join('')}
-                                ${unallocatedCount > 0 ? `<span class="text-xs px-2 py-1 rounded-lg bg-amber-50 text-amber-700 border border-amber-300 font-medium">
-                                    ⚠ Unallocated: ${fmt(unallocatedAmt)} <span class="text-gray-500">(${unallocatedCount})</span>
-                                </span>` : ''}
+                                ${unallocatedCount > 0 ? (() => {
+                                    const u = _formatTechs(unallocatedTechs);
+                                    const uTip = u.tooltip || 'Items not yet allocated to any pool';
+                                    return `<span class="text-xs px-2 py-1 rounded-lg bg-amber-50 text-amber-700 border border-amber-300 font-medium" title="${_attrEscape(uTip)}">
+                                        ⚠ Unallocated: ${fmt(unallocatedAmt)} <span class="text-gray-500">(${unallocatedCount})</span>${u.inline?` <span class="text-amber-600" style="font-weight:normal">· 👷 ${u.inline}</span>`:''}
+                                    </span>`;
+                                })() : ''}
                             </div>
                         </div>` : ''}
                     </div>
