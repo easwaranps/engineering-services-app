@@ -2620,6 +2620,129 @@
             _updateSyncIndicator();
         }
 
+        // ════════════════════════════════════════════════════════════════
+        // SEQUENCE-CONFLICT RESOLUTION + MERGE-ON-SAVE
+        // ────────────────────────────────────────────────────────────────
+        // Why this exists:
+        //  • Auto-generated sequence numbers (Voucher No, Txn ID, Pool ID,
+        //    Bank ID) are computed at modal-open against the *current*
+        //    in-memory data. If User A saves first, User B's pre-computed
+        //    number collides.
+        //  • Separately, when B saves, B's in-memory dataset doesn't include
+        //    A's new record — a naive write would clobber A's record.
+        //
+        // What it provides:
+        //  • _refetchFresh(type)        — pull the latest server copy
+        //  • _resolveSequence(opts)     — confirm & renumber if displayed
+        //                                 sequence is now taken
+        //  • _mergeAndSave(type, ...)   — merge B's new/edited record into
+        //                                 fresh data and persist
+        // ════════════════════════════════════════════════════════════════
+
+        // Pull the freshest server copy of a watched file. Returns the parsed
+        // JSON or null on failure. Uses the existing loadFileFromDrive.
+        async function _refetchFresh(type) {
+            try {
+                const data = await loadFileFromDrive(`${type}.json`);
+                if (Array.isArray(data)) return data;
+                if (data && typeof data === 'object') return data;
+                return null;
+            } catch(e) {
+                console.warn(`_refetchFresh(${type}) failed:`, e.message);
+                return null;
+            }
+        }
+
+        // Confirm-and-renumber if the user's displayed sequence number is
+        // already taken in the fresh data.
+        //
+        // opts = {
+        //   freshArray:    array — latest server copy of the relevant file
+        //   displayedID:   string — the number the user sees on screen (e.g. 'VCH2526003')
+        //   computeNext:   (freshArray) => string — recompute the next-in-series
+        //                  using the same logic that produced displayedID
+        //   isTaken:       (freshArray, id) => boolean — is `id` already in fresh data?
+        //   label:         string — friendly name for the dialog ("Voucher No",
+        //                  "Transaction ID", "Pool ID", "Bank Account ID")
+        // }
+        //
+        // Returns: { ok: true, id: <agreedID>, renumbered: boolean }
+        //       or { ok: false }                  (user cancelled)
+        async function _resolveSequence(opts) {
+            const { freshArray, displayedID, computeNext, isTaken, label } = opts;
+            if (!displayedID) return { ok: true, id: computeNext(freshArray), renumbered: false };
+            if (!isTaken(freshArray, displayedID)) {
+                // Not taken — proceed with what the user sees.
+                return { ok: true, id: displayedID, renumbered: false };
+            }
+            // Collision detected — compute what we'd renumber to, then confirm.
+            const newID = computeNext(freshArray);
+            const msg = `${label} "${displayedID}" was just used by another user.\n\n`
+                      + `Save this record as "${newID}" instead?\n\n`
+                      + `OK     → save with the new number\n`
+                      + `Cancel → keep modal open (you can review and click Save again)`;
+            const proceed = window.confirm(msg);
+            if (!proceed) return { ok: false };
+            return { ok: true, id: newID, renumbered: true };
+        }
+
+        // Merge a new-or-edited record into the freshest server copy, then save.
+        // This prevents the "lost record" race where B's save clobbers A's new
+        // record because B's in-memory array predates A's write.
+        //
+        // type:      'expenses' | 'transactions' | 'fundPools' | 'bankAccounts' | etc.
+        // freshArr:  fresh server copy (from _refetchFresh)
+        // localArr:  the in-memory array variable
+        // setLocal:  (newArr) => void — assigns merged array back to the module-level var
+        // idKey:     'expID' | 'txnID' | 'poolID' | 'id' | ...
+        // record:    the record being saved (already stamped + sequence-resolved)
+        // isEdit:    boolean — true for editing existing, false for new
+        //
+        // Behaviour:
+        //  • If isEdit: find by idKey in fresh, replace; if missing in fresh
+        //    (e.g. deleted by someone else), prepend (caller should have already
+        //    warned via stale-check).
+        //  • If new: append (idKey is guaranteed unique because we just
+        //    resolved any sequence collision).
+        //  • Also preserves any records that exist locally but not in fresh
+        //    (e.g. local has B's edit-in-progress; we shouldn't drop it).
+        //    In practice, since stamping uses lastModifiedAt, this is a no-op
+        //    for clean cases but protects against the rare case where the
+        //    user did *two* edits in one session and the second hasn't synced.
+        function _mergeRecordIntoFresh(freshArr, localArr, idKey, record, isEdit) {
+            const merged = Array.isArray(freshArr) ? freshArr.slice() : [];
+            const idVal = record[idKey];
+            const idxInFresh = merged.findIndex(r => r && r[idKey] === idVal);
+            if (isEdit) {
+                if (idxInFresh >= 0) merged[idxInFresh] = record;
+                else merged.push(record);   // someone else deleted it; re-add
+            } else {
+                if (idxInFresh >= 0) {
+                    // Should not happen post-_resolveSequence, but be defensive.
+                    console.warn(`_mergeRecordIntoFresh: new record ${idVal} already in fresh — overwriting`);
+                    merged[idxInFresh] = record;
+                } else {
+                    merged.push(record);
+                }
+            }
+            // Preserve local-only records (rare; mainly defensive).
+            // A local record is "preservable" if it has a lastModifiedAt, was
+            // last modified by us, and is not in fresh.
+            const me = (typeof _concurWhoAmI === 'function') ? _concurWhoAmI() : null;
+            (Array.isArray(localArr) ? localArr : []).forEach(lr => {
+                if (!lr || !lr[idKey]) return;
+                if (lr[idKey] === idVal) return;  // already handled
+                const inFresh = merged.find(r => r && r[idKey] === lr[idKey]);
+                if (inFresh) return;
+                // Local-only. Keep only if it's ours and stamped — otherwise
+                // assume it was a transient view of A's pre-save state.
+                if (me && lr.lastModifiedBy === me && lr.lastModifiedAt) {
+                    merged.push(lr);
+                }
+            });
+            return merged;
+        }
+
         // ── 3. CHANGE TRACKING & DIRTY FLAG ────────────────────────────
         // Called every time data is modified in memory
         function _markDirty(type) {
@@ -5709,10 +5832,40 @@
 
                 // Create the pool
                 const idInfo = _nextPoolID(dDate);
+
+                // ── Sequence-conflict resolution against fresh server data ──
+                // Two admins disbursing simultaneously would each compute the same
+                // _nextPoolID; refresh, confirm with user if collided.
+                const _freshPools = await _refetchFresh('fundPools');
+                let resolvedPoolID = idInfo.poolID;
+                let resolvedSeqNo  = idInfo.sequenceNo;
+                if (_freshPools) {
+                    const seq = await _resolveSequence({
+                        freshArray: _freshPools,
+                        displayedID: idInfo.poolID,
+                        computeNext: (arr) => {
+                            const exists = arr.filter(p => p.fy === idInfo.fy);
+                            const maxN = exists.reduce((m,p) => Math.max(m, p.sequenceNo||0), 0);
+                            return `Fund Req-${idInfo.fy}-${String(maxN + 1).padStart(3,'0')}`;
+                        },
+                        isTaken: (arr, id) => arr.some(p => p.poolID === id),
+                        label: 'Pool ID'
+                    });
+                    if (!seq.ok) {
+                        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Disburse'; }
+                        return;
+                    }
+                    resolvedPoolID = seq.id;
+                    if (seq.renumbered) {
+                        // Derive the new sequenceNo from the renumbered poolID
+                        const m = resolvedPoolID.match(/-(\d+)$/);
+                        if (m) resolvedSeqNo = parseInt(m[1], 10);
+                    }
+                }
                 const newPool = {
-                    poolID:           idInfo.poolID,
+                    poolID:           resolvedPoolID,
                     fy:               idInfo.fy,
-                    sequenceNo:       idInfo.sequenceNo,
+                    sequenceNo:       resolvedSeqNo,
                     sourceRequestID:  r.requestID,
                     requestedBy:      r.requestedBy,
                     requestedByName:  r.requestedByName,
@@ -5735,11 +5888,17 @@
                     createdAt:        new Date().toISOString(),
                     updatedAt:        new Date().toISOString()
                 };
+                if (typeof _stampRecord === 'function') _stampRecord(newPool);
 
                 // ── Snapshot for rollback if save fails ──
                 const requestSnapshot = JSON.parse(JSON.stringify(r));
 
-                fundPools.push(newPool);
+                // Merge pool into fresh array (prevents clobbering another admin's recent pool).
+                if (_freshPools) {
+                    fundPools = _mergeRecordIntoFresh(_freshPools, fundPools, 'poolID', newPool, false);
+                } else {
+                    fundPools.push(newPool);
+                }
 
                 // Update request
                 r.status          = 'Disbursed';
@@ -6776,11 +6935,28 @@
             };
             _stampRecord(ba);
 
-            if (currentBankAccount) {
-                const idx = bankAccounts.findIndex(b => b.id === currentBankAccount.id);
-                if (idx >= 0) bankAccounts[idx] = ba;
+            // ── Sequence-conflict resolution + merge-on-save (new account only) ──
+            const _freshBA = await _refetchFresh('bankAccounts');
+            if (_freshBA) {
+                if (!currentBankAccount) {
+                    const seq = await _resolveSequence({
+                        freshArray: _freshBA,
+                        displayedID: ba.id,
+                        computeNext: (arr) => 'BA' + String(arr.length + 1).padStart(3,'0'),
+                        isTaken: (arr, id) => arr.some(b => b.id === id),
+                        label: 'Bank Account ID'
+                    });
+                    if (!seq.ok) return;
+                    ba.id = seq.id;
+                }
+                bankAccounts = _mergeRecordIntoFresh(_freshBA, bankAccounts, 'id', ba, !!currentBankAccount);
             } else {
-                bankAccounts.push(ba);
+                if (currentBankAccount) {
+                    const idx = bankAccounts.findIndex(b => b.id === currentBankAccount.id);
+                    if (idx >= 0) bankAccounts[idx] = ba; else bankAccounts.push(ba);
+                } else {
+                    bankAccounts.push(ba);
+                }
             }
 
             await saveData('bankAccounts', bankAccounts);
@@ -8115,11 +8291,46 @@
             // ── Level 2 concurrency: stamp record ──
             _stampRecord(expObj);
 
-            if (currentExpense) {
-                const idx = expenses.findIndex(x => x.expID === currentExpense.expID);
-                if (idx >= 0) expenses[idx] = expObj;
+            // ── Sequence-conflict resolution + merge-on-save (NEW expense only) ──
+            // For new expenses, voucherNo was generated at modal-open against
+            // a possibly stale snapshot. Check against fresh server data, and
+            // if it collides, ask the user whether to renumber.
+            const _freshExp = await _refetchFresh('expenses');
+            if (_freshExp) {
+                if (!currentExpense) {
+                    const fyCode = getFinancialYearCode(new Date());
+                    const seq = await _resolveSequence({
+                        freshArray: _freshExp,
+                        displayedID: expObj.voucherNo,
+                        computeNext: (arr) => 'VCH' + fyCode + String(
+                            arr.filter(r => (r.voucherNo||'').includes(fyCode)).length + 1
+                        ).padStart(3,'0'),
+                        isTaken: (arr, id) => arr.some(r => r.voucherNo === id),
+                        label: 'Voucher No'
+                    });
+                    if (!seq.ok) {
+                        // User cancelled — leave modal open, restore Save button.
+                        window._expSaving = false;
+                        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Expense'; }
+                        return;
+                    }
+                    expObj.voucherNo = seq.id;
+                    if (seq.renumbered) {
+                        // Reflect the new number in the modal so it's visible if user re-checks.
+                        const vEl = document.getElementById('expVoucherNo');
+                        if (vEl) vEl.value = seq.id;
+                    }
+                }
+                // Merge into fresh array, then commit local view.
+                expenses = _mergeRecordIntoFresh(_freshExp, expenses, 'expID', expObj, !!currentExpense);
             } else {
-                expenses.push(expObj);
+                // Could not fetch fresh — fall back to legacy local-array update.
+                if (currentExpense) {
+                    const idx = expenses.findIndex(x => x.expID === currentExpense.expID);
+                    if (idx >= 0) expenses[idx] = expObj; else expenses.push(expObj);
+                } else {
+                    expenses.push(expObj);
+                }
             }
                 _stagedExpFiles = []; // clear staged queue after successful save
                 await saveData('expenses', expenses);
@@ -10520,15 +10731,60 @@
                 };
                 _stampRecord(txnData);
                 
-                if (currentTransaction) {
-                    const index = transactions.findIndex(t => t.txnID === currentTransaction.txnID);
-                    transactions[index] = txnData;
-                } else {
-                    transactions.push(txnData);
-                }
-                
+                // Hoisted up so the cancellation branch below can re-enable the button.
                 const submitBtn = e.target.querySelector('button[type="submit"]');
                 const originalText = submitBtn.textContent;
+                
+                // ── Sequence-conflict resolution + merge-on-save ──
+                // For new transactions, txnID was generated at modal-open via
+                // generateTxnID() against the local snapshot. Re-check against
+                // fresh data; renumber with confirmation if collided.
+                const _freshTxn = await _refetchFresh('transactions');
+                if (_freshTxn) {
+                    if (!currentTransaction) {
+                        const category = txnData.txnCategory;
+                        const fyCode   = getFinancialYearCode(new Date());
+                        const prefix   = category === 'QUOTATION'         ? 'QTE'
+                                       : category === 'PROFORMA_INVOICE'  ? 'PI'
+                                       : category === 'PO'                ? 'PO'
+                                       : category === 'INVOICE'           ? 'INV'
+                                       : category === 'CREDIT_NOTE'       ? 'CN'  : 'TXN';
+                        const labelMap = { 'QUOTATION':'Quotation No', 'PROFORMA_INVOICE':'Proforma Invoice No',
+                                           'PO':'Purchase Order No', 'INVOICE':'Invoice No',
+                                           'CREDIT_NOTE':'Credit Note No' };
+                        const seq = await _resolveSequence({
+                            freshArray: _freshTxn,
+                            displayedID: txnData.txnID,
+                            computeNext: (arr) => {
+                                const fyTxns = arr.filter(t => {
+                                    if (t.txnCategory !== category) return false;
+                                    const m = (t.txnID||'').match(/[A-Z]+(\d{4})\d{3,}$/);
+                                    return m ? m[1] === fyCode : false;
+                                });
+                                return prefix + fyCode + String(fyTxns.length + 1).padStart(3,'0');
+                            },
+                            isTaken: (arr, id) => arr.some(t => t.txnID === id),
+                            label: labelMap[category] || 'Transaction ID'
+                        });
+                        if (!seq.ok) {
+                            // User cancelled — leave modal open, restore Save button.
+                            submitBtn.textContent = originalText;
+                            submitBtn.disabled = false;
+                            return;
+                        }
+                        txnData.txnID = seq.id;
+                    }
+                    transactions = _mergeRecordIntoFresh(_freshTxn, transactions, 'txnID', txnData, !!currentTransaction);
+                } else {
+                    // Fallback if refetch failed
+                    if (currentTransaction) {
+                        const index = transactions.findIndex(t => t.txnID === currentTransaction.txnID);
+                        if (index >= 0) transactions[index] = txnData; else transactions.push(txnData);
+                    } else {
+                        transactions.push(txnData);
+                    }
+                }
+                
                 submitBtn.textContent = 'Saving...';
                 submitBtn.disabled = true;
                 
