@@ -17035,8 +17035,79 @@ Automated WFH alert — ${company} Attendance System.`;
             doc.save('DirReimbStatement_'+dirKey+'_'+monthYM+'.pdf');
         }
 
+        // ── Project Expenses search/filter state (preserved across re-renders) ──
+        let _projExpEntrySearch  = '';   // matches description, vendor, category, technician, date, amount, paid by, payMode
+        let _projExpProjectFilter = '';  // matches project name + projectRef
+        let _projExpFocusedField  = '';  // 'entry' | 'project' — to restore focus after re-render
+
+        // Handlers called by the input onkeyup; debounced lightly via requestAnimationFrame
+        let _projExpRerenderPending = false;
+        function _onProjExpEntrySearch(v) {
+            _projExpEntrySearch = (v || '').toLowerCase().trim();
+            _projExpFocusedField = 'entry';
+            _scheduleProjExpRerender();
+        }
+        function _onProjExpProjectFilter(v) {
+            _projExpProjectFilter = (v || '').toLowerCase().trim();
+            _projExpFocusedField = 'project';
+            _scheduleProjExpRerender();
+        }
+        function _scheduleProjExpRerender() {
+            if (_projExpRerenderPending) return;
+            _projExpRerenderPending = true;
+            requestAnimationFrame(() => {
+                _projExpRerenderPending = false;
+                if (currentView === 'projexp') renderView();
+            });
+        }
+        function _clearProjExpFilters() {
+            _projExpEntrySearch = '';
+            _projExpProjectFilter = '';
+            _projExpFocusedField = '';
+            renderView();
+        }
+        // Does an item match the entry search? Compares against multiple fields.
+        function _itemMatchesEntrySearch(item, q) {
+            if (!q) return true;
+            const techs = (item.technicians || []).map(t => t.name).join(' ') || item.staffName || '';
+            const hay = [
+                item.description, item.vendor, item.category,
+                techs, item.date,
+                String(item.amount || ''),
+                item.payMode, item.paidByName, item.addedBy
+            ].filter(Boolean).join(' \u0001 ').toLowerCase();
+            return hay.includes(q);
+        }
+
         function renderProjectExpenses(content) {
             const fmt = n => '₹' + (+n||0).toLocaleString('en-IN', {minimumFractionDigits:2});
+            const entryQ   = _projExpEntrySearch;
+            const projectQ = _projExpProjectFilter;
+            const filterActive = !!(entryQ || projectQ);
+
+            // Precompute filter stats so the search bar can show "Showing X of Y…"
+            // (Computed twice — here for the header, again in the project loop below
+            // for the actual rendering. Cost is negligible.)
+            let _filterStats = null;
+            if (filterActive) {
+                const projFiltered = projectQ
+                    ? projectExpenses.filter(p => ((p.projectName||'')+' '+(p.projectRef||'')).toLowerCase().includes(projectQ))
+                    : projectExpenses;
+                let matchedItems = 0, projectsWithMatches = 0, totalEntriesInScope = 0;
+                projFiltered.forEach(p => {
+                    const all = p.items || [];
+                    totalEntriesInScope += all.length;
+                    const m = entryQ ? all.filter(it => _itemMatchesEntrySearch(it, entryQ)).length : all.length;
+                    matchedItems += m;
+                    if (m > 0) projectsWithMatches++;
+                });
+                _filterStats = {
+                    projectsShown: entryQ ? projectsWithMatches : projFiltered.length,
+                    projectsTotal: projectExpenses.length,
+                    itemsShown:    matchedItems,
+                    itemsTotal:    totalEntriesInScope
+                };
+            }
 
             // Collect all pending/approved fund requests across all projects (legacy data, kept for migration awareness)
             // NOTE: Phase C moved fund requests to dedicated 💰 Funds tab. Legacy nested requests
@@ -17088,6 +17159,33 @@ Automated WFH alert — ${company} Attendance System.`;
                 </div>
             </div>
 
+            <!-- ── SEARCH / FILTER BAR ── -->
+            <div class="bg-white border border-gray-200 rounded-xl shadow-sm p-3 mb-4">
+                <div class="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
+                    <div class="flex-1 relative">
+                        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
+                        <input id="projExpEntrySearch" type="text"
+                               value="${entryQ.replace(/"/g,'&quot;')}"
+                               oninput="_onProjExpEntrySearch(this.value)"
+                               placeholder="Search entries — description, vendor, category, technician, date, amount, paid by…"
+                               class="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400" />
+                    </div>
+                    <div class="sm:w-72 relative">
+                        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">📁</span>
+                        <input id="projExpProjectFilter" type="text"
+                               value="${projectQ.replace(/"/g,'&quot;')}"
+                               oninput="_onProjExpProjectFilter(this.value)"
+                               placeholder="Filter projects by name / ref"
+                               class="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400" />
+                    </div>
+                    ${filterActive ? `<button onclick="_clearProjExpFilters()" class="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 whitespace-nowrap">✕ Clear</button>` : ''}
+                </div>
+                ${filterActive ? `<div class="text-xs text-gray-500 mt-2">
+                    Showing <b class="text-yellow-700">${_filterStats.itemsShown}</b> of ${_filterStats.itemsTotal} entries
+                    across <b class="text-yellow-700">${_filterStats.projectsShown}</b> of ${_filterStats.projectsTotal} projects
+                </div>` : ''}
+            </div>
+
             <!-- ── LEGACY PENDING — visibility only, action in 💰 Funds tab ── -->
             ${allPending.length ? `
             <div class="bg-white border-2 border-amber-300 rounded-xl shadow-sm mb-6 overflow-hidden">
@@ -17132,8 +17230,32 @@ Automated WFH alert — ${company} Attendance System.`;
             </div>` : ''}
 
             <!-- ── PROJECT LIST ── -->
-            ${!projectExpenses.length ? `<div class="text-center py-16 text-gray-400"><div class="text-5xl mb-4">🧳</div><p>No projects yet. Click <b>+ New Project</b> to add one.</p></div>` :
-            projectExpenses.map(p => {
+            ${(() => {
+                if (!projectExpenses.length) return `<div class="text-center py-16 text-gray-400"><div class="text-5xl mb-4">🧳</div><p>No projects yet. Click <b>+ New Project</b> to add one.</p></div>`;
+                // ── Apply filters ──
+                // Step 1: filter projects by name/ref.
+                const afterProjectFilter = projectQ
+                    ? projectExpenses.filter(p =>
+                        ((p.projectName||'')+' '+(p.projectRef||'')).toLowerCase().includes(projectQ))
+                    : projectExpenses;
+                // Step 2: for each surviving project, filter its items by entry search.
+                //   If entryQ is active and a project has zero matching items, drop it.
+                const projWithFiltered = afterProjectFilter.map(p => {
+                    const allItems = p.items || [];
+                    const matched  = entryQ ? allItems.filter(it => _itemMatchesEntrySearch(it, entryQ)) : allItems;
+                    return { p, matched, allItemsCount: allItems.length };
+                }).filter(x => !entryQ || x.matched.length > 0);
+
+                if (filterActive && !projWithFiltered.length) {
+                    return `<div class="text-center py-16 text-gray-400">
+                        <div class="text-5xl mb-4">🔍</div>
+                        <p class="font-semibold">No matching entries</p>
+                        <p class="text-sm mt-1">No projects or expense entries match your filters.</p>
+                        <button onclick="_clearProjExpFilters()" class="mt-4 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 text-sm">Clear filters</button>
+                    </div>`;
+                }
+
+                return projWithFiltered.map(({ p, matched, allItemsCount }) => {
                 const spent   = (p.items||[]).reduce((a,i)=>a+(parseFloat(i.amount)||0),0);
                 // Phase C: compute pool allocation breakdown for this project's items
                 const poolBreakdown = {};
@@ -17150,6 +17272,8 @@ Automated WFH alert — ${company} Attendance System.`;
                     }
                 });
                 const poolEntries = Object.entries(poolBreakdown);
+                // The items we'll display in the table — filtered when entryQ active, else all.
+                const displayItems = entryQ ? matched : (p.items || []);
                 return `
                 <div class="bg-white border border-gray-200 rounded-xl shadow-sm mb-4 overflow-hidden">
                     <!-- Project header -->
@@ -17190,8 +17314,9 @@ Automated WFH alert — ${company} Attendance System.`;
                     <!-- Field expense entries -->
                     ${(p.items||[]).length ? `
                     <div class="border-t">
-                        <div class="px-4 py-2 bg-yellow-50 text-xs font-bold text-yellow-700 uppercase tracking-wide">
-                            Field Expense Entries (${(p.items||[]).length})
+                        <div class="px-4 py-2 bg-yellow-50 text-xs font-bold text-yellow-700 uppercase tracking-wide flex justify-between items-center">
+                            <span>Field Expense Entries (${entryQ ? displayItems.length + ' of ' + (p.items||[]).length : (p.items||[]).length})</span>
+                            ${entryQ && displayItems.length < (p.items||[]).length ? `<span class="text-yellow-600 font-normal normal-case">🔍 filtered</span>` : ''}
                         </div>
                         <table class="w-full text-xs">
                             <thead class="bg-yellow-50"><tr>
@@ -17205,7 +17330,7 @@ Automated WFH alert — ${company} Attendance System.`;
                                 <th class="px-3 py-1.5 text-center">Bills</th>
                                 <th class="px-3 py-1.5 text-center">Tally / Del</th>
                             </tr></thead>
-                            <tbody>${(p.items||[]).map(item=>{
+                            <tbody>${displayItems.map(item=>{
                                 const techs=(item.technicians||[]).map(t=>t.name).join(', ')||item.staffName||'—';
                                 const attCount=(item.billAttachments||[]).length+(item.billData?1:0);
                                 return `<tr class="border-t hover:bg-yellow-50">
@@ -17245,7 +17370,8 @@ Automated WFH alert — ${company} Attendance System.`;
                         </table>
                     </div>` : '<p class="text-xs text-gray-400 px-4 py-2 border-t">No field expense entries yet.</p>'}
                 </div>`;
-            }).join('')}
+            }).join('');
+            })()}
 
             <!-- Release Funds Modal -->
             <div id="releaseFundsModal" class="modal">
@@ -17374,6 +17500,25 @@ Automated WFH alert — ${company} Attendance System.`;
                     </form>
                 </div>
             </div>`;
+
+            // ── Restore focus to whichever search input the user was typing in ──
+            // renderView re-creates the whole content, which loses focus. We track
+            // which field was last edited and restore focus + cursor position to it.
+            if (_projExpFocusedField === 'entry') {
+                const el = document.getElementById('projExpEntrySearch');
+                if (el) {
+                    el.focus();
+                    const v = el.value;
+                    el.setSelectionRange(v.length, v.length);
+                }
+            } else if (_projExpFocusedField === 'project') {
+                const el = document.getElementById('projExpProjectFilter');
+                if (el) {
+                    el.focus();
+                    const v = el.value;
+                    el.setSelectionRange(v.length, v.length);
+                }
+            }
         }
 
         function openProjExpModal(p = null) {
