@@ -17040,35 +17040,51 @@ Automated WFH alert — ${company} Attendance System.`;
         let _projExpProjectFilter = '';  // matches project name + projectRef
         let _projExpFocusedField  = '';  // 'entry' | 'project' — to restore focus after re-render
 
-        // Handlers called by the input onkeyup; debounced lightly via requestAnimationFrame
-        let _projExpRerenderPending = false;
+        // ── Handlers called by the input's oninput event ──
+        // Bug fix history (the two visible symptoms were "space bar does nothing"
+        // and "types continuously / characters dropped"):
+        //   • Previously called .trim() on the live value — that stripped trailing
+        //     spaces as the user typed, so the space bar appeared to do nothing.
+        //     Now we keep the raw value; trimming happens only inside the matcher.
+        //   • Previously re-rendered the entire tab on every keystroke (via
+        //     renderView), which destroyed and rebuilt the input element the user
+        //     was typing into. On fast typing this caused dropped/flickering
+        //     characters. Now we update ONLY the project list container, leaving
+        //     the search inputs untouched in the DOM.
         function _onProjExpEntrySearch(v) {
-            _projExpEntrySearch = (v || '').toLowerCase().trim();
+            _projExpEntrySearch = String(v == null ? '' : v).toLowerCase();
             _projExpFocusedField = 'entry';
-            _scheduleProjExpRerender();
+            _refreshProjExpList();
         }
         function _onProjExpProjectFilter(v) {
-            _projExpProjectFilter = (v || '').toLowerCase().trim();
+            _projExpProjectFilter = String(v == null ? '' : v).toLowerCase();
             _projExpFocusedField = 'project';
-            _scheduleProjExpRerender();
+            _refreshProjExpList();
         }
-        function _scheduleProjExpRerender() {
-            if (_projExpRerenderPending) return;
-            _projExpRerenderPending = true;
-            requestAnimationFrame(() => {
-                _projExpRerenderPending = false;
-                if (currentView === 'projexp') renderView();
-            });
+        // Re-render ONLY the project list + filter-stats line, leaving the
+        // search inputs (and the user's cursor inside them) intact.
+        function _refreshProjExpList() {
+            const listEl  = document.getElementById('projExpListContainer');
+            const statsEl = document.getElementById('projExpFilterStats');
+            const clearBtn = document.getElementById('projExpClearBtn');
+            if (!listEl) return;          // not on this view; nothing to do
+            listEl.innerHTML  = _buildProjExpListHTML();
+            if (statsEl) statsEl.innerHTML = _buildProjExpStatsHTML();
+            if (clearBtn) clearBtn.style.display = (_projExpEntrySearch || _projExpProjectFilter) ? '' : 'none';
         }
         function _clearProjExpFilters() {
             _projExpEntrySearch = '';
             _projExpProjectFilter = '';
             _projExpFocusedField = '';
+            // Full re-render here is fine — we're not in the input anymore.
             renderView();
         }
         // Does an item match the entry search? Compares against multiple fields.
+        // Trimming happens HERE (on the query at compare time), not on the live
+        // input value — see bug fix history above.
         function _itemMatchesEntrySearch(item, q) {
-            if (!q) return true;
+            const qq = (q || '').trim();
+            if (!qq) return true;
             const techs = (item.technicians || []).map(t => t.name).join(' ') || item.staffName || '';
             const hay = [
                 item.description, item.vendor, item.category,
@@ -17076,188 +17092,77 @@ Automated WFH alert — ${company} Attendance System.`;
                 String(item.amount || ''),
                 item.payMode, item.paidByName, item.addedBy
             ].filter(Boolean).join(' \u0001 ').toLowerCase();
-            return hay.includes(q);
+            return hay.includes(qq);
         }
 
-        function renderProjectExpenses(content) {
+        // ── Internal: compute filter stats object ──
+        function _computeProjExpFilterStats() {
+            const entryQ   = _projExpEntrySearch;
+            const projectQ = _projExpProjectFilter;
+            if (!entryQ && !projectQ) return null;
+            const projFiltered = projectQ
+                ? projectExpenses.filter(p => ((p.projectName||'')+' '+(p.projectRef||'')).toLowerCase().includes(projectQ))
+                : projectExpenses;
+            let matchedItems = 0, projectsWithMatches = 0, totalEntriesInScope = 0;
+            projFiltered.forEach(p => {
+                const all = p.items || [];
+                totalEntriesInScope += all.length;
+                const m = entryQ ? all.filter(it => _itemMatchesEntrySearch(it, entryQ)).length : all.length;
+                matchedItems += m;
+                if (m > 0) projectsWithMatches++;
+            });
+            return {
+                projectsShown: entryQ ? projectsWithMatches : projFiltered.length,
+                projectsTotal: projectExpenses.length,
+                itemsShown:    matchedItems,
+                itemsTotal:    totalEntriesInScope
+            };
+        }
+
+        // Stats line shown under the search inputs (or empty when no filter active).
+        function _buildProjExpStatsHTML() {
+            const s = _computeProjExpFilterStats();
+            if (!s) return '';
+            return `<div class="text-xs text-gray-500 mt-2">
+                Showing <b class="text-yellow-700">${s.itemsShown}</b> of ${s.itemsTotal} entries
+                across <b class="text-yellow-700">${s.projectsShown}</b> of ${s.projectsTotal} projects
+            </div>`;
+        }
+
+        // The full project list HTML, with filters applied.
+        // Extracted from the renderProjectExpenses IIFE so it can be re-run
+        // independently when the user types in the search box (without touching
+        // the search inputs themselves — see _refreshProjExpList).
+        function _buildProjExpListHTML() {
             const fmt = n => '₹' + (+n||0).toLocaleString('en-IN', {minimumFractionDigits:2});
             const entryQ   = _projExpEntrySearch;
             const projectQ = _projExpProjectFilter;
             const filterActive = !!(entryQ || projectQ);
 
-            // Precompute filter stats so the search bar can show "Showing X of Y…"
-            // (Computed twice — here for the header, again in the project loop below
-            // for the actual rendering. Cost is negligible.)
-            let _filterStats = null;
-            if (filterActive) {
-                const projFiltered = projectQ
-                    ? projectExpenses.filter(p => ((p.projectName||'')+' '+(p.projectRef||'')).toLowerCase().includes(projectQ))
-                    : projectExpenses;
-                let matchedItems = 0, projectsWithMatches = 0, totalEntriesInScope = 0;
-                projFiltered.forEach(p => {
-                    const all = p.items || [];
-                    totalEntriesInScope += all.length;
-                    const m = entryQ ? all.filter(it => _itemMatchesEntrySearch(it, entryQ)).length : all.length;
-                    matchedItems += m;
-                    if (m > 0) projectsWithMatches++;
-                });
-                _filterStats = {
-                    projectsShown: entryQ ? projectsWithMatches : projFiltered.length,
-                    projectsTotal: projectExpenses.length,
-                    itemsShown:    matchedItems,
-                    itemsTotal:    totalEntriesInScope
-                };
+            if (!projectExpenses.length) {
+                return `<div class="text-center py-16 text-gray-400"><div class="text-5xl mb-4">🧳</div><p>No projects yet. Click <b>+ New Project</b> to add one.</p></div>`;
+            }
+            // Step 1: filter projects by name/ref.
+            const afterProjectFilter = projectQ
+                ? projectExpenses.filter(p => ((p.projectName||'')+' '+(p.projectRef||'')).toLowerCase().includes(projectQ))
+                : projectExpenses;
+            // Step 2: for each surviving project, filter its items by entry search.
+            const projWithFiltered = afterProjectFilter.map(p => {
+                const allItems = p.items || [];
+                const matched  = entryQ ? allItems.filter(it => _itemMatchesEntrySearch(it, entryQ)) : allItems;
+                return { p, matched };
+            }).filter(x => !entryQ || x.matched.length > 0);
+
+            if (filterActive && !projWithFiltered.length) {
+                return `<div class="text-center py-16 text-gray-400">
+                    <div class="text-5xl mb-4">🔍</div>
+                    <p class="font-semibold">No matching entries</p>
+                    <p class="text-sm mt-1">No projects or expense entries match your filters.</p>
+                    <button onclick="_clearProjExpFilters()" class="mt-4 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 text-sm">Clear filters</button>
+                </div>`;
             }
 
-            // Collect all pending/approved fund requests across all projects (legacy data, kept for migration awareness)
-            // NOTE: Phase C moved fund requests to dedicated 💰 Funds tab. Legacy nested requests
-            // shown here only if they exist in old test data — pure visibility, no actions.
-            const allPending = [];
-            projectExpenses.forEach(p => {
-                (p.fundRequests||[]).forEach(r => {
-                    if (r.status === 'Pending' || r.status === 'Approved') {
-                        allPending.push({...r, projExpID: p.projExpID, projectName: p.projectName, projectRef: p.projectRef||''});
-                    }
-                });
-            });
-            allPending.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
-
-            // Summary totals — Phase C: spend is the only meaningful per-project metric
-            // (totalFunds + balance moved to 💰 Funds tab as pool concept).
-            const totalSpent  = projectExpenses.reduce((s,p)=>s+(p.items||[]).reduce((a,i)=>a+(parseFloat(i.amount)||0),0),0);
-            const totalEntries = projectExpenses.reduce((s,p)=>s+(p.items||[]).length, 0);
-
-            content.innerHTML = `
-            <div class="flex items-center justify-between mb-6">
-                <div>
-                    <h2 class="text-3xl font-bold text-gray-800">🧳 Projects & Field Expenses</h2>
-                    <p class="text-gray-500 text-sm mt-1">Manage project sites and view field expense entries · Fund flow is in <a href="javascript:void(0)" onclick="switchView('funds')" class="text-emerald-600 font-semibold hover:underline">💰 Funds tab</a></p>
-                </div>
-                <div class="flex gap-2">
-                    <button onclick="exportAllProjExpCSV()" class="px-4 py-2 bg-green-600 text-white rounded-xl hover:bg-green-700 font-medium text-sm">📊 Export CSV</button>
-                    <button onclick="exportAllProjExpPDF()" class="px-4 py-2 bg-purple-600 text-white rounded-xl hover:bg-purple-700 font-medium text-sm">📄 Export PDF</button>
-                    <button onclick="openProjExpModal()" class="px-5 py-2 bg-yellow-600 text-white rounded-xl hover:bg-yellow-700 font-medium">+ New Project</button>
-                </div>
-            </div>
-
-            <!-- Summary — 3 metrics (Phase C: removed legacy Office Funds + Balance + Pending) -->
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
-                <div class="bg-gradient-to-br from-red-500 to-pink-600 rounded-xl p-4 text-white shadow">
-                    <p class="text-xs opacity-80">Total Field Expenses</p>
-                    <p class="text-2xl font-bold">${fmt(totalSpent)}</p>
-                    <p class="text-xs opacity-80 mt-1">Across ${projectExpenses.length} project${projectExpenses.length===1?'':'s'}</p>
-                </div>
-                <div class="bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl p-4 text-white shadow">
-                    <p class="text-xs opacity-80">Expense Entries</p>
-                    <p class="text-2xl font-bold">${totalEntries}</p>
-                    <p class="text-xs opacity-80 mt-1">Total logged</p>
-                </div>
-                <div class="bg-gradient-to-br from-green-500 to-teal-600 rounded-xl p-4 text-white shadow">
-                    <p class="text-xs opacity-80">Total Projects</p>
-                    <p class="text-2xl font-bold">${projectExpenses.length}</p>
-                    <p class="text-xs opacity-80 mt-1">Active sites</p>
-                </div>
-            </div>
-
-            <!-- ── SEARCH / FILTER BAR ── -->
-            <div class="bg-white border border-gray-200 rounded-xl shadow-sm p-3 mb-4">
-                <div class="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
-                    <div class="flex-1 relative">
-                        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
-                        <input id="projExpEntrySearch" type="text"
-                               value="${entryQ.replace(/"/g,'&quot;')}"
-                               oninput="_onProjExpEntrySearch(this.value)"
-                               placeholder="Search entries — description, vendor, category, technician, date, amount, paid by…"
-                               class="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400" />
-                    </div>
-                    <div class="sm:w-72 relative">
-                        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">📁</span>
-                        <input id="projExpProjectFilter" type="text"
-                               value="${projectQ.replace(/"/g,'&quot;')}"
-                               oninput="_onProjExpProjectFilter(this.value)"
-                               placeholder="Filter projects by name / ref"
-                               class="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400" />
-                    </div>
-                    ${filterActive ? `<button onclick="_clearProjExpFilters()" class="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 whitespace-nowrap">✕ Clear</button>` : ''}
-                </div>
-                ${filterActive ? `<div class="text-xs text-gray-500 mt-2">
-                    Showing <b class="text-yellow-700">${_filterStats.itemsShown}</b> of ${_filterStats.itemsTotal} entries
-                    across <b class="text-yellow-700">${_filterStats.projectsShown}</b> of ${_filterStats.projectsTotal} projects
-                </div>` : ''}
-            </div>
-
-            <!-- ── LEGACY PENDING — visibility only, action in 💰 Funds tab ── -->
-            ${allPending.length ? `
-            <div class="bg-white border-2 border-amber-300 rounded-xl shadow-sm mb-6 overflow-hidden">
-                <div class="bg-amber-50 px-5 py-3 border-b border-amber-200 flex items-start justify-between">
-                    <div>
-                        <div class="flex items-center gap-2">
-                            <span class="text-lg">⚠️</span>
-                            <h3 class="font-bold text-amber-800">Legacy Fund Requests (deprecated)</h3>
-                            <span class="px-2 py-0.5 bg-amber-200 text-amber-800 rounded-full text-xs font-bold">${allPending.length}</span>
-                        </div>
-                        <p class="text-xs text-amber-700 mt-1">These are pre-Phase-C fund requests stored inside projects. New fund requests live in the <a href="javascript:void(0)" onclick="switchView('funds')" class="font-semibold underline">💰 Funds tab</a>. Use Heavy Wipe in Settings → Developer Tools to clean up legacy data when ready.</p>
-                    </div>
-                </div>
-                <table class="w-full text-sm">
-                    <thead class="bg-amber-50 text-xs text-gray-500 uppercase">
-                        <tr>
-                            <th class="px-4 py-2 text-left">Project</th>
-                            <th class="px-4 py-2 text-left">Date</th>
-                            <th class="px-4 py-2 text-left">Purpose</th>
-                            <th class="px-4 py-2 text-right">Amount</th>
-                            <th class="px-4 py-2 text-center">Status</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${allPending.map(r=>`
-                        <tr class="border-t">
-                            <td class="px-4 py-2">
-                                <p class="font-medium text-gray-800">${r.projectName}</p>
-                                ${r.projectRef?`<p class="text-xs text-gray-400">${r.projectRef}</p>`:''}
-                            </td>
-                            <td class="px-4 py-2 text-xs text-gray-500">${r.date||'—'}</td>
-                            <td class="px-4 py-2">
-                                <span class="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs">${r.purpose||'—'}</span>
-                            </td>
-                            <td class="px-4 py-2 text-right font-bold text-gray-800">${fmt(r.amount)}</td>
-                            <td class="px-4 py-2 text-center">
-                                <span class="px-2 py-1 rounded-full text-xs font-semibold ${r.status==='Approved'?'bg-blue-100 text-blue-700':'bg-amber-100 text-amber-700'}">${r.status}</span>
-                            </td>
-                        </tr>`).join('')}
-                    </tbody>
-                </table>
-            </div>` : ''}
-
-            <!-- ── PROJECT LIST ── -->
-            ${(() => {
-                if (!projectExpenses.length) return `<div class="text-center py-16 text-gray-400"><div class="text-5xl mb-4">🧳</div><p>No projects yet. Click <b>+ New Project</b> to add one.</p></div>`;
-                // ── Apply filters ──
-                // Step 1: filter projects by name/ref.
-                const afterProjectFilter = projectQ
-                    ? projectExpenses.filter(p =>
-                        ((p.projectName||'')+' '+(p.projectRef||'')).toLowerCase().includes(projectQ))
-                    : projectExpenses;
-                // Step 2: for each surviving project, filter its items by entry search.
-                //   If entryQ is active and a project has zero matching items, drop it.
-                const projWithFiltered = afterProjectFilter.map(p => {
-                    const allItems = p.items || [];
-                    const matched  = entryQ ? allItems.filter(it => _itemMatchesEntrySearch(it, entryQ)) : allItems;
-                    return { p, matched, allItemsCount: allItems.length };
-                }).filter(x => !entryQ || x.matched.length > 0);
-
-                if (filterActive && !projWithFiltered.length) {
-                    return `<div class="text-center py-16 text-gray-400">
-                        <div class="text-5xl mb-4">🔍</div>
-                        <p class="font-semibold">No matching entries</p>
-                        <p class="text-sm mt-1">No projects or expense entries match your filters.</p>
-                        <button onclick="_clearProjExpFilters()" class="mt-4 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 text-sm">Clear filters</button>
-                    </div>`;
-                }
-
-                return projWithFiltered.map(({ p, matched, allItemsCount }) => {
-                const spent   = (p.items||[]).reduce((a,i)=>a+(parseFloat(i.amount)||0),0);
-                // Phase C: compute pool allocation breakdown for this project's items
+            return projWithFiltered.map(({ p, matched }) => {
                 const poolBreakdown = {};
                 let unallocatedAmt = 0, unallocatedCount = 0;
                 (p.items||[]).forEach(it => {
@@ -17272,8 +17177,8 @@ Automated WFH alert — ${company} Attendance System.`;
                     }
                 });
                 const poolEntries = Object.entries(poolBreakdown);
-                // The items we'll display in the table — filtered when entryQ active, else all.
                 const displayItems = entryQ ? matched : (p.items || []);
+                const spent = (p.items||[]).reduce((a,i)=>a+(parseFloat(i.amount)||0),0);
                 return `
                 <div class="bg-white border border-gray-200 rounded-xl shadow-sm mb-4 overflow-hidden">
                     <!-- Project header -->
@@ -17347,19 +17252,16 @@ Automated WFH alert — ${company} Attendance System.`;
                                     <td class="px-3 py-1.5 text-center">${attCount>0?`<button onclick="viewProjExpBills('${p.projExpID}','${item.itemID}')" class="text-blue-500 hover:text-blue-700">📎 ${attCount}</button>`:'—'}</td>
                                     <td class="px-3 py-1.5 text-center whitespace-nowrap">
                                         <div class="flex gap-1 justify-center flex-wrap">
-                                            <!-- Step 1: Mark Tally -->
                                             <button onclick="toggleTallyStatus('${p.projExpID}','${item.itemID}')"
                                                 class="text-xs px-2 py-1 rounded border font-semibold ${item.tallyUpdated?'bg-teal-500 border-teal-600 text-white':'bg-gray-100 border-gray-300 text-gray-600 hover:bg-teal-50 hover:border-teal-300'}"
                                                 title="${item.tallyUpdated?'Click to un-mark Tally':'Click to mark as entered in Tally'}">
                                                 ${item.tallyUpdated?'✓ Tally':'Tally ▸'}
                                             </button>
-                                            <!-- Step 2: Attach voucher (always visible) -->
                                             <button onclick="openTallyVoucherModal('${p.projExpID}','${item.itemID}')"
                                                 class="text-xs px-2 py-1 rounded border font-semibold ${item.tallyVoucherNo?'bg-indigo-500 border-indigo-600 text-white':item.tallyUpdated?'bg-indigo-100 border-indigo-300 text-indigo-700 hover:bg-indigo-200':'bg-gray-50 border-gray-200 text-gray-400 hover:bg-indigo-50 hover:border-indigo-200'}"
                                                 title="${item.tallyVoucherNo?'Voucher #'+item.tallyVoucherNo+' — click to edit':'Attach Tally voucher number and screenshot'}">
                                                 📋 ${item.tallyVoucherNo?'#'+item.tallyVoucherNo:'Voucher'}
                                             </button>
-                                            <!-- Delete -->
                                             ${settings.allowExpenseDelete
                                                 ?`<button onclick="deleteProjExpItem('${p.projExpID}','${item.itemID}')" class="text-xs px-1.5 py-1 rounded border border-red-200 text-red-500 hover:bg-red-50" title="Delete entry">✕</button>`
                                                 :'<span class="text-gray-200 text-xs" title="Delete locked — enable in Settings">🔒</span>'}
@@ -17371,7 +17273,137 @@ Automated WFH alert — ${company} Attendance System.`;
                     </div>` : '<p class="text-xs text-gray-400 px-4 py-2 border-t">No field expense entries yet.</p>'}
                 </div>`;
             }).join('');
-            })()}
+        }
+
+        function renderProjectExpenses(content) {
+            const fmt = n => '₹' + (+n||0).toLocaleString('en-IN', {minimumFractionDigits:2});
+            const entryQ   = _projExpEntrySearch;
+            const projectQ = _projExpProjectFilter;
+            const filterActive = !!(entryQ || projectQ);
+
+            // (Filter stats and project list are built via _buildProjExpStatsHTML
+            // and _buildProjExpListHTML below. Partial refresh on keystrokes
+            // updates ONLY those, preserving the user's cursor in the input.)
+
+            // Collect all pending/approved fund requests across all projects (legacy data, kept for migration awareness)
+            // NOTE: Phase C moved fund requests to dedicated 💰 Funds tab. Legacy nested requests
+            // shown here only if they exist in old test data — pure visibility, no actions.
+            const allPending = [];
+            projectExpenses.forEach(p => {
+                (p.fundRequests||[]).forEach(r => {
+                    if (r.status === 'Pending' || r.status === 'Approved') {
+                        allPending.push({...r, projExpID: p.projExpID, projectName: p.projectName, projectRef: p.projectRef||''});
+                    }
+                });
+            });
+            allPending.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+
+            // Summary totals — Phase C: spend is the only meaningful per-project metric
+            // (totalFunds + balance moved to 💰 Funds tab as pool concept).
+            const totalSpent  = projectExpenses.reduce((s,p)=>s+(p.items||[]).reduce((a,i)=>a+(parseFloat(i.amount)||0),0),0);
+            const totalEntries = projectExpenses.reduce((s,p)=>s+(p.items||[]).length, 0);
+
+            content.innerHTML = `
+            <div class="flex items-center justify-between mb-6">
+                <div>
+                    <h2 class="text-3xl font-bold text-gray-800">🧳 Projects & Field Expenses</h2>
+                    <p class="text-gray-500 text-sm mt-1">Manage project sites and view field expense entries · Fund flow is in <a href="javascript:void(0)" onclick="switchView('funds')" class="text-emerald-600 font-semibold hover:underline">💰 Funds tab</a></p>
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="exportAllProjExpCSV()" class="px-4 py-2 bg-green-600 text-white rounded-xl hover:bg-green-700 font-medium text-sm">📊 Export CSV</button>
+                    <button onclick="exportAllProjExpPDF()" class="px-4 py-2 bg-purple-600 text-white rounded-xl hover:bg-purple-700 font-medium text-sm">📄 Export PDF</button>
+                    <button onclick="openProjExpModal()" class="px-5 py-2 bg-yellow-600 text-white rounded-xl hover:bg-yellow-700 font-medium">+ New Project</button>
+                </div>
+            </div>
+
+            <!-- Summary — 3 metrics (Phase C: removed legacy Office Funds + Balance + Pending) -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
+                <div class="bg-gradient-to-br from-red-500 to-pink-600 rounded-xl p-4 text-white shadow">
+                    <p class="text-xs opacity-80">Total Field Expenses</p>
+                    <p class="text-2xl font-bold">${fmt(totalSpent)}</p>
+                    <p class="text-xs opacity-80 mt-1">Across ${projectExpenses.length} project${projectExpenses.length===1?'':'s'}</p>
+                </div>
+                <div class="bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl p-4 text-white shadow">
+                    <p class="text-xs opacity-80">Expense Entries</p>
+                    <p class="text-2xl font-bold">${totalEntries}</p>
+                    <p class="text-xs opacity-80 mt-1">Total logged</p>
+                </div>
+                <div class="bg-gradient-to-br from-green-500 to-teal-600 rounded-xl p-4 text-white shadow">
+                    <p class="text-xs opacity-80">Total Projects</p>
+                    <p class="text-2xl font-bold">${projectExpenses.length}</p>
+                    <p class="text-xs opacity-80 mt-1">Active sites</p>
+                </div>
+            </div>
+
+            <!-- ── SEARCH / FILTER BAR ── -->
+            <div class="bg-white border border-gray-200 rounded-xl shadow-sm p-3 mb-4">
+                <div class="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
+                    <div class="flex-1 relative">
+                        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
+                        <input id="projExpEntrySearch" type="text"
+                               value="${entryQ.replace(/"/g,'&quot;')}"
+                               oninput="_onProjExpEntrySearch(this.value)"
+                               placeholder="Search entries — description, vendor, category, technician, date, amount, paid by…"
+                               class="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400" />
+                    </div>
+                    <div class="sm:w-72 relative">
+                        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">📁</span>
+                        <input id="projExpProjectFilter" type="text"
+                               value="${projectQ.replace(/"/g,'&quot;')}"
+                               oninput="_onProjExpProjectFilter(this.value)"
+                               placeholder="Filter projects by name / ref"
+                               class="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400" />
+                    </div>
+                    <button id="projExpClearBtn" onclick="_clearProjExpFilters()" style="${filterActive?'':'display:none'}" class="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 whitespace-nowrap">✕ Clear</button>
+                </div>
+                <div id="projExpFilterStats">${_buildProjExpStatsHTML()}</div>
+            </div>
+
+            <!-- ── LEGACY PENDING — visibility only, action in 💰 Funds tab ── -->
+            ${allPending.length ? `
+            <div class="bg-white border-2 border-amber-300 rounded-xl shadow-sm mb-6 overflow-hidden">
+                <div class="bg-amber-50 px-5 py-3 border-b border-amber-200 flex items-start justify-between">
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-lg">⚠️</span>
+                            <h3 class="font-bold text-amber-800">Legacy Fund Requests (deprecated)</h3>
+                            <span class="px-2 py-0.5 bg-amber-200 text-amber-800 rounded-full text-xs font-bold">${allPending.length}</span>
+                        </div>
+                        <p class="text-xs text-amber-700 mt-1">These are pre-Phase-C fund requests stored inside projects. New fund requests live in the <a href="javascript:void(0)" onclick="switchView('funds')" class="font-semibold underline">💰 Funds tab</a>. Use Heavy Wipe in Settings → Developer Tools to clean up legacy data when ready.</p>
+                    </div>
+                </div>
+                <table class="w-full text-sm">
+                    <thead class="bg-amber-50 text-xs text-gray-500 uppercase">
+                        <tr>
+                            <th class="px-4 py-2 text-left">Project</th>
+                            <th class="px-4 py-2 text-left">Date</th>
+                            <th class="px-4 py-2 text-left">Purpose</th>
+                            <th class="px-4 py-2 text-right">Amount</th>
+                            <th class="px-4 py-2 text-center">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${allPending.map(r=>`
+                        <tr class="border-t">
+                            <td class="px-4 py-2">
+                                <p class="font-medium text-gray-800">${r.projectName}</p>
+                                ${r.projectRef?`<p class="text-xs text-gray-400">${r.projectRef}</p>`:''}
+                            </td>
+                            <td class="px-4 py-2 text-xs text-gray-500">${r.date||'—'}</td>
+                            <td class="px-4 py-2">
+                                <span class="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs">${r.purpose||'—'}</span>
+                            </td>
+                            <td class="px-4 py-2 text-right font-bold text-gray-800">${fmt(r.amount)}</td>
+                            <td class="px-4 py-2 text-center">
+                                <span class="px-2 py-1 rounded-full text-xs font-semibold ${r.status==='Approved'?'bg-blue-100 text-blue-700':'bg-amber-100 text-amber-700'}">${r.status}</span>
+                            </td>
+                        </tr>`).join('')}
+                    </tbody>
+                </table>
+            </div>` : ''}
+
+            <!-- ── PROJECT LIST (rendered via _buildProjExpListHTML; partial-refreshed on filter change) ── -->
+            <div id="projExpListContainer">${_buildProjExpListHTML()}</div>
 
             <!-- Release Funds Modal -->
             <div id="releaseFundsModal" class="modal">
