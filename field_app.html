@@ -1623,16 +1623,42 @@
                 </div>
                 <button onclick="openFundReqModal()" style="padding:8px 16px;border-radius:9px;background:#fff;color:#15803d;border:none;cursor:pointer;font-size:13px;font-weight:700;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.15)">+ Request Fund</button>
             </div>
-            ${reqStatusInfo ? `
-            <div style="margin-top:10px;padding:8px 10px;background:${reqStatusInfo.bg};border-radius:8px;display:flex;justify-content:space-between;align-items:center;gap:8px">
-                <div style="font-size:12px;color:${reqStatusInfo.color}">
-                    <b>${reqStatusInfo.icon} Last Request:</b> ${fmt(lastReq.requestedAmount)} · ${reqStatusInfo.label}
-                    <div style="font-size:10px;opacity:.85;margin-top:1px">Sent ${lastReq.requestedDate} ${lastReq.requestedTime||''}</div>
-                </div>
-                ${lastReq.status === 'Pending'
-                    ? `<button onclick="cancelFundRequest('${lastReq.requestID}')" style="padding:4px 10px;background:rgba(0,0,0,.1);color:${reqStatusInfo.color};border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap">Cancel</button>`
-                    : ''}
-            </div>` : ''}
+            ${reqStatusInfo ? (() => {
+                // Status-aware action buttons:
+                //   Pending          → Edit + Cancel
+                //   Rejected/Cancelled → Resubmit
+                //   Approved/Disbursed → Request Correction (unless one is pending)
+                const s = lastReq.status;
+                const btnStyle = `padding:4px 10px;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap`;
+                let actions = '';
+                if (s === 'Pending') {
+                    actions = `
+                        <button onclick="editFundRequest('${lastReq.requestID}')" style="${btnStyle};background:rgba(0,0,0,.08);color:${reqStatusInfo.color}" title="Edit date, amount, purpose…">✏️ Edit</button>
+                        <button onclick="cancelFundRequest('${lastReq.requestID}')" style="${btnStyle};background:rgba(0,0,0,.08);color:${reqStatusInfo.color}">Cancel</button>`;
+                } else if (s === 'Rejected' || s === 'Cancelled') {
+                    actions = `<button onclick="resubmitFundRequest('${lastReq.requestID}')" style="${btnStyle};background:#0d7c66;color:#fff" title="Create a corrected new request">🔄 Resubmit</button>`;
+                } else if (s === 'Approved' || s === 'Disbursed') {
+                    // Check whether there's an unresolved correction already
+                    const pendingCR = (lastReq.correctionRequests||[]).filter(c => !c.resolvedAt).length;
+                    if (pendingCR > 0) {
+                        actions = `<span style="font-size:10px;color:${reqStatusInfo.color};padding:2px 8px;background:rgba(0,0,0,.06);border-radius:5px" title="Office is reviewing your correction request">📨 Correction pending (${pendingCR})</span>`;
+                    } else {
+                        actions = `<button onclick="requestFundCorrection('${lastReq.requestID}')" style="${btnStyle};background:rgba(0,0,0,.08);color:${reqStatusInfo.color}" title="Ask the office to amend this request — direct edit not allowed once processed">📨 Request Correction</button>`;
+                    }
+                }
+                // Audit hint: show "edited" badge if editHistory present
+                const editBadge = (lastReq.editHistory && lastReq.editHistory.length)
+                    ? `<span style="font-size:9px;color:${reqStatusInfo.color};opacity:.7;margin-left:6px" title="Edited ${lastReq.editHistory.length} time${lastReq.editHistory.length===1?'':'s'}">✎</span>`
+                    : '';
+                return `
+                <div style="margin-top:10px;padding:8px 10px;background:${reqStatusInfo.bg};border-radius:8px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+                    <div style="font-size:12px;color:${reqStatusInfo.color};flex:1;min-width:160px">
+                        <b>${reqStatusInfo.icon} Last Request:</b> ${fmt(lastReq.requestedAmount)} · ${reqStatusInfo.label}${editBadge}
+                        <div style="font-size:10px;opacity:.85;margin-top:1px">Sent ${lastReq.requestedDate} ${lastReq.requestedTime||''}</div>
+                    </div>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap">${actions}</div>
+                </div>`;
+            })() : ''}
         </div>
 
         <!-- Old grand summary (kept for project-level view) -->
@@ -1768,27 +1794,81 @@
     // ── FUND REQUEST CRUD ─────────────────────────────────────────
     // ── FUND REQUEST (Phase A+B — pool-based architecture) ──
     // openFundReqModal: opens the modal. No projID needed — request is tech-bound, not project-bound.
-    function openFundReqModal() {
+    // Mode-aware modal:
+    //   mode = 'new'      → blank form, will create a fresh request
+    //   mode = 'edit'     → pre-filled from `existing`, will update in place (Pending only)
+    //   mode = 'resubmit' → pre-filled from `existing`, will create a NEW request
+    //                       (used for Rejected/Cancelled requests)
+    let _frMode = 'new';
+    let _frEditingID = null;   // requestID being edited (when mode='edit')
+
+    function openFundReqModal(mode, existing) {
+        _frMode = mode || 'new';
+        _frEditingID = (mode === 'edit') ? (existing?.requestID || null) : null;
+
         // Populate technician dropdown from staffList (technicians only)
         const techSel = document.getElementById('frRequester');
         const techs = (staffList||[]).filter(s => (s.staffType||'').toLowerCase().includes('tech'));
+        // For new/resubmit, default to current user. For edit, lock to the existing requester.
+        const targetSID = (existing && (_frMode === 'edit' || _frMode === 'resubmit'))
+            ? existing.requestedBy
+            : currentUser?.staffID;
         techSel.innerHTML = (techs.length ? techs : staffList).map(s =>
-            `<option value="${s.staffID}" ${currentUser?.staffID===s.staffID?'selected':''}>${s.name}${s.staffType?' ('+s.staffType+')':''}</option>`
+            `<option value="${s.staffID}" ${targetSID===s.staffID?'selected':''}>${s.name}${s.staffType?' ('+s.staffType+')':''}</option>`
         ).join('');
-        document.getElementById('frDate').value     = new Date().toISOString().split('T')[0];
-        document.getElementById('frAmount').value   = '';
-        document.getElementById('frPurpose').value  = '';
-        document.getElementById('frProject').value  = '';
-        document.getElementById('frRemarks').value  = '';
-        // Show bank preview for currently-selected tech
+
+        // Lock requester field on edit (per spec: NOT editable).
+        techSel.disabled = (_frMode === 'edit');
+
+        // Field values
+        if (existing && (_frMode === 'edit' || _frMode === 'resubmit')) {
+            document.getElementById('frDate').value     = existing.requestedDate || new Date().toISOString().split('T')[0];
+            document.getElementById('frAmount').value   = existing.requestedAmount || '';
+            document.getElementById('frPurpose').value  = existing.purpose || '';
+            document.getElementById('frProject').value  = existing.project || '';
+            document.getElementById('frRemarks').value  = existing.notes || '';
+        } else {
+            document.getElementById('frDate').value     = new Date().toISOString().split('T')[0];
+            document.getElementById('frAmount').value   = '';
+            document.getElementById('frPurpose').value  = '';
+            document.getElementById('frProject').value  = '';
+            document.getElementById('frRemarks').value  = '';
+        }
+
+        // Title + submit button label change with mode
+        const titleEl = document.getElementById('fundReqTitle');
+        const submitBtn = document.querySelector('#fundReqForm button[type="submit"]');
+        if (_frMode === 'edit') {
+            if (titleEl) titleEl.textContent = '✏️ Edit Fund Request';
+            if (submitBtn) submitBtn.textContent = '💾 Save Changes';
+        } else if (_frMode === 'resubmit') {
+            if (titleEl) titleEl.textContent = '🔄 Resubmit Fund Request';
+            if (submitBtn) submitBtn.textContent = '📤 Submit New Request';
+        } else {
+            if (titleEl) titleEl.textContent = '📋 Request Fund';
+            if (submitBtn) submitBtn.textContent = '📤 Submit Request';
+        }
+
+        // Show bank preview for the targeted technician
         _updateFundReqBankPreview();
         techSel.onchange = _updateFundReqBankPreview;
         document.getElementById('fundReqModal').classList.add('show');
-        // Level 2 concurrency — new request, no existing record to guard
-        _concurBeginEdit('fundRequests', []);
+        // Level 2 concurrency:
+        //   For edit, guard against external modification of THIS request.
+        //   For new/resubmit, no existing record to guard.
+        if (_frMode === 'edit' && _frEditingID) {
+            _concurBeginEdit('fundRequests', [{ id: _frEditingID, idKey: 'requestID' }]);
+        } else {
+            _concurBeginEdit('fundRequests', []);
+        }
     }
     function closeFundReqModal() {
         document.getElementById('fundReqModal').classList.remove('show');
+        // Re-enable requester field (in case it was locked for edit mode)
+        const techSel = document.getElementById('frRequester');
+        if (techSel) techSel.disabled = false;
+        _frMode = 'new';
+        _frEditingID = null;
         _concurEndEdit();
     }
     function _updateFundReqBankPreview() {
@@ -1816,6 +1896,7 @@
         if (_savingFundReq) return; // prevent double-submit
         _savingFundReq = true;
         const submitBtn = e.target?.querySelector?.('button[type="submit"]');
+        const origBtnText = submitBtn?.innerHTML || '';
         if (submitBtn) { submitBtn.disabled = true; submitBtn.innerHTML = 'Submitting…'; }
         try {
         const requesterID = document.getElementById('frRequester').value;
@@ -1825,6 +1906,74 @@
             showToast('⚠ Please complete all required fields (min ₹100)');
             return;
         }
+
+        // ── EDIT MODE: update existing Pending request in place ──
+        if (_frMode === 'edit' && _frEditingID) {
+            const idx = fundRequests.findIndex(r => r.requestID === _frEditingID);
+            if (idx < 0) { showToast('⚠ Request not found — may have been deleted'); return; }
+            const existing = fundRequests[idx];
+
+            // Safety net: edit allowed only when status is still Pending.
+            // Office may have approved/rejected/disbursed since modal opened — re-check.
+            if (existing.status !== 'Pending') {
+                showToast('⚠ Cannot edit — request is now ' + existing.status.toLowerCase() + '. Refresh and use Request Correction.');
+                closeFundReqModal();
+                renderView();
+                return;
+            }
+
+            // Level 2 concurrency: pre-save staleness check
+            if (await _concurBlockIfStale('fundRequests', [{ id: _frEditingID, idKey: 'requestID' }])) return;
+
+            // Capture changes for audit log
+            const newDate    = document.getElementById('frDate').value;
+            const newPurpose = document.getElementById('frPurpose').value.trim();
+            const newProject = document.getElementById('frProject').value.trim();
+            const newRemarks = document.getElementById('frRemarks').value.trim();
+            const changes = {};
+            if (existing.requestedAmount != amt)        changes.amount  = [existing.requestedAmount, amt];
+            if ((existing.requestedDate||'') !== newDate)    changes.date    = [existing.requestedDate||'', newDate];
+            if ((existing.purpose||'') !== newPurpose)       changes.purpose = [existing.purpose||'', newPurpose];
+            if ((existing.project||'') !== newProject)       changes.project = [existing.project||'', newProject];
+            if ((existing.notes||'') !== newRemarks)         changes.notes   = [existing.notes||'', newRemarks];
+
+            if (!Object.keys(changes).length) {
+                showToast('No changes to save');
+                closeFundReqModal();
+                return;
+            }
+
+            existing.requestedAmount = amt;
+            existing.requestedDate   = newDate;
+            existing.purpose         = newPurpose;
+            existing.project         = newProject;
+            existing.notes           = newRemarks;
+            existing.updatedAt       = new Date().toISOString();
+
+            // Audit trail
+            if (!existing.editHistory) existing.editHistory = [];
+            existing.editHistory.push({
+                at:      new Date().toISOString(),
+                by:      currentUser?.email || currentUser?.staffID || 'unknown',
+                byName:  currentUser?.name  || '',
+                changes
+            });
+            _stampRecord(existing);
+
+            try {
+                await saveFundRequests();
+                closeFundReqModal();
+                renderView();
+                showToast('✅ Fund request updated');
+            } catch(err) {
+                showToast('⚠ Save failed: ' + (err.message || 'try again'));
+            }
+            return;
+        }
+
+        // ── NEW or RESUBMIT MODE: create a fresh request ──
+        // Resubmit produces a new requestID and a fresh timeline — the original
+        // Rejected/Cancelled request stays untouched as audit history.
         const now = new Date();
         const newReq = {
             requestID:        'REQ-'+now.getTime(),
@@ -1850,7 +1999,9 @@
             notes:            document.getElementById('frRemarks').value.trim(),
             cancelledReason:  '',
             createdAt:        now.toISOString(),
-            updatedAt:        now.toISOString()
+            updatedAt:        now.toISOString(),
+            // For resubmit, remember which prior request this was based on (audit trail)
+            resubmitOfID:     (_frMode === 'resubmit' && _frEditingID) ? _frEditingID : ''
         };
         _stampRecord(newReq);
         fundRequests.push(newReq);
@@ -1858,7 +2009,7 @@
             await saveFundRequests();
             closeFundReqModal();
             renderView();
-            showToast('📤 Fund request submitted to office');
+            showToast(_frMode === 'resubmit' ? '🔄 Request resubmitted to office' : '📤 Fund request submitted to office');
         } catch(err) {
             // Rollback in-memory if save failed
             fundRequests = fundRequests.filter(r => r.requestID !== newReq.requestID);
@@ -1870,7 +2021,7 @@
         }
         } finally {
             _savingFundReq = false;
-            if (submitBtn) { submitBtn.disabled = false; submitBtn.innerHTML = '📤 Submit Request'; }
+            if (submitBtn) { submitBtn.disabled = false; submitBtn.innerHTML = origBtnText || '📤 Submit Request'; }
         }
     }
 
@@ -1895,6 +2046,94 @@
             showToast('🗑️ Request cancelled');
         } catch(err) {
             showToast('⚠ Save failed');
+        }
+    }
+
+    // ── EDIT: open modal pre-filled with this Pending request's values ──
+    // Used when the request hasn't been acted on yet by the office.
+    function editFundRequest(reqID) {
+        const r = fundRequests.find(x => x.requestID === reqID);
+        if (!r) { showToast('⚠ Request not found'); return; }
+        if (r.status !== 'Pending') {
+            showToast('⚠ Cannot edit — request is ' + r.status.toLowerCase() + '. Use Request Correction.');
+            return;
+        }
+        openFundReqModal('edit', r);
+    }
+
+    // ── RESUBMIT: create a NEW request seeded from a Rejected/Cancelled one ──
+    // Original record stays as audit history. New request gets a fresh ID.
+    function resubmitFundRequest(reqID) {
+        const r = fundRequests.find(x => x.requestID === reqID);
+        if (!r) { showToast('⚠ Request not found'); return; }
+        if (r.status !== 'Rejected' && r.status !== 'Cancelled') {
+            showToast('⚠ Resubmit only available for Rejected or Cancelled requests');
+            return;
+        }
+        openFundReqModal('resubmit', r);
+    }
+
+    // ── REQUEST CORRECTION: non-destructive note attached to an already-Approved
+    // or already-Disbursed request, asking the office to amend it. ──
+    //
+    // Why we don't allow direct edit here:
+    //   • Approved: office is about to disburse based on the current amount.
+    //     Silent changes could short-pay or overpay.
+    //   • Disbursed: a fund pool already exists with this amount. Items have
+    //     potentially been logged against it. Changing the request's amount
+    //     doesn't fix the pool.
+    // So the tech submits a "please correct" message; the office decides what
+    // to do (amend pool, reject, etc.) and clears the flag.
+    async function requestFundCorrection(reqID) {
+        const r = fundRequests.find(x => x.requestID === reqID);
+        if (!r) { showToast('⚠ Request not found'); return; }
+        if (r.status !== 'Approved' && r.status !== 'Disbursed') {
+            showToast('⚠ Correction Request only applies to Approved or Disbursed requests');
+            return;
+        }
+        const msg = window.prompt(
+            'Describe what needs correcting on this ' + r.status.toLowerCase() + ' request:\n\n' +
+            '• Date: ' + (r.requestedDate||'—') + '\n' +
+            '• Amount: ₹' + (r.requestedAmount||0) + '\n' +
+            '• Purpose: ' + (r.purpose||'—') + '\n\n' +
+            'Examples:\n' +
+            '  "Amount should be ₹50000 not ₹5000"\n' +
+            '  "Date should be 2026-05-15"\n\n' +
+            'The office will see this and decide how to amend.',
+            ''
+        );
+        if (msg === null) return;           // user cancelled
+        const txt = msg.trim();
+        if (!txt) { showToast('⚠ Please enter a correction message'); return; }
+        if (txt.length > 500) { showToast('⚠ Keep correction note under 500 characters'); return; }
+
+        // Level 2 concurrency — guard
+        if (await _concurBlockIfStale('fundRequests', [{ id: reqID, idKey: 'requestID' }])) return;
+
+        // Append to a correctionRequests[] array on the fund request.
+        // The office app reads this and presents the message; once acted on,
+        // office sets `resolvedAt` so we know it's been handled.
+        if (!r.correctionRequests) r.correctionRequests = [];
+        r.correctionRequests.push({
+            id:         'CR-' + Date.now(),
+            at:         new Date().toISOString(),
+            by:         currentUser?.email || currentUser?.staffID || 'unknown',
+            byName:     currentUser?.name  || '',
+            message:    txt,
+            resolvedAt: '',
+            resolvedBy: '',
+            resolution: ''
+        });
+        r.updatedAt = new Date().toISOString();
+        _stampRecord(r);
+        try {
+            await saveFundRequests();
+            renderView();
+            showToast('📨 Correction request sent to office');
+        } catch(err) {
+            // Rollback the unsaved append
+            r.correctionRequests.pop();
+            showToast('⚠ Send failed: ' + (err.message || 'try again'));
         }
     }
 
