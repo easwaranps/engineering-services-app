@@ -7537,6 +7537,76 @@
             }
         }
 
+        // ════════════════════════════════════════════════════════════════
+        // VOUCHER NO (BILL LOG REF) — FORMAT HELPERS
+        // ────────────────────────────────────────────────────────────────
+        // Format: <FYcode>-<NNN>  (e.g., "2627-001", grows to "2627-1000" past 999)
+        // Migration: old "VCH" + 4-digit FY + 3+ digits (e.g., "VCH2627001") is
+        // recognized and rewritten to the new format preserving the same
+        // sequence number on next save. Both formats share the same numeric
+        // slot — VCH2627001 and 2627-001 are treated as duplicates.
+        // Manually-entered values that don't match either pattern are left alone.
+        // ════════════════════════════════════════════════════════════════
+
+        // Pattern for the OLD legacy format: VCH + 4-digit FY + 3-or-more digits
+        // Capture group 1 = FY code, capture group 2 = sequence number.
+        const _VOUCHER_OLD_RE = /^VCH(\d{4})(\d{3,})$/;
+        // Pattern for the NEW format: 4-digit FY + hyphen + 3-or-more digits
+        const _VOUCHER_NEW_RE = /^(\d{4})-(\d{3,})$/;
+
+        // Return { fyCode, seqNo } if the voucher matches either pattern, else null.
+        function _parseVoucherNo(v) {
+            if (!v) return null;
+            const s = String(v).trim();
+            let m = s.match(_VOUCHER_NEW_RE);
+            if (m) return { fyCode: m[1], seqNo: parseInt(m[2], 10), format: 'new' };
+            m = s.match(_VOUCHER_OLD_RE);
+            if (m) return { fyCode: m[1], seqNo: parseInt(m[2], 10), format: 'old' };
+            return null;  // custom/manual — leave it alone
+        }
+
+        // Format a sequence number using the new format (min 3 digits, grows naturally).
+        function _formatVoucherNo(fyCode, n) {
+            return fyCode + '-' + String(n).padStart(3, '0');
+        }
+
+        // Compute the next voucher number for a given FY, given an array of expenses.
+        // Considers BOTH old and new formats — they share the numeric slot.
+        // Returns the next sequence number as an integer.
+        function _nextVoucherSeq(arr, fyCode) {
+            let max = 0;
+            (arr || []).forEach(e => {
+                const parsed = _parseVoucherNo(e.voucherNo);
+                if (parsed && parsed.fyCode === fyCode && parsed.seqNo > max) {
+                    max = parsed.seqNo;
+                }
+            });
+            return max + 1;
+        }
+
+        // Is the given voucherNo (either format) already taken by some record in arr?
+        // Treats VCH2627001 and 2627-001 as the SAME slot — needed during migration
+        // window where old and new formats coexist.
+        function _isVoucherTaken(arr, voucherNo) {
+            const target = _parseVoucherNo(voucherNo);
+            if (!target) {
+                // Custom/manual value — only exact-match counts as taken.
+                return (arr || []).some(e => e.voucherNo === voucherNo);
+            }
+            return (arr || []).some(e => {
+                const p = _parseVoucherNo(e.voucherNo);
+                return p && p.fyCode === target.fyCode && p.seqNo === target.seqNo;
+            });
+        }
+
+        // Convert an old-format voucher to new format, preserving the sequence number.
+        // If already new-format or custom, returns unchanged.
+        function _migrateVoucherNo(v) {
+            const parsed = _parseVoucherNo(v);
+            if (!parsed || parsed.format !== 'old') return v;
+            return _formatVoucherNo(parsed.fyCode, parsed.seqNo);
+        }
+
         function openExpenseModal(exp = null) {
             currentExpense = exp ? JSON.parse(JSON.stringify(exp)) : null; // deep copy so edits don't mutate original until save
             document.getElementById('expenseModalTitle').textContent = exp ? 'Edit Expense / Bill' : 'New Expense / Bill';
@@ -7565,15 +7635,17 @@
             const gstInputEl = document.getElementById('expGSTInputClaimable');
             if (gstInputEl) gstInputEl.checked = true;
 
-            // Auto-generate voucher number
+            // Auto-generate voucher number (NEW FORMAT: "2627-001", expandable)
             if (!exp) {
                 const fyCode = getFinancialYearCode(new Date());
-                const count  = expenses.filter(e => (e.voucherNo||'').includes(fyCode)).length + 1;
-                document.getElementById('expVoucherNo').value = 'VCH' + fyCode + String(count).padStart(3,'0');
+                const seq    = _nextVoucherSeq(expenses, fyCode);
+                document.getElementById('expVoucherNo').value = _formatVoucherNo(fyCode, seq);
                 document.getElementById('expBillDate').value = new Date().toISOString().split('T')[0];
                 document.getElementById('expExchRate').value = '1';
             } else {
-                document.getElementById('expVoucherNo').value     = exp.voucherNo||'';
+                // Existing record — display in NEW format if it matches old auto-format.
+                // (Migration is committed when the user saves; here it's just the preview.)
+                document.getElementById('expVoucherNo').value     = _migrateVoucherNo(exp.voucherNo || '');
                 document.getElementById('expBillNo').value        = exp.billNo||'';
                 document.getElementById('expBillDate').value      = exp.billDate||'';
                 document.getElementById('expCompanyName').value   = exp.companyName||'';
@@ -8291,10 +8363,21 @@
             // ── Level 2 concurrency: stamp record ──
             _stampRecord(expObj);
 
+            // ── Migration: rewrite old "VCH...." to new "FY-NNN" format. ──
+            // Applies to BOTH new (the open-modal display might already be new
+            // format, but a manual edit could revert it) and existing records
+            // (this is the "migrate on next save" path you asked for).
+            // Manual/custom voucher strings are left alone.
+            expObj.voucherNo = _migrateVoucherNo(expObj.voucherNo);
+
             // ── Sequence-conflict resolution + merge-on-save (NEW expense only) ──
             // For new expenses, voucherNo was generated at modal-open against
             // a possibly stale snapshot. Check against fresh server data, and
             // if it collides, ask the user whether to renumber.
+            //
+            // Important: _isVoucherTaken treats VCH2627001 and 2627-001 as the
+            // SAME slot — needed during the migration window where old and new
+            // formats coexist on Drive.
             const _freshExp = await _refetchFresh('expenses');
             if (_freshExp) {
                 if (!currentExpense) {
@@ -8302,11 +8385,9 @@
                     const seq = await _resolveSequence({
                         freshArray: _freshExp,
                         displayedID: expObj.voucherNo,
-                        computeNext: (arr) => 'VCH' + fyCode + String(
-                            arr.filter(r => (r.voucherNo||'').includes(fyCode)).length + 1
-                        ).padStart(3,'0'),
-                        isTaken: (arr, id) => arr.some(r => r.voucherNo === id),
-                        label: 'Voucher No'
+                        computeNext: (arr) => _formatVoucherNo(fyCode, _nextVoucherSeq(arr, fyCode)),
+                        isTaken: _isVoucherTaken,
+                        label: 'Bill Log Ref'
                     });
                     if (!seq.ok) {
                         // User cancelled — leave modal open, restore Save button.
