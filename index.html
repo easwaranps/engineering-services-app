@@ -11609,6 +11609,13 @@
                                     </div>
                                 </div>
                                 <div id="attLateWarn" class="hidden text-xs font-semibold text-orange-700 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2"></div>
+                                <!-- WFH-after-office field (Office staff, Present/Half-Day/OT only) -->
+                                <div id="attWfhAfterWrap" class="hidden">
+                                    <label class="block text-xs font-semibold text-indigo-700 mb-1">🏠 Additional WFH hours <span class="text-gray-400 font-normal">(after office, optional)</span></label>
+                                    <input type="number" id="attWfhAfterHours" min="0" max="12" step="0.5" placeholder="e.g. 3"
+                                        class="w-full px-3 py-2 border border-indigo-200 rounded-lg text-sm bg-white"/>
+                                    <p class="text-xs text-gray-400 mt-1">For when you worked at the office <em>and</em> additional hours from home (Option B).</p>
+                                </div>
                                 <div id="attWFHTaskWrap" class="hidden">
                                     <label class="block text-xs font-semibold text-gray-600 mb-1">📋 Work Summary (WFH Tasks Done)</label>
                                     <textarea id="attWFHTask" rows="2" placeholder="Brief summary of work done from home today…" class="w-full px-3 py-2 border rounded-lg text-sm bg-white resize-none"></textarea>
@@ -13021,6 +13028,24 @@ ${'─'.repeat(50)}
             const ATT_COL={Working:[21,128,61],StandBy:[180,83,9],Outstation:[29,78,216],
                            Anchorage:[14,116,144],Sailing:[67,56,202],
                            ApprovedLeave:[124,58,237],UnApprovedLeave:[220,38,38]};
+            // Office-mode colors keyed by the literal status string written into the table.
+            // (Unlike ATT_FULL, these are not abbreviations — the cell renders the same word.)
+            const OFFICE_COL={
+                'Present':           [21,128,61],   // green
+                'OT':                [21,128,61],
+                'WFH':               [99,102,241],  // indigo
+                'Half Day':          [180,83,9],    // amber
+                'Half Day-Afternoon':[180,83,9],
+                'Leave':             [124,58,237],  // purple
+                'Casual Leave':      [124,58,237],
+                'Sick Leave':        [124,58,237],
+                'Earned Leave':      [124,58,237],
+                'Comp Off':          [124,58,237],
+                'Absent':            [220,38,38],   // red
+                'Holiday':           [180,83,9],    // amber
+                'Sunday':            [148,163,184], // slate
+                'Weekend':           [148,163,184]
+            };
 
             const drawPageHeader=(pageNum,totalPages)=>{
                 doc.setFillColor(15,58,95);doc.rect(0,0,PW,22,'F');
@@ -13039,57 +13064,116 @@ ${'─'.repeat(50)}
                 drawPageHeader(pageStart,pageStart);
                 let y=28;
 
-                // ── Staff info card ──────────────────────────────
-                doc.setFillColor(241,245,249);doc.rect(ML,y,CW,14,'F');
-                doc.setDrawColor(203,213,225);doc.rect(ML,y,CW,14);
+                // ── Staff info card (2 rows to avoid overlap on long designations) ──
+                doc.setFillColor(241,245,249);doc.rect(ML,y,CW,18,'F');
+                doc.setDrawColor(203,213,225);doc.rect(ML,y,CW,18);
+                // Row 1 — name (bold, larger)
                 doc.setFontSize(11);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
                 doc.text(s.name,ML+4,y+6);
+                // Row 2 — Emp Code + Type
                 doc.setFontSize(8.5);doc.setFont('helvetica','normal');doc.setTextColor(71,85,105);
                 doc.text('Emp Code: '+(s.staffID||'—'),ML+4,y+11);
-                doc.text('Type: '+(s.staffType||'—'),ML+60,y+11);
-                doc.text('Designation: '+(s.designation||'—'),ML+100,y+11);
-                doc.text('Status: '+(s.status||'Active'),ML+155,y+11);
-                y+=18;
+                doc.text('Type: '+(s.staffType||'—'),ML+90,y+11);
+                // Row 3 — Designation + Status (separate line; designation can be long)
+                doc.text('Designation: '+(s.designation||'—'),ML+4,y+16);
+                doc.text('Status: '+(s.status||'Active'),ML+150,y+16);
+                y+=22;
+
+                // Issue 4 / 2: detect Office staff up-front so we can shape the daily
+                // table with an extra "WFH Hrs" column AND choose the right summary.
+                const isOffice = (s.staffType||'').toLowerCase() === 'office';
 
                 // ── Daily attendance table ───────────────────────
                 const lookup=_attLookup(s.staffID,dates);
+                // Counters for BOTH technician-mode statuses and office-mode statuses.
+                // Only the relevant set is shown in the summary footer, based on staff type.
                 const cnt={Working:0,StandBy:0,Outstation:0,Anchorage:0,Sailing:0,ApprovedLeave:0,UnApprovedLeave:0};
+                const cntOffice={Present:0,WFH:0,Leave:0,HalfDay:0,Holiday:0,Sunday:0};
+                // Total additional WFH-after-office hours accumulated this month (issue 4)
+                let cntWfhAfterOffice = 0;
                 const rows=[];
                 dates.forEach((date,i)=>{
                     const key=_attDayKey(date);
                     const rec=lookup[key];
+                    // Technician-mode statuses
                     if(rec&&cnt[rec.status]!==undefined)cnt[rec.status]++;
+                    // Office-mode statuses — map several leave labels into one Leave bucket
+                    if (rec) {
+                        const st = rec.status;
+                        if (st === 'Present' || st === 'OT')                    cntOffice.Present++;
+                        else if (st === 'WFH')                                  cntOffice.WFH++;
+                        else if (st === 'Half Day' || st === 'Half Day-Afternoon') cntOffice.HalfDay++;
+                        else if (st === 'Holiday')                              cntOffice.Holiday++;
+                        else if (st === 'Sunday' || st === 'Weekend')           cntOffice.Sunday++;
+                        else if (st === 'Leave' || st === 'Casual Leave' ||
+                                 st === 'Sick Leave' || st === 'Earned Leave' ||
+                                 st === 'Comp Off'   || st === 'Absent')        cntOffice.Leave++;
+                        // Issue 4 — sum any WFH-after-office hours stored on the day
+                        const h = parseFloat(rec.wfhAfterOfficeHours) || 0;
+                        if (h > 0) cntWfhAfterOffice += h;
+                    }
                     const dayName=date.toLocaleDateString('en-IN',{weekday:'short'});
                     const dayDate=date.toLocaleDateString('en-IN',{day:'2-digit',month:'short'});
                     const isWE=date.getDay()===0||date.getDay()===6;
-                    rows.push([
+                    const baseRow = [
                         String(i+1),
                         dayDate+' '+dayName,
                         rec?(ATT_FULL[rec.status]||rec.status):(isWE?'Weekend':'—'),
                         rec?.project||'—',
                         rec?.remarks||'—'
-                    ]);
+                    ];
+                    if (isOffice) {
+                        // Insert "WFH Hrs" between Status and Project (index 3).
+                        // Shows the daily WFH-after-office value, or blank when none.
+                        const wfh = parseFloat(rec?.wfhAfterOfficeHours) || 0;
+                        baseRow.splice(3, 0, wfh > 0 ? wfh.toFixed(1)+'h' : '—');
+                    }
+                    rows.push(baseRow);
                 });
 
-                doc.autoTable({
-                    startY:y,margin:{left:ML,right:MR},theme:'grid',
-                    styles:{fontSize:8,cellPadding:2.5},
-                    headStyles:{fillColor:[30,58,138],textColor:[255,255,255],fontStyle:'bold',fontSize:8},
-                    head:[['#','Date','Attendance Status','Project','Remarks']],
-                    body:rows,
-                    columnStyles:{
+                // Build table head + column widths based on staff type.
+                // Office-mode adds a "WFH Hrs" column between Status and Project.
+                let headRow, colStyles;
+                if (isOffice) {
+                    headRow = [['#','Date','Attendance Status','WFH Hrs','Project','Remarks']];
+                    colStyles = {
+                        0:{cellWidth:8,halign:'center'},
+                        1:{cellWidth:24},
+                        2:{cellWidth:34},
+                        3:{cellWidth:14,halign:'center',fontStyle:'bold',textColor:[99,102,241]},
+                        4:{cellWidth:50},
+                        5:{cellWidth:CW-8-24-34-14-50}
+                    };
+                } else {
+                    headRow = [['#','Date','Attendance Status','Project','Remarks']];
+                    colStyles = {
                         0:{cellWidth:8,halign:'center'},
                         1:{cellWidth:26},
                         2:{cellWidth:36},
                         3:{cellWidth:55},
                         4:{cellWidth:CW-8-26-36-55}
-                    },
+                    };
+                }
+
+                doc.autoTable({
+                    startY:y,margin:{left:ML,right:MR},theme:'grid',
+                    styles:{fontSize:8,cellPadding:2.5},
+                    headStyles:{fillColor:[30,58,138],textColor:[255,255,255],fontStyle:'bold',fontSize:8},
+                    head: headRow,
+                    body: rows,
+                    columnStyles: colStyles,
                     didParseCell:(d)=>{
                         if(d.section==='body'&&d.column.index===2){
                             const val=d.cell.raw;
+                            // 1) Try the technician-mode (ATT_FULL → ATT_COL) lookup first
                             const key=Object.entries(ATT_FULL).find(([,v])=>v===val)?.[0];
                             if(key&&ATT_COL[key]){
                                 d.cell.styles.textColor=ATT_COL[key];
+                                d.cell.styles.fontStyle='bold';
+                            }
+                            // 2) Office-mode strings are stored verbatim — look them up directly
+                            else if (OFFICE_COL[val]) {
+                                d.cell.styles.textColor=OFFICE_COL[val];
                                 d.cell.styles.fontStyle='bold';
                             }
                             if(val==='Weekend'){d.cell.styles.textColor=[156,163,175];}
@@ -13099,18 +13183,41 @@ ${'─'.repeat(50)}
                 });
                 y=doc.lastAutoTable.finalY+5;
 
-                // ── Monthly summary bar ──────────────────────────
-                const eng=cnt.Working+cnt.Outstation+cnt.Anchorage+cnt.Sailing;
-                const summaryData=[
-                    ['Working',cnt.Working,[21,128,61]],
-                    ['Stand By',cnt.StandBy,[180,83,9]],
-                    ['Outstation',cnt.Outstation,[29,78,216]],
-                    ['Anchorage',cnt.Anchorage,[14,116,144]],
-                    ['Sailing',cnt.Sailing,[67,56,202]],
-                    ['Appr. Leave',cnt.ApprovedLeave,[124,58,237]],
-                    ['Unappr. Leave',cnt.UnApprovedLeave,[220,38,38]],
-                    ['ENGAGED TOTAL',eng,[15,58,95]]
-                ];
+                // ── Monthly summary bar (depends on staff type) ──────
+                // Office staff get Present/WFH/Leave/Half Day/Holiday/Sunday counts.
+                // Technician staff get Working/Stand By/Outstation/Anchorage/Sailing/Leaves.
+                // The original "ENGAGED TOTAL" concept (working + outstation + anchorage + sailing)
+                // doesn't apply to office staff; instead, we show "TOTAL WORK DAYS" (Present + WFH + Half Day).
+                // (isOffice was already computed earlier when building the daily table.)
+                let summaryData;
+                if (isOffice) {
+                    const totalWork = cntOffice.Present + cntOffice.WFH + cntOffice.HalfDay;
+                    summaryData = [
+                        ['Present',       cntOffice.Present, [21,128,61]],
+                        ['WFH',           cntOffice.WFH,     [99,102,241]],
+                        ['Half Day',      cntOffice.HalfDay, [180,83,9]],
+                        ['Leave',         cntOffice.Leave,   [124,58,237]],
+                        ['Holiday',       cntOffice.Holiday, [217,119,6]],
+                        ['Sunday',        cntOffice.Sunday,  [100,116,139]],
+                        ['TOTAL WORK',    totalWork,         [15,58,95]]
+                    ];
+                    // Append the WFH-after-office hours total if any were logged (issue 4)
+                    if (cntWfhAfterOffice > 0) {
+                        summaryData.push(['+WFH hrs', cntWfhAfterOffice.toFixed(1), [67,56,202]]);
+                    }
+                } else {
+                    const eng=cnt.Working+cnt.Outstation+cnt.Anchorage+cnt.Sailing;
+                    summaryData=[
+                        ['Working',cnt.Working,[21,128,61]],
+                        ['Stand By',cnt.StandBy,[180,83,9]],
+                        ['Outstation',cnt.Outstation,[29,78,216]],
+                        ['Anchorage',cnt.Anchorage,[14,116,144]],
+                        ['Sailing',cnt.Sailing,[67,56,202]],
+                        ['Appr. Leave',cnt.ApprovedLeave,[124,58,237]],
+                        ['Unappr. Leave',cnt.UnApprovedLeave,[220,38,38]],
+                        ['ENGAGED TOTAL',eng,[15,58,95]]
+                    ];
+                }
                 const sw=CW/summaryData.length;
                 if(y+16>280){doc.addPage();drawPageHeader(doc.getNumberOfPages(),doc.getNumberOfPages());y=28;}
                 summaryData.forEach(([label,val,col],i)=>{
@@ -13150,7 +13257,7 @@ ${'─'.repeat(50)}
             if(!staffToExport.length){alert('No staff to export.');return;}
             const dates=_attPeriodDates(shY,shM);
             // One row per day per staff
-            const rows=[['Employee Code','Staff Name','Staff Type','Designation','Staff Status','Date','Day','Attendance Status','Project','Remarks']];
+            const rows=[['Employee Code','Staff Name','Staff Type','Designation','Staff Status','Date','Day','Attendance Status','WFH Hrs (after office)','Project','Remarks']];
             staffToExport.forEach(s=>{
                 const lookup=_attLookup(s.staffID,dates);
                 dates.forEach(date=>{
@@ -13158,6 +13265,7 @@ ${'─'.repeat(50)}
                     const rec=lookup[key];
                     const dayName=date.toLocaleDateString('en-IN',{weekday:'long'});
                     const isWE=date.getDay()===0||date.getDay()===6;
+                    const wfhAfter = parseFloat(rec?.wfhAfterOfficeHours) || 0;
                     rows.push([
                         s.staffID||'',
                         s.name,
@@ -13167,6 +13275,7 @@ ${'─'.repeat(50)}
                         key,
                         dayName,
                         rec?rec.status:(isWE?'Weekend':''),
+                        wfhAfter > 0 ? wfhAfter.toFixed(1) : '',
                         rec?.project||'',
                         rec?.remarks||''
                     ]);
@@ -13902,6 +14011,10 @@ ${'─'.repeat(50)}
                 sel.innerHTML=[['Working','✅ Working'],['StandBy','⏳ Stand By'],['Outstation','🚢 Outstation'],['Anchorage','⚓ Anchorage'],['Sailing','🌊 Sailing'],['ApprovedLeave','🌿 Approved Leave'],['UnApprovedLeave','❌ Unapproved Leave']].map(([v,l])=>`<option value="${v}">${l}</option>`).join('');
                 sel.onchange = () => toggleTechOTField(sel.value, st);
                 toggleTechOTField(sel.value, st);
+                // Hide WFH-after-office (Office-only field) when switching to Technician
+                document.getElementById('attWfhAfterWrap')?.classList.add('hidden');
+                // Hide the entire time-fields panel — technicians don't use Present/WFH
+                document.getElementById('attTimeFields')?.classList.add('hidden');
             } else {
                 sel.innerHTML=[['Present','✅ Present (Office)'],['WFH','🏠 Work From Home'],['OT','🕐 Overtime (OT)'],['Half Day','⏰ Half Day (Morning)'],['Half Day-Afternoon','⏰ Half Day (Afternoon)'],['Casual Leave','🌴 Casual Leave (CL)'],['Sick Leave','🤒 Sick Leave (SL)'],['Earned Leave','🌿 Earned Leave (EL)'],['Comp Off','🔄 Comp Off (CO)'],['Leave','🌿 Leave (Other)'],['Absent','❌ Absent'],['Sunday','☀️ Sunday (Paid)'],['Holiday','🎉 Holiday (Paid)']].map(([v,l])=>`<option value="${v}">${l}</option>`).join('');
                 sel.onchange = () => toggleAttTimeFields(sel.value);
@@ -14005,6 +14118,13 @@ They will no longer be able to sign in.`)) return;
             document.getElementById('attTimeFields')?.classList.toggle('hidden', !showTime);
             document.getElementById('attWFHBadge')?.classList.toggle('hidden', !isWFH);
             document.getElementById('attWFHTaskWrap')?.classList.toggle('hidden', !isWFH);
+            // "Additional WFH hours" — shown for Office staff on Present/Half Day/OT
+            // (not WFH itself, since that's already a full WFH day).
+            const sid = document.getElementById('attStaff')?.value;
+            const st  = staff.find(x => x.staffID === sid);
+            const isOffice = st && (st.staffType||'').toLowerCase() === 'office';
+            const showWfhAfter = isOffice && ['Present','OT','Half Day','Half Day-Afternoon'].includes(status);
+            document.getElementById('attWfhAfterWrap')?.classList.toggle('hidden', !showWfhAfter);
             const title = document.getElementById('attModalTitle');
             if (title) title.textContent = isWFH ? '🏠 WFH Log-In / Log-Out' : 'Mark Attendance';
             onCheckInChange();
@@ -14455,6 +14575,7 @@ Automated WFH alert — ${company} Attendance System.`;
             if(prefillSID)sel.value=prefillSID;
             onAttStaffChange(sel.value);
             document.getElementById('attRemarks').value='';
+            const wahEl=document.getElementById('attWfhAfterHours'); if(wahEl) wahEl.value='';
             modal.classList.add('show');
             // Level 2 concurrency — register the staff record being edited (no record yet → new entry)
             _concurBeginEdit('staff', prefillSID ? [{ id: prefillSID, idKey: 'staffID' }] : []);
@@ -14484,6 +14605,8 @@ Automated WFH alert — ${company} Attendance System.`;
             const coEl=document.getElementById('attCheckOut'); if(coEl) coEl.value=rec.checkOut||'';
             const wtEl=document.getElementById('attWFHTask'); if(wtEl) wtEl.value=rec.wfhTask||'';
             const otEl=document.getElementById('attOTHours'); if(otEl) otEl.value=rec.otHours||'';
+            // Issue 4: restore additional WFH-after-office hours (Office staff combo)
+            const wahEl=document.getElementById('attWfhAfterHours'); if(wahEl) wahEl.value=rec.wfhAfterOfficeHours||'';
             toggleAttTimeFields(rec.status);
             // For technicians, show OT field on edit
             const editSt=staff.find(x=>x.staffID===rec.staffID);
@@ -14546,11 +14669,14 @@ Automated WFH alert — ${company} Attendance System.`;
                 extraWorkMins = extra > 0 ? extra : 0;
             }
             const otHours = parseFloat(document.getElementById('attOTHours')?.value)||0;
+            // Issue 4: additional WFH hours after office (Office staff, Present/Half Day/OT only)
+            const wfhAfterOfficeHours = parseFloat(document.getElementById('attWfhAfterHours')?.value)||0;
             const newRec={
                 attID:editAttID||('ATT'+Date.now()),
                 staffID:sid, date:dateVal,
                 status,
                 otHours,
+                wfhAfterOfficeHours,
                 earlyMins,      // minutes arrived before office start (early arrival)
                 extraWorkMins,  // minutes stayed beyond office end time
                 loggedBy: currentUser?.name || currentUser?.email || 'Unknown',
