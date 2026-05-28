@@ -7295,19 +7295,15 @@
             } catch(err) { alert('Delete failed: ' + err.message); }
         }
 
-        function viewExpTallyVoucher(expID) {
+        async function viewExpTallyVoucher(expID) {
             const exp = expenses.find(e => e.expID === expID);
             if (!exp?.tallyVoucherData && !exp?.tallyVoucherDriveId) { alert('No voucher attachment saved.'); return; }
-            if (exp.tallyVoucherDriveId) {
-                window.open('https://drive.google.com/file/d/' + exp.tallyVoucherDriveId + '/view', '_blank');
-                return;
-            }
-            if (exp.tallyVoucherData) {
-                const w = window.open();
-                w.document.write(exp.tallyVoucherData.startsWith('data:application/pdf')
-                    ? `<html><body style="margin:0"><embed src="${exp.tallyVoucherData}" type="application/pdf" width="100%" height="100%"/></body></html>`
-                    : `<html><body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${exp.tallyVoucherData}" style="max-width:100%;max-height:100vh;object-fit:contain"/></body></html>`);
-            }
+            await _openVoucherAttachment({
+                driveId: exp.tallyVoucherDriveId,
+                data:    exp.tallyVoucherData,
+                name:    exp.tallyVoucherName || 'tally-voucher',
+                mime:    exp.tallyVoucherMime || ''
+            });
         }
 
         // ── Expense Modal Functions ──────────────────────────────────────────
@@ -14911,21 +14907,82 @@ Automated WFH alert — ${company} Attendance System.`;
             setTimeout(() => toast.remove(), 3000);
         }
 
-        function viewTallyVoucher(projID, itemID) {
+        async function viewTallyVoucher(projID, itemID) {
             const p    = projectExpenses.find(x=>x.projExpID===projID);
             const item = (p?.items||[]).find(i=>i.itemID===itemID);
             if (!item?.tallyVoucherData && !item?.tallyVoucherDriveId) {
                 alert('No voucher attachment saved.'); return;
             }
-            if (item.tallyVoucherDriveId) {
-                window.open('https://drive.google.com/file/d/'+item.tallyVoucherDriveId+'/view', '_blank');
-                return;
-            }
-            if (item.tallyVoucherData) {
-                const w = window.open();
-                w.document.write(item.tallyVoucherData.startsWith('data:application/pdf')
-                    ?`<html><body style="margin:0"><embed src="${item.tallyVoucherData}" type="application/pdf" width="100%" height="100%"/></body></html>`
-                    :`<html><body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${item.tallyVoucherData}" style="max-width:100%;max-height:100vh;object-fit:contain"/></body></html>`);
+            await _openVoucherAttachment({
+                driveId: item.tallyVoucherDriveId,
+                data:    item.tallyVoucherData,
+                name:    item.tallyVoucherName || 'tally-voucher',
+                mime:    item.tallyVoucherMime || ''
+            });
+        }
+
+        // Shared voucher/attachment opener — works for both project items and expenses.
+        // Strategy:
+        //   • Open a blank tab synchronously (inside the click) so popup blockers allow it.
+        //   • For Drive files, fetch the bytes with the *viewer's own* access token and
+        //     show them as a blob. This avoids the "/view" permission page that fails when
+        //     the file was uploaded by a different user / lives in another user's Drive.
+        //   • For legacy base64 data, render inline as before.
+        async function _openVoucherAttachment({ driveId, data, name, mime }) {
+            // Open the tab up-front (synchronous) to survive popup blockers.
+            const w = window.open('', '_blank');
+            if (!w) { alert('Please allow pop-ups for this site to view attachments.'); return; }
+            // Friendly loading placeholder
+            w.document.write(`<html><head><title>${(name||'Attachment').replace(/[<>]/g,'')}</title></head>
+                <body style="margin:0;background:#111;color:#9ca3af;font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh">
+                <div style="text-align:center"><div style="font-size:40px">⏳</div><p>Loading voucher…</p></div></body></html>`);
+
+            try {
+                if (driveId) {
+                    // Fetch via API with the current user's token — permission-proof.
+                    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${driveId}?alt=media`,
+                        { headers: { 'Authorization': `Bearer ${accessToken}` } });
+                    if (!res.ok) {
+                        // Fall back to the Drive web viewer if the API fetch is denied
+                        // (e.g. token lacks scope) — still better than a dead tab.
+                        if (res.status === 403 || res.status === 404) {
+                            w.location.href = `https://drive.google.com/file/d/${driveId}/view`;
+                            return;
+                        }
+                        throw new Error('Drive returned ' + res.status);
+                    }
+                    const blob = await res.blob();
+                    const url  = URL.createObjectURL(blob);
+                    const isPdf = (blob.type === 'application/pdf') || (mime === 'application/pdf') || /\.pdf$/i.test(name||'');
+                    w.document.open();
+                    w.document.write(isPdf
+                        ? `<html><body style="margin:0"><embed src="${url}" type="application/pdf" width="100%" height="100%"/></body></html>`
+                        : `<html><body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${url}" style="max-width:100%;max-height:100vh;object-fit:contain"/></body></html>`);
+                    w.document.close();
+                    // Revoke the object URL after the tab has had time to load it
+                    setTimeout(() => URL.revokeObjectURL(url), 60000);
+                    return;
+                }
+                if (data) {
+                    const isPdf = data.startsWith('data:application/pdf');
+                    w.document.open();
+                    w.document.write(isPdf
+                        ? `<html><body style="margin:0"><embed src="${data}" type="application/pdf" width="100%" height="100%"/></body></html>`
+                        : `<html><body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${data}" style="max-width:100%;max-height:100vh;object-fit:contain"/></body></html>`);
+                    w.document.close();
+                    return;
+                }
+                // Nothing to show
+                w.document.open();
+                w.document.write('<html><body style="font-family:sans-serif;padding:40px;text-align:center"><h3>No attachment found</h3></body></html>');
+                w.document.close();
+            } catch(err) {
+                w.document.open();
+                w.document.write(`<html><body style="font-family:sans-serif;padding:40px;text-align:center;color:#dc2626">
+                    <h3>Could not load voucher</h3><p>${(err.message||'Unknown error').replace(/[<>]/g,'')}</p>
+                    ${driveId?`<p><a href="https://drive.google.com/file/d/${driveId}/view" target="_blank">Try opening in Google Drive →</a></p>`:''}
+                    </body></html>`);
+                w.document.close();
             }
         }
 
