@@ -11635,10 +11635,32 @@
                                 <div><label class="block text-xs font-semibold text-gray-600 mb-1">Variable Allow. (₹)</label><input type="number" id="sVariable" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                             </div>
                             <h4 class="text-sm font-bold text-green-700 mb-2">🌿 Leave Entitlement</h4>
-                            <p class="text-xs text-gray-400 mb-3">Leave accrues 2 days/month. Carried-forward leave is added to the running balance. Excess leave taken = Loss of Pay deduction. Each month starts fresh (negative balance from prior month is applied as LOP, then resets to 0).</p>
-                            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                            <p class="text-xs text-gray-400 mb-3">
+                                Set the <strong>Opening Balance</strong> and <strong>Anchor Month/Year</strong> <em>once</em> when the staff is registered (or when migrating from prior records).
+                                From that anchor, leave accrues at the rate below each month, and leave taken in attendance is deducted automatically.
+                                The running balance is computed by the system — you don't need to update it monthly.
+                            </p>
+                            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-2">
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Opening Balance <span class="text-gray-400">(days at anchor)</span></label><input type="number" id="sLeaveOpening" value="0" min="0" step="0.5" placeholder="e.g. 22.5" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Anchor Month <span class="text-gray-400">(accrual starts)</span></label>
+                                    <select id="sLeaveOpeningMonth" class="w-full px-3 py-2 border rounded-lg text-sm bg-white">
+                                        <option value="1">January</option><option value="2">February</option><option value="3">March</option>
+                                        <option value="4">April</option><option value="5">May</option><option value="6">June</option>
+                                        <option value="7">July</option><option value="8">August</option><option value="9">September</option>
+                                        <option value="10">October</option><option value="11">November</option><option value="12">December</option>
+                                    </select>
+                                </div>
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Anchor Year</label><input type="number" id="sLeaveOpeningYear" min="2020" max="2099" step="1" placeholder="e.g. 2026" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                                 <div><label class="block text-xs font-semibold text-gray-600 mb-1">Leave Accrual /month <span class="text-gray-400">(default 2)</span></label><input type="number" id="sLeavePerMonth" value="2" min="0" max="31" step="0.5" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
-                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">Carried-Forward Leave <span class="text-gray-400">(days — from prior records)</span></label><input type="number" id="sCarriedLeave" value="0" min="0" step="0.5" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                                <div><label class="block text-xs font-semibold text-gray-600 mb-1">One-time Adjustment <span class="text-gray-400">(rare — use opening balance instead)</span></label><input type="number" id="sCarriedLeave" value="0" step="0.5" placeholder="0" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                                    <p class="text-xs text-gray-400 mt-1">Legacy field. Leave at 0 for new staff. Used by older records that had encashments applied.</p>
+                                </div>
+                                <div class="bg-green-50 border border-green-200 rounded-lg p-3 text-xs text-green-800">
+                                    <strong>Example:</strong> A new joiner on 1 May 2026 with 0 leave to start → Opening Balance <b>0</b>, Anchor <b>May 2026</b>, Accrual <b>2/month</b>.<br>
+                                    <strong>Migration:</strong> Existing staff with 22.5 days as of Apr 2026 → Opening <b>22.5</b>, Anchor <b>April 2026</b>.
+                                </div>
                             </div>
                             <h4 class="text-sm font-bold text-red-700 mb-2">📋 Statutory Deductions</h4>
                             <p class="text-xs text-gray-400 mb-3">Bonus=Basic÷10. PF Gross=Basic+HRA+DA+Med+Conv+GP+Bonus (Variable excluded). PT only if gross &gt;₹15k; March=₹300.</p>
@@ -13704,6 +13726,10 @@ ${'─'.repeat(50)}
                 fv2('sGradePay',s.gradePay||'');fv2('sConveyance',s.conveyance||'');fv2('sMedical',s.medical||'');
                 fv2('sVariable',s.variable||'');fv2('sLeavePerMonth',s.leavePerMonth!==undefined?s.leavePerMonth:2);
                 fv2('sCarriedLeave',s.carriedLeave!==undefined?s.carriedLeave:0);
+                // Running-ledger anchor & opening balance
+                fv2('sLeaveOpening',      s.leaveOpening!==undefined?s.leaveOpening:0);
+                fv2('sLeaveOpeningMonth', s.leaveOpeningMonth || (new Date().getMonth()+1));
+                fv2('sLeaveOpeningYear',  s.leaveOpeningYear  || new Date().getFullYear());
                 fv2('sPFPct',s.pfPct!==undefined?s.pfPct:12);fv2('sESICPct',s.esicPct!==undefined?s.esicPct:0.75);
                 fv2('sPTBase',s.ptBase!==undefined?s.ptBase:200);fv2('sTDSMonthly',s.tdsMonthly||'');
                 fv2('sStandbyPct',s.standbyPct!==undefined?s.standbyPct:50);
