@@ -1234,10 +1234,48 @@
         function _calcESIC(basis,esicPct){return basis<=21000?+(basis*(parseFloat(esicPct)||0.75)/100).toFixed(2):0;} // basis includes variable; exempt if >₹21,000
 
         // ── LEAVE CALCULATION ─────────────────────────────────────────────────
-        // For a given staff + month, compute:
-        //   accrued = leavePerMonth (default 2)
-        //   prevBalance = sum of all attendance-based leave data prior months + carriedLeave
-        //   leaveTaken = days marked as 'Leave' (not Sunday/Holiday)  this month
+        // ════════════════════════════════════════════════════════════════
+        // OFFICE LEAVE BALANCE — RUNNING LEDGER MODEL
+        // ────────────────────────────────────────────────────────────────
+        // (replaces the old per-month snapshot which kept re-adding `opening`
+        //  every month and never accumulated across months.)
+        //
+        // Model:
+        //   balanceEndOfMonth(M) =
+        //       leaveOpening                            ← one-time, anchor-month value
+        //     + leavePerMonth × monthsFromAnchor(M)     ← cumulative accrual
+        //     + carriedLeave                            ← legacy one-time adjustment
+        //     − Σ leaveTaken from anchor through end of M
+        //     − Σ encashments dated from anchor through end of M
+        //
+        // monthsFromAnchor(M): 1 for the anchor month itself, 2 for the next,
+        //   etc. So both opening AND the anchor month's own accrual count.
+        //
+        // For KEERTHIKA (anchor=Apr 2026, opening=22.5, lpM=2):
+        //   April: 22.5 + 2×1 − 1     = 23.5
+        //   May  : 22.5 + 2×2 − 4.5   = 22   ✓ matches expected
+        //
+        // The function returns the same field names as the old version so
+        // downstream callers (payslip render, attendance modal, PDF) don't
+        // need any changes:
+        //   { lpM, carried, opening, available, leaveTaken, lopDays,
+        //     nextBalance, breakdown }
+        //
+        // LOP rule:
+        //   "available" here means the balance going INTO this month plus this
+        //   month's accrual (i.e. what's available to spend this month).
+        //   lopDays = max(0, thisMonthTaken − available)
+        //   nextBalance = max(0, available − thisMonthTaken)
+        //
+        // Encashments dated within the current month are subtracted from
+        // available alongside this-month leave taken; older encashments are
+        // already baked into the carry-in.
+        // ════════════════════════════════════════════════════════════════
+        // All statuses that count as leave (1 day each)
+        const LEAVE_STATUSES = ['Leave','Casual Leave','Sick Leave','Earned Leave','Comp Off'];
+        // Half-day statuses (0.5 day each)
+        const HALF_DAY_STATUSES = ['Half Day','Half Day-Afternoon'];
+
         // ── OFFICE PAY PERIOD: 26th prev month → 25th current month ─────────
         function getOfficePeriodDates(year, month) {
             const pm=month===1?12:month-1, py=month===1?year-1:year;
@@ -1247,43 +1285,142 @@
             return d;
         }
 
-        //   available = prevBalance + accrued
-        //   lopDays = max(0, leaveTaken - available)  — excess = LOP
-        //   nextBalance = max(0, available - leaveTaken)  — negative resets to 0
-        // All statuses that count as leave (1 day each)
-        const LEAVE_STATUSES = ['Leave','Casual Leave','Sick Leave','Earned Leave','Comp Off'];
-        // Half-day statuses (0.5 day each)
-        const HALF_DAY_STATUSES = ['Half Day','Half Day-Afternoon'];
+        // Number of months from (anchorY,anchorM) through (y,m) inclusive.
+        // Returns 1 if (y,m) === anchor; 0 or negative if y,m is before anchor.
+        function _monthsFromAnchor(anchorY, anchorM, y, m) {
+            return (y - anchorY) * 12 + (m - anchorM) + 1;
+        }
+
+        // Sum a staff's leave-taken between two pay-period endpoints (inclusive).
+        // Pay periods: a "month M" runs from 26th of M-1 through 25th of M.
+        // Pass startBoundary = first ms of period starting "month a", endBoundary =
+        // last ms of period ending "month b". We compare attendance date timestamps.
+        function _sumLeaveTaken(st, startMs, endMs) {
+            let total = 0;
+            const breakdown = {};
+            [...LEAVE_STATUSES, ...HALF_DAY_STATUSES].forEach(s => breakdown[s] = 0);
+            (st.attendance||[]).forEach(a => {
+                if (!a.date) return;
+                const [ay, am, ad] = a.date.split('-').map(Number);
+                const t = new Date(ay, am-1, ad).getTime();
+                if (t < startMs || t > endMs) return;
+                if (LEAVE_STATUSES.includes(a.status))     { total += 1;   breakdown[a.status] = (breakdown[a.status]||0) + 1; }
+                if (HALF_DAY_STATUSES.includes(a.status))  { total += 0.5; breakdown[a.status] = (breakdown[a.status]||0) + 0.5; }
+            });
+            return { total: +total.toFixed(1), breakdown };
+        }
+
+        // Sum encashments (in days) between two timestamps inclusive.
+        function _sumEncashments(st, startMs, endMs) {
+            let total = 0;
+            (st.leaveEncashments||[]).forEach(e => {
+                if (!e.date) return;
+                const [ey, em, ed] = e.date.split('-').map(Number);
+                const t = new Date(ey, em-1, ed).getTime();
+                if (t < startMs || t > endMs) return;
+                total += +(e.days || 0);
+            });
+            return +total.toFixed(1);
+        }
 
         function _calcOfficeLeave(st, year, month) {
             const lpM      = +(st.leavePerMonth  ?? 2);
-            const carried  = +(st.carriedLeave   || 0);
-            const opening  = +(st.leaveOpening   || 0); // starting balance set in staff record
-            // Carry-forward start period — only count after this month
-            const cfYear   = st.leaveOpeningYear  ? +st.leaveOpeningYear  : 0;
-            const cfMonth  = st.leaveOpeningMonth ? +st.leaveOpeningMonth : 0;
-            // Pay period: 26th prev month → 25th this month
-            const pm = month===1?12:month-1, py = month===1?year-1:year;
-            const periodStart = new Date(py, pm-1, 26).getTime();
-            const periodEnd   = new Date(year, month-1, 25, 23, 59, 59).getTime();
-            // Count all leave types in period
-            let leaveTaken = 0;
-            const breakdown = {};
-            [...LEAVE_STATUSES, ...HALF_DAY_STATUSES].forEach(s => breakdown[s]=0);
-            (st.attendance||[]).forEach(a => {
-                if(!a.date) return;
-                const [ay,am,ad]=a.date.split('-').map(Number);
-                const t=new Date(ay,am-1,ad).getTime();
-                if(t < periodStart || t > periodEnd) return;
-                if(LEAVE_STATUSES.includes(a.status))    { leaveTaken+=1;   breakdown[a.status]=(breakdown[a.status]||0)+1; }
-                if(HALF_DAY_STATUSES.includes(a.status)) { leaveTaken+=0.5; breakdown[a.status]=(breakdown[a.status]||0)+0.5; }
-            });
-            // Available = opening balance + accrual this month + carried forward
-            const available = +(opening + lpM + carried).toFixed(1);
-            // LOP rule: excess leave = Loss of Pay; next month carry = 0 (not negative)
-            const lopDays     = +(Math.max(0, leaveTaken - available)).toFixed(1);
+            const opening  = +(st.leaveOpening   || 0);
+            const carried  = +(st.carriedLeave   || 0);          // legacy one-time adjustment
+            // Anchor — when accrual starts counting from. If not set, default to
+            // the requested month itself (so the staff has no prior history yet).
+            const anchorY  = +st.leaveOpeningYear  || year;
+            const anchorM  = +st.leaveOpeningMonth || month;
+
+            // If the requested month is BEFORE the anchor month, there's no
+            // history yet — show opening as the balance and nothing taken.
+            if ((year < anchorY) || (year === anchorY && month < anchorM)) {
+                return {
+                    lpM, carried, opening,
+                    available:   +(opening + carried).toFixed(1),
+                    leaveTaken:  0,
+                    lopDays:     0,
+                    nextBalance: +(opening + carried).toFixed(1),
+                    breakdown:   {},
+                    // Extra diagnostic fields (used by the optional ledger detail view)
+                    _ledger: {
+                        anchorY, anchorM,
+                        monthsFromAnchor: 0,
+                        totalAccrued:   0,
+                        totalTaken:     0,
+                        totalEncashed:  0,
+                        beforeAnchor:   true
+                    }
+                };
+            }
+
+            // ── Build the ledger ──
+            // Period boundaries:
+            //   anchor pay-period start = 26 of (anchorM-1) at anchorY (or prior year if Jan)
+            //   this-month pay-period start = 26 of (month-1)
+            //   this-month pay-period end   = 25 of month
+            const _anchorPrevM = anchorM === 1 ? 12 : anchorM - 1;
+            const _anchorPrevY = anchorM === 1 ? anchorY - 1 : anchorY;
+            const anchorPeriodStart = new Date(_anchorPrevY, _anchorPrevM - 1, 26).getTime();
+
+            const _thisPrevM = month === 1 ? 12 : month - 1;
+            const _thisPrevY = month === 1 ? year  - 1 : year;
+            const thisPeriodStart = new Date(_thisPrevY, _thisPrevM - 1, 26).getTime();
+            const thisPeriodEnd   = new Date(year, month - 1, 25, 23, 59, 59).getTime();
+
+            // PRIOR window: from anchor start UP TO (but not including) this-month start
+            const priorEnd = thisPeriodStart - 1;
+            const priorTakenObj = (priorEnd >= anchorPeriodStart)
+                ? _sumLeaveTaken(st, anchorPeriodStart, priorEnd)
+                : { total: 0, breakdown: {} };
+            const priorEncashed = (priorEnd >= anchorPeriodStart)
+                ? _sumEncashments(st, anchorPeriodStart, priorEnd)
+                : 0;
+
+            // THIS-MONTH window
+            const thisTakenObj = _sumLeaveTaken(st, thisPeriodStart, thisPeriodEnd);
+            const thisEncashed = _sumEncashments(st, thisPeriodStart, thisPeriodEnd);
+
+            // Months from anchor through THIS month, inclusive
+            const monthsThru = _monthsFromAnchor(anchorY, anchorM, year, month);
+            // Months from anchor through PRIOR month (i.e. excluding this month)
+            const monthsPrior = monthsThru - 1;
+
+            // Carry into this month from prior months only.
+            //   = opening + carried (one-time) + lpM × monthsPrior − priorTaken − priorEncashed
+            const carryIn = opening + carried + lpM * monthsPrior - priorTakenObj.total - priorEncashed;
+
+            // Available to spend in this month = carry-in + this month's accrual − encashments dated this month
+            // (Encashments this month reduce what's available before LOP is computed.)
+            const available = +(carryIn + lpM - thisEncashed).toFixed(1);
+
+            const leaveTaken = thisTakenObj.total;
+            const lopDays    = +(Math.max(0, leaveTaken - available)).toFixed(1);
+            // nextBalance is what would carry forward to NEXT month.
+            // We clamp to 0 because LOP absorbs the excess (it's a salary deduction
+            // rather than a negative leave balance — same rule as the old code).
             const nextBalance = +(Math.max(0, available - leaveTaken)).toFixed(1);
-            return { lpM, carried, opening, available, leaveTaken, lopDays, nextBalance, breakdown };
+
+            return {
+                lpM, carried, opening,
+                available,
+                leaveTaken,
+                lopDays,
+                nextBalance,
+                breakdown: thisTakenObj.breakdown,
+                // Diagnostic ledger — handy for a future "Leave Ledger" detail view
+                _ledger: {
+                    anchorY, anchorM,
+                    monthsFromAnchor: monthsThru,
+                    totalAccrued:   +(lpM * monthsThru).toFixed(1),
+                    totalTaken:     +(priorTakenObj.total + leaveTaken).toFixed(1),
+                    totalEncashed:  +(priorEncashed + thisEncashed).toFixed(1),
+                    carryIn:        +carryIn.toFixed(1),
+                    thisAccrual:    lpM,
+                    thisEncashed,
+                    beforeAnchor:   false
+                }
+            };
         }
         // Keep old name as alias for payslip code that calls computeLeaveForMonth
         function computeLeaveForMonth(st, year, month) { return _calcOfficeLeave(st, year, month); }
@@ -12516,10 +12653,11 @@ ${'─'.repeat(50)}
             };
             _stampRecord(encRec);
             staff[idx].leaveEncashments.push(encRec);
-            // Reduce carried leave / opening balance by encashed days
-            const currentBalance = +(staff[idx].leaveOpening||0)+(staff[idx].carriedLeave||0);
-            const newBalance = Math.max(0, currentBalance - days);
-            staff[idx].carriedLeave = newBalance;
+            // Option A: encashment is a dated ledger event. We do NOT touch
+            // `carriedLeave` here — the running ledger in _calcOfficeLeave reads
+            // the dated encashment record directly and subtracts it from the
+            // balance on/after its date. `carriedLeave` remains a one-time
+            // legacy adjustment frozen at whatever value it had at migration.
             _stampRecord(staff[idx]);
             await saveData('staff', staff);
             document.getElementById('leaveEncashModal')?.remove();
