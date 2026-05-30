@@ -3669,62 +3669,109 @@
 
                 // Re-read the current file from Drive before saving
                 // This catches any changes other users made since our last load
+                //
+                // ── PERFORMANCE: when Level 2 polling has a fresh modifiedTime for
+                // this type (polled within the last 30s), use that cached value
+                // instead of doing another fresh Drive API call. Saves ~1 second.
                 try {
-                    const folderId2 = await getOrCreateAppFolder();
-                    const authHdr2  = { 'Authorization': `Bearer ${accessToken}` };
-                    const qCheck    = encodeURIComponent(`name='${type}.json' and '${folderId2}' in parents and trashed=false`);
-                    const rCheck    = await fetch(`https://www.googleapis.com/drive/v3/files?q=${qCheck}&fields=files(id,modifiedTime)&spaces=drive`, { headers: authHdr2 });
-                    if (rCheck.ok) {
-                        const dCheck = await rCheck.json();
-                        if (dCheck.files?.length) {
-                            // Compare Drive modifiedTime with our _lastLoadTime
-                            const driveModTime = new Date(dCheck.files[0].modifiedTime).getTime();
-                            const ourLoadTime  = window._lastLoadTime?.[type] || 0;
-                            if (driveModTime > ourLoadTime + 2000) {
-                                // If this save was already approved as "force" (from queue retry or Save Now), skip the prompt
-                                if (_forcedSaveTypes[type]) {
-                                    console.log(`⚡ Skipping freshness prompt for ${type} — forced save`);
-                                } else {
-                                // Another user saved after we loaded — ask the user what to do
-                                const choice = await _conflictDialog({
-                                    type,
-                                    reason: 'updated',
-                                    message: `${type} data was updated by another user since you loaded it.`,
-                                    forceLabel: 'Save Anyway (Overwrite)',
-                                    waitLabel: 'Hold My Changes & Wait',
-                                    discardLabel: 'Discard My Changes',
-                                });
-                                if (choice === 'wait') {
-                                    _saveInProgress[type] = false;
-                                    _enqueuePendingSave(type, data, 'Data was updated by another user');
-                                    return;
-                                }
-                                if (choice === 'discard') {
-                                    _saveInProgress[type] = false;
-                                    _showSaveIndicator(type, 'pending');
-                                    await refreshDataFromDrive();
-                                    return;
-                                }
-                                // 'force' falls through and overwrites
-                                }
+                    let driveModTime = null;
+                    if (typeof _concur !== 'undefined' && _concur && _concur.lastModTimes && _concur.lastModTimes[type] && _concur.lastSyncAt) {
+                        const pollAge = Date.now() - _concur.lastSyncAt.getTime();
+                        if (pollAge < 30000) {
+                            // Fresh enough — use the cached modifiedTime from the poller
+                            driveModTime = new Date(_concur.lastModTimes[type]).getTime();
+                        }
+                    }
+                    // Fall back to a fresh Drive API call if the poller doesn't have it
+                    if (driveModTime === null) {
+                        const folderId2 = await getOrCreateAppFolder();
+                        const authHdr2  = { 'Authorization': `Bearer ${accessToken}` };
+                        const qCheck    = encodeURIComponent(`name='${type}.json' and '${folderId2}' in parents and trashed=false`);
+                        const rCheck    = await fetch(`https://www.googleapis.com/drive/v3/files?q=${qCheck}&fields=files(id,modifiedTime)&spaces=drive`, { headers: authHdr2 });
+                        if (rCheck.ok) {
+                            const dCheck = await rCheck.json();
+                            if (dCheck.files?.length) {
+                                driveModTime = new Date(dCheck.files[0].modifiedTime).getTime();
+                            }
+                        }
+                    }
+                    if (driveModTime !== null) {
+                        const ourLoadTime = window._lastLoadTime?.[type] || 0;
+                        if (driveModTime > ourLoadTime + 2000) {
+                            // If this save was already approved as "force" (from queue retry or Save Now), skip the prompt
+                            if (_forcedSaveTypes[type]) {
+                                console.log(`⚡ Skipping freshness prompt for ${type} — forced save`);
+                            } else {
+                            // Another user saved after we loaded — ask the user what to do
+                            const choice = await _conflictDialog({
+                                type,
+                                reason: 'updated',
+                                message: `${type} data was updated by another user since you loaded it.`,
+                                forceLabel: 'Save Anyway (Overwrite)',
+                                waitLabel: 'Hold My Changes & Wait',
+                                discardLabel: 'Discard My Changes',
+                            });
+                            if (choice === 'wait') {
+                                _saveInProgress[type] = false;
+                                _enqueuePendingSave(type, data, 'Data was updated by another user');
+                                return;
+                            }
+                            if (choice === 'discard') {
+                                _saveInProgress[type] = false;
+                                _showSaveIndicator(type, 'pending');
+                                await refreshDataFromDrive();
+                                return;
+                            }
+                            // 'force' falls through and overwrites
                             }
                         }
                     }
                 } catch(e) { console.warn('Pre-save check failed (non-critical):', e.message); }
 
                 // Acquire save lock — warns if another user is editing
-                const canSave = await _acquireLock(type, data);
-                if (!canSave) {
-                    _saveInProgress[type] = false;
-                    // _acquireLock has already enqueued the data if user chose to wait
-                    return;
+                //
+                // ── PERFORMANCE: skip the heavy Drive-based file lock when Level 2
+                // concurrency is active. Level 2 already provides record-level
+                // optimistic locking via lastModifiedAt + the freshness check above,
+                // so the file lock is redundant defense costing 4–5 extra round trips.
+                // We still call _acquireLock when Level 2 isn't initialised, as a
+                // fallback for older code paths.
+                const _hasLevel2 = (typeof _concur !== 'undefined') && _concur && _concur.lastSyncAt;
+                if (!_hasLevel2) {
+                    const canSave = await _acquireLock(type, data);
+                    if (!canSave) {
+                        _saveInProgress[type] = false;
+                        // _acquireLock has already enqueued the data if user chose to wait
+                        return;
+                    }
                 }
 
-                // Create version backup before overwriting
-                await _createBackup(type);
-
+                // ── PERFORMANCE: write the file FIRST, then run backup async ──
+                // Previously _createBackup ran BEFORE the save and added 5–10s of
+                // latency (it does 9+ Drive round trips: list, delete oldest, rename
+                // 3 slots, server-side copy). The backup is for disaster recovery
+                // and doesn't need to be transactional with the save — we can run
+                // it in the background after the user's save completes.
+                //
+                // Throttled: only create a new backup if the last one for this type
+                // is older than 30 minutes. Prevents rotation thrash during heavy
+                // editing sessions and saves further round trips.
                 await saveFileToDrive(`${type}.json`, data);
                 console.log(`✅ Successfully saved ${type}`);
+
+                // Fire-and-forget background backup (throttled to one per 30 min per type)
+                if (!window._lastBackupTime) window._lastBackupTime = {};
+                const lastBackup = window._lastBackupTime[type] || 0;
+                const BACKUP_THROTTLE_MS = 30 * 60 * 1000; // 30 minutes
+                if (Date.now() - lastBackup > BACKUP_THROTTLE_MS) {
+                    window._lastBackupTime[type] = Date.now();
+                    // Schedule for after the current task — does NOT block the user
+                    setTimeout(() => {
+                        _createBackup(type).catch(e =>
+                            console.warn(`Background backup failed for ${type} (non-critical):`, e.message)
+                        );
+                    }, 100);
+                }
 
                 _pendingSave[type]    = false;
                 _saveInProgress[type] = false;
@@ -3738,7 +3785,11 @@
                     delete _pendingSaveQueue[type];
                     _renderPendingQueueBanner();
                 }
-                await _releaseLock(type);
+                // Only release the file-level lock if we acquired it earlier
+                // (we skip both acquire and release when Level 2 is active).
+                if (!_hasLevel2) {
+                    await _releaseLock(type);
+                }
             } catch (error) {
                 console.error(`❌ Error saving ${type}:`, error);
                 _saveInProgress[type] = false;
