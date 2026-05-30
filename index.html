@@ -12806,8 +12806,10 @@ ${'─'.repeat(50)}
                 await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
             }
             const {jsPDF} = window.jspdf;
-            const doc  = new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
-            const ML=14,MR=14,CW=210-ML-MR,PW=210;
+            // Landscape A4 — needed because the leave summary table has 15 columns
+            // (Staff Name + 11 numeric + LOP + Balance) which can't fit on portrait.
+            const doc  = new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
+            const ML=14,MR=14,CW=297-ML-MR,PW=297;
             const MN   = ['January','February','March','April','May','June','July','August','September','October','November','December'];
             const monthLabel = MN[month-1]+' '+year;
             const fmt2 = m => { const h=Math.floor(m/60),mn=m%60; return h>0?h+'h '+mn+'m':mn+'m'; };
@@ -12896,15 +12898,29 @@ ${'─'.repeat(50)}
 
             doc.autoTable({
                 startY:y, margin:{left:ML,right:MR}, theme:'grid',
-                styles:{fontSize:7.5, cellPadding:2.5, valign:'middle'},
-                headStyles:{fillColor:[5,150,105], textColor:[255,255,255], fontStyle:'bold', fontSize:7.5},
                 head:[['Staff Name','Opening','Leave/Mo','Carried','Available','CL','SL','EL','CO','HD','Other','Total Taken','Absent','LOP','Balance']],
                 body: summaryBody,
+                styles:{fontSize:8.5, cellPadding:2.5, valign:'middle', overflow:'linebreak'},
+                headStyles:{fillColor:[5,150,105], textColor:[255,255,255], fontStyle:'bold', fontSize:8, halign:'center'},
+                // Landscape A4 content width is ~269mm. Allocate generously so the
+                // headers don't break into "Open\ning" / "Carri\ned" / "Availa\nble".
                 columnStyles:{
-                    0:{cellWidth:34}, 1:{cellWidth:12}, 2:{cellWidth:13}, 3:{cellWidth:12}, 4:{cellWidth:14},
-                    5:{cellWidth:9},  6:{cellWidth:9},  7:{cellWidth:9},  8:{cellWidth:9},  9:{cellWidth:9},
-                    10:{cellWidth:11},11:{cellWidth:14}, 12:{cellWidth:11},13:{cellWidth:13},14:{cellWidth:CW-179}
-                },
+                    0:{cellWidth:60, fontStyle:'bold'},      // Staff Name + designation
+                    1:{cellWidth:16, halign:'center'},        // Opening
+                    2:{cellWidth:18, halign:'center'},        // Leave/Mo
+                    3:{cellWidth:16, halign:'center'},        // Carried
+                    4:{cellWidth:20, halign:'center'},        // Available
+                    5:{cellWidth:11, halign:'center'},        // CL
+                    6:{cellWidth:11, halign:'center'},        // SL
+                    7:{cellWidth:11, halign:'center'},        // EL
+                    8:{cellWidth:11, halign:'center'},        // CO
+                    9:{cellWidth:11, halign:'center'},        // HD
+                    10:{cellWidth:14, halign:'center'},       // Other
+                    11:{cellWidth:20, halign:'center'},       // Total Taken
+                    12:{cellWidth:14, halign:'center'},       // Absent
+                    13:{cellWidth:18, halign:'center'},       // LOP
+                    14:{cellWidth:18, halign:'center'}        // Balance
+                },                                            // (totals 269mm — fills the landscape page)
                 alternateRowStyles:{fillColor:[240,253,250]},
                 footStyles:{fillColor:[4,120,87], textColor:[255,255,255], fontStyle:'bold'},
             });
@@ -12937,7 +12953,7 @@ ${'─'.repeat(50)}
                     .filter(a=>{ const[ay,am]=a.date.split('-'); return +ay===year&&+am===month&&Object.keys(LEAVE_MAP).includes(a.status); })
                     .sort((a,b)=>a.date.localeCompare(b.date));
                 if (!mAtt.length) return;
-                if (y > 240) { doc.addPage(); y=15; }
+                if (y > 180) { doc.addPage(); y=15; }  // landscape A4 is 210mm tall
 
                 doc.setFillColor(240,253,250); doc.rect(ML,y,CW,7,'F');
                 doc.setFontSize(9); doc.setFont('helvetica','bold'); doc.setTextColor(5,150,105);
@@ -12954,7 +12970,7 @@ ${'─'.repeat(50)}
                         const dayName=dt.toLocaleDateString('en-IN',{weekday:'short'});
                         const lm = LEAVE_MAP[a.status]||{short:'—',color:[75,85,99]};
                         const isHD = ['Half Day','Half Day-Afternoon'].includes(a.status);
-                        const impact = isHD ? '−0.5d' : (a.status==='Absent'?'−0 (unpaid)':'−1d');
+                        const impact = isHD ? '-0.5d' : (a.status==='Absent'?'-0 (unpaid)':'-1d');
                         return [
                             {content:a.date, styles:{fontSize:8}},
                             {content:dayName, styles:{halign:'center',fontSize:7.5}},
