@@ -1354,71 +1354,79 @@
                 };
             }
 
-            // ── Build the ledger ──
-            // Period boundaries:
-            //   anchor pay-period start = 26 of (anchorM-1) at anchorY (or prior year if Jan)
-            //   this-month pay-period start = 26 of (month-1)
-            //   this-month pay-period end   = 25 of month
-            const _anchorPrevM = anchorM === 1 ? 12 : anchorM - 1;
-            const _anchorPrevY = anchorM === 1 ? anchorY - 1 : anchorY;
-            const anchorPeriodStart = new Date(_anchorPrevY, _anchorPrevM - 1, 26).getTime();
-
-            const _thisPrevM = month === 1 ? 12 : month - 1;
-            const _thisPrevY = month === 1 ? year  - 1 : year;
-            const thisPeriodStart = new Date(_thisPrevY, _thisPrevM - 1, 26).getTime();
-            const thisPeriodEnd   = new Date(year, month - 1, 25, 23, 59, 59).getTime();
-
-            // PRIOR window: from anchor start UP TO (but not including) this-month start
-            const priorEnd = thisPeriodStart - 1;
-            const priorTakenObj = (priorEnd >= anchorPeriodStart)
-                ? _sumLeaveTaken(st, anchorPeriodStart, priorEnd)
-                : { total: 0, breakdown: {} };
-            const priorEncashed = (priorEnd >= anchorPeriodStart)
-                ? _sumEncashments(st, anchorPeriodStart, priorEnd)
-                : 0;
-
-            // THIS-MONTH window
-            const thisTakenObj = _sumLeaveTaken(st, thisPeriodStart, thisPeriodEnd);
-            const thisEncashed = _sumEncashments(st, thisPeriodStart, thisPeriodEnd);
-
-            // Months from anchor through THIS month, inclusive
+            // ── MONTH-BY-MONTH SETTLEMENT (Interpretation A) ──
+            // We iterate from the anchor month through the requested month, applying
+            // monthly LOP settlement (nextBalance clamped to 0). This makes any LOP
+            // "fall off" at the end of its month rather than carrying as debt.
+            //
+            // For each month i:
+            //   balanceStart  = (i == anchor) ? opening + carried : prevMonth.nextBalance
+            //   available     = balanceStart + lpM − encashments(i)
+            //   leaveTaken(i) = sum of leave + half-days in month i's pay period
+            //   lopDays(i)    = max(0, leaveTaken(i) − available)         ← LOP settled this month
+            //   nextBalance   = max(0, available − leaveTaken(i))         ← clamped to 0 (carryforward forgiveness)
             const monthsThru = _monthsFromAnchor(anchorY, anchorM, year, month);
-            // Months from anchor through PRIOR month (i.e. excluding this month)
-            const monthsPrior = monthsThru - 1;
+            let runningBalance = opening + carried;     // entering balance at the anchor
+            let cumAccrued     = 0;
+            let cumTaken       = 0;
+            let cumEncashed    = 0;
+            let cumLOP         = 0;
+            // Values for the REQUESTED month — captured when the loop reaches it
+            let thisAvailable = 0, thisLeaveTaken = 0, thisLopDays = 0, thisBreakdown = {};
+            let thisEncashed = 0;
 
-            // Carry into this month from prior months only.
-            //   = opening + carried (one-time) + lpM × monthsPrior − priorTaken − priorEncashed
-            const carryIn = opening + carried + lpM * monthsPrior - priorTakenObj.total - priorEncashed;
+            for (let step = 0; step < monthsThru; step++) {
+                // Compute this iteration's (y, m)
+                const iAbs = (anchorY * 12 + (anchorM - 1)) + step;
+                const iY = Math.floor(iAbs / 12);
+                const iM = (iAbs % 12) + 1;
+                // Pay-period bounds for month (iY, iM)
+                const _ppPM = iM === 1 ? 12 : iM - 1;
+                const _ppPY = iM === 1 ? iY - 1 : iY;
+                const ppStart = new Date(_ppPY, _ppPM - 1, 26).getTime();
+                const ppEnd   = new Date(iY,    iM - 1,    25, 23, 59, 59).getTime();
 
-            // Available to spend in this month = carry-in + this month's accrual − encashments dated this month
-            // (Encashments this month reduce what's available before LOP is computed.)
-            const available = +(carryIn + lpM - thisEncashed).toFixed(1);
+                const takenObj   = _sumLeaveTaken(st, ppStart, ppEnd);
+                const encashedI  = _sumEncashments(st, ppStart, ppEnd);
+                const availableI = +(runningBalance + lpM - encashedI).toFixed(1);
+                const lopI       = +Math.max(0, takenObj.total - availableI).toFixed(1);
+                const nextI      = +Math.max(0, availableI - takenObj.total).toFixed(1);
 
-            const leaveTaken = thisTakenObj.total;
-            const lopDays    = +(Math.max(0, leaveTaken - available)).toFixed(1);
-            // nextBalance is what would carry forward to NEXT month.
-            // We clamp to 0 because LOP absorbs the excess (it's a salary deduction
-            // rather than a negative leave balance — same rule as the old code).
-            const nextBalance = +(Math.max(0, available - leaveTaken)).toFixed(1);
+                cumAccrued  += lpM;
+                cumTaken    += takenObj.total;
+                cumEncashed += encashedI;
+                cumLOP      += lopI;
+
+                // If this is the REQUESTED month, capture for the return value
+                if (step === monthsThru - 1) {
+                    thisAvailable  = availableI;
+                    thisLeaveTaken = takenObj.total;
+                    thisLopDays    = lopI;
+                    thisBreakdown  = takenObj.breakdown;
+                    thisEncashed   = encashedI;
+                }
+                runningBalance = nextI;
+            }
 
             return {
                 lpM, carried, opening,
-                available,
-                leaveTaken,
-                lopDays,
-                nextBalance,
-                breakdown: thisTakenObj.breakdown,
-                // Diagnostic ledger — handy for a future "Leave Ledger" detail view
+                available:   thisAvailable,
+                leaveTaken:  thisLeaveTaken,
+                lopDays:     thisLopDays,
+                nextBalance: runningBalance,           // already the post-settlement value of the requested month
+                breakdown:   thisBreakdown,
+                // Diagnostic ledger — useful for future "Leave Ledger" detail view
                 _ledger: {
                     anchorY, anchorM,
                     monthsFromAnchor: monthsThru,
-                    totalAccrued:   +(lpM * monthsThru).toFixed(1),
-                    totalTaken:     +(priorTakenObj.total + leaveTaken).toFixed(1),
-                    totalEncashed:  +(priorEncashed + thisEncashed).toFixed(1),
-                    carryIn:        +carryIn.toFixed(1),
+                    totalAccrued:   +cumAccrued.toFixed(1),
+                    totalTaken:     +cumTaken.toFixed(1),
+                    totalEncashed:  +cumEncashed.toFixed(1),
+                    totalLOP:       +cumLOP.toFixed(1),       // sum of LOP across all settled months
                     thisAccrual:    lpM,
                     thisEncashed,
-                    beforeAnchor:   false
+                    beforeAnchor:   false,
+                    settlementModel:'monthly'                 // documents the policy in use
                 }
             };
         }
@@ -12834,34 +12842,54 @@ ${'─'.repeat(50)}
             doc.text('LEAVE BALANCE SUMMARY — '+monthLabel, ML, y); y+=6;
 
             const summaryBody = officeStaff.map(st => {
-                const mAtt = (st.attendance||[]).filter(a=>{ const[ay,am]=a.date.split('-'); return +ay===year&&+am===month; });
-                // Count each leave type
-                const cl  = mAtt.filter(a=>a.status==='Casual Leave').length;
-                const sl  = mAtt.filter(a=>a.status==='Sick Leave').length;
-                const el  = mAtt.filter(a=>a.status==='Earned Leave').length;
-                const co  = mAtt.filter(a=>a.status==='Comp Off').length;
-                const ol  = mAtt.filter(a=>a.status==='Leave').length;
-                const hdM = mAtt.filter(a=>a.status==='Half Day').length;
-                const hdA = mAtt.filter(a=>a.status==='Half Day-Afternoon').length;
-                const ab  = mAtt.filter(a=>a.status==='Absent').length;
-                // Total leave days (CL+SL+EL+CO+OL + 0.5 per half day)
-                const totalLeave = cl+sl+el+co+ol+(hdM+hdA)*0.5;
-                // Accrual balance
-                const lpM     = +(st.leavePerMonth??2);
-                const carried = +(st.carriedLeave||0);
-                const accrued = +(lpM + carried).toFixed(1);
-                const balance = +(accrued - totalLeave).toFixed(1);
-                const balCol  = balance < 0 ? [220,38,38] : balance === 0 ? [180,83,9] : [5,150,105];
+                // Use the running-ledger calc — same source the on-screen report uses.
+                // (Previously this PDF rolled its own per-month formula that ignored
+                // opening balance and the anchor month, causing screen vs PDF mismatch.)
+                const res = _calcOfficeLeave(st, year, month);
+                const bd  = res.breakdown || {};
+                // Pull individual leave type counts from the breakdown (pay-period scoped)
+                const cl  = bd['Casual Leave'] || 0;
+                const sl  = bd['Sick Leave'] || 0;
+                const el  = bd['Earned Leave'] || 0;
+                const co  = bd['Comp Off'] || 0;
+                const ol  = bd['Leave'] || 0;
+                const hd  = (bd['Half Day'] || 0) + (bd['Half Day-Afternoon'] || 0);
+                // "Absent" doesn't reduce balance but we still surface it in the report.
+                // Count from this pay period (26th prev → 25th current) for consistency.
+                const _tPM = month === 1 ? 12 : month - 1;
+                const _tPY = month === 1 ? year - 1 : year;
+                const ppStart = new Date(_tPY, _tPM - 1, 26).getTime();
+                const ppEnd   = new Date(year, month - 1, 25, 23, 59, 59).getTime();
+                const ab = (st.attendance||[]).filter(a => {
+                    if (a.status !== 'Absent' || !a.date) return false;
+                    const [ay, am, ad] = a.date.split('-').map(Number);
+                    const t = new Date(ay, am-1, ad).getTime();
+                    return t >= ppStart && t <= ppEnd;
+                }).length;
+
+                const lpM        = res.lpM;
+                const opening    = res.opening;
+                const carried    = res.carried;
+                const available  = res.available;        // ledger-correct
+                const totalLeave = res.leaveTaken;
+                const balance    = res.nextBalance;      // ledger-correct
+                const lop        = res.lopDays;
+                const balCol     = balance < 0 ? [220,38,38]
+                                  : balance === 0 ? [180,83,9]
+                                  : balance < 5 ? [217,119,6]
+                                  : [5,150,105];
                 const n = (v,c) => v>0 ? {content:String(v),styles:{halign:'center',fontStyle:'bold',textColor:c}} : {content:'—',styles:{halign:'center',textColor:[180,180,180]}};
                 return [
                     {content:st.name+' / '+(st.designation||''), styles:{fontSize:8}},
+                    {content:opening>0?String(opening):'—', styles:{halign:'center',textColor:[124,58,237]}},
                     {content:String(lpM),   styles:{halign:'center',textColor:[79,70,229]}},
-                    {content:String(carried),styles:{halign:'center'}},
-                    {content:String(accrued),styles:{halign:'center',fontStyle:'bold'}},
+                    {content:carried>0?String(carried):'—',styles:{halign:'center'}},
+                    {content:String(available),styles:{halign:'center',fontStyle:'bold',textColor:[30,64,175]}},
                     n(cl,[180,83,9]), n(sl,[220,38,38]), n(el,[5,150,105]),
-                    n(co,[99,102,241]), n(hdM+hdA > 0 ? hdM+hdA : 0,[234,88,12]), n(ol,[75,85,99]),
+                    n(co,[99,102,241]), n(hd,[234,88,12]), n(ol,[75,85,99]),
                     {content:totalLeave>0?String(totalLeave):'—',styles:{halign:'center',fontStyle:'bold',textColor:totalLeave>0?[220,38,38]:[180,180,180]}},
                     n(ab,[127,29,29]),
+                    {content:lop>0?String(lop)+' LOP':'—',styles:{halign:'center',fontStyle:'bold',textColor:lop>0?[220,38,38]:[180,180,180]}},
                     {content:String(balance),styles:{halign:'center',fontStyle:'bold',fontSize:9,textColor:balCol}},
                 ];
             });
@@ -12870,13 +12898,12 @@ ${'─'.repeat(50)}
                 startY:y, margin:{left:ML,right:MR}, theme:'grid',
                 styles:{fontSize:7.5, cellPadding:2.5, valign:'middle'},
                 headStyles:{fillColor:[5,150,105], textColor:[255,255,255], fontStyle:'bold', fontSize:7.5},
-                head:[['Staff Name','Leave/Mo','Carried','Available','CL','SL','EL','CO','HD','Other','Total Taken','Absent','Balance']],
+                head:[['Staff Name','Opening','Leave/Mo','Carried','Available','CL','SL','EL','CO','HD','Other','Total Taken','Absent','LOP','Balance']],
                 body: summaryBody,
                 columnStyles:{
-                    0:{cellWidth:38}, 1:{cellWidth:14}, 2:{cellWidth:14}, 3:{cellWidth:15},
-                    4:{cellWidth:10}, 5:{cellWidth:10}, 6:{cellWidth:10}, 7:{cellWidth:10},
-                    8:{cellWidth:10}, 9:{cellWidth:14}, 10:{cellWidth:16}, 11:{cellWidth:13},
-                    12:{cellWidth:CW-184}
+                    0:{cellWidth:34}, 1:{cellWidth:12}, 2:{cellWidth:13}, 3:{cellWidth:12}, 4:{cellWidth:14},
+                    5:{cellWidth:9},  6:{cellWidth:9},  7:{cellWidth:9},  8:{cellWidth:9},  9:{cellWidth:9},
+                    10:{cellWidth:11},11:{cellWidth:14}, 12:{cellWidth:11},13:{cellWidth:13},14:{cellWidth:CW-179}
                 },
                 alternateRowStyles:{fillColor:[240,253,250]},
                 footStyles:{fillColor:[4,120,87], textColor:[255,255,255], fontStyle:'bold'},
