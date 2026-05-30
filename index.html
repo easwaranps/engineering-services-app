@@ -1469,18 +1469,38 @@
             const periodDates=getOfficePeriodDates(op.periodYear||new Date().getFullYear(), op.periodMonth);
             const periodDays=periodDates.length;
             const periodLabel=periodDates[0].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})+' – '+periodDates[periodDates.length-1].toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
-            // Leave calculation using 26th–25th window
+            // Leave calculation using 26th–25th window — running ledger (Interpretation A)
             const leaveResult = computeLeaveForMonth(st, op.periodYear||new Date().getFullYear(), op.periodMonth);
             const manualLeave = +op.leaveTaken || 0;
             const leaveTakenFinal = op._useManualLeave ? manualLeave : (manualLeave > 0 ? manualLeave : leaveResult.leaveTaken);
-            const lpM=+(st.leavePerMonth??2),carried=+(st.carriedLeave||0);
-            const available=carried+lpM;
-            const lopDays=Math.max(0,leaveTakenFinal-available),lbal=Math.max(0,available-leaveTakenFinal);
+            const lpM     = leaveResult.lpM;
+            const carried = leaveResult.carried;
+            // Use the LEDGER's available/balance — it accounts for opening balance,
+            // accruals from the anchor, and prior months' settlements. The previous
+            // code used a per-month formula (carried + lpM) that ignored the running
+            // ledger entirely, causing payslips to show "Available 2" instead of the
+            // true 23/25.5/etc. when a staff had non-zero leaveOpening.
+            //
+            // If the user manually overrode `leaveTaken` in the payslip UI, recompute
+            // LOP/balance against the ledger's `available` (which is correct), since
+            // the override only changes how many leave days are claimed for THIS month.
+            let available, lopDays, lbal;
+            if (op._useManualLeave || (manualLeave > 0 && manualLeave !== leaveResult.leaveTaken)) {
+                // Manual override: keep ledger's available, recompute settlement against it
+                available = leaveResult.available;
+                lopDays   = Math.max(0, leaveTakenFinal - available);
+                lbal      = Math.max(0, available - leaveTakenFinal);
+            } else {
+                // No manual override: trust the ledger directly
+                available = leaveResult.available;
+                lopDays   = leaveResult.lopDays;
+                lbal      = leaveResult.nextBalance;
+            }
             // LOP = lopBase / periodDays × lopDays  (actual period days, not hardcoded 26)
             const lopBase=basic+hra+da+med+gp+cv+bonus;
             const lopA=+(lopDays*(lopBase/periodDays)).toFixed(2);
             const addlD=+op.addlDeduction||0,totD=pf.pfAmt+esicAmt+ptAmt+tds+lopA+addlD,net=gross-totD;
-            return{basic,hra,hraPct,da,daPct,gradePay:gp,conveyance:cv,medical:med,bonus,variable:vr,addlAllow:addlA,gross,grossWithVar,grossExclVar,pfPct,pfGross:pf.pfGross,pfAmt:pf.pfAmt,pfCapped:pf.pfCapped,esicPct,esicAmt,esicWaived,ptAmt,ptApplies,isFebruary,isMarchFY,gender,tdsAmt:tds,leavePerMonth:lpM,carriedLeave:carried,available,leaveTaken:leaveTakenFinal,lopDays,lopAmt:lopA,leaveBalance:lbal,addlDed:addlD,totalDed:totD,netPay:net,periodDays,periodLabel};
+            return{basic,hra,hraPct,da,daPct,gradePay:gp,conveyance:cv,medical:med,bonus,variable:vr,addlAllow:addlA,gross,grossWithVar,grossExclVar,pfPct,pfGross:pf.pfGross,pfAmt:pf.pfAmt,pfCapped:pf.pfCapped,esicPct,esicAmt,esicWaived,ptAmt,ptApplies,isFebruary,isMarchFY,gender,tdsAmt:tds,leavePerMonth:lpM,carriedLeave:carried,leaveOpening:leaveResult.opening||0,available,leaveTaken:leaveTakenFinal,lopDays,lopAmt:lopA,leaveBalance:lbal,addlDed:addlD,totalDed:totD,netPay:net,periodDays,periodLabel};
         }
 
         function onPaySlipStaffChange(staffID){
@@ -15349,9 +15369,10 @@ Automated WFH alert — ${company} Attendance System.`;
                 ['Employee Code',st.empCode||'—','PAN',st.pan||'—'],
                 ['PF Number',st.pfNumber||'—','ESIC',st.esicNumber||'—'],
                 ['Pay Period',pl,'',''],
-                ['Leave Accrual/Month',String(c.leavePerMonth),'Carried Forward',String(c.carriedLeave)],
-                ['Available Leave',String(c.available),'Leave Taken',String(c.leaveTaken)],
-                ['LOP Days',String(c.lopDays),'Next Month Balance',c.lopDays>0?'0 (reset after LOP)':String(c.leaveBalance)]
+                ['Opening Balance',String(c.leaveOpening)+'d','Leave Accrual/Month',String(c.leavePerMonth)+'d'],
+                ['Carried Forward',String(c.carriedLeave)+'d','Available This Month',String(c.available)+'d'],
+                ['Leave Taken',String(c.leaveTaken)+'d','LOP Days',String(c.lopDays)+'d'],
+                ['Next Month Balance',c.lopDays>0?String(c.leaveBalance)+'d (reset after LOP)':String(c.leaveBalance)+'d','','']
             ],columnStyles:{0:{cellWidth:38,fontStyle:'bold'},2:{cellWidth:38,fontStyle:'bold'}}});y=doc.lastAutoTable.finalY+6;
             const earRows=[['Basic Salary',INR(c.basic)]];
             if(c.hra>0)earRows.push([`HRA (${c.hraPct}%)`,INR(c.hra)]);
