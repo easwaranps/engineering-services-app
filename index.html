@@ -15641,6 +15641,8 @@ Automated WFH alert — ${company} Attendance System.`;
             const filterAmtMin  = parseFloat(window._dirFilter?.amtMin)||0;
             const filterAmtMax  = parseFloat(window._dirFilter?.amtMax)||0;
             const filterStatus  = window._dirFilter?.status  || '';
+            // Tally filter: '' (all) | 'updated' | 'pending' | 'voucher' | 'novoucher'
+            const filterTally   = window._dirFilter?.tally   || '';
 
             const fmtC = n => '₹'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
             const filtered = directorExpenses.filter(d => {
@@ -15660,7 +15662,19 @@ Automated WFH alert — ${company} Attendance System.`;
                 const mStat = !filterStatus ||
                     (filterStatus === 'reimbursed' && d.reimbursed) ||
                     (filterStatus === 'pending'    && !d.reimbursed);
-                return mDir && mMon && mSrch && mCat && mFrom && mTo && mAmt && mStat;
+                // Tally filter — 5 states:
+                //   'updated'   = Tally entered (✓ marked)
+                //   'pending'   = NOT marked as Tally-entered
+                //   'voucher'   = has a Tally voucher number recorded
+                //   'novoucher' = Tally-marked but voucher number still missing
+                //                 (useful to find the gap between "marked done" and "have proof")
+                const hasVoucher = !!(d.tallyVoucherNo && String(d.tallyVoucherNo).trim());
+                const mTally = !filterTally ||
+                    (filterTally === 'updated'   && d.tallyUpdated) ||
+                    (filterTally === 'pending'   && !d.tallyUpdated) ||
+                    (filterTally === 'voucher'   && hasVoucher) ||
+                    (filterTally === 'novoucher' && d.tallyUpdated && !hasVoucher);
+                return mDir && mMon && mSrch && mCat && mFrom && mTo && mAmt && mStat && mTally;
             }).sort((a,b)=>(b.expDate||'').localeCompare(a.expDate||''));
 
             // Monthly totals per director
@@ -15824,11 +15838,18 @@ Automated WFH alert — ${company} Attendance System.`;
                     </select>
                     <button onclick="window._dirFilter={};renderView()" class="px-3 py-2 text-xs text-gray-500 border rounded-lg hover:bg-gray-50 whitespace-nowrap">✕ Clear All</button>
                 </div>
-                <!-- Row 2: Category + Date range + Amount range -->
+                <!-- Row 2: Category + Tally state + Date range + Amount range -->
                 <div class="flex flex-wrap gap-3 items-center">
                     <select onchange="window._dirFilter={...(window._dirFilter||{}),cat:this.value};renderView()" class="px-3 py-2 border rounded-lg text-sm min-w-48">
                         <option value="" ${filterCat===''?'selected':''}>All Categories</option>
                         ${ACC_CATEGORIES.map(c=>`<option value="${c}" ${filterCat===c?'selected':''}>${c}</option>`).join('')}
+                    </select>
+                    <select onchange="window._dirFilter={...(window._dirFilter||{}),tally:this.value};renderView()" class="px-3 py-2 border rounded-lg text-sm min-w-48" title="Filter by Tally entry state">
+                        <option value=""          ${filterTally===''         ?'selected':''}>All Tally States</option>
+                        <option value="updated"   ${filterTally==='updated'  ?'selected':''}>✓ Tally Entered</option>
+                        <option value="pending"   ${filterTally==='pending'  ?'selected':''}>· Pending Tally</option>
+                        <option value="voucher"   ${filterTally==='voucher'  ?'selected':''}>📋 With Voucher No</option>
+                        <option value="novoucher" ${filterTally==='novoucher'?'selected':''}>⚠ Marked but No Voucher</option>
                     </select>
                     <div class="flex items-center gap-1">
                         <span class="text-xs text-gray-500 whitespace-nowrap">Date from</span>
