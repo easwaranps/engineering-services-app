@@ -10262,6 +10262,34 @@
                     </div>
                 </div>
 
+                <!-- Staff Edit Control -->
+                <div class="bg-white rounded-2xl shadow-lg p-6 mt-6">
+                    <div class="flex justify-between items-center">
+                        <div>
+                            <h3 class="text-xl font-bold text-indigo-700">👤 Staff Edit Control</h3>
+                            <p class="text-xs text-gray-500 mt-1">When locked, the Edit button on the staff list is hidden. Use the View button for read-only access. Enable Edit only when intentionally updating staff details.</p>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <span class="text-xs px-3 py-1 rounded-full font-medium ${settings.allowStaffEdit?'bg-red-100 text-red-700':'bg-green-100 text-green-700'}">${settings.allowStaffEdit?'🔓 Edit Enabled':'🔒 Edit Locked'}</span>
+                            <button onclick="toggleStaffEditLock()" class="px-3 py-1.5 text-sm border border-indigo-300 text-indigo-600 rounded-lg hover:bg-indigo-50">${settings.allowStaffEdit?'Lock Edit':'Unlock Edit'}</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Staff Delete Control -->
+                <div class="bg-white rounded-2xl shadow-lg p-6 mt-6">
+                    <div class="flex justify-between items-center">
+                        <div>
+                            <h3 class="text-xl font-bold text-red-700">👤 Staff Delete Control</h3>
+                            <p class="text-xs text-gray-500 mt-1">When locked, the Delete button on the staff list is hidden. Highly recommended to keep locked except when removing a wrong entry — deleted staff records can be hard to recover and may break linked payroll history.</p>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <span class="text-xs px-3 py-1 rounded-full font-medium ${settings.allowStaffDelete?'bg-red-100 text-red-700':'bg-green-100 text-green-700'}">${settings.allowStaffDelete?'🔓 Delete Enabled':'🔒 Delete Locked'}</span>
+                            <button onclick="toggleStaffDeleteLock()" class="px-3 py-1.5 text-sm border border-red-300 text-red-600 rounded-lg hover:bg-red-50">${settings.allowStaffDelete?'Lock (Disable Delete)':'Unlock (Enable Delete)'}</button>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Developer / Pre-Production Tools -->
                 <div class="bg-white rounded-2xl shadow-lg p-6 mt-6 border-2 border-purple-200">
                     <div class="flex justify-between items-center mb-2">
@@ -11796,9 +11824,9 @@
                         </div>
                         <div><label class="block text-xs font-semibold text-gray-600 mb-1">Remarks</label>
                             <textarea id="sRemarks" rows="2" class="w-full px-3 py-2 border rounded-lg text-sm"></textarea></div>
-                        <div class="flex gap-3 justify-end pt-2">
-                            <button type="button" onclick="closeStaffModal()" class="px-5 py-2 border border-gray-300 rounded-xl text-gray-600 hover:bg-gray-50">Cancel</button>
-                            <button type="submit" class="px-6 py-2 bg-teal-600 text-white rounded-xl hover:bg-teal-700 font-semibold">Save Staff</button>
+                        <div class="flex gap-3 justify-end pt-2" id="staffFormFooter">
+                            <button type="button" id="staffFormCancelBtn" onclick="closeStaffModal()" class="px-5 py-2 border border-gray-300 rounded-xl text-gray-600 hover:bg-gray-50">Cancel</button>
+                            <button type="submit" id="staffFormSaveBtn" class="px-6 py-2 bg-teal-600 text-white rounded-xl hover:bg-teal-700 font-semibold">Save Staff</button>
                         </div>
                     </form>
                 </div>
@@ -11940,8 +11968,9 @@
                         <td class="px-3 py-2 text-center"><span class="px-2 py-0.5 rounded-full text-xs ${s.status==='Active' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">${s.status||'Active'}</span></td>
                         <td class="px-3 py-2 text-right whitespace-nowrap">
                             ${(s.documents||[]).length>0 ? `<button onclick="viewStaffDocsModal('${s.staffID}')" title="${(s.documents||[]).length} document(s)" class="inline-flex items-center text-xs font-medium px-1.5 py-0.5 mr-2 bg-teal-100 text-teal-700 hover:bg-teal-200 rounded-md">📎 ${(s.documents||[]).length}</button>` : ''}
-                            <button onclick="editStaff('${s.staffID}')" class="text-indigo-600 hover:text-indigo-800 text-xs font-medium mr-2">Edit</button>
-                            <button onclick="deleteStaff('${s.staffID}')" class="text-red-600 hover:text-red-800 text-xs">Del</button>
+                            <button onclick="viewStaff('${s.staffID}')" class="text-blue-600 hover:text-blue-800 text-xs font-medium mr-2" title="View staff details (read-only)">View</button>
+                            ${settings.allowStaffEdit ? `<button onclick="editStaff('${s.staffID}')" class="text-indigo-600 hover:text-indigo-800 text-xs font-medium mr-2" title="Edit staff details">Edit</button>` : `<span class="text-gray-300 text-xs mr-2" title="Edit locked — enable in Settings">🔒 Edit</span>`}
+                            ${settings.allowStaffDelete ? `<button onclick="deleteStaff('${s.staffID}')" class="text-red-600 hover:text-red-800 text-xs" title="Delete staff">Del</button>` : `<span class="text-gray-300 text-xs" title="Delete locked — enable in Settings">🔒 Del</span>`}
                         </td>
                     </tr>`).join('')}
                 </tbody>
@@ -14170,7 +14199,24 @@ ${'─'.repeat(50)}
             document.body.appendChild(a); a.click(); a.remove();
         }
 
-        function closeStaffModal() { document.getElementById('staffModal').classList.remove('show'); currentStaff = null; _staffDocsBuf = []; _concurEndEdit(); }
+        function closeStaffModal() {
+            const modal = document.getElementById('staffModal');
+            if (modal) {
+                modal.classList.remove('show');
+                // Restore any disabled-by-view-mode state so the next open is a clean slate
+                modal.querySelectorAll('input, select, textarea, button').forEach(el => {
+                    el.disabled = false;
+                    el.classList.remove('cursor-not-allowed','bg-gray-50');
+                });
+                const saveBtn = document.getElementById('staffFormSaveBtn');
+                if (saveBtn) saveBtn.style.display = '';
+                const cancelBtn = document.getElementById('staffFormCancelBtn');
+                if (cancelBtn) cancelBtn.textContent = 'Cancel';
+            }
+            currentStaff = null;
+            _staffDocsBuf = [];
+            _concurEndEdit();
+        }
 
         async function saveStaff(e) {
             e.preventDefault();
@@ -14265,6 +14311,44 @@ ${'─'.repeat(50)}
         }
 
         function editStaff(id) { const s = staff.find(x => x.staffID === id); if (s) openStaffModal(s); }
+
+        // Read-only view: opens the same modal that Edit uses, populates from the
+        // staff record, then disables every input/select/textarea and hides the
+        // Save button. Anything added to the Edit modal in future automatically
+        // appears here — no risk of the view drifting out of sync.
+        function viewStaff(id) {
+            const s = staff.find(x => x.staffID === id);
+            if (!s) return;
+            openStaffModal(s);
+            const modal = document.getElementById('staffModal');
+            if (!modal) return;
+            // Disable every form control inside the modal
+            modal.querySelectorAll('input, select, textarea, button[type="submit"]').forEach(el => {
+                if (el.id === 'staffFormSaveBtn') {
+                    el.style.display = 'none';   // hide Save in view mode
+                    return;
+                }
+                el.disabled = true;
+                el.classList.add('cursor-not-allowed','bg-gray-50');
+            });
+            // Re-enable the Cancel/Close button + any close 'X' button in the header
+            const cancelBtn = document.getElementById('staffFormCancelBtn');
+            if (cancelBtn) {
+                cancelBtn.disabled = false;
+                cancelBtn.textContent = 'Close';
+                cancelBtn.classList.remove('cursor-not-allowed','bg-gray-50');
+            }
+            // The header close-X is a <button> without type=submit; re-enable
+            modal.querySelectorAll('.bg-gradient-to-r button').forEach(el => {
+                el.disabled = false;
+                el.classList.remove('cursor-not-allowed','bg-gray-50');
+            });
+            // Update the modal title to reflect view-mode
+            const title = document.getElementById('staffModalTitle');
+            if (title) title.textContent = '👁  View Staff — ' + (s.name || '');
+            // Stop Level 2 from holding an editing lock on this record — we're not editing
+            try { _concurEndEdit(); } catch(e) {}
+        }
 
         async function deleteStaff(id) {
             if (!confirm('Delete this staff member and all their records?')) return;
@@ -15266,6 +15350,8 @@ Automated WFH alert — ${company} Attendance System.`;
 
         async function toggleExpenseDeleteLock(){settings.allowExpenseDelete=!settings.allowExpenseDelete;await saveData('settings',settings);renderView();}
         async function toggleProjectDeleteLock(){settings.allowProjectDelete=!settings.allowProjectDelete;await saveData('settings',settings);renderView();}
+        async function toggleStaffEditLock(){settings.allowStaffEdit=!settings.allowStaffEdit;await saveData('settings',settings);renderView();}
+        async function toggleStaffDeleteLock(){settings.allowStaffDelete=!settings.allowStaffDelete;await saveData('settings',settings);renderView();}
         async function togglePayslipEditLock(){settings.payslipEditUnlocked=!settings.payslipEditUnlocked;await saveData('settings',settings);renderView();}
 
         function generatePaySlipPDF(){const techV=!document.getElementById('twSection')?.classList.contains('hidden'),offV=!document.getElementById('opSection')?.classList.contains('hidden');if(techV)_pdfTech();else if(offV)_pdfOffice();else alert('Please select a staff member first.');}
