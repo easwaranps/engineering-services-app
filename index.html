@@ -15235,6 +15235,24 @@ Automated WFH alert — ${company} Attendance System.`;
                 expenses[idx].tallyUpdatedAt = new Date().toISOString();
                 _stampRecord(expenses[idx]);
                 await saveData('expenses', expenses);
+            } else if (projID === 'DIREXP') {
+                // ── Director Expense ──────────────────────────────
+                // (parallel path to the project branch, scoped to a directorExpenses record)
+                const idx = directorExpenses.findIndex(d => d.deID === itemID);
+                if (idx < 0) return;
+                if (await _concurBlockIfStale('directorExpenses', [{ id: itemID, idKey: 'deID' }])) return;
+                if (vNo)   directorExpenses[idx].tallyVoucherNo   = vNo;
+                if (vDate) directorExpenses[idx].tallyVoucherDate = vDate;
+                if (_tvAttachment) {
+                    directorExpenses[idx].tallyVoucherDriveId = newDriveId;
+                    directorExpenses[idx].tallyVoucherData    = newData;
+                    directorExpenses[idx].tallyVoucherName    = newName;
+                    directorExpenses[idx].tallyVoucherMime    = newMime;
+                }
+                directorExpenses[idx].tallyUpdated   = true;
+                directorExpenses[idx].tallyUpdatedAt = new Date().toISOString();
+                _stampRecord(directorExpenses[idx]);
+                await saveData('directorExpenses', directorExpenses);
             } else {
                 // ── Projects tab ──────────────────────────────────
                 const idx = projectExpenses.findIndex(x => x.projExpID === projID);
@@ -15842,11 +15860,12 @@ Automated WFH alert — ${company} Attendance System.`;
                             <th class="px-3 py-3 text-left text-xs font-semibold">Mode</th>
                             <th class="px-3 py-3 text-right text-xs font-semibold">Amount</th>
                             <th class="px-3 py-3 text-center text-xs font-semibold">Reimb.</th>
+                            <th class="px-3 py-3 text-center text-xs font-semibold">Tally</th>
                             <th class="px-3 py-3 text-right text-xs font-semibold">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
-                        ${filtered.length === 0 ? `<tr><td colspan="10" class="px-4 py-12 text-center text-gray-400">No entries found. Click + New Entry to add.</td></tr>` :
+                        ${filtered.length === 0 ? `<tr><td colspan="11" class="px-4 py-12 text-center text-gray-400">No entries found. Click + New Entry to add.</td></tr>` :
                             filtered.map(d => {
                                 const safeId = d.deID.replace(/'/g,"\'");
                                 const dirIdx = d.director === 'dir1' ? 0 : 1;
@@ -15859,7 +15878,10 @@ Automated WFH alert — ${company} Attendance System.`;
                                     <td class="px-3 py-2 whitespace-nowrap text-xs text-gray-600">${d.expDate||'—'}</td>
                                     <td class="px-3 py-2"><span class="text-xs font-semibold px-2 py-0.5 rounded-full ${dirIdx===0?'bg-rose-100 text-rose-700':'bg-indigo-100 text-indigo-700'}">${dirName}</span></td>
                                     <td class="px-3 py-2 text-xs">${d.category||'—'}</td>
-                                    <td class="px-3 py-2 text-xs" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${d.description||''}">${d.description||'—'}</td>
+                                    <td class="px-3 py-2 text-xs" style="max-width:160px;${d.tallyUpdated?'color:#0d9488;font-weight:600':''}" title="${d.description||''}">
+                                        <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.description||'—'}</div>
+                                        ${d.tallyUpdated?`<span style="font-size:10px;background:#ccfbf1;color:#0d9488;padding:1px 6px;border-radius:4px">✓ Tally${d.tallyVoucherNo?' #'+d.tallyVoucherNo:''}</span>`:''}
+                                    </td>
                                     <td class="px-3 py-2 text-xs ${d.projectNo?'text-blue-600 font-medium':''}">${d.projectNo||'—'}</td>
                                     <td class="px-3 py-2 text-xs">${d.payMode||'—'}</td>
                                     <td class="px-3 py-2 text-right font-semibold text-gray-800">${fmtC(d.amount)}</td>
@@ -15867,6 +15889,22 @@ Automated WFH alert — ${company} Attendance System.`;
                                         ${d.reimbursed
                                             ? `<span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-semibold">✓ Paid</span>`
                                             : `<button onclick="event.stopPropagation();markDirExpReimbursed('${safeId}')" class="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full hover:bg-orange-200">Mark Paid</button>`}
+                                    </td>
+                                    <td class="px-3 py-2 text-center whitespace-nowrap" onclick="event.stopPropagation()">
+                                        <div class="flex gap-1 justify-center flex-wrap">
+                                            <!-- Step 1: Mark Tally — same pattern as project expense items -->
+                                            <button onclick="toggleDirExpTallyStatus('${safeId}')"
+                                                class="text-xs px-2 py-1 rounded border font-semibold ${d.tallyUpdated?'bg-teal-500 border-teal-600 text-white':'bg-gray-100 border-gray-300 text-gray-600 hover:bg-teal-50 hover:border-teal-300'}"
+                                                title="${d.tallyUpdated?'Click to un-mark Tally':'Click to mark as entered in Tally'}">
+                                                ${d.tallyUpdated?'✓':'▸'}
+                                            </button>
+                                            <!-- Step 2: Voucher attachment -->
+                                            <button onclick="openDirExpTallyVoucherModal('${safeId}')"
+                                                class="text-xs px-2 py-1 rounded border font-semibold ${d.tallyVoucherNo?'bg-indigo-500 border-indigo-600 text-white':d.tallyUpdated?'bg-indigo-100 border-indigo-300 text-indigo-700 hover:bg-indigo-200':'bg-gray-50 border-gray-200 text-gray-400 hover:bg-indigo-50 hover:border-indigo-200'}"
+                                                title="${d.tallyVoucherNo?'Voucher #'+d.tallyVoucherNo+' — click to edit':'Attach Tally voucher number and screenshot'}">
+                                                📋 ${d.tallyVoucherNo?'#'+d.tallyVoucherNo:'Voucher'}
+                                            </button>
+                                        </div>
                                     </td>
                                     <td class="px-3 py-2 text-right" onclick="event.stopPropagation()">
                                         <div class="flex items-center justify-end gap-1">
@@ -15877,7 +15915,7 @@ Automated WFH alert — ${company} Attendance System.`;
                                     </td>
                                 </tr>
                                 <tr id="${rowId}" class="hidden">
-                                    <td colspan="10" style="padding:0;border-bottom:2px solid #fecdd3">
+                                    <td colspan="11" style="padding:0;border-bottom:2px solid #fecdd3">
                                         <div style="background:#fff1f2;padding:12px 16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px">
                                             <div>
                                                 <p style="font-size:10px;font-weight:700;color:#9f1239;letter-spacing:.05em;margin-bottom:4px">EXPENSE DETAILS</p>
@@ -17015,14 +17053,10 @@ Automated WFH alert — ${company} Attendance System.`;
                             <div>
                                 <label class="block text-xs font-semibold text-gray-600 mb-1">Payment Mode</label>
                                 <select id="dsMode2" class="w-full px-3 py-2 border rounded-lg text-sm">
-                                    <option value="Bank Transfer">Bank Transfer</option>
-                                    <option value="NEFT">NEFT</option>
-                                    <option value="RTGS">RTGS</option>
-                                    <option value="UPI">UPI</option>
-                                    <option value="G-Pay">G-Pay</option>
-                                    <option value="Cash">Cash</option>
-                                    <option value="Cheque">Cheque</option>
+                                    ${['Cash','G-Pay / UPI','Bank Transfer (NEFT/RTGS/IMPS)','Credit Card','Debit Card','Cheque'].map(m=>`<option value="${m}">${m}</option>`).join('')}
                                 </select>
+                                <!-- "Personal - To Reimburse" and "Company Card" intentionally omitted —
+                                     a settlement IS the reimbursement, so those modes don't make sense here. -->
                             </div>
                             <div>
                                 <label class="block text-xs font-semibold text-gray-600 mb-1">Voucher / Ref</label>
@@ -18269,6 +18303,89 @@ Automated WFH alert — ${company} Attendance System.`;
             if (idx < 0) return;
             projectExpenses[idx].items = (projectExpenses[idx].items||[]).filter(i => i.itemID !== itemID);
             await saveData('projectExpenses', projectExpenses);
+            renderView();
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        // DIRECTOR EXPENSE — TALLY WORKFLOW
+        // ────────────────────────────────────────────────────────────────
+        // Parallel to project-item Tally (toggleTallyStatus + openTallyVoucherModal)
+        // but scoped to a single directorExpenses[] record by deID.
+        //
+        // The voucher modal is the SAME modal (#tallyVoucherModal) used for project
+        // items and expenses. We re-use the hidden tvProjID field as a discriminator:
+        //   tvProjID = ''        → expense save path
+        //   tvProjID = 'DIREXP'  → director expense save path
+        //   tvProjID = <projID>  → project item save path (existing)
+        // ════════════════════════════════════════════════════════════════
+        async function toggleDirExpTallyStatus(deID) {
+            const idx = directorExpenses.findIndex(d => d.deID === deID);
+            if (idx < 0) return;
+            // Level 2 concurrency — guard against another user editing this record
+            if (await _concurBlockIfStale('directorExpenses', [{ id: deID, idKey: 'deID' }])) return;
+            directorExpenses[idx].tallyUpdated   = !directorExpenses[idx].tallyUpdated;
+            directorExpenses[idx].tallyUpdatedAt = directorExpenses[idx].tallyUpdated ? new Date().toISOString() : null;
+            _stampRecord(directorExpenses[idx]);
+            await saveData('directorExpenses', directorExpenses);
+            renderView();
+        }
+
+        function openDirExpTallyVoucherModal(deID) {
+            _tvAttachment = null;
+            const d = directorExpenses.find(x => x.deID === deID);
+            if (!d) return;
+            const dirIdx  = d.director === 'dir1' ? 0 : 1;
+            const dirs    = (settings.directors||['Director 1','Director 2']);
+            const dirName = dirs[dirIdx] || d.director;
+            // Use 'DIREXP' as the discriminator in tvProjID so saveTallyVoucher's
+            // existing if/else can route to the director-expense branch.
+            document.getElementById('tvProjID').value = 'DIREXP';
+            document.getElementById('tvItemID').value = deID;
+            document.getElementById('tvItemDesc').textContent = (d.description||'(no description)') + ' · ' + dirName;
+            document.getElementById('tvItemAmt').textContent  = (d.category||'—') + ' · ' + '₹'+(+d.amount||0).toLocaleString('en-IN',{minimumFractionDigits:2}) + ' · ' + (d.expDate||'');
+            document.getElementById('tvVoucherNo').value   = d.tallyVoucherNo||'';
+            document.getElementById('tvVoucherDate').value = d.tallyVoucherDate||'';
+            renderTvGrid();
+            const existEl = document.getElementById('tvExistingInfo');
+            const hasTv = d.tallyVoucherData || d.tallyVoucherDriveId;
+            if (hasTv) {
+                existEl.classList.remove('hidden');
+                existEl.innerHTML = `<span style="color:#0f766e">✅ Voucher saved: <strong>${d.tallyVoucherNo||'No number'}</strong> (${d.tallyVoucherDate||'No date'})</span>
+                    <span style="display:inline-flex;gap:6px;margin-left:8px">
+                        <button onclick="viewDirExpTallyVoucher('${deID}')" style="color:#0d9488;text-decoration:underline;background:none;border:none;cursor:pointer;font-size:12px">View</button>
+                        <button onclick="deleteDirExpTallyVoucher('${deID}')" style="color:#dc2626;text-decoration:underline;background:none;border:none;cursor:pointer;font-size:12px">🗑️ Delete</button>
+                    </span>`;
+            } else {
+                existEl.classList.add('hidden');
+            }
+            document.getElementById('tallyVoucherModal').classList.add('show');
+        }
+
+        async function viewDirExpTallyVoucher(deID) {
+            const d = directorExpenses.find(x => x.deID === deID);
+            if (!d?.tallyVoucherData && !d?.tallyVoucherDriveId) { alert('No voucher attachment saved.'); return; }
+            await _openVoucherAttachment({
+                driveId: d.tallyVoucherDriveId,
+                data:    d.tallyVoucherData,
+                name:    d.tallyVoucherName || 'tally-voucher',
+                mime:    d.tallyVoucherMime || ''
+            });
+        }
+
+        async function deleteDirExpTallyVoucher(deID) {
+            if (!confirm('Remove the Tally voucher attachment from this director expense?\n\nThe attachment will be deleted but the expense itself will be kept.')) return;
+            const idx = directorExpenses.findIndex(d => d.deID === deID);
+            if (idx < 0) return;
+            if (await _concurBlockIfStale('directorExpenses', [{ id: deID, idKey: 'deID' }])) return;
+            directorExpenses[idx].tallyVoucherNo      = '';
+            directorExpenses[idx].tallyVoucherDate    = '';
+            directorExpenses[idx].tallyVoucherDriveId = null;
+            directorExpenses[idx].tallyVoucherData    = null;
+            directorExpenses[idx].tallyVoucherName    = '';
+            directorExpenses[idx].tallyVoucherMime    = '';
+            _stampRecord(directorExpenses[idx]);
+            await saveData('directorExpenses', directorExpenses);
+            closeTallyVoucherModal();
             renderView();
         }
         // ── FUND DISBURSEMENT STATEMENT PDF ──────────────────────────
