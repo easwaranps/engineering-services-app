@@ -868,6 +868,28 @@
             { method: 'PATCH', headers: { Authorization: `Bearer ${accessToken}` }, body: form }
         );
         if (!r.ok) {
+            // Drive sometimes returns a non-OK response while the write HAS committed
+            // (especially under poll contention or transient 5xx). Before throwing,
+            // re-fetch the file's modifiedTime and a hash of the size — if the most
+            // recent revision matches what we just wrote, treat it as a success.
+            try {
+                const expectedSize = blob.size;
+                const verify = await fetch(
+                    `https://www.googleapis.com/drive/v3/files/${fileId}?fields=size,modifiedTime&supportsAllDrives=true`,
+                    { headers: { Authorization: `Bearer ${accessToken}` } }
+                );
+                if (verify.ok) {
+                    const meta = await verify.json();
+                    const driveSize = parseInt(meta.size, 10);
+                    const recent    = meta.modifiedTime && (Date.now() - new Date(meta.modifiedTime).getTime() < 30_000);
+                    // If size matches what we just sent AND modifiedTime is in the last 30s,
+                    // the write committed despite the spurious non-OK. Don't false-alarm.
+                    if (recent && driveSize === expectedSize) {
+                        console.warn('writeFile: non-OK response but write verified as committed (size match + recent modifiedTime). Treating as success.');
+                        return;
+                    }
+                }
+            } catch(_) { /* ignore verify-step failure, fall through to original throw */ }
             const err = await r.json().catch(()=>({}));
             throw new Error('Save failed: ' + (err.error?.message || r.statusText));
         }
@@ -2673,7 +2695,19 @@
             addedBy:         currentUser?.name || 'Unknown',
             addedByID:       currentUser?.staffID || '',
             addedAt:         oldItem?.addedAt || new Date().toISOString(),
-            updatedAt:       new Date().toISOString()
+            updatedAt:       new Date().toISOString(),
+            // Preserve Tally state through edits (was being wiped silently before).
+            // Verification is intentionally NOT preserved — any edit invalidates
+            // a prior verification and forces re-verification (policy).
+            tallyUpdated:        oldItem?.tallyUpdated      || false,
+            tallyUpdatedAt:      oldItem?.tallyUpdatedAt    || null,
+            tallyVoucherNo:      oldItem?.tallyVoucherNo    || '',
+            tallyVoucherDate:    oldItem?.tallyVoucherDate  || '',
+            tallyVoucherDriveId: oldItem?.tallyVoucherDriveId || null,
+            tallyVoucherData:    oldItem?.tallyVoucherData    || null,
+            tallyVoucherName:    oldItem?.tallyVoucherName    || '',
+            tallyVoucherMime:    oldItem?.tallyVoucherMime    || '',
+            // verified intentionally omitted → defaults to undefined/falsy on edit
         };
         _stampRecord(entry);
         if (itemID) {
