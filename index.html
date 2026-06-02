@@ -7204,6 +7204,7 @@
 
         function renderExpenses(content) {
             content.innerHTML = `
+                ${_verificationBanner('expenses')}
                 <div class="flex justify-between items-center mb-4 flex-wrap gap-3">
                     <h2 class="text-3xl font-bold">💸 Expenses & Bills</h2>
                     <div class="flex gap-2 flex-wrap">
@@ -7376,7 +7377,9 @@
                         <!-- Actions -->
                         <div>
                             <p style="font-size:10px;font-weight:700;color:#374151;letter-spacing:.05em;margin-bottom:4px">ACTIONS</p>
-                            <div class="flex flex-wrap gap-1">
+                            <div class="flex flex-wrap gap-1 items-center">
+                                ${_renderVerifyBadge(e)}
+                                ${_isTallyUnlocked(e) ? `
                                 <button onclick="toggleExpTally('${safeId}')"
                                     class="text-xs px-2 py-1 rounded border font-semibold ${tallyDone?'bg-teal-500 border-teal-600 text-white':'bg-gray-100 border-gray-300 text-gray-600 hover:bg-teal-50'}">
                                     ${tallyDone?'✓ Tally':'+ Tally'}
@@ -7385,6 +7388,7 @@
                                     class="text-xs px-2 py-1 rounded border font-semibold ${hasVoucher?'bg-indigo-500 border-indigo-600 text-white':tallyDone?'bg-orange-100 border-orange-300 text-orange-700':'bg-gray-50 border-gray-200 text-gray-400 hover:bg-indigo-50'}">
                                     📋 ${tallyVoucherNo?'#'+tallyVoucherNo:'Voucher'}
                                 </button>
+                                ` : _renderVerifyButton(e, `verifyRecord('expense','${safeId}')`)}
                                 ${attachCount>0?`<button onclick="viewExpPhotoById('${safeId}',0)" class="text-xs px-2 py-1 rounded border border-blue-200 text-blue-600 hover:bg-blue-50">📎 ${attachCount} Bill${attachCount>1?'s':''}</button>`:''}
                             </div>
                         </div>
@@ -7757,6 +7761,229 @@
         }
 
         // ════════════════════════════════════════════════════════════════
+        // ════════════════════════════════════════════════════════════════
+        // SECOND-EYE VERIFICATION (maker-checker)
+        // ────────────────────────────────────────────────────────────────
+        // Universal verification gate for project items, director expenses,
+        // and regular expenses. Tally workflow buttons (✓ Tally / 📋 Voucher)
+        // are hidden until a SECOND person verifies the record.
+        //
+        // Rule precedence per record:
+        //   • If `verified === true`  →  verified (use the `verifiedBy` stamp)
+        //   • Else if `tallyUpdated === true` and no `verified` field
+        //         →  implicit grandfather (was entered under pre-gate rules)
+        //   • Else → unverified
+        //
+        // Maker-checker: by default the user who CREATED the record cannot
+        // verify it themselves. Admin can flip `settings.allowSelfVerification`
+        // to relax this for small teams.
+        //
+        // The exposed API:
+        //   _verifyState(record)  → { isVerified, isGrandfathered, by, at, canSelfVerify, isOwnRecord }
+        //   _renderVerifyBadge(record)   → HTML string for the row/detail badge
+        //   _renderVerifyButton(record, type, idArgs)   → HTML for the Verify CTA
+        //                                                 (returns '' if not allowed for this user)
+        //   verifyRecord(type, id1[, id2])  → save the verification stamp
+        //   bulkVerifyAll(type)   → "Mark all unverified as verified by me" action
+        // ════════════════════════════════════════════════════════════════
+
+        // Get the current user's identifier for verification stamps.
+        // Prefers email (stable + unique), falls back to name, then 'unknown'.
+        function _currentVerifier() {
+            return currentUser?.email || currentUser?.name || 'unknown';
+        }
+
+        // Given an expense-like record, return its verification state.
+        function _verifyState(rec) {
+            const isVerified      = !!rec?.verified;
+            const isGrandfathered = !isVerified && !!rec?.tallyUpdated && !rec?.hasOwnProperty?.('verified');
+            // Determine if this record was authored by the current user
+            const me = _currentVerifier();
+            // Record creators are stamped in different fields depending on the area.
+            // Project items use `addedBy`, director expenses use `enteredBy`, expenses
+            // use `addedByEmail`/`addedBy`. We check all common author fields.
+            const author = rec?.addedByEmail || rec?.enteredByEmail || rec?.loggedByEmail
+                         || rec?.addedBy || rec?.enteredBy || rec?.loggedBy || '';
+            const isOwnRecord  = !!author && (author === me || author === currentUser?.name || author === currentUser?.email);
+            const canSelfVerify = !!settings?.allowSelfVerification;
+            return { isVerified, isGrandfathered, by: rec?.verifiedBy || '', at: rec?.verifiedAt || '', isOwnRecord, canSelfVerify, author };
+        }
+
+        // Should the Tally workflow buttons be available for this record?
+        function _isTallyUnlocked(rec) {
+            const v = _verifyState(rec);
+            return v.isVerified || v.isGrandfathered;
+        }
+
+        // Render a small badge showing the verification status.
+        function _renderVerifyBadge(rec) {
+            const v = _verifyState(rec);
+            if (v.isVerified) {
+                const when = v.at ? new Date(v.at).toLocaleDateString('en-IN', {day:'2-digit',month:'short'}) : '';
+                const tip = `Verified by ${v.by||'?'}${when?' on '+when:''}${rec?.verifyNote?' · '+rec.verifyNote:''}`;
+                return `<span title="${tip.replace(/"/g,'&quot;')}" class="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 font-medium">✓ Verified</span>`;
+            }
+            if (v.isGrandfathered) {
+                return `<span title="Verified implicitly (Tally was already entered under pre-gate rules). Use 'Mark all verified by me' in Settings if you want an explicit stamp." class="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 font-medium">✓ Legacy</span>`;
+            }
+            return `<span class="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium" title="Awaiting second-person verification before Tally entry">⏳ Pending Verify</span>`;
+        }
+
+        // Render the Verify button (when applicable). Returns '' when:
+        //   • The record is already verified/grandfathered
+        //   • The current user is the maker and self-verification is disabled
+        // `onclickAttr` is the verifyRecord(...) call, prepared by the caller.
+        function _renderVerifyButton(rec, onclickAttr) {
+            const v = _verifyState(rec);
+            if (v.isVerified || v.isGrandfathered) return '';
+            if (v.isOwnRecord && !v.canSelfVerify) {
+                return `<button disabled class="text-xs px-2 py-1 rounded border font-semibold bg-gray-50 border-gray-200 text-gray-400 cursor-not-allowed" title="You created this entry — a different person must verify it (maker-checker rule). Enable self-verification in Settings to bypass.">🔍 Verify (locked)</button>`;
+            }
+            return `<button onclick="${onclickAttr}" class="text-xs px-2 py-1 rounded border font-semibold bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-100" title="Verify this entry to unlock Tally workflow">🔍 Verify</button>`;
+        }
+
+        // Apply the verification stamp to a record (does NOT save — caller saves).
+        function _applyVerifyStamp(rec, note) {
+            rec.verified    = true;
+            rec.verifiedBy  = _currentVerifier();
+            rec.verifiedAt  = new Date().toISOString();
+            if (note) rec.verifyNote = note;
+        }
+
+        // Reset verification (e.g., on any edit). Caller saves.
+        function _resetVerifyStamp(rec) {
+            rec.verified   = false;
+            rec.verifiedBy = '';
+            rec.verifiedAt = '';
+            // Keep verifyNote for audit trail (so you can see "was verified by X, then re-edited")
+        }
+
+        // ── Verify a single record (universal entry point) ──
+        // type = 'expense' | 'directorExpense' | 'projectItem'
+        // For projectItem we need projID + itemID; for the others, the single ID.
+        async function verifyRecord(type, id1, id2) {
+            // Optional note prompt — keep it cheap (single window.prompt). If the
+            // user cancels, we abort. Empty input = verify without note.
+            const note = window.prompt('Verifying this entry as second-person reviewer.\n\nOptional note (press OK to confirm, Cancel to abort):', '');
+            if (note === null) return; // cancelled
+
+            try {
+                if (type === 'expense') {
+                    const idx = expenses.findIndex(e => e.expID === id1);
+                    if (idx < 0) { alert('Expense not found.'); return; }
+                    const v = _verifyState(expenses[idx]);
+                    if (v.isOwnRecord && !v.canSelfVerify) { alert('Self-verification is disabled. Ask another team member to verify.'); return; }
+                    if (await _concurBlockIfStale('expenses', [{ id: id1, idKey: 'expID' }])) return;
+                    _applyVerifyStamp(expenses[idx], note.trim());
+                    _stampRecord(expenses[idx]);
+                    await saveData('expenses', expenses);
+                } else if (type === 'directorExpense') {
+                    const idx = directorExpenses.findIndex(d => d.deID === id1);
+                    if (idx < 0) { alert('Director expense not found.'); return; }
+                    const v = _verifyState(directorExpenses[idx]);
+                    if (v.isOwnRecord && !v.canSelfVerify) { alert('Self-verification is disabled. Ask another team member to verify.'); return; }
+                    if (await _concurBlockIfStale('directorExpenses', [{ id: id1, idKey: 'deID' }])) return;
+                    _applyVerifyStamp(directorExpenses[idx], note.trim());
+                    _stampRecord(directorExpenses[idx]);
+                    await saveData('directorExpenses', directorExpenses);
+                } else if (type === 'projectItem') {
+                    const projIdx = projectExpenses.findIndex(p => p.projExpID === id1);
+                    if (projIdx < 0) { alert('Project not found.'); return; }
+                    const itemIdx = (projectExpenses[projIdx].items||[]).findIndex(i => i.itemID === id2);
+                    if (itemIdx < 0) { alert('Item not found.'); return; }
+                    const v = _verifyState(projectExpenses[projIdx].items[itemIdx]);
+                    if (v.isOwnRecord && !v.canSelfVerify) { alert('Self-verification is disabled. Ask another team member to verify.'); return; }
+                    if (await _concurBlockIfStale('projectExpenses', [{ id: id1, idKey: 'projExpID' }, { id: id2, idKey: 'itemID', container: 'items' }])) return;
+                    _applyVerifyStamp(projectExpenses[projIdx].items[itemIdx], note.trim());
+                    _stampRecord(projectExpenses[projIdx]);
+                    await saveData('projectExpenses', projectExpenses);
+                }
+                renderView();
+                showToast && showToast('✓ Verified');
+            } catch(err) {
+                alert('Verify failed: ' + (err.message || 'try again'));
+            }
+        }
+
+        // ── Bulk action: stamp all unverified records of a type as verified by me ──
+        // type = 'expense' | 'directorExpense' | 'projectItem' | 'all'
+        async function bulkVerifyAll(type) {
+            const verifierName = currentUser?.name || currentUser?.email || 'You';
+            if (!confirm(`Mark ALL currently-unverified entries as verified by ${verifierName}?\n\n` +
+                         `This is intended as a one-time cleanup when first enabling the verification gate. ` +
+                         `It will stamp every unverified entry (across the selected area) with your name + timestamp.\n\n` +
+                         `Records already verified or implicitly grandfathered (had Tally already entered) will be left untouched.\n\n` +
+                         `Continue?`)) return;
+
+            let touched = 0;
+            const stamp = () => ({
+                verified:   true,
+                verifiedBy: _currentVerifier(),
+                verifiedAt: new Date().toISOString(),
+                verifyNote: 'Bulk-verified during gate rollout'
+            });
+
+            if (type === 'expense' || type === 'all') {
+                expenses.forEach(e => {
+                    if (!e.verified && !e.tallyUpdated) { Object.assign(e, stamp()); _stampRecord(e); touched++; }
+                });
+                if (touched > 0) await saveData('expenses', expenses);
+            }
+            if (type === 'directorExpense' || type === 'all') {
+                let touchedHere = 0;
+                directorExpenses.forEach(d => {
+                    if (!d.verified && !d.tallyUpdated) { Object.assign(d, stamp()); _stampRecord(d); touchedHere++; }
+                });
+                if (touchedHere > 0) { touched += touchedHere; await saveData('directorExpenses', directorExpenses); }
+            }
+            if (type === 'projectItem' || type === 'all') {
+                let touchedHere = 0;
+                projectExpenses.forEach(p => {
+                    (p.items||[]).forEach(it => {
+                        if (!it.verified && !it.tallyUpdated) { Object.assign(it, stamp()); touchedHere++; }
+                    });
+                    if (touchedHere > 0) _stampRecord(p);
+                });
+                if (touchedHere > 0) { touched += touchedHere; await saveData('projectExpenses', projectExpenses); }
+            }
+            alert(`✓ Bulk-verified ${touched} ${touched === 1 ? 'record' : 'records'}.`);
+            renderView();
+        }
+
+        // ── Settings toggle handler for the maker-checker rule ──
+        async function toggleSelfVerification() {
+            settings.allowSelfVerification = !settings.allowSelfVerification;
+            await saveData('settings', settings);
+            renderView();
+        }
+
+        // Count of pending records by type. Implicitly-grandfathered records
+        // (have tallyUpdated:true but no explicit verified field) DON'T count
+        // as pending — they were already cleared under the old rules.
+        function _countPendingByType(type) {
+            const isPending = (r) => !r.verified && !(r.tallyUpdated && !r.hasOwnProperty('verified'));
+            let n = 0;
+            if (type === 'expenses')         (expenses||[]).forEach(e => { if (isPending(e)) n++; });
+            if (type === 'directorExpenses') (directorExpenses||[]).forEach(d => { if (isPending(d)) n++; });
+            if (type === 'projectExpenses')  (projectExpenses||[]).forEach(p => (p.items||[]).forEach(it => { if (isPending(it)) n++; }));
+            return n;
+        }
+
+        // Banner shown at the top of the three affected tabs. Empty when nothing pending.
+        // Includes a one-click bulk-verify button for admins.
+        function _verificationBanner(type) {
+            const n = _countPendingByType(type);
+            if (!n) return '';
+            return `<div style="background:linear-gradient(to right,#fef3c7,#fde68a);border:1px solid #f59e0b;border-radius:10px;padding:10px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+                <div style="font-size:13px;color:#78350f">
+                    <strong>⏳ Verification gate active.</strong>
+                    <span>${n} entr${n===1?'y is':'ies are'} pending verification on this tab.</span>
+                    <span style="font-size:11px;color:#92400e;display:block;margin-top:2px">Tally workflow (✓ Tally, 📋 Voucher) is hidden until each entry is verified by another user. Edits reset verification.</span>
+                </div>
+                <button onclick="bulkVerifyAll('all')" style="background:#d97706;color:#fff;border:none;border-radius:7px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">⚡ Bulk Verify All Pending</button>
+            </div>`;
+        }
+
         // VOUCHER NO (BILL LOG REF) — FORMAT HELPERS
         // ────────────────────────────────────────────────────────────────
         // Format: <FYcode>-<NNN>  (e.g., "2627-001", grows to "2627-1000" past 999)
@@ -8581,6 +8808,12 @@
 
             // ── Level 2 concurrency: stamp record ──
             _stampRecord(expObj);
+
+            // ── Second-eye verification: reset on edit ──
+            // Per policy: any edit invalidates a prior verification, forcing
+            // re-verification. For new entries this is a no-op since there's
+            // no prior stamp to clear.
+            if (currentExpense?.verified) _resetVerifyStamp(expObj);
 
             // ── Migration: rewrite old "VCH...." to new "FY-NNN" format. ──
             // Applies to BOTH new (the open-modal display might already be new
@@ -10287,6 +10520,57 @@
                             <span class="text-xs px-3 py-1 rounded-full font-medium ${settings.allowStaffDelete?'bg-red-100 text-red-700':'bg-green-100 text-green-700'}">${settings.allowStaffDelete?'🔓 Delete Enabled':'🔒 Delete Locked'}</span>
                             <button onclick="toggleStaffDeleteLock()" class="px-3 py-1.5 text-sm border border-red-300 text-red-600 rounded-lg hover:bg-red-50">${settings.allowStaffDelete?'Lock (Disable Delete)':'Unlock (Enable Delete)'}</button>
                         </div>
+                    </div>
+                </div>
+
+                <!-- ════════════════════════════════════════════════════════════
+                     EXPENSE VERIFICATION GATE
+                     The maker-checker control: Tally workflow is unlocked only
+                     after a second person verifies each expense. Bulk action
+                     below stamps everything as verified by the current user.
+                     ════════════════════════════════════════════════════════════ -->
+                <div class="bg-white rounded-2xl shadow-lg p-6 mt-6 border border-amber-200">
+                    <div class="flex justify-between items-start mb-4">
+                        <div>
+                            <h3 class="text-xl font-bold text-amber-700">🔍 Expense Verification Gate</h3>
+                            <p class="text-xs text-gray-500 mt-1 max-w-3xl">Second-person verification is required before the Tally workflow (✓ Tally, 📋 Voucher) becomes available on any expense entry — across Project Items, Director Expenses, and Regular Expenses. Editing a verified entry automatically resets its verification status.</p>
+                        </div>
+                    </div>
+                    <!-- Pending counts (live) -->
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
+                        ${(() => {
+                            const pe = _countPendingByType('expenses');
+                            const pd = _countPendingByType('directorExpenses');
+                            const pp = _countPendingByType('projectExpenses');
+                            const total = pe + pd + pp;
+                            const tile = (label, n, col) => `<div class="rounded-xl p-3 border" style="background:${col};border-color:${col.replace('fef','fcd').replace('dcfce7','86efac').replace('e0e7ff','c7d2fe')}">
+                                <p class="text-xs text-gray-600">${label}</p>
+                                <p class="text-2xl font-bold ${n>0?'text-amber-700':'text-green-700'}">${n}</p>
+                            </div>`;
+                            return tile('Regular Expenses', pe, '#fef3c7') +
+                                   tile('Director Expenses', pd, '#fef3c7') +
+                                   tile('Project Items', pp, '#fef3c7') +
+                                   tile('TOTAL Pending', total, total>0?'#fee2e2':'#dcfce7');
+                        })()}
+                    </div>
+                    <!-- Self-verification toggle -->
+                    <div class="flex justify-between items-center py-3 border-t border-amber-100">
+                        <div>
+                            <p class="text-sm font-semibold text-gray-700">Maker-checker rule</p>
+                            <p class="text-xs text-gray-500 mt-0.5">${settings.allowSelfVerification?'⚠ Currently bypassed — entry creators CAN verify their own entries':'✓ Active — entry creators CANNOT verify their own entries (recommended)'}</p>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <span class="text-xs px-3 py-1 rounded-full font-medium ${settings.allowSelfVerification?'bg-orange-100 text-orange-700':'bg-green-100 text-green-700'}">${settings.allowSelfVerification?'Self-verify ON':'Self-verify OFF'}</span>
+                            <button onclick="toggleSelfVerification()" class="px-3 py-1.5 text-sm border border-amber-300 text-amber-700 rounded-lg hover:bg-amber-50">${settings.allowSelfVerification?'Re-enforce':'Allow self-verify'}</button>
+                        </div>
+                    </div>
+                    <!-- Bulk verify -->
+                    <div class="flex justify-between items-center py-3 border-t border-amber-100">
+                        <div>
+                            <p class="text-sm font-semibold text-gray-700">Bulk Admin Override</p>
+                            <p class="text-xs text-gray-500 mt-0.5">One-click verification of ALL pending entries across all three areas. Stamps every pending record as verified by you, regardless of maker. Intended for first-time rollout or after data imports.</p>
+                        </div>
+                        <button onclick="bulkVerifyAll('all')" class="px-4 py-2 text-sm bg-amber-600 text-white rounded-lg hover:bg-amber-700 font-semibold whitespace-nowrap">⚡ Bulk Verify All Pending</button>
                     </div>
                 </div>
 
@@ -15695,6 +15979,7 @@ Automated WFH alert — ${company} Attendance System.`;
             };
 
             content.innerHTML = `
+            ${_verificationBanner('directorExpenses')}
             <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
                 <div>
                     <h2 class="text-2xl font-bold text-gray-800">👔 Director Expenses</h2>
@@ -15912,7 +16197,9 @@ Automated WFH alert — ${company} Attendance System.`;
                                             : `<button onclick="event.stopPropagation();markDirExpReimbursed('${safeId}')" class="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full hover:bg-orange-200">Mark Paid</button>`}
                                     </td>
                                     <td class="px-3 py-2 text-center whitespace-nowrap" onclick="event.stopPropagation()">
-                                        <div class="flex gap-1 justify-center flex-wrap">
+                                        <div class="flex gap-1 justify-center flex-wrap items-center">
+                                            ${_renderVerifyBadge(d)}
+                                            ${_isTallyUnlocked(d) ? `
                                             <!-- Step 1: Mark Tally — same pattern as project expense items -->
                                             <button onclick="toggleDirExpTallyStatus('${safeId}')"
                                                 class="text-xs px-2 py-1 rounded border font-semibold ${d.tallyUpdated?'bg-teal-500 border-teal-600 text-white':'bg-gray-100 border-gray-300 text-gray-600 hover:bg-teal-50 hover:border-teal-300'}"
@@ -15925,6 +16212,7 @@ Automated WFH alert — ${company} Attendance System.`;
                                                 title="${d.tallyVoucherNo?'Voucher #'+d.tallyVoucherNo+' — click to edit':'Attach Tally voucher number and screenshot'}">
                                                 📋 ${d.tallyVoucherNo?'#'+d.tallyVoucherNo:'Voucher'}
                                             </button>
+                                            ` : _renderVerifyButton(d, `verifyRecord('directorExpense','${safeId}')`)}
                                         </div>
                                     </td>
                                     <td class="px-3 py-2 text-right" onclick="event.stopPropagation()">
@@ -16517,10 +16805,24 @@ Automated WFH alert — ${company} Attendance System.`;
                     linkedExpID:    document.getElementById('deLinkedExp')?.value||'',
                     notes:          document.getElementById('deNotes').value,
                     attachments,
-                    createdAt:      _currentDirExp?.createdAt || new Date().toISOString()
+                    createdAt:      _currentDirExp?.createdAt || new Date().toISOString(),
+                    // Preserve Tally & verification state across edits — without this,
+                    // editing a director expense would silently wipe its Tally status
+                    // and voucher attachment. We DO reset `verified` below per policy
+                    // (any edit invalidates a prior verification).
+                    tallyUpdated:        _currentDirExp?.tallyUpdated      || false,
+                    tallyUpdatedAt:      _currentDirExp?.tallyUpdatedAt    || null,
+                    tallyVoucherNo:      _currentDirExp?.tallyVoucherNo    || '',
+                    tallyVoucherDate:    _currentDirExp?.tallyVoucherDate  || '',
+                    tallyVoucherDriveId: _currentDirExp?.tallyVoucherDriveId || null,
+                    tallyVoucherData:    _currentDirExp?.tallyVoucherData    || null,
+                    tallyVoucherName:    _currentDirExp?.tallyVoucherName    || '',
+                    tallyVoucherMime:    _currentDirExp?.tallyVoucherMime    || ''
                 };
                 // ── Level 2 concurrency: stamp record ──
                 _stampRecord(expObj);
+                // ── Second-eye verification: reset on edit ──
+                if (_currentDirExp?.verified) _resetVerifyStamp(expObj);
                 if (_currentDirExp) {
                     const idx = directorExpenses.findIndex(d=>d.deID===_currentDirExp.deID);
                     if (idx>=0) directorExpenses[idx] = expObj; else directorExpenses.push(expObj);
@@ -17888,7 +18190,9 @@ Automated WFH alert — ${company} Attendance System.`;
                                     <td class="px-3 py-1.5 text-right font-medium">${fmt(parseFloat(item.amount)||0)}</td>
                                     <td class="px-3 py-1.5 text-center">${attCount>0?`<button onclick="viewProjExpBills('${p.projExpID}','${item.itemID}')" class="text-blue-500 hover:text-blue-700">📎 ${attCount}</button>`:'—'}</td>
                                     <td class="px-3 py-1.5 text-center whitespace-nowrap">
-                                        <div class="flex gap-1 justify-center flex-wrap">
+                                        <div class="flex gap-1 justify-center flex-wrap items-center">
+                                            ${_renderVerifyBadge(item)}
+                                            ${_isTallyUnlocked(item) ? `
                                             <button onclick="toggleTallyStatus('${p.projExpID}','${item.itemID}')"
                                                 class="text-xs px-2 py-1 rounded border font-semibold ${item.tallyUpdated?'bg-teal-500 border-teal-600 text-white':'bg-gray-100 border-gray-300 text-gray-600 hover:bg-teal-50 hover:border-teal-300'}"
                                                 title="${item.tallyUpdated?'Click to un-mark Tally':'Click to mark as entered in Tally'}">
@@ -17899,6 +18203,7 @@ Automated WFH alert — ${company} Attendance System.`;
                                                 title="${item.tallyVoucherNo?'Voucher #'+item.tallyVoucherNo+' — click to edit':'Attach Tally voucher number and screenshot'}">
                                                 📋 ${item.tallyVoucherNo?'#'+item.tallyVoucherNo:'Voucher'}
                                             </button>
+                                            ` : _renderVerifyButton(item, `verifyRecord('projectItem','${p.projExpID}','${item.itemID}')`)}
                                             ${settings.allowExpenseDelete
                                                 ?`<button onclick="deleteProjExpItem('${p.projExpID}','${item.itemID}')" class="text-xs px-1.5 py-1 rounded border border-red-200 text-red-500 hover:bg-red-50" title="Delete entry">✕</button>`
                                                 :'<span class="text-gray-200 text-xs" title="Delete locked — enable in Settings">🔒</span>'}
@@ -17941,6 +18246,7 @@ Automated WFH alert — ${company} Attendance System.`;
             const totalEntries = projectExpenses.reduce((s,p)=>s+(p.items||[]).length, 0);
 
             content.innerHTML = `
+            ${_verificationBanner('projectExpenses')}
             <div class="flex items-center justify-between mb-6">
                 <div>
                     <h2 class="text-3xl font-bold text-gray-800">🧳 Projects & Field Expenses</h2>
