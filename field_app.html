@@ -1466,6 +1466,37 @@
         setTimeout(() => t.classList.remove('show'), duration);
     }
 
+    // ── Double-submit guard ───────────────────────────────────────
+    // Wraps a form-event submit button so a user can't tap-tap-tap and
+    // create duplicate records while the first save is in flight.
+    // Usage:
+    //   const release = _guardSubmit(e);
+    //   try { ... actual save logic ... } finally { release(); }
+    // If the button is already submitting, returns a release fn that
+    // does nothing AND _the caller should bail out_. Check with the
+    // returned object's `wasBusy` flag.
+    function _guardSubmit(e, label = 'Saving…') {
+        const btn = e?.target?.querySelector?.('button[type="submit"]')
+                 || e?.submitter
+                 || null;
+        if (!btn) return { wasBusy: false, release: () => {} };
+        if (btn.dataset.submitting === '1') {
+            return { wasBusy: true, release: () => {} };
+        }
+        btn.dataset.submitting = '1';
+        btn.disabled = true;
+        const orig = btn.textContent;
+        btn.textContent = label;
+        return {
+            wasBusy: false,
+            release: () => {
+                btn.dataset.submitting = '0';
+                btn.disabled = false;
+                btn.textContent = orig;
+            }
+        };
+    }
+
     // ── RENDER SCREENS ────────────────────────────────────────────
     // ── USER SELECTION — shown after login, before app ───────────
     function renderUserSelect() {
@@ -2305,6 +2336,12 @@
 
     function _formatFieldAutoRetryToast(result) {
         if (result.allocated === 0) return null;
+        // `fmt` is intentionally redeclared here — the field app's render functions
+        // each scope their own `fmt`, and this helper runs outside any of them
+        // (e.g. fires after saveExpItem). Without this local def, calling fmt(...)
+        // throws ReferenceError → bubbles up as a misleading "Save failed" even
+        // though the save itself completed.
+        const fmt = n => '₹' + (+n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 });
         const poolList = Object.entries(result.byPool)
             .map(([id, n]) => n > 1 ? `${id} (×${n})` : id)
             .join(', ');
@@ -2633,10 +2670,19 @@
 
     async function saveExpItem(e) {
         e.preventDefault();
+        // ── Double-submit guard ──
+        // Without this, an impatient tap-tap-tap on Save creates 2-3 duplicate
+        // items because each click pushes a new entry into projectExpenses[idx].items
+        // before the first save's await returns.
+        const _submitBtn = e.target?.querySelector('button[type="submit"]') || document.querySelector('#expItemForm button[type="submit"]');
+        if (_submitBtn?.dataset.submitting === '1') return;
+        if (_submitBtn) { _submitBtn.dataset.submitting = '1'; _submitBtn.disabled = true; const _origText = _submitBtn.textContent; _submitBtn.dataset.origText = _origText; _submitBtn.textContent = 'Saving…'; }
+        const _releaseBtn = () => { if (_submitBtn) { _submitBtn.dataset.submitting = '0'; _submitBtn.disabled = false; _submitBtn.textContent = _submitBtn.dataset.origText || 'Save'; } };
+        try {
         const projID = document.getElementById('eiProjID').value;
         const itemID = document.getElementById('eiItemID').value;
         const idx    = projectExpenses.findIndex(x=>x.projExpID===projID);
-        if (idx<0) return;
+        if (idx<0) { _releaseBtn(); return; }
         if (!projectExpenses[idx].items) projectExpenses[idx].items=[];
 
         // ── Level 2 concurrency: pre-save staleness check on the item being edited ──
@@ -2645,13 +2691,14 @@
                 { id: projID, idKey: 'projExpID' },
                 { id: itemID, idKey: 'itemID', container: 'items' }
             ];
-            if (await _concurBlockIfStale('projectExpenses', stalePath)) return;
+            if (await _concurBlockIfStale('projectExpenses', stalePath)) { _releaseBtn(); return; }
         }
 
         // ── Phase C: validate Paid By ──
         const paidByStaffID = document.getElementById('eiPaidBy').value;
         if (!paidByStaffID) {
             showToast('⚠ Please select who paid for this expense');
+            _releaseBtn();
             return;
         }
         const paidByStaff = (staffList||[]).find(s => s.staffID === paidByStaffID);
@@ -2661,6 +2708,7 @@
         const poolChoice = document.getElementById('eiPoolID').value;
         if (!poolChoice) {
             showToast('⚠ Please select a pool (or "Save as Unallocated")');
+            _releaseBtn();
             return;
         }
         const newAmount = parseFloat(document.getElementById('eiAmt').value) || 0;
@@ -2750,6 +2798,11 @@
             if (retryMsg) setTimeout(() => showToast(retryMsg, 5000), 1400);
         } catch(err) {
             showToast('⚠ Save failed: ' + (err.message || 'try again'));
+        }
+        } finally {
+            // Always release the submit button, whether save succeeded, failed,
+            // or threw inside the validation block above.
+            _releaseBtn();
         }
     }
 
@@ -4064,6 +4117,9 @@
 
     async function saveDayEntry(e){
         e.preventDefault();
+        const _g = _guardSubmit(e);
+        if (_g.wasBusy) return;
+        try {
         const wlID=document.getElementById('dayWlID').value;
         const entryID=document.getElementById('dayEntryID').value;
         // Level 2 concurrency: pre-save staleness check on the dailyEntry record
@@ -4131,6 +4187,11 @@
         await saveData('workLogs',workLogs);
         _concurEndEdit();
         closeDayModal();renderView();showToast('✅ Daily entry saved');
+        } catch(err) {
+            showToast('⚠ Save failed: ' + (err.message || 'try again'));
+        } finally {
+            _g.release();
+        }
     }
 
     async function deleteDayEntry(wlID,entryID){
