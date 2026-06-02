@@ -3358,6 +3358,28 @@
                     delete _driveFileIdCache[fileName];
                     return saveFileToDrive(fileName, fileData);
                 }
+                // Before throwing, check whether the write actually committed despite
+                // the non-OK status. Drive occasionally returns 5xx (or other non-2xx)
+                // while having persisted the change, especially under poll contention
+                // or transient backend issues. If we can confirm the file size matches
+                // what we just sent AND modifiedTime is very recent, treat as success.
+                if (existingId) {
+                    try {
+                        const verifyRes = await fetch(
+                            `https://www.googleapis.com/drive/v3/files/${existingId}?fields=size,modifiedTime`,
+                            { headers: authHdr }
+                        );
+                        if (verifyRes.ok) {
+                            const meta = await verifyRes.json();
+                            const driveSize = parseInt(meta.size, 10);
+                            const recent    = meta.modifiedTime && (Date.now() - new Date(meta.modifiedTime).getTime() < 30_000);
+                            if (recent && driveSize === blob.size) {
+                                console.warn(`saveFileToDrive: non-OK (${uploadRes.status}) but write verified for ${fileName} (size match + recent modifiedTime). Treating as success.`);
+                                return { id: existingId, size: driveSize, modifiedTime: meta.modifiedTime };
+                            }
+                        }
+                    } catch(_) { /* verify-step failure: fall through to original throw */ }
+                }
                 throw new Error(`Drive save failed for ${fileName}: ${err.error?.message || uploadRes.statusText}`);
             }
             const saved = await uploadRes.json();
@@ -7867,6 +7889,11 @@
             const note = window.prompt('Verifying this entry as second-person reviewer.\n\nOptional note (press OK to confirm, Cancel to abort):', '');
             if (note === null) return; // cancelled
 
+            // The save and the post-save UI refresh are tracked separately. If the
+            // save throws, that's a real failure. If only the renderView() throws
+            // (e.g. a transient template bug), the verification IS persisted and
+            // we shouldn't false-alarm the user — we just nudge them to reload.
+            let saveOk = false;
             try {
                 if (type === 'expense') {
                     const idx = expenses.findIndex(e => e.expID === id1);
@@ -7898,10 +7925,21 @@
                     _stampRecord(projectExpenses[projIdx]);
                     await saveData('projectExpenses', projectExpenses);
                 }
-                renderView();
-                showToast && showToast('✓ Verified');
+                saveOk = true;
             } catch(err) {
                 alert('Verify failed: ' + (err.message || 'try again'));
+                return;
+            }
+            // Save succeeded — now refresh the UI. If THIS throws, it's a render
+            // issue, not a data integrity issue. The verification has persisted.
+            if (saveOk) {
+                try {
+                    renderView();
+                } catch(uiErr) {
+                    console.warn('Post-verify UI refresh threw (verification IS saved):', uiErr);
+                    // Don't show "Verify failed" — that would be misleading. Just nudge.
+                    // No alert needed; user will see ✓ Verified after next refresh.
+                }
             }
         }
 
