@@ -1861,38 +1861,70 @@
 
         <!-- Project cards -->
         ${(() => {
-            // Apply the search filter to the projectExpenses list, but ONLY for rendering.
-            // The original `projectExpenses` array is untouched.
-            //
-            // Strategy: build a single concatenated lower-cased "haystack" string per
-            // project that contains every searchable field — project metadata, every
-            // item's text fields + technician names, every fund request's purpose/remarks,
-            // AND every date expanded into multiple natural formats. Then run the
-            // multi-token matcher: each whitespace-separated token in the query must be
-            // found somewhere in the haystack (AND across tokens).
-            const _filtered = projectExpenses.filter(p => {
-                if (!_peSearchQ) return true;
-                // Build the per-project haystack lazily — small enough to recompute on each keystroke.
-                const parts = [
+            // ── Item-level search ──
+            // Strategy:
+            //   1. Build the project's project-level haystack (name, ref, city, location,
+            //      project dates). If the query already matches this, show the whole
+            //      project with all its items — searching by project identity should
+            //      reveal everything inside it.
+            //   2. Otherwise, build a per-item haystack and check which items satisfy
+            //      every query token. If at least one item matches, include the project
+            //      and show only those matching items.
+            //   3. Project header totals always reflect the WHOLE project — they don't
+            //      change based on the filter, because that would be misleading
+            //      (showing "Spent: ₹93" while a ₹30,000 figure is hidden).
+            const _filtered = projectExpenses.map(p => {
+                if (!_peSearchQ) {
+                    return { p, items: p.items || [], showAllItems: true };
+                }
+                // Step 1: does the query match the project itself entirely?
+                const projHay = [
                     p.projectName, p.projectRef, p.projectCity, p.projectLocation,
                     _dateHaystack(p.startDate), _dateHaystack(p.endDate)
-                ];
-                (p.items||[]).forEach(it => {
-                    parts.push(it.description, it.category, it.vendor, it.payMode, it.staffName);
-                    parts.push(_dateHaystack(it.date));
-                    (it.technicians||[]).forEach(t => parts.push(t.name));
+                ].filter(Boolean).join(' ');
+                if (_matchTokens(projHay, _peSearchQ)) {
+                    return { p, items: p.items || [], showAllItems: true };
+                }
+                // Step 2: filter items by the query. CRITICAL — each item's haystack
+                // also includes the project-level fields. Otherwise a query like
+                // "chennai diesel" fails: 'chennai' is only at project level, 'diesel'
+                // is only at item level, and neither layer alone has both. By folding
+                // project fields into each item's haystack, both tokens can be satisfied
+                // and the user gets the result they expect.
+                const matchingItems = (p.items || []).filter(it => {
+                    const itHay = [
+                        projHay,    // ← project fields prefix so cross-level AND works
+                        it.description, it.category, it.vendor, it.payMode, it.staffName,
+                        _dateHaystack(it.date),
+                        ...((it.technicians||[]).map(t => t.name))
+                    ].filter(Boolean).join(' ');
+                    return _matchTokens(itHay, _peSearchQ);
                 });
-                (p.fundRequests||[]).forEach(r => {
-                    parts.push(r.purpose, r.remarks);
-                    parts.push(_dateHaystack(r.date));
+                // Also check fund requests so a query hitting a fund request doesn't get dropped
+                const matchingFR = (p.fundRequests || []).some(r => {
+                    const rHay = [
+                        projHay,    // ← same cross-level coverage for fund requests
+                        r.purpose, r.remarks,
+                        _dateHaystack(r.date)
+                    ].filter(Boolean).join(' ');
+                    return _matchTokens(rHay, _peSearchQ);
                 });
-                return _matchTokens(parts.filter(Boolean).join(' '), _peSearchQ);
-            });
+                if (matchingItems.length > 0 || matchingFR) {
+                    // If only fund requests matched (no items), still show all items so the
+                    // user has context. If items matched, show only those items.
+                    return {
+                        p,
+                        items: matchingItems.length > 0 ? matchingItems : (p.items || []),
+                        showAllItems: matchingItems.length === 0
+                    };
+                }
+                return null; // no match anywhere
+            }).filter(Boolean);
             return !projectExpenses.length ?
             `<div class="card p-10 text-center"><div style="font-size:48px;margin-bottom:8px">🧳</div><p class="font-medium text-gray-400">No projects yet</p><p class="text-sm text-gray-400 mt-1">Projects will appear here once created by the office team.</p></div>` :
             !_filtered.length ?
             `<div class="card p-10 text-center"><div style="font-size:36px;margin-bottom:8px">🔍</div><p class="font-medium text-gray-500">No projects match "${_peSearchQ.replace(/</g,'&lt;')}"</p><p class="text-sm text-gray-400 mt-1">Try a different search term or <button onclick="_clearSearch('pe','peSearchInput')" style="color:#0d7c66;background:none;border:none;text-decoration:underline;cursor:pointer;font-size:13px">clear the filter</button>.</p></div>` :
-            _filtered.map(p => {
+            _filtered.map(({ p, items: _visibleItems, showAllItems: _showAllItems }) => {
             const funds   = parseFloat(p.totalFunds)||0;
             const spent   = (p.items||[]).reduce((a,i)=>a+(parseFloat(i.amount)||0),0);
             const tfIn    = (p.fundTransfers||[]).filter(t=>t.direction==='in').reduce((a,t)=>a+(parseFloat(t.amount)||0),0);
@@ -1969,10 +2001,12 @@
                 </div>` : ''}
 
                 <!-- Expense items section -->
-                ${(p.items||[]).length ? `
+                ${_visibleItems.length ? `
                 <div style="border-top:1px solid var(--border)">
-                    <div style="padding:8px 14px;font-size:11px;font-weight:700;color:#0d7c66;letter-spacing:.04em">EXPENSE ENTRIES</div>
-                    ${(p.items||[]).map(it=>{
+                    <div style="padding:8px 14px;font-size:11px;font-weight:700;color:#0d7c66;letter-spacing:.04em;display:flex;justify-content:space-between;align-items:center">
+                        <span>EXPENSE ENTRIES${(!_showAllItems && _peSearchQ) ? ` <span style="font-weight:500;color:#94a3b8;font-size:10px">· showing ${_visibleItems.length} of ${(p.items||[]).length} (filtered)</span>` : ''}</span>
+                    </div>
+                    ${_visibleItems.map(it=>{
                         const techNames=(it.technicians||[]).map(t=>t.name).join(', ')||it.staffName||'';
                         const attCount=(it.billAttachments||[]).length+(it.billData?1:0);
                         // Pool lock: greys out Edit/Del and shows a small 🔒 chip on the row
@@ -3894,23 +3928,40 @@
         };
         const sorted=[...workLogs].sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
 
-        // Apply search filter — same pattern as the Project Expenses screen.
-        // Build a haystack per work-log that includes the parent log's fields,
-        // the work-period dates, every technician, and every daily entry's
-        // fields + date. Then check that every whitespace token in the query
-        // matches somewhere in that haystack (AND across tokens).
-        const filtered = !_wlSearchQ ? sorted : sorted.filter(w => {
-            const parts = [
+        // Apply search filter — same item-level approach as Project Expenses screen:
+        //   1. If query matches the work log itself (project, location, status,
+        //      technicians, period dates), include the work log with all daily entries.
+        //   2. Otherwise, filter daily entries by the query. Each entry's haystack
+        //      includes the parent work log fields so cross-level AND works
+        //      (e.g. "completed apr 06" — project status at log level, date at entry).
+        //   3. Include only work logs with at least one matching daily entry.
+        const filtered = !_wlSearchQ ? sorted.map(w => ({ w, entries: w.dailyEntries || [], showAllEntries: true })) :
+        sorted.map(w => {
+            // Step 1: log-level match → include with all entries
+            const logHay = [
                 w.project, w.location, w.status,
-                _dateHaystack(w.workStartDate), _dateHaystack(w.workEndDate)
-            ];
-            (w.technicians||[]).forEach(t => parts.push(t.name));
-            (w.dailyEntries||[]).forEach(e => {
-                parts.push(e.description, e.remarks, e.category);
-                parts.push(_dateHaystack(e.date));
+                _dateHaystack(w.workStartDate), _dateHaystack(w.workEndDate),
+                ...(w.technicians||[]).map(t => t.name)
+            ].filter(Boolean).join(' ');
+            if (_matchTokens(logHay, _wlSearchQ)) {
+                return { w, entries: w.dailyEntries || [], showAllEntries: true };
+            }
+            // Step 2: entry-level filtering. Fold logHay into each entry's haystack
+            // so cross-level AND works.
+            const matchingEntries = (w.dailyEntries||[]).filter(e => {
+                const eHay = [
+                    logHay,    // ← parent fields for cross-level AND
+                    e.description, e.remarks, e.category,
+                    _dateHaystack(e.date),
+                    ...(e.technicians||[]).map(t => t.name)
+                ].filter(Boolean).join(' ');
+                return _matchTokens(eHay, _wlSearchQ);
             });
-            return _matchTokens(parts.filter(Boolean).join(' '), _wlSearchQ);
-        });
+            if (matchingEntries.length > 0) {
+                return { w, entries: matchingEntries, showAllEntries: false };
+            }
+            return null;
+        }).filter(Boolean);
 
         el.innerHTML=`
         <button onclick="openWlModal()" class="btn-primary w-full mb-4 flex items-center justify-center gap-2" style="background:linear-gradient(135deg,#1e3a5f,#1d4ed8)">
@@ -3932,7 +3983,7 @@
 
         ${!sorted.length?`<div class="card p-10 text-center"><div style="font-size:48px;margin-bottom:8px">📋</div><p class="font-medium text-gray-400">No work logs yet</p><p class="text-sm text-gray-400 mt-1">Create a Project Work Log, then add daily entries</p></div>`
         :!filtered.length?`<div class="card p-10 text-center"><div style="font-size:36px;margin-bottom:8px">🔍</div><p class="font-medium text-gray-500">No work logs match "${_wlSearchQ.replace(/</g,'&lt;')}"</p><p class="text-sm text-gray-400 mt-1">Try a different search term or <button onclick="_clearSearch('wl','wlSearchInput')" style="color:#0d7c66;background:none;border:none;text-decoration:underline;cursor:pointer;font-size:13px">clear the filter</button>.</p></div>`
-        :filtered.map(w=>{
+        :filtered.map(({ w, entries: _visibleEntries, showAllEntries: _showAllEntries })=>{
             const ss=statusSty[w.status]||statusSty['Pending'];
             const techNames=(w.technicians||[]).map(t=>t.name).join(', ')||'—';
             const days=(w.dailyEntries||[]).length;
@@ -3963,17 +4014,26 @@
                     </div>
                 </div>
                 <!-- Daily entries -->
-                ${!days?`<div style="padding:10px 16px;border-top:1px solid var(--border);font-size:12px;color:var(--muted)">No daily entries yet — tap "+ Add Daily Update" to begin.</div>`:`
+                ${!_visibleEntries.length?`<div style="padding:10px 16px;border-top:1px solid var(--border);font-size:12px;color:var(--muted)">${days?`No matching daily entries.`:`No daily entries yet — tap "+ Add Daily Update" to begin.`}</div>`:`
                 <div style="border-top:1px solid var(--border)">
-                    ${[...w.dailyEntries].sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map((d,idx)=>{
-                        const dur=(d.startTime&&d.endTime)?calcDuration(d.startTime,d.endTime):'';
-                        const dayTechs=(d.technicians||[]).map(t=>t.name).join(', ')||(w.technicians||[]).map(t=>t.name).join(', ')||'—';
+                    ${(!_showAllEntries && _wlSearchQ) ? `<div style="padding:6px 16px;font-size:10px;color:#94a3b8;background:#fafafa">Showing ${_visibleEntries.length} of ${days} daily entries (filtered)</div>` : ''}
+                    ${(() => {
+                        // Pre-compute the original chronological day number for every entry
+                        // so filtered views still show "Day N" with the correct N relative to
+                        // the whole work log (not the filtered slice).
+                        const allSortedDesc = [...(w.dailyEntries||[])].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+                        const dayNumByID = {};
+                        allSortedDesc.forEach((e, i) => { if (e.entryID) dayNumByID[e.entryID] = days - i; });
+                        return [..._visibleEntries].sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map((d)=>{
+                            const dayNum = dayNumByID[d.entryID] || '?';
+                            const dur=(d.startTime&&d.endTime)?calcDuration(d.startTime,d.endTime):'';
+                            const dayTechs=(d.technicians||[]).map(t=>t.name).join(', ')||(w.technicians||[]).map(t=>t.name).join(', ')||'—';
                         return `
                         <div style="padding:12px 16px;border-bottom:1px solid var(--border);background:${idx%2===0?'#fff':'#f8fafc'}">
                             <!-- Header row: day number, date, time, category, actions -->
                             <div class="flex justify-between items-start mb-2">
                                 <div>
-                                    <span class="font-semibold" style="font-size:13px;color:var(--navy)">Day ${days-idx} — ${d.date||'—'}</span>
+                                    <span class="font-semibold" style="font-size:13px;color:var(--navy)">Day ${dayNum} — ${d.date||'—'}</span>
                                     ${d.startTime?`<span style="font-size:11px;color:var(--muted);margin-left:8px">⏱ ${d.startTime}–${d.endTime||'?'}${dur?' ('+dur+')':''}</span>`:''}
                                     ${d.category?`<span class="badge" style="margin-left:6px;background:#eff6ff;color:#1d4ed8;font-size:10px">${d.category}</span>`:''}
                                 </div>
@@ -4057,7 +4117,8 @@
                                         }).join('')}</div>
                             </div>`:''}
                         </div>`;
-                    }).join('')}
+                    }).join('');
+                    })()}
                 </div>`}
             </div>`;
         }).join('')}`;
