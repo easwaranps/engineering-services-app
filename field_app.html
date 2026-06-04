@@ -1500,6 +1500,53 @@
         };
     }
 
+    // ════════════════════════════════════════════════════════════════
+    // PER-SCREEN SEARCH FILTERS
+    // ────────────────────────────────────────────────────────────────
+    // _peSearchQ → Project Expenses screen filter (project & item-level)
+    // _wlSearchQ → Work Logs screen filter (work-log & daily-entry-level)
+    //
+    // Each tab keeps its own query in module-scope. Live-filter behavior:
+    // every keystroke calls renderView(), which re-renders the whole tab.
+    // The naïve approach destroys the input's focus on each keystroke,
+    // so we wrap each search box with a small focus-restoration helper
+    // that re-focuses it and restores the caret after the render.
+    // ════════════════════════════════════════════════════════════════
+    let _peSearchQ = '';
+    let _wlSearchQ = '';
+
+    // Update the query and re-render, then restore focus + caret.
+    // The whole point: typing should feel uninterrupted even though
+    // we're triggering a full innerHTML rewrite on every keystroke.
+    function _setSearch(field, value, inputId) {
+        if (field === 'pe') _peSearchQ = value;
+        else if (field === 'wl') _wlSearchQ = value;
+        renderView();
+        // Re-focus the SAME input (matched by id) and put the caret at the end.
+        // requestAnimationFrame waits for the new DOM to be in place.
+        requestAnimationFrame(() => {
+            const el = document.getElementById(inputId);
+            if (el) {
+                el.focus();
+                const v = el.value;
+                try { el.setSelectionRange(v.length, v.length); } catch(_) {}
+            }
+        });
+    }
+
+    function _clearSearch(field, inputId) { _setSearch(field, '', inputId); }
+
+    // Case-insensitive "does this haystack contain the needle?" used by
+    // both screens. Treats the needle as a single string — no fancy
+    // boolean operators. Whitespace at the ends of the query is
+    // ignored, but interior spaces matter.
+    function _searchMatch(haystack, needle) {
+        if (!needle) return true;                          // empty query = match all
+        const q = String(needle).trim().toLowerCase();
+        if (!q) return true;
+        return String(haystack || '').toLowerCase().includes(q);
+    }
+
     // ── RENDER SCREENS ────────────────────────────────────────────
     // ── USER SELECTION — shown after login, before app ───────────
     function renderUserSelect() {
@@ -1736,10 +1783,52 @@
             <p style="font-size:12px;color:#1d4ed8">Use <strong>+ Request Fund</strong> above when you need funds. Once disbursed, log expenses against projects below — they'll auto-allocate to the active pool (Phase C feature, coming soon).</p>
         </div>
 
+        <!-- ── Project search ──
+             Live filter. Matches against project name, ref, city/location
+             AND every item field (description, vendor, category, technician,
+             pay mode). A hit anywhere keeps the entire project card visible. -->
+        <div style="position:relative;margin-bottom:12px">
+            <input type="search" id="peSearchInput"
+                value="${_peSearchQ.replace(/"/g,'&quot;')}"
+                placeholder="🔍 Search projects, expenses, technicians, vendors…"
+                oninput="_setSearch('pe', this.value, 'peSearchInput')"
+                autocomplete="off"
+                style="width:100%;padding:10px 36px 10px 14px;border:1px solid var(--border);border-radius:10px;font-size:14px;background:#fff;outline:none"/>
+            ${_peSearchQ ? `<button onclick="_clearSearch('pe','peSearchInput')" title="Clear search" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;font-size:18px;color:#94a3b8;cursor:pointer;padding:4px 8px;line-height:1">✕</button>` : ''}
+        </div>
+
         <!-- Project cards -->
-        ${!projectExpenses.length ?
+        ${(() => {
+            // Apply the search filter to the projectExpenses list, but ONLY for rendering.
+            // The original `projectExpenses` array is untouched.
+            const _filtered = projectExpenses.filter(p => {
+                if (!_peSearchQ) return true;
+                // Project-level matches first (fast path)
+                if (_searchMatch(p.projectName, _peSearchQ)) return true;
+                if (_searchMatch(p.projectRef,  _peSearchQ)) return true;
+                if (_searchMatch(p.projectCity, _peSearchQ)) return true;
+                if (_searchMatch(p.projectLocation, _peSearchQ)) return true;
+                // Item-level — check each item's searchable fields
+                if ((p.items||[]).some(it =>
+                    _searchMatch(it.description, _peSearchQ) ||
+                    _searchMatch(it.category,    _peSearchQ) ||
+                    _searchMatch(it.vendor,      _peSearchQ) ||
+                    _searchMatch(it.payMode,     _peSearchQ) ||
+                    _searchMatch(it.staffName,   _peSearchQ) ||
+                    (it.technicians||[]).some(t => _searchMatch(t.name, _peSearchQ))
+                )) return true;
+                // Fund-request match too — purpose / remarks
+                if ((p.fundRequests||[]).some(r =>
+                    _searchMatch(r.purpose, _peSearchQ) ||
+                    _searchMatch(r.remarks, _peSearchQ)
+                )) return true;
+                return false;
+            });
+            return !projectExpenses.length ?
             `<div class="card p-10 text-center"><div style="font-size:48px;margin-bottom:8px">🧳</div><p class="font-medium text-gray-400">No projects yet</p><p class="text-sm text-gray-400 mt-1">Projects will appear here once created by the office team.</p></div>` :
-        projectExpenses.map(p => {
+            !_filtered.length ?
+            `<div class="card p-10 text-center"><div style="font-size:36px;margin-bottom:8px">🔍</div><p class="font-medium text-gray-500">No projects match "${_peSearchQ.replace(/</g,'&lt;')}"</p><p class="text-sm text-gray-400 mt-1">Try a different search term or <button onclick="_clearSearch('pe','peSearchInput')" style="color:#0d7c66;background:none;border:none;text-decoration:underline;cursor:pointer;font-size:13px">clear the filter</button>.</p></div>` :
+            _filtered.map(p => {
             const funds   = parseFloat(p.totalFunds)||0;
             const spent   = (p.items||[]).reduce((a,i)=>a+(parseFloat(i.amount)||0),0);
             const tfIn    = (p.fundTransfers||[]).filter(t=>t.direction==='in').reduce((a,t)=>a+(parseFloat(t.amount)||0),0);
@@ -1847,7 +1936,8 @@
                     }).join('')}
                 </div>` : `<p style="padding:10px 14px;font-size:12px;color:var(--muted);border-top:1px solid var(--border)">No expenses recorded yet.</p>`}
             </div>`;
-        }).join('')}`;
+        }).join('');
+        })()}`;
     }
 
     // ── FUND REQUEST CRUD ─────────────────────────────────────────
@@ -3740,12 +3830,43 @@
         };
         const sorted=[...workLogs].sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
 
+        // Apply search filter — kept separate from the sort so it's easy to reason about.
+        // Matches against work-log project/location/status/technicians AND any
+        // daily entry's description/remarks/category. Search is case-insensitive.
+        const filtered = !_wlSearchQ ? sorted : sorted.filter(w => {
+            if (_searchMatch(w.project,  _wlSearchQ)) return true;
+            if (_searchMatch(w.location, _wlSearchQ)) return true;
+            if (_searchMatch(w.status,   _wlSearchQ)) return true;
+            if ((w.technicians||[]).some(t => _searchMatch(t.name, _wlSearchQ))) return true;
+            if ((w.dailyEntries||[]).some(e =>
+                _searchMatch(e.description, _wlSearchQ) ||
+                _searchMatch(e.remarks,     _wlSearchQ) ||
+                _searchMatch(e.category,    _wlSearchQ)
+            )) return true;
+            return false;
+        });
+
         el.innerHTML=`
         <button onclick="openWlModal()" class="btn-primary w-full mb-4 flex items-center justify-center gap-2" style="background:linear-gradient(135deg,#1e3a5f,#1d4ed8)">
             <span style="font-size:18px">+</span> New Project Work Log
         </button>
+
+        <!-- ── Work-log search ──
+             Live filter. Matches project, location, status, technician names,
+             and daily-entry descriptions/remarks/category. -->
+        <div style="position:relative;margin-bottom:12px">
+            <input type="search" id="wlSearchInput"
+                value="${_wlSearchQ.replace(/"/g,'&quot;')}"
+                placeholder="🔍 Search work logs by project, technician, status…"
+                oninput="_setSearch('wl', this.value, 'wlSearchInput')"
+                autocomplete="off"
+                style="width:100%;padding:10px 36px 10px 14px;border:1px solid var(--border);border-radius:10px;font-size:14px;background:#fff;outline:none"/>
+            ${_wlSearchQ ? `<button onclick="_clearSearch('wl','wlSearchInput')" title="Clear search" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;font-size:18px;color:#94a3b8;cursor:pointer;padding:4px 8px;line-height:1">✕</button>` : ''}
+        </div>
+
         ${!sorted.length?`<div class="card p-10 text-center"><div style="font-size:48px;margin-bottom:8px">📋</div><p class="font-medium text-gray-400">No work logs yet</p><p class="text-sm text-gray-400 mt-1">Create a Project Work Log, then add daily entries</p></div>`
-        :sorted.map(w=>{
+        :!filtered.length?`<div class="card p-10 text-center"><div style="font-size:36px;margin-bottom:8px">🔍</div><p class="font-medium text-gray-500">No work logs match "${_wlSearchQ.replace(/</g,'&lt;')}"</p><p class="text-sm text-gray-400 mt-1">Try a different search term or <button onclick="_clearSearch('wl','wlSearchInput')" style="color:#0d7c66;background:none;border:none;text-decoration:underline;cursor:pointer;font-size:13px">clear the filter</button>.</p></div>`
+        :filtered.map(w=>{
             const ss=statusSty[w.status]||statusSty['Pending'];
             const techNames=(w.technicians||[]).map(t=>t.name).join(', ')||'—';
             const days=(w.dailyEntries||[]).length;
