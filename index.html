@@ -6258,7 +6258,10 @@
                             <div style="font-size:11px;text-transform:uppercase;opacity:.85;letter-spacing:.5px">Fund Pool · ${p.status}</div>
                             <div style="font-size:18px;font-weight:700;font-family:monospace">${p.poolID}</div>
                         </div>
-                        <button onclick="this.closest('[style*=fixed]').remove()" style="background:none;border:none;color:#fff;font-size:22px;cursor:pointer">✕</button>
+                        <div style="display:flex;gap:8px;align-items:center">
+                            ${p.status==='Closed' ? `<button onclick="reopenPool('${p.poolID}')" style="background:#fff;color:#059669;border:none;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer" title="Re-open this pool — restores field-app edit/delete on its expenses">🔓 Re-open Pool</button>` : ''}
+                            <button onclick="this.closest('[style*=fixed]').remove()" style="background:none;border:none;color:#fff;font-size:22px;cursor:pointer">✕</button>
+                        </div>
                     </div>
                     <div style="padding:20px">
                         <!-- Summary -->
@@ -6354,6 +6357,55 @@
             </div>`;
             const div = document.createElement('div'); div.innerHTML = html;
             document.body.appendChild(div.firstElementChild);
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        // RE-OPEN A CLOSED FUND POOL (admin override)
+        // ────────────────────────────────────────────────────────────────
+        // Under the hard-lock policy, Closed pools are read-only from the
+        // field app. This action flips a Closed pool back to Active so
+        // technicians can edit/delete the linked expenses (e.g. to fix a
+        // mis-categorised bill). After re-opening, the pool's balance
+        // will recompute live on next field-app save — if balance is still
+        // <= 0, the auto-close in _fieldRecomputePool kicks back in.
+        // ════════════════════════════════════════════════════════════════
+        async function reopenPool(poolID) {
+            const p = fundPools.find(x => x.poolID === poolID);
+            if (!p) return alert('Pool not found');
+            if (p.status !== 'Closed') return alert('Only Closed pools can be re-opened.');
+            const linked = [];
+            (projectExpenses||[]).forEach(proj => {
+                (proj.items||[]).forEach(it => { if (it.poolID === poolID) linked.push(it); });
+            });
+            const linkedCount = linked.length;
+            const ok = confirm(
+                `Re-open Fund Pool ${poolID}\n\n` +
+                `This pool is currently Closed. Re-opening it will:\n` +
+                `• Restore the field app's ability to EDIT or DELETE the ${linkedCount} linked expense${linkedCount===1?'':'s'}\n` +
+                `• Set pool status back to Active (closedDate cleared)\n` +
+                `• If a subsequent edit doesn't free up balance, the pool will auto-close again on the next field-app save\n\n` +
+                `Use this only to allow legitimate corrections. Proceed?`
+            );
+            if (!ok) return;
+            // Level 2 concurrency: this is a single-pool edit
+            if (await _concurBlockIfStale('fundPools', [{ id: poolID, idKey: 'poolID' }])) return;
+            p.status     = 'Active';
+            p.closedDate = '';
+            p.reopenedAt = new Date().toISOString();
+            p.reopenedBy = currentUser?.name || currentUser?.email || 'Unknown';
+            _stampRecord(p);
+            try {
+                await saveData('fundPools', fundPools);
+                // Close any open pool detail modal so the user re-opens it and sees fresh state
+                document.querySelectorAll('[style*="position:fixed"][style*="inset:0"]').forEach(el => {
+                    if (el.textContent && el.textContent.includes(poolID)) el.remove();
+                });
+                renderView();
+                if (typeof showToast === 'function') showToast(`🔓 Pool ${poolID} re-opened — field app can now edit/delete linked expenses`);
+                else alert(`✓ Pool ${poolID} re-opened. Field app can now edit/delete its linked expenses.`);
+            } catch(err) {
+                alert('Re-open failed: ' + (err.message || 'try again'));
+            }
         }
 
         // Reverse a disbursement — deletes the pool AND reverts the source request
