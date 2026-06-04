@@ -198,7 +198,10 @@
                 </div>
                 <div class="mt-3">
                     <label class="field-label">Project <span style="color:#94a3b8">(optional)</span></label>
-                    <input type="text" id="frProject" class="field-input" placeholder="e.g. P-001 or project name"/>
+                    <select id="frProject" class="field-input">
+                        <option value="">— Select a project —</option>
+                        <!-- Populated dynamically in openFundReqModal — shows all projects regardless of status -->
+                    </select>
                 </div>
                 <div class="mt-3">
                     <label class="field-label">Notes <span style="color:#94a3b8">(optional)</span></label>
@@ -1819,13 +1822,16 @@
                     ${(p.items||[]).map(it=>{
                         const techNames=(it.technicians||[]).map(t=>t.name).join(', ')||it.staffName||'';
                         const attCount=(it.billAttachments||[]).length+(it.billData?1:0);
+                        // Pool lock: greys out Edit/Del and shows a small 🔒 chip on the row
+                        const _poolLocked = _isPoolClosed(it.poolID);
                         return `
-                        <div style="padding:10px 14px;border-top:1px solid var(--border)">
+                        <div style="padding:10px 14px;border-top:1px solid var(--border);${_poolLocked?'background:#fafafa':''}">
                             <div style="display:flex;justify-content:space-between;align-items:flex-start">
                                 <div class="flex-1 min-w-0 mr-2">
                                     <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px">
                                         <span class="badge" style="background:#f0fdf4;color:#0d7c66;border:1px solid #bbf7d0">${it.category}</span>
                                         <span style="font-size:13px;font-weight:600;color:var(--text)">${it.description}</span>
+                                        ${_poolLocked?`<span title="Pool ${it.poolID} is Closed — entry is read-only" style="font-size:10px;background:#f3f4f6;color:#6b7280;padding:1px 6px;border-radius:4px;border:1px solid #d1d5db">🔒 Locked</span>`:''}
                                     </div>
                                     <p style="font-size:11px;color:var(--muted)">${it.date}${it.payMode?' · '+it.payMode:''}${it.vendor?' · '+it.vendor:''}${techNames?' · 👷 '+techNames:''}</p>
                                     ${it.addedBy?`<p style="font-size:10px;color:#94a3b8;margin-top:1px">✏️ Entered by: <strong style="color:#64748b">${it.addedBy}</strong></p>`:''}
@@ -1833,8 +1839,8 @@
                                 <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
                                     <span style="font-size:14px;font-weight:700;color:var(--navy)">${fmt(it.amount)}</span>
                                     ${attCount>0?`<button onclick="viewExpAttachments('${p.projExpID}','${it.itemID}')" style="padding:3px 8px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;font-size:11px;color:#1d4ed8;cursor:pointer">📎 ${attCount}</button>`:''}
-                                    <button onclick="openExpItemModal('${p.projExpID}','${it.itemID}')" style="padding:3px 8px;border-radius:6px;border:1.5px solid var(--border);background:#fff;cursor:pointer;font-size:11px;color:var(--muted)">✏️</button>
-                                    <button onclick="deleteExpItem('${p.projExpID}','${it.itemID}')" style="padding:3px 8px;border-radius:6px;border:1.5px solid #fecaca;background:#fff;cursor:pointer;font-size:11px;color:#dc2626">✕</button>
+                                    <button onclick="openExpItemModal('${p.projExpID}','${it.itemID}')" ${_poolLocked?'disabled title="Pool closed — re-open in Settings to edit"':''} style="padding:3px 8px;border-radius:6px;border:1.5px solid ${_poolLocked?'#e5e7eb':'var(--border)'};background:${_poolLocked?'#f9fafb':'#fff'};cursor:${_poolLocked?'not-allowed':'pointer'};font-size:11px;color:${_poolLocked?'#9ca3af':'var(--muted)'};opacity:${_poolLocked?'0.55':'1'}">✏️</button>
+                                    <button onclick="deleteExpItem('${p.projExpID}','${it.itemID}')" ${_poolLocked?'disabled title="Pool closed — re-open in Settings to delete"':''} style="padding:3px 8px;border-radius:6px;border:1.5px solid ${_poolLocked?'#e5e7eb':'#fecaca'};background:${_poolLocked?'#f9fafb':'#fff'};cursor:${_poolLocked?'not-allowed':'pointer'};font-size:11px;color:${_poolLocked?'#9ca3af':'#dc2626'};opacity:${_poolLocked?'0.55':'1'}">✕</button>
                                 </div>
                             </div>
                         </div>`;
@@ -1872,6 +1878,34 @@
 
         // Lock requester field on edit (per spec: NOT editable).
         techSel.disabled = (_frMode === 'edit');
+
+        // ── Populate Project dropdown — ALL projects regardless of status ──
+        // Sorted by projectName for predictable order. Empty option = no project (optional field).
+        const projSel = document.getElementById('frProject');
+        if (projSel) {
+            const presetProject = (existing && (_frMode === 'edit' || _frMode === 'resubmit')) ? (existing.project || '') : '';
+            const allProjects = [...(projectExpenses||[])].sort((a,b) =>
+                String(a.projectName||'').localeCompare(String(b.projectName||''))
+            );
+            // Build options. We store the projectName as the option value (matches the existing
+            // schema where `request.project` is a free-text name). We also include projectRef in
+            // the label to disambiguate similarly-named projects.
+            const opts = ['<option value="">— Select a project (optional) —</option>'];
+            // If a preset value doesn't match any current project (legacy text entry),
+            // surface it at top as a one-off option so we don't silently lose it.
+            const presetMatches = !presetProject || allProjects.some(p => (p.projectName||'') === presetProject);
+            if (!presetMatches) {
+                opts.push(`<option value="${presetProject.replace(/"/g,'&quot;')}" selected>${presetProject} (legacy)</option>`);
+            }
+            allProjects.forEach(p => {
+                const name = p.projectName || '';
+                if (!name) return;
+                const label = name + (p.projectRef ? ` (${p.projectRef})` : '');
+                const selected = (presetMatches && name === presetProject) ? ' selected' : '';
+                opts.push(`<option value="${name.replace(/"/g,'&quot;')}"${selected}>${label}</option>`);
+            });
+            projSel.innerHTML = opts.join('');
+        }
 
         // Field values
         if (existing && (_frMode === 'edit' || _frMode === 'resubmit')) {
@@ -2219,6 +2253,25 @@
     }
 
     // ════════════════════════════════════════════════════════════════
+    // POOL LOCK HELPERS
+    // ────────────────────────────────────────────────────────────────
+    // Closed fund pools are HARD-LOCKED for the field app. No edits or
+    // deletes are allowed on expenses attached to a Closed pool, and the
+    // pool cannot auto-reopen from field-app actions. Only an admin in
+    // the Main App's Settings → "Re-open Pool" can flip a Closed pool
+    // back to Active.
+    //
+    // Unallocated expenses (poolID === '') are NOT locked — they're not
+    // attached to any pool yet.
+    // ════════════════════════════════════════════════════════════════
+    function _isPoolClosed(poolID) {
+        if (!poolID) return false;                // unallocated → not locked
+        const pool = (fundPools||[]).find(p => p.poolID === poolID);
+        if (!pool) return false;                  // pool missing — treat as not-locked so user isn't stuck
+        return pool.status === 'Closed';
+    }
+
+    // ════════════════════════════════════════════════════════════════
     // PHASE C — FIFO ENGINE (mirrors Main App logic)
     // ════════════════════════════════════════════════════════════════
 
@@ -2532,6 +2585,19 @@
     }
 
     function openExpItemModal(projID, itemID=null) {
+        // ── Pool lock guard ──
+        // If editing an existing expense whose pool is Closed, refuse to open
+        // the modal at all. Surfacing the lock here keeps mutations off the
+        // closed-pool entirely (we don't want partial state if the user starts
+        // editing then we block on save).
+        if (itemID) {
+            const _proj = projectExpenses.find(x=>x.projExpID===projID);
+            const _item = (_proj?.items||[]).find(i=>i.itemID===itemID);
+            if (_item && _isPoolClosed(_item.poolID)) {
+                showToast(`🔒 This expense is in a Closed fund pool (${_item.poolID}) — read-only. Ask the office to re-open the pool first.`, 4500);
+                return;
+            }
+        }
         _eiStaffRows = []; _eiBillAttachments = []; _eiStagedFiles = [];
         document.getElementById('eiProjID').value  = projID;
         document.getElementById('eiItemID').value  = itemID||'';
@@ -2807,6 +2873,17 @@
     }
 
     async function deleteExpItem(projID, itemID) {
+        // ── Pool lock guard ──
+        // Refuse delete when the item's pool is Closed. Locking deletes
+        // is what enforces "Closed = truly read-only" — without this,
+        // a delete would free up balance and the pool would silently
+        // re-open via _fieldRecomputePool.
+        const _proj = projectExpenses.find(x=>x.projExpID===projID);
+        const _item = (_proj?.items||[]).find(i=>i.itemID===itemID);
+        if (_item && _isPoolClosed(_item.poolID)) {
+            showToast(`🔒 This expense is in a Closed fund pool (${_item.poolID}) — cannot delete. Ask the office to re-open the pool first.`, 4500);
+            return;
+        }
         if (!confirm('Delete this expense entry?')) return;
         const idx = projectExpenses.findIndex(x=>x.projExpID===projID);
         if (idx<0) return;
