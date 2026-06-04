@@ -4024,7 +4024,7 @@
                         const allSortedDesc = [...(w.dailyEntries||[])].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
                         const dayNumByID = {};
                         allSortedDesc.forEach((e, i) => { if (e.entryID) dayNumByID[e.entryID] = days - i; });
-                        return [..._visibleEntries].sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map((d)=>{
+                        return [..._visibleEntries].sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map((d, idx)=>{
                             const dayNum = dayNumByID[d.entryID] || '?';
                             const dur=(d.startTime&&d.endTime)?calcDuration(d.startTime,d.endTime):'';
                             const dayTechs=(d.technicians||[]).map(t=>t.name).join(', ')||(w.technicians||[]).map(t=>t.name).join(', ')||'—';
