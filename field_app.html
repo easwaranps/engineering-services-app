@@ -1547,6 +1547,68 @@
         return String(haystack || '').toLowerCase().includes(q);
     }
 
+    // ── Date haystack expansion ──
+    // A stored date like "2026-04-08" should match any natural way a
+    // user might type that date. Returns a space-separated string of
+    // every format variant so substring-search works:
+    //   2026-04-08  08-04-2026  08/04/2026  8 apr  apr 8  april 2026 …
+    //
+    // Empty input → empty string (so it's harmless to concat into a
+    // larger haystack).
+    function _dateHaystack(isoDate) {
+        if (!isoDate || typeof isoDate !== 'string') return '';
+        // Accept full ISO or just the date portion of a timestamp
+        const m = isoDate.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (!m) return String(isoDate).toLowerCase();
+        const [_, y, mm, dd] = m;
+        const monthNum   = parseInt(mm, 10);
+        const dayNum     = parseInt(dd, 10);
+        const months     = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+        const monthsLong = ['january','february','march','april','may','june','july','august','september','october','november','december'];
+        const monShort = months[monthNum-1]     || '';
+        const monLong  = monthsLong[monthNum-1] || '';
+        // Build every reasonable format we might encounter from a user typing
+        const parts = [
+            `${y}-${mm}-${dd}`,
+            `${dd}-${mm}-${y}`,
+            `${dd}/${mm}/${y}`,
+            `${dd}.${mm}.${y}`,
+            String(dayNum),
+            dd,
+            String(monthNum),
+            mm,
+            monShort, monLong,
+            y,
+            monShort && `${monShort} ${y}`,
+            monLong  && `${monLong} ${y}`,
+            monShort && `${dayNum} ${monShort}`,
+            monShort && `${dayNum} ${monShort} ${y}`,
+            monShort && `${monShort} ${dayNum}`,
+            monShort && `${monShort} ${dayNum} ${y}`
+        ].filter(Boolean);
+        return parts.join(' ').toLowerCase();
+    }
+
+    // ── Multi-token search ──
+    // Build a single lower-cased "haystack" string for a record (caller
+    // supplies the list of fields + dates), then check that EVERY
+    // whitespace-separated token in the query is present somewhere in
+    // that haystack. Tokens are AND'd; if any token is missing → no match.
+    //
+    // Example: query "reliance 8 apr" on a Reliance/Apr-08 bill →
+    //   haystack: "...reliance... 2026-04-08 08-04-2026 8 apr april ..."
+    //   tokens: ["reliance","8","apr"] — all three found → match
+    function _matchTokens(haystack, query) {
+        if (!query) return true;
+        const q = String(query).trim().toLowerCase();
+        if (!q) return true;
+        const hay = String(haystack || '').toLowerCase();
+        // Split on whitespace; drop empty tokens.
+        const tokens = q.split(/\s+/).filter(Boolean);
+        if (!tokens.length) return true;
+        return tokens.every(t => hay.includes(t));
+    }
+
     // ── RENDER SCREENS ────────────────────────────────────────────
     // ── USER SELECTION — shown after login, before app ───────────
     function renderUserSelect() {
@@ -1790,7 +1852,7 @@
         <div style="position:relative;margin-bottom:12px">
             <input type="search" id="peSearchInput"
                 value="${_peSearchQ.replace(/"/g,'&quot;')}"
-                placeholder="🔍 Search projects, expenses, technicians, vendors…"
+                placeholder="🔍 Search by project, vendor, technician, date (e.g. '8 apr reliance')…"
                 oninput="_setSearch('pe', this.value, 'peSearchInput')"
                 autocomplete="off"
                 style="width:100%;padding:10px 36px 10px 14px;border:1px solid var(--border);border-radius:10px;font-size:14px;background:#fff;outline:none"/>
@@ -1801,28 +1863,30 @@
         ${(() => {
             // Apply the search filter to the projectExpenses list, but ONLY for rendering.
             // The original `projectExpenses` array is untouched.
+            //
+            // Strategy: build a single concatenated lower-cased "haystack" string per
+            // project that contains every searchable field — project metadata, every
+            // item's text fields + technician names, every fund request's purpose/remarks,
+            // AND every date expanded into multiple natural formats. Then run the
+            // multi-token matcher: each whitespace-separated token in the query must be
+            // found somewhere in the haystack (AND across tokens).
             const _filtered = projectExpenses.filter(p => {
                 if (!_peSearchQ) return true;
-                // Project-level matches first (fast path)
-                if (_searchMatch(p.projectName, _peSearchQ)) return true;
-                if (_searchMatch(p.projectRef,  _peSearchQ)) return true;
-                if (_searchMatch(p.projectCity, _peSearchQ)) return true;
-                if (_searchMatch(p.projectLocation, _peSearchQ)) return true;
-                // Item-level — check each item's searchable fields
-                if ((p.items||[]).some(it =>
-                    _searchMatch(it.description, _peSearchQ) ||
-                    _searchMatch(it.category,    _peSearchQ) ||
-                    _searchMatch(it.vendor,      _peSearchQ) ||
-                    _searchMatch(it.payMode,     _peSearchQ) ||
-                    _searchMatch(it.staffName,   _peSearchQ) ||
-                    (it.technicians||[]).some(t => _searchMatch(t.name, _peSearchQ))
-                )) return true;
-                // Fund-request match too — purpose / remarks
-                if ((p.fundRequests||[]).some(r =>
-                    _searchMatch(r.purpose, _peSearchQ) ||
-                    _searchMatch(r.remarks, _peSearchQ)
-                )) return true;
-                return false;
+                // Build the per-project haystack lazily — small enough to recompute on each keystroke.
+                const parts = [
+                    p.projectName, p.projectRef, p.projectCity, p.projectLocation,
+                    _dateHaystack(p.startDate), _dateHaystack(p.endDate)
+                ];
+                (p.items||[]).forEach(it => {
+                    parts.push(it.description, it.category, it.vendor, it.payMode, it.staffName);
+                    parts.push(_dateHaystack(it.date));
+                    (it.technicians||[]).forEach(t => parts.push(t.name));
+                });
+                (p.fundRequests||[]).forEach(r => {
+                    parts.push(r.purpose, r.remarks);
+                    parts.push(_dateHaystack(r.date));
+                });
+                return _matchTokens(parts.filter(Boolean).join(' '), _peSearchQ);
             });
             return !projectExpenses.length ?
             `<div class="card p-10 text-center"><div style="font-size:48px;margin-bottom:8px">🧳</div><p class="font-medium text-gray-400">No projects yet</p><p class="text-sm text-gray-400 mt-1">Projects will appear here once created by the office team.</p></div>` :
@@ -3830,20 +3894,22 @@
         };
         const sorted=[...workLogs].sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
 
-        // Apply search filter — kept separate from the sort so it's easy to reason about.
-        // Matches against work-log project/location/status/technicians AND any
-        // daily entry's description/remarks/category. Search is case-insensitive.
+        // Apply search filter — same pattern as the Project Expenses screen.
+        // Build a haystack per work-log that includes the parent log's fields,
+        // the work-period dates, every technician, and every daily entry's
+        // fields + date. Then check that every whitespace token in the query
+        // matches somewhere in that haystack (AND across tokens).
         const filtered = !_wlSearchQ ? sorted : sorted.filter(w => {
-            if (_searchMatch(w.project,  _wlSearchQ)) return true;
-            if (_searchMatch(w.location, _wlSearchQ)) return true;
-            if (_searchMatch(w.status,   _wlSearchQ)) return true;
-            if ((w.technicians||[]).some(t => _searchMatch(t.name, _wlSearchQ))) return true;
-            if ((w.dailyEntries||[]).some(e =>
-                _searchMatch(e.description, _wlSearchQ) ||
-                _searchMatch(e.remarks,     _wlSearchQ) ||
-                _searchMatch(e.category,    _wlSearchQ)
-            )) return true;
-            return false;
+            const parts = [
+                w.project, w.location, w.status,
+                _dateHaystack(w.workStartDate), _dateHaystack(w.workEndDate)
+            ];
+            (w.technicians||[]).forEach(t => parts.push(t.name));
+            (w.dailyEntries||[]).forEach(e => {
+                parts.push(e.description, e.remarks, e.category);
+                parts.push(_dateHaystack(e.date));
+            });
+            return _matchTokens(parts.filter(Boolean).join(' '), _wlSearchQ);
         });
 
         el.innerHTML=`
@@ -3857,7 +3923,7 @@
         <div style="position:relative;margin-bottom:12px">
             <input type="search" id="wlSearchInput"
                 value="${_wlSearchQ.replace(/"/g,'&quot;')}"
-                placeholder="🔍 Search work logs by project, technician, status…"
+                placeholder="🔍 Search by project, technician, status, date (e.g. 'completed apr')…"
                 oninput="_setSearch('wl', this.value, 'wlSearchInput')"
                 autocomplete="off"
                 style="width:100%;padding:10px 36px 10px 14px;border:1px solid var(--border);border-radius:10px;font-size:14px;background:#fff;outline:none"/>
