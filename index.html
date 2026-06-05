@@ -11661,9 +11661,14 @@
             const filteredParties = parties.filter(p => 
                 direction === 'Outgoing' ? p.partyType === 'Client' : p.partyType === 'SubContractor'
             );
-            
+            // HTML-escape attribute values so party names containing quotes (") or
+            // angle brackets don't break the rendered <option value="..."> markup.
+            // Without this, a stored name like ' "AEROMARINE PRIVATE LIMITED" ' truncates
+            // the value attribute at the first internal quote → option becomes value=""
+            // → the parties.find() lookup later returns undefined → wrong tax mode.
+            const escAttr = s => String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
             partySelect.innerHTML = '<option value="">Select Party</option>' + 
-                filteredParties.map(p => `<option value="${p.partyName}">${p.partyName}</option>`).join('');
+                filteredParties.map(p => `<option value="${escAttr(p.partyName)}">${escAttr(p.partyName)}</option>`).join('');
         }
 
         // Enhanced addLineItem with smart GST calculation
