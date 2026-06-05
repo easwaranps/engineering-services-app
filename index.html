@@ -1280,31 +1280,70 @@
         // available alongside this-month leave taken; older encashments are
         // already baked into the carry-in.
         // ════════════════════════════════════════════════════════════════
-        // TDS SECTION CATALOG (FY 2025-26 rates)
+        // TDS SECTION CATALOG — FY 2026-27 (Income Tax Act 2025)
         // ────────────────────────────────────────────────────────────────
-        // `defaultRate` is the rate suggested when the section is picked.
-        // null = the user must set the rate manually (slab-based or varying).
-        // The user can override the % at the record level regardless of default.
+        // Each entry combines OLD code (ITA 1961), NEW code (ITA 2025 from
+        // April 2026), payee classification, default rate, and TRACES
+        // Payment Code (used on the challan when depositing). The dropdown
+        // shows all three identifiers so the user can match their CA's
+        // vocabulary — different teams refer to the same section by
+        // different keys during the transition period.
+        //
+        //   id           — internal key, also stored on the saved record
+        //   oldCode      — ITA 1961 reference (e.g. '194C', '194J(a)')
+        //   newCode      — ITA 2025 reference (e.g. '393(1) Sl 6')
+        //   payeeType    — '' / 'Indiv-HUF' / 'Others' / 'Govt' / 'Pension'
+        //   description  — short human description
+        //   tracesCode   — 4-digit code for the TDS challan (e.g. '1024').
+        //                  Empty for sections without a published TRACES code yet (e.g. 194R as of FY26-27).
+        //   defaultRate  — % (null when slab-based or varies)
+        //
+        // Legacy expense records have just `tdsSection: '194C'` etc., with no
+        // payee distinction. Those records render with section name only and
+        // group by the old code, so existing data displays cleanly.
         // ════════════════════════════════════════════════════════════════
         const TDS_SECTIONS = [
-            { code: '192',     label: '192 — Salary (slab)',                            defaultRate: null },
-            { code: '192A',    label: '192A — PF withdrawal premature',                 defaultRate: 10   },
-            { code: '194A',    label: '194A — Interest (not securities)',               defaultRate: 10   },
-            { code: '194B',    label: '194B — Lottery / gaming winnings',               defaultRate: 30   },
-            { code: '194C',    label: '194C — Contractor payments (2% co / 1% indiv)',  defaultRate: 2    },
-            { code: '194D',    label: '194D — Insurance commission',                    defaultRate: 5    },
-            { code: '194H',    label: '194H — Commission / brokerage',                  defaultRate: 5    },
-            { code: '194I(a)', label: '194I(a) — Rent: plant & machinery',              defaultRate: 2    },
-            { code: '194I(b)', label: '194I(b) — Rent: land / building',                defaultRate: 10   },
-            { code: '194IA',   label: '194IA — Sale of immovable property (above 50L)', defaultRate: 1    },
-            { code: '194J(a)', label: '194J(a) — Professional / technical fees',        defaultRate: 10   },
-            { code: '194J(b)', label: '194J(b) — Royalty / FTS (specific)',             defaultRate: 2    },
-            { code: '194Q',    label: '194Q — Purchase of goods (above 50L)',           defaultRate: 0.1  },
-            { code: '195',     label: '195 — Payments to non-residents (varies)',       defaultRate: null },
-            { code: '206C',    label: '206C — TCS collected at source (varies)',        defaultRate: null }
+            // Salary
+            { id:'SAL-GOVT', oldCode:'192',     newCode:'392',           payeeType:'Govt',      description:'Salary — Govt employees',                tracesCode:'1001', defaultRate:null },
+            { id:'SAL-OTH',  oldCode:'192',     newCode:'392',           payeeType:'Others',    description:'Salary — Other (non-govt)',              tracesCode:'1002', defaultRate:null },
+            { id:'SAL-PEN',  oldCode:'192',     newCode:'392',           payeeType:'Pension',   description:'Salary — Pensioners',                    tracesCode:'1003', defaultRate:null },
+            // PF
+            { id:'EPF',      oldCode:'192A',    newCode:'392',           payeeType:'',          description:'EPF premature withdrawal',               tracesCode:'1004', defaultRate:10   },
+            // Commission / brokerage
+            { id:'COM-IH',   oldCode:'194H',    newCode:'393(1) Sl 1',   payeeType:'Indiv-HUF', description:'Commission / brokerage — Indiv/HUF',     tracesCode:'1005', defaultRate:5    },
+            { id:'COM-OT',   oldCode:'194H',    newCode:'393(1) Sl 1',   payeeType:'Others',    description:'Commission / brokerage — Others',        tracesCode:'1006', defaultRate:5    },
+            // Rent
+            { id:'RENT-PM',  oldCode:'194I(a)', newCode:'393(1) Sl 2',   payeeType:'',          description:'Rent — Plant / Machinery',               tracesCode:'1008', defaultRate:2    },
+            { id:'RENT-LB',  oldCode:'194I(b)', newCode:'393(1) Sl 2',   payeeType:'',          description:'Rent — Land / Building / Furniture',     tracesCode:'1009', defaultRate:10   },
+            // Contractors
+            { id:'CON-IH',   oldCode:'194C',    newCode:'393(1) Sl 6',   payeeType:'Indiv-HUF', description:'Contractor payments — Indiv/HUF',        tracesCode:'1023', defaultRate:1    },
+            { id:'CON-OT',   oldCode:'194C',    newCode:'393(1) Sl 6',   payeeType:'Others',    description:'Contractor payments — Others',           tracesCode:'1024', defaultRate:2    },
+            // 194J variants
+            { id:'TECH',     oldCode:'194J(b)', newCode:'393(1) Sl 6',   payeeType:'',          description:'Technical services',                     tracesCode:'1026', defaultRate:2    },
+            { id:'PROF',     oldCode:'194J(a)', newCode:'393(1) Sl 6',   payeeType:'',          description:'Professional fees',                      tracesCode:'1027', defaultRate:10   },
+            // Goods / perquisites
+            { id:'PUR',      oldCode:'194Q',    newCode:'393(1) Sl 8',   payeeType:'',          description:'Purchase of goods (above 50L)',          tracesCode:'1031', defaultRate:0.1  },
+            { id:'PERK',     oldCode:'194R',    newCode:'393(1) Sl 9',   payeeType:'',          description:'Business perquisites',                   tracesCode:'',     defaultRate:10   }
         ];
-        // Helpful lookup map for downstream views (Tax tab, PDF)
-        const TDS_SECTION_LABEL = Object.fromEntries(TDS_SECTIONS.map(s => [s.code, s.label]));
+
+        // Build a one-line dropdown label per entry — shows old/new section,
+        // description, TRACES code, and default rate so users can pick
+        // unambiguously.
+        function _tdsLabelFor(s) {
+            const payeeNote = s.payeeType ? '' : ''; // payee already in description for split sections
+            const traces    = s.tracesCode ? ` [TRACES ${s.tracesCode}]` : ' [TRACES n/a]';
+            const rate      = s.defaultRate !== null ? ` · ${s.defaultRate}%` : ' · slab';
+            return `${s.oldCode} → ${s.newCode} · ${s.description}${traces}${rate}`;
+        }
+
+        // Quick id-keyed map for lookups elsewhere
+        const TDS_SECTION_BY_ID = Object.fromEntries(TDS_SECTIONS.map(s => [s.id, s]));
+        // Legacy: lookup by old code (returns first matching entry — used for
+        // displaying records saved before the expanded picker).
+        const TDS_SECTION_BY_OLDCODE = TDS_SECTIONS.reduce((m, s) => {
+            if (!m[s.oldCode]) m[s.oldCode] = s;
+            return m;
+        }, {});
 
         // ════════════════════════════════════════════════════════════════
         // All statuses that count as leave (1 day each)
@@ -8239,7 +8278,17 @@
                     // (in case this code runs before DOMContentLoaded — defensive).
                     initTDSSectionDropdown();
                     const sectSel = document.getElementById('expTDSSectionCode');
-                    if (sectSel) sectSel.value = exp.tdsSection || '';
+                    if (sectSel) {
+                        // Three possible source values for the saved section:
+                        //   1. tdsSectionId   — catalog id from a save after FY 2026-27 expansion (e.g. 'CON-IH')
+                        //   2. tdsSection     — legacy: either an id or just an old code ('194C')
+                        // We try them in priority order. Falling back to the first
+                        // catalog entry whose oldCode matches keeps legacy records loadable.
+                        const candidate = exp.tdsSectionId
+                                       || (TDS_SECTION_BY_ID[exp.tdsSection] ? exp.tdsSection : '')
+                                       || (TDS_SECTION_BY_OLDCODE[exp.tdsSection || '']?.id || '');
+                        sectSel.value = candidate || '';
+                    }
                     document.getElementById('expTaxableAmt').value = exp.taxableAmt||'';
                     document.getElementById('expTDSPct').value     = exp.tdsPct||'2';
                     document.getElementById('expTDSAmt').value     = exp.tdsAmt||'';
@@ -8711,21 +8760,24 @@
         // ── Populate the TDS Section dropdown from the catalog ──
         // Called once on app load (and idempotent if called again, since it
         // resets innerHTML). Keeps the placeholder option at the top.
+        // The option value is the catalog `id` (e.g. 'CON-IH') — saved on the
+        // record as tdsSection. We also derive the old code, new code, payee,
+        // and TRACES code from the id on save.
         function initTDSSectionDropdown() {
             const sel = document.getElementById('expTDSSectionCode');
             if (!sel) return;
             sel.innerHTML = '<option value="">— Select section —</option>' +
-                TDS_SECTIONS.map(s => `<option value="${s.code}">${s.label}</option>`).join('');
+                TDS_SECTIONS.map(s => `<option value="${s.id}">${_tdsLabelFor(s)}</option>`).join('');
         }
 
         // ── When the user picks a section, set the default % ──
         // Only changes the rate if the section has a known default. For
-        // null-default sections (192/195/206C — slab or varying), we leave
-        // the existing % alone so the user picks manually.
+        // null-default sections (salary slabs), we leave the existing %
+        // alone so the user picks manually.
         function onTDSSectionChange() {
-            const code = document.getElementById('expTDSSectionCode')?.value || '';
-            if (!code) { calcExpAmounts(); return; }
-            const section = TDS_SECTIONS.find(s => s.code === code);
+            const id = document.getElementById('expTDSSectionCode')?.value || '';
+            if (!id) { calcExpAmounts(); return; }
+            const section = TDS_SECTION_BY_ID[id];
             if (section && section.defaultRate !== null) {
                 const pctSel = document.getElementById('expTDSPct');
                 const target = String(section.defaultRate);
@@ -8855,15 +8907,16 @@
                           ? (parseFloat(document.getElementById('expAdvanceAmt').value)||0) : 0;
             const billINR = bill * rate;
             let tdsAmt  = tdsOn ? (parseFloat(document.getElementById('expTDSAmt').value)||0) : 0;
-            const tdsSectionCode = tdsOn ? (document.getElementById('expTDSSectionCode')?.value || '') : '';
+            // Dropdown value is now the catalog id (e.g. 'CON-IH'), not a raw section code.
+            const tdsSectionId = tdsOn ? (document.getElementById('expTDSSectionCode')?.value || '') : '';
 
             // ── TDS Section mandatory gate ──
             // If TDS is ticked, the section MUST be picked. Quarterly TDS filing
             // (Form 26Q/27Q) requires section-wise totals — leaving it blank makes
             // the record unfilable later. Hard block, no soft override.
-            if (tdsOn && !tdsSectionCode) {
+            if (tdsOn && !tdsSectionId) {
                 alert('⚠ TDS Section is required when TDS Applicable is ticked.\n\n' +
-                      'Please pick the section (194A, 194C, 194J etc.) from the dropdown. ' +
+                      'Please pick the section from the dropdown (showing old & new code + TRACES). ' +
                       'Quarterly TDS filing reports each section separately, so this cannot be left blank.');
                 // Try to focus the dropdown so the user can act immediately
                 document.getElementById('expTDSSectionCode')?.focus();
@@ -8871,6 +8924,16 @@
                 window._expSaving = false;
                 return;
             }
+
+            // Derive the four canonical TDS fields from the catalog entry.
+            // We store all four on the record so downstream views (Tax tab,
+            // PDF, filing exports) can use whichever vocabulary they need
+            // without re-looking-up the catalog.
+            const _tdsMeta = tdsSectionId ? (TDS_SECTION_BY_ID[tdsSectionId] || null) : null;
+            const tdsSectionOld    = _tdsMeta?.oldCode    || '';
+            const tdsSectionNew    = _tdsMeta?.newCode    || '';
+            const tdsTracesCode    = _tdsMeta?.tracesCode || '';
+            const tdsPayeeType     = _tdsMeta?.payeeType  || '';
 
             // ── TDS validation gate ──
             // When TDS Applicable is ticked but the computed amount is 0, the record
@@ -8965,7 +9028,17 @@
                 creditNote:        cn,
                 creditNoteDetails: document.getElementById('expCreditNoteDetails').value,
                 tdsApplicable:     tdsOn,
-                tdsSection:        tdsSectionCode,    // e.g. '194C' — required when tdsOn
+                // Old ITA-1961 code (e.g. '194C') — kept as the primary key for
+                // backward compatibility with records saved before FY 2026-27.
+                tdsSection:        tdsSectionOld,
+                // New ITA-2025 code (e.g. '393(1) Sl 6') — surfaces in filings/PDFs.
+                tdsSectionNew:     tdsSectionNew,
+                // TRACES Payment Code (e.g. '1024') — used on the challan deposit.
+                tdsTracesCode:     tdsTracesCode,
+                // Payee classification for sub-rate sections (Indiv-HUF / Others / etc.)
+                tdsPayeeType:      tdsPayeeType,
+                // Catalog id (e.g. 'CON-IH') — re-populates the dropdown verbatim on edit.
+                tdsSectionId:      tdsSectionId,
                 taxableAmt:        tdsOn ? (parseFloat(document.getElementById('expTaxableAmt').value)||0) : 0,
                 tdsPct:            tdsOn ? (document.getElementById('expTDSPct').value === 'Other'
                                     ? (document.getElementById('expTDSCustomPct')?.value + '%')
@@ -9380,7 +9453,9 @@
             });
             // Catalog-defined sections appear first in catalog order, then any
             // unrecognised codes (including "Unspecified"), alphabetically.
-            const catalogOrder = TDS_SECTIONS.map(s => s.code);
+            // De-dupe old codes since some appear in multiple catalog entries
+            // (e.g. 194C → CON-IH and CON-OT both share oldCode '194C').
+            const catalogOrder = [...new Set(TDS_SECTIONS.map(s => s.oldCode))];
             const orderedSections = [
                 ...catalogOrder.filter(c => tdsBySection[c]),
                 ...Object.keys(tdsBySection).filter(s => !catalogOrder.includes(s)).sort()
@@ -9391,10 +9466,17 @@
                 const paid    = !!e.tdsPaid;
                 const challan = e.tdsChallan||'';
                 const safeId  = e.expID.replace(/'/g,"\\'");
+                // Show the new code + TRACES code below the old code (small, monospace)
+                // for filing reference; legacy records without these fields show only the old code.
+                const sectionCell = e.tdsSection
+                    ? `<div class="font-mono font-semibold text-red-700">${e.tdsSection}</div>` +
+                      (e.tdsSectionNew  ? `<div class="font-mono text-[9px] text-gray-500">→ ${e.tdsSectionNew}</div>` : '') +
+                      (e.tdsTracesCode  ? `<div class="text-[9px] text-blue-600">TRACES ${e.tdsTracesCode}</div>` : '')
+                    : '<span class="text-gray-400">—</span>';
                 return `<tr class="border-t hover:bg-red-50 ${paid?'bg-green-50':''}">
                     <td class="px-3 py-2 text-xs">${i}</td>
                     <td class="px-3 py-2 text-xs font-medium">${e.billDate||'—'}</td>
-                    <td class="px-3 py-2 text-xs font-mono font-semibold text-red-700">${e.tdsSection||'—'}</td>
+                    <td class="px-3 py-2 text-xs">${sectionCell}</td>
                     <td class="px-3 py-2 text-xs">${e.companyName||'—'}</td>
                     <td class="px-3 py-2 text-xs">${e.voucherNo||e.billNo||'—'}</td>
                     <td class="px-3 py-2 text-xs text-right">${fmt(e.taxableAmt||e.billAmtINR||0)}</td>
@@ -9416,16 +9498,36 @@
             };
 
             // Build the rows: section header + records + section subtotal, per group.
+            // Header shows the old code and (where applicable) the new ITA-2025 code,
+            // a brief description, and a payee-type sub-breakdown when relevant.
             let _rowCounter = 0;
             const tdsRows = orderedSections.map(sec => {
                 const items = tdsBySection[sec];
                 const subTotal = items.reduce((s,e) => s + (parseFloat(e.tdsAmt)||0), 0);
-                const sectionMeta = TDS_SECTIONS.find(s => s.code === sec);
-                const labelText = sectionMeta ? sectionMeta.label : sec;
+                // Pick the first catalog entry that matches this old code (used purely
+                // for description + new-code display in the header).
+                const sectionMeta = TDS_SECTIONS.find(s => s.oldCode === sec);
+                // Some old-codes correspond to multiple payee types (194C, 194H, 192).
+                // If this group has more than one payee type, show a small breakdown
+                // line under the header.
+                const payeeBreakdown = (() => {
+                    const allMetas = TDS_SECTIONS.filter(s => s.oldCode === sec);
+                    if (allMetas.length < 2) return ''; // no split sections
+                    const byPayee = {};
+                    items.forEach(e => {
+                        const k = e.tdsPayeeType || '(unspecified)';
+                        byPayee[k] = (byPayee[k]||0) + (parseFloat(e.tdsAmt)||0);
+                    });
+                    const parts = Object.entries(byPayee).map(([k,v]) => `${k}: <span class="font-mono">${fmt(v)}</span>`).join(' · ');
+                    return parts ? `<div class="text-[10px] font-normal text-red-700 mt-0.5">${parts}</div>` : '';
+                })();
+                const newCodeNote = sectionMeta?.newCode ? ` <span class="text-[10px] font-normal text-red-700">→ ${sectionMeta.newCode}</span>` : '';
+                const descNote    = sectionMeta?.description ? ` <span class="font-normal text-red-700 ml-1">— ${sectionMeta.description.replace(/—.*$/,'').trim()}</span>` : '';
                 const headerRow = `<tr class="bg-red-200">
                     <td colspan="11" class="px-3 py-1.5 text-xs font-bold text-red-900">
-                        📌 Section ${sec}${sectionMeta?` <span class="font-normal text-red-700 ml-1">— ${labelText.replace(sec+' — ','')}</span>`:''}
+                        📌 Section ${sec}${newCodeNote}${descNote}
                         <span class="float-right">Subtotal: <span class="font-mono">${fmt(subTotal)}</span> · ${items.length} entr${items.length===1?'y':'ies'}</span>
+                        ${payeeBreakdown}
                     </td>
                 </tr>`;
                 return headerRow + items.map(e => { _rowCounter++; return _renderTDSRow(e, _rowCounter); }).join('');
@@ -9447,11 +9549,12 @@
                         const subTotal = items.reduce((s,e) => s + (parseFloat(e.tdsAmt)||0), 0);
                         const paidSub  = items.reduce((s,e) => s + (e.tdsPaid ? (parseFloat(e.tdsAmt)||0) : 0), 0);
                         const pending  = subTotal - paidSub;
-                        const meta     = TDS_SECTIONS.find(s => s.code === sec);
-                        const shortDesc = meta ? meta.label.replace(sec+' — ','').split('(')[0].trim() : sec;
+                        const meta     = TDS_SECTIONS.find(s => s.oldCode === sec);
+                        const shortDesc = meta ? (meta.description || '').replace(/—.*$/,'').trim() : sec;
+                        const newCode  = meta?.newCode || '';
                         const isUnspec = sec === '— Unspecified —';
                         return `<div class="rounded-xl border ${isUnspec?'border-amber-300 bg-amber-50':'border-red-200 bg-red-50'} p-3">
-                            <p class="text-xs font-mono font-bold ${isUnspec?'text-amber-800':'text-red-800'}">${sec}</p>
+                            <p class="text-xs font-mono font-bold ${isUnspec?'text-amber-800':'text-red-800'}">${sec}${newCode?` <span class="font-normal text-[9px] text-gray-500">→ ${newCode}</span>`:''}</p>
                             <p class="text-[10px] text-gray-600 truncate mb-1" title="${shortDesc}">${shortDesc}</p>
                             <p class="text-lg font-bold ${isUnspec?'text-amber-700':'text-red-700'}">${fmt(subTotal)}</p>
                             <div class="flex justify-between text-[10px] text-gray-500 mt-1">
@@ -9886,7 +9989,7 @@
                     const sec = e.tdsSection || '— Unspecified —';
                     (_pdfBySection[sec] = _pdfBySection[sec] || []).push(e);
                 });
-                const _catalogOrder = TDS_SECTIONS.map(s => s.code);
+                const _catalogOrder = [...new Set(TDS_SECTIONS.map(s => s.oldCode))];
                 const _orderedSections = [
                     ..._catalogOrder.filter(c => _pdfBySection[c]),
                     ...Object.keys(_pdfBySection).filter(s => !_catalogOrder.includes(s)).sort()
@@ -9896,28 +9999,30 @@
                 doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
                     styles:{fontSize:7.5,cellPadding:2.5},
                     headStyles:{fillColor:[127,29,29],textColor:[255,255,255],fontStyle:'bold'},
-                    head:[['TDS SECTION-WISE BREAKDOWN',{content:'',colSpan:3}]],
+                    head:[['TDS SECTION-WISE BREAKDOWN',{content:'',colSpan:4}]],
                     body:[],columnStyles:{0:{cellWidth:CW}}
                 });
                 y = doc.lastAutoTable.finalY;
                 doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
                     styles:{fontSize:8,cellPadding:2.5},
                     headStyles:{fillColor:[185,28,28],textColor:[255,255,255],fontStyle:'bold'},
-                    head:[['Section','Description','Entries','TDS Amount']],
+                    head:[['Old Code','New ITA-2025','Description','Entries','TDS Amount']],
                     body:_orderedSections.map(sec => {
                         const items   = _pdfBySection[sec];
                         const subTot  = items.reduce((s,e) => s + (parseFloat(e.tdsAmt)||0), 0);
-                        const meta    = TDS_SECTIONS.find(s => s.code === sec);
-                        const desc    = meta ? meta.label.replace(sec+' — ','') : '(unspecified — please assign)';
+                        const meta    = TDS_SECTIONS.find(s => s.oldCode === sec);
+                        const desc    = meta ? (meta.description || sec) : '(unspecified — please assign)';
+                        const newCd   = meta?.newCode || '—';
                         return [
                             {content:sec,styles:{fontStyle:'bold'}},
+                            {content:newCd,styles:{fontSize:7}},
                             desc,
                             {content:String(items.length),styles:{halign:'center'}},
                             {content:INR(subTot),styles:{halign:'right',fontStyle:'bold',textColor:[185,28,28]}}
                         ];
                     }),
-                    foot:[[{content:'TOTAL',colSpan:3,styles:{fontStyle:'bold',halign:'right'}},{content:INR(d.totalTDSDeducted),styles:{fontStyle:'bold',halign:'right',textColor:[185,28,28]}}]],
-                    columnStyles:{0:{cellWidth:22},1:{cellWidth:CW-22-22-32},2:{cellWidth:22,halign:'center'},3:{cellWidth:32,halign:'right'}}
+                    foot:[[{content:'TOTAL',colSpan:4,styles:{fontStyle:'bold',halign:'right'}},{content:INR(d.totalTDSDeducted),styles:{fontStyle:'bold',halign:'right',textColor:[185,28,28]}}]],
+                    columnStyles:{0:{cellWidth:22},1:{cellWidth:28},2:{cellWidth:CW-22-28-22-32},3:{cellWidth:22,halign:'center'},4:{cellWidth:32,halign:'right'}}
                 });
                 y = doc.lastAutoTable.finalY+4;
                 if(y>240){doc.addPage();y=15;}
@@ -9925,24 +10030,25 @@
                 doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
                     styles:{fontSize:7.5,cellPadding:2.5},
                     headStyles:{fillColor:[185,28,28],textColor:[255,255,255],fontStyle:'bold'},
-                    head:[['TDS DEDUCTED ENTRIES',{content:'',colSpan:7}]],
+                    head:[['TDS DEDUCTED ENTRIES',{content:'',colSpan:8}]],
                     body:[],columnStyles:{0:{cellWidth:CW}}
                 });
                 y = doc.lastAutoTable.finalY;
                 doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
-                    styles:{fontSize:7.5,cellPadding:2.5},
+                    styles:{fontSize:7,cellPadding:2},
                     headStyles:{fillColor:[239,68,68],textColor:[255,255,255],fontStyle:'bold'},
-                    head:[['Date','Section','Vendor','Bill No','Taxable','TDS %','TDS Amt','Status']],
+                    head:[['Date','Section','TRACES','Vendor','Bill No','Taxable','TDS %','TDS Amt','Status']],
                     body:d.tdsExpenses.map(e=>[e.billDate||'—',
                         {content:e.tdsSection||'—',styles:{fontStyle:'bold'}},
+                        {content:e.tdsTracesCode||'—',styles:{halign:'center'}},
                         e.companyName||'—',e.voucherNo||e.billNo||'—',
                         {content:INR(e.taxableAmt||e.billAmtINR||0),styles:{halign:'right'}},
                         {content:(e.tdsPct||'—')+'%',styles:{halign:'center'}},
                         {content:INR(e.tdsAmt),styles:{halign:'right',fontStyle:'bold',textColor:[185,28,28]}},
                         {content:e.tdsPaid?'Paid':'Pending',styles:{halign:'center',textColor:e.tdsPaid?[21,128,61]:[220,38,38]}}
                     ]),
-                    foot:[[{content:'TOTAL',colSpan:6,styles:{fontStyle:'bold',halign:'right'}},{content:INR(d.totalTDSDeducted),styles:{fontStyle:'bold',halign:'right',textColor:[185,28,28]}},'']],
-                    columnStyles:{0:{cellWidth:18},1:{cellWidth:18},2:{cellWidth:38},3:{cellWidth:24},4:{cellWidth:24,halign:'right'},5:{cellWidth:13},6:{cellWidth:24},7:{cellWidth:23}}
+                    foot:[[{content:'TOTAL',colSpan:7,styles:{fontStyle:'bold',halign:'right'}},{content:INR(d.totalTDSDeducted),styles:{fontStyle:'bold',halign:'right',textColor:[185,28,28]}},'']],
+                    columnStyles:{0:{cellWidth:18},1:{cellWidth:18},2:{cellWidth:14},3:{cellWidth:34},4:{cellWidth:22},5:{cellWidth:22,halign:'right'},6:{cellWidth:12},7:{cellWidth:22},8:{cellWidth:20}}
                 });
                 y = doc.lastAutoTable.finalY+5;
             }
