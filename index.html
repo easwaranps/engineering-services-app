@@ -421,6 +421,14 @@
                         </label>
                     </div>
                     <div id="expTDSFields" class="grid grid-cols-2 md:grid-cols-4 gap-4 hidden">
+                        <div class="md:col-span-2">
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">TDS Section <span class="text-red-600">*</span></label>
+                            <select id="expTDSSectionCode" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" onchange="onTDSSectionChange()" required>
+                                <option value="">— Select section —</option>
+                                <!-- Options injected at runtime by initTDSSectionDropdown(), driven by the TDS_SECTIONS catalog -->
+                            </select>
+                            <p class="text-[10px] text-gray-500 mt-1">Required when TDS is applicable. Picking a section sets the default rate.</p>
+                        </div>
                         <div>
                             <label class="block text-xs font-semibold text-gray-600 mb-1" id="expTaxableAmtLabel">Taxable Amount in INR</label>
                             <input type="number" id="expTaxableAmt" placeholder="0.00" min="0" step="0.01" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
@@ -428,6 +436,7 @@
                         <div>
                             <label class="block text-xs font-semibold text-gray-600 mb-1">TDS %</label>
                             <select id="expTDSPct" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" onchange="onTDSPctChange()">
+                                <option value="0.1">0.1%</option>
                                 <option value="1">1%</option>
                                 <option value="2" selected>2%</option>
                                 <option value="5">5%</option>
@@ -1270,6 +1279,33 @@
         // Encashments dated within the current month are subtracted from
         // available alongside this-month leave taken; older encashments are
         // already baked into the carry-in.
+        // ════════════════════════════════════════════════════════════════
+        // TDS SECTION CATALOG (FY 2025-26 rates)
+        // ────────────────────────────────────────────────────────────────
+        // `defaultRate` is the rate suggested when the section is picked.
+        // null = the user must set the rate manually (slab-based or varying).
+        // The user can override the % at the record level regardless of default.
+        // ════════════════════════════════════════════════════════════════
+        const TDS_SECTIONS = [
+            { code: '192',     label: '192 — Salary (slab)',                            defaultRate: null },
+            { code: '192A',    label: '192A — PF withdrawal premature',                 defaultRate: 10   },
+            { code: '194A',    label: '194A — Interest (not securities)',               defaultRate: 10   },
+            { code: '194B',    label: '194B — Lottery / gaming winnings',               defaultRate: 30   },
+            { code: '194C',    label: '194C — Contractor payments (2% co / 1% indiv)',  defaultRate: 2    },
+            { code: '194D',    label: '194D — Insurance commission',                    defaultRate: 5    },
+            { code: '194H',    label: '194H — Commission / brokerage',                  defaultRate: 5    },
+            { code: '194I(a)', label: '194I(a) — Rent: plant & machinery',              defaultRate: 2    },
+            { code: '194I(b)', label: '194I(b) — Rent: land / building',                defaultRate: 10   },
+            { code: '194IA',   label: '194IA — Sale of immovable property (above 50L)', defaultRate: 1    },
+            { code: '194J(a)', label: '194J(a) — Professional / technical fees',        defaultRate: 10   },
+            { code: '194J(b)', label: '194J(b) — Royalty / FTS (specific)',             defaultRate: 2    },
+            { code: '194Q',    label: '194Q — Purchase of goods (above 50L)',           defaultRate: 0.1  },
+            { code: '195',     label: '195 — Payments to non-residents (varies)',       defaultRate: null },
+            { code: '206C',    label: '206C — TCS collected at source (varies)',        defaultRate: null }
+        ];
+        // Helpful lookup map for downstream views (Tax tab, PDF)
+        const TDS_SECTION_LABEL = Object.fromEntries(TDS_SECTIONS.map(s => [s.code, s.label]));
+
         // ════════════════════════════════════════════════════════════════
         // All statuses that count as leave (1 day each)
         const LEAVE_STATUSES = ['Leave','Casual Leave','Sick Leave','Earned Leave','Comp Off'];
@@ -8199,6 +8235,11 @@
                 document.getElementById('expTDSApplicable').checked   = exp.tdsApplicable||false;
                 if (exp.tdsApplicable) {
                     document.getElementById('expTDSFields').classList.remove('hidden');
+                    // Section catalog dropdown must be populated before we set the value
+                    // (in case this code runs before DOMContentLoaded — defensive).
+                    initTDSSectionDropdown();
+                    const sectSel = document.getElementById('expTDSSectionCode');
+                    if (sectSel) sectSel.value = exp.tdsSection || '';
                     document.getElementById('expTaxableAmt').value = exp.taxableAmt||'';
                     document.getElementById('expTDSPct').value     = exp.tdsPct||'2';
                     document.getElementById('expTDSAmt').value     = exp.tdsAmt||'';
@@ -8667,6 +8708,43 @@
             calcExpAmounts();
         });
 
+        // ── Populate the TDS Section dropdown from the catalog ──
+        // Called once on app load (and idempotent if called again, since it
+        // resets innerHTML). Keeps the placeholder option at the top.
+        function initTDSSectionDropdown() {
+            const sel = document.getElementById('expTDSSectionCode');
+            if (!sel) return;
+            sel.innerHTML = '<option value="">— Select section —</option>' +
+                TDS_SECTIONS.map(s => `<option value="${s.code}">${s.label}</option>`).join('');
+        }
+
+        // ── When the user picks a section, set the default % ──
+        // Only changes the rate if the section has a known default. For
+        // null-default sections (192/195/206C — slab or varying), we leave
+        // the existing % alone so the user picks manually.
+        function onTDSSectionChange() {
+            const code = document.getElementById('expTDSSectionCode')?.value || '';
+            if (!code) { calcExpAmounts(); return; }
+            const section = TDS_SECTIONS.find(s => s.code === code);
+            if (section && section.defaultRate !== null) {
+                const pctSel = document.getElementById('expTDSPct');
+                const target = String(section.defaultRate);
+                // If our standard dropdown contains this value, use it.
+                // Otherwise switch to "Other" and write the rate into the custom field.
+                const hasOption = Array.from(pctSel?.options || []).some(o => o.value === target);
+                if (hasOption) {
+                    pctSel.value = target;
+                    document.getElementById('expTDSCustomPctWrap')?.classList.add('hidden');
+                } else {
+                    pctSel.value = 'Other';
+                    document.getElementById('expTDSCustomPctWrap')?.classList.remove('hidden');
+                    const cPct = document.getElementById('expTDSCustomPct');
+                    if (cPct) cPct.value = target;
+                }
+            }
+            calcExpAmounts();
+        }
+
         function onTDSPctChange() {
             const sel = document.getElementById('expTDSPct');
             const wrap = document.getElementById('expTDSCustomPctWrap');
@@ -8776,7 +8854,59 @@
             const adv   = (billType === 'SUPPLIER' || billType === 'SALARY' || billType === '')
                           ? (parseFloat(document.getElementById('expAdvanceAmt').value)||0) : 0;
             const billINR = bill * rate;
-            const tdsAmt  = tdsOn ? (parseFloat(document.getElementById('expTDSAmt').value)||0) : 0;
+            let tdsAmt  = tdsOn ? (parseFloat(document.getElementById('expTDSAmt').value)||0) : 0;
+            const tdsSectionCode = tdsOn ? (document.getElementById('expTDSSectionCode')?.value || '') : '';
+
+            // ── TDS Section mandatory gate ──
+            // If TDS is ticked, the section MUST be picked. Quarterly TDS filing
+            // (Form 26Q/27Q) requires section-wise totals — leaving it blank makes
+            // the record unfilable later. Hard block, no soft override.
+            if (tdsOn && !tdsSectionCode) {
+                alert('⚠ TDS Section is required when TDS Applicable is ticked.\n\n' +
+                      'Please pick the section (194A, 194C, 194J etc.) from the dropdown. ' +
+                      'Quarterly TDS filing reports each section separately, so this cannot be left blank.');
+                // Try to focus the dropdown so the user can act immediately
+                document.getElementById('expTDSSectionCode')?.focus();
+                if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Expense'; }
+                window._expSaving = false;
+                return;
+            }
+
+            // ── TDS validation gate ──
+            // When TDS Applicable is ticked but the computed amount is 0, the record
+            // would silently fall off the Tax tab. Two ways this can happen:
+            //   (a) User filled Taxable Amt + TDS % but calcExpAmounts() didn't
+            //       refresh the read-only TDS Amount field → recover silently.
+            //   (b) Taxable Amt is genuinely missing → warn the user with a
+            //       confirm() so they can either cancel and fix, or save knowingly.
+            if (tdsOn && tdsAmt <= 0) {
+                const taxableField = parseFloat(document.getElementById('expTaxableAmt')?.value) || 0;
+                const pctSel       = document.getElementById('expTDSPct')?.value;
+                const pctNum       = pctSel === 'Other'
+                    ? (parseFloat(document.getElementById('expTDSCustomPct')?.value) || 0)
+                    : (parseFloat(pctSel) || 0);
+                // Case (a): we have the inputs but the cached amount is stale → recover.
+                if (taxableField > 0 && pctNum > 0) {
+                    tdsAmt = +(taxableField * pctNum / 100).toFixed(2);
+                    const tdsEl = document.getElementById('expTDSAmt');
+                    if (tdsEl) tdsEl.value = tdsAmt.toFixed(2);
+                    console.log(`TDS amount auto-recovered: ${tdsAmt} (= ${taxableField} × ${pctNum}%)`);
+                } else {
+                    // Case (b): missing data → ask the user before persisting a TDS=0 record.
+                    const missing = [];
+                    if (taxableField <= 0) missing.push('Taxable Amount');
+                    if (pctNum <= 0)       missing.push('TDS %');
+                    const proceed = confirm(
+                        '⚠ TDS Applicable is ticked, but the TDS Amount is ₹0.\n\n' +
+                        'Missing: ' + missing.join(' and ') + '\n\n' +
+                        'If you save now, this entry will NOT appear on the Tax tab — there is no TDS to deposit.\n\n' +
+                        'OK = Save anyway (no TDS tracking)\n' +
+                        'Cancel = Go back and complete the TDS section'
+                    );
+                    if (!proceed) return;
+                }
+            }
+
             const totalTax = cgst + sgst + igst;
             const grossTotal = billINR + totalTax;          // Total Bill Amount
             const netPayable = +(grossTotal - tdsAmt - cn - adv).toFixed(2);
@@ -8835,6 +8965,7 @@
                 creditNote:        cn,
                 creditNoteDetails: document.getElementById('expCreditNoteDetails').value,
                 tdsApplicable:     tdsOn,
+                tdsSection:        tdsSectionCode,    // e.g. '194C' — required when tdsOn
                 taxableAmt:        tdsOn ? (parseFloat(document.getElementById('expTaxableAmt').value)||0) : 0,
                 tdsPct:            tdsOn ? (document.getElementById('expTDSPct').value === 'Other'
                                     ? (document.getElementById('expTDSCustomPct')?.value + '%')
@@ -9238,13 +9369,32 @@
             </div>`;
 
             // ── TDS PANEL ─────────────────────────────────────────────────
-            const tdsRows = d.tdsExpenses.map((e,i) => {
+            // Group expenses by TDS section so the table reads like a quarterly
+            // filing report. Each group has its own sub-header row with a section
+            // sub-total. Records without a section (legacy data) collect under
+            // an "Unspecified" group so the user can spot and fix them.
+            const tdsBySection = {};
+            d.tdsExpenses.forEach(e => {
+                const sec = e.tdsSection || '— Unspecified —';
+                (tdsBySection[sec] = tdsBySection[sec] || []).push(e);
+            });
+            // Catalog-defined sections appear first in catalog order, then any
+            // unrecognised codes (including "Unspecified"), alphabetically.
+            const catalogOrder = TDS_SECTIONS.map(s => s.code);
+            const orderedSections = [
+                ...catalogOrder.filter(c => tdsBySection[c]),
+                ...Object.keys(tdsBySection).filter(s => !catalogOrder.includes(s)).sort()
+            ];
+
+            // Helper: row HTML for one expense
+            const _renderTDSRow = (e, i) => {
                 const paid    = !!e.tdsPaid;
                 const challan = e.tdsChallan||'';
                 const safeId  = e.expID.replace(/'/g,"\\'");
                 return `<tr class="border-t hover:bg-red-50 ${paid?'bg-green-50':''}">
-                    <td class="px-3 py-2 text-xs">${i+1}</td>
+                    <td class="px-3 py-2 text-xs">${i}</td>
                     <td class="px-3 py-2 text-xs font-medium">${e.billDate||'—'}</td>
+                    <td class="px-3 py-2 text-xs font-mono font-semibold text-red-700">${e.tdsSection||'—'}</td>
                     <td class="px-3 py-2 text-xs">${e.companyName||'—'}</td>
                     <td class="px-3 py-2 text-xs">${e.voucherNo||e.billNo||'—'}</td>
                     <td class="px-3 py-2 text-xs text-right">${fmt(e.taxableAmt||e.billAmtINR||0)}</td>
@@ -9263,7 +9413,55 @@
                         </button>
                     </td>
                 </tr>`;
+            };
+
+            // Build the rows: section header + records + section subtotal, per group.
+            let _rowCounter = 0;
+            const tdsRows = orderedSections.map(sec => {
+                const items = tdsBySection[sec];
+                const subTotal = items.reduce((s,e) => s + (parseFloat(e.tdsAmt)||0), 0);
+                const sectionMeta = TDS_SECTIONS.find(s => s.code === sec);
+                const labelText = sectionMeta ? sectionMeta.label : sec;
+                const headerRow = `<tr class="bg-red-200">
+                    <td colspan="11" class="px-3 py-1.5 text-xs font-bold text-red-900">
+                        📌 Section ${sec}${sectionMeta?` <span class="font-normal text-red-700 ml-1">— ${labelText.replace(sec+' — ','')}</span>`:''}
+                        <span class="float-right">Subtotal: <span class="font-mono">${fmt(subTotal)}</span> · ${items.length} entr${items.length===1?'y':'ies'}</span>
+                    </td>
+                </tr>`;
+                return headerRow + items.map(e => { _rowCounter++; return _renderTDSRow(e, _rowCounter); }).join('');
             }).join('');
+
+            // ── TDS SECTION BREAKDOWN CARD ────────────────────────────────
+            // Per-section subtotals shown as a grid of compact tiles so the user
+            // can see liability per section at a glance — useful for matching
+            // against challan deposits (which are filed section-wise).
+            const tdsSectionBreakdown = d.tdsExpenses.length ? `
+            <div class="bg-white rounded-2xl shadow-sm mb-6 overflow-hidden border border-red-100">
+                <div class="px-5 py-3 bg-gradient-to-r from-red-700 to-red-600">
+                    <h3 class="text-white font-bold text-base">📊 TDS SECTION-WISE BREAKDOWN — ${d.monthName} ${year}</h3>
+                    <p class="text-red-100 text-xs mt-0.5">Per-section liability for matching against challan deposits</p>
+                </div>
+                <div class="p-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                    ${orderedSections.map(sec => {
+                        const items    = tdsBySection[sec];
+                        const subTotal = items.reduce((s,e) => s + (parseFloat(e.tdsAmt)||0), 0);
+                        const paidSub  = items.reduce((s,e) => s + (e.tdsPaid ? (parseFloat(e.tdsAmt)||0) : 0), 0);
+                        const pending  = subTotal - paidSub;
+                        const meta     = TDS_SECTIONS.find(s => s.code === sec);
+                        const shortDesc = meta ? meta.label.replace(sec+' — ','').split('(')[0].trim() : sec;
+                        const isUnspec = sec === '— Unspecified —';
+                        return `<div class="rounded-xl border ${isUnspec?'border-amber-300 bg-amber-50':'border-red-200 bg-red-50'} p-3">
+                            <p class="text-xs font-mono font-bold ${isUnspec?'text-amber-800':'text-red-800'}">${sec}</p>
+                            <p class="text-[10px] text-gray-600 truncate mb-1" title="${shortDesc}">${shortDesc}</p>
+                            <p class="text-lg font-bold ${isUnspec?'text-amber-700':'text-red-700'}">${fmt(subTotal)}</p>
+                            <div class="flex justify-between text-[10px] text-gray-500 mt-1">
+                                <span>${items.length} entr${items.length===1?'y':'ies'}</span>
+                                <span>Pending: <strong class="text-red-700">${fmt(pending)}</strong></span>
+                            </div>
+                        </div>`;
+                    }).join('')}
+                </div>
+            </div>` : '';
 
             const tdsPanel = `
             <div class="bg-white rounded-2xl shadow-sm mb-6 overflow-hidden">
@@ -9291,6 +9489,7 @@
                             <tr>
                                 <th class="px-3 py-2">#</th>
                                 <th class="px-3 py-2 text-left">Bill Date</th>
+                                <th class="px-3 py-2 text-left">Section</th>
                                 <th class="px-3 py-2 text-left">Vendor / Party</th>
                                 <th class="px-3 py-2 text-left">Bill Log Ref No</th>
                                 <th class="px-3 py-2 text-right">Taxable Amt</th>
@@ -9304,7 +9503,7 @@
                         <tbody>${tdsRows}</tbody>
                         <tfoot class="bg-red-100">
                             <tr>
-                                <td colspan="6" class="px-3 py-2 text-xs font-bold text-right text-red-800">TOTAL TDS TO DEPOSIT:</td>
+                                <td colspan="7" class="px-3 py-2 text-xs font-bold text-right text-red-800">TOTAL TDS TO DEPOSIT:</td>
                                 <td class="px-3 py-2 text-sm font-bold text-right text-red-800">${fmt(d.totalTDSDeducted)}</td>
                                 <td colspan="3"></td>
                             </tr>
@@ -9571,7 +9770,7 @@
                 </div>
             </div>`;
 
-            return cards + tdsPanel + tdsRecPanel + gstPanel + checklist;
+            return cards + tdsSectionBreakdown + tdsPanel + tdsRecPanel + gstPanel + checklist;
         }
 
         // ── TDS PAYMENT MODAL ─────────────────────────────────────────────
@@ -9681,6 +9880,48 @@
 
             // TDS Table
             if (d.tdsExpenses.length) {
+                // Build section grouping for the PDF (same logic as on-screen)
+                const _pdfBySection = {};
+                d.tdsExpenses.forEach(e => {
+                    const sec = e.tdsSection || '— Unspecified —';
+                    (_pdfBySection[sec] = _pdfBySection[sec] || []).push(e);
+                });
+                const _catalogOrder = TDS_SECTIONS.map(s => s.code);
+                const _orderedSections = [
+                    ..._catalogOrder.filter(c => _pdfBySection[c]),
+                    ...Object.keys(_pdfBySection).filter(s => !_catalogOrder.includes(s)).sort()
+                ];
+
+                // Section breakdown summary table — one row per section with subtotal
+                doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+                    styles:{fontSize:7.5,cellPadding:2.5},
+                    headStyles:{fillColor:[127,29,29],textColor:[255,255,255],fontStyle:'bold'},
+                    head:[['TDS SECTION-WISE BREAKDOWN',{content:'',colSpan:3}]],
+                    body:[],columnStyles:{0:{cellWidth:CW}}
+                });
+                y = doc.lastAutoTable.finalY;
+                doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+                    styles:{fontSize:8,cellPadding:2.5},
+                    headStyles:{fillColor:[185,28,28],textColor:[255,255,255],fontStyle:'bold'},
+                    head:[['Section','Description','Entries','TDS Amount']],
+                    body:_orderedSections.map(sec => {
+                        const items   = _pdfBySection[sec];
+                        const subTot  = items.reduce((s,e) => s + (parseFloat(e.tdsAmt)||0), 0);
+                        const meta    = TDS_SECTIONS.find(s => s.code === sec);
+                        const desc    = meta ? meta.label.replace(sec+' — ','') : '(unspecified — please assign)';
+                        return [
+                            {content:sec,styles:{fontStyle:'bold'}},
+                            desc,
+                            {content:String(items.length),styles:{halign:'center'}},
+                            {content:INR(subTot),styles:{halign:'right',fontStyle:'bold',textColor:[185,28,28]}}
+                        ];
+                    }),
+                    foot:[[{content:'TOTAL',colSpan:3,styles:{fontStyle:'bold',halign:'right'}},{content:INR(d.totalTDSDeducted),styles:{fontStyle:'bold',halign:'right',textColor:[185,28,28]}}]],
+                    columnStyles:{0:{cellWidth:22},1:{cellWidth:CW-22-22-32},2:{cellWidth:22,halign:'center'},3:{cellWidth:32,halign:'right'}}
+                });
+                y = doc.lastAutoTable.finalY+4;
+                if(y>240){doc.addPage();y=15;}
+
                 doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
                     styles:{fontSize:7.5,cellPadding:2.5},
                     headStyles:{fillColor:[185,28,28],textColor:[255,255,255],fontStyle:'bold'},
@@ -9691,15 +9932,17 @@
                 doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
                     styles:{fontSize:7.5,cellPadding:2.5},
                     headStyles:{fillColor:[239,68,68],textColor:[255,255,255],fontStyle:'bold'},
-                    head:[['Date','Vendor','Bill No','Taxable','TDS %','TDS Amt','Status']],
-                    body:d.tdsExpenses.map(e=>[e.billDate||'—',e.companyName||'—',e.voucherNo||e.billNo||'—',
+                    head:[['Date','Section','Vendor','Bill No','Taxable','TDS %','TDS Amt','Status']],
+                    body:d.tdsExpenses.map(e=>[e.billDate||'—',
+                        {content:e.tdsSection||'—',styles:{fontStyle:'bold'}},
+                        e.companyName||'—',e.voucherNo||e.billNo||'—',
                         {content:INR(e.taxableAmt||e.billAmtINR||0),styles:{halign:'right'}},
                         {content:(e.tdsPct||'—')+'%',styles:{halign:'center'}},
                         {content:INR(e.tdsAmt),styles:{halign:'right',fontStyle:'bold',textColor:[185,28,28]}},
                         {content:e.tdsPaid?'Paid':'Pending',styles:{halign:'center',textColor:e.tdsPaid?[21,128,61]:[220,38,38]}}
                     ]),
-                    foot:[[{content:'TOTAL',colSpan:5,styles:{fontStyle:'bold',halign:'right'}},{content:INR(d.totalTDSDeducted),styles:{fontStyle:'bold',halign:'right',textColor:[185,28,28]}},'']],
-                    columnStyles:{0:{cellWidth:18},1:{cellWidth:45},2:{cellWidth:28},3:{cellWidth:28,halign:'right'},4:{cellWidth:14},5:{cellWidth:28},6:{cellWidth:21}}
+                    foot:[[{content:'TOTAL',colSpan:6,styles:{fontStyle:'bold',halign:'right'}},{content:INR(d.totalTDSDeducted),styles:{fontStyle:'bold',halign:'right',textColor:[185,28,28]}},'']],
+                    columnStyles:{0:{cellWidth:18},1:{cellWidth:18},2:{cellWidth:38},3:{cellWidth:24},4:{cellWidth:24,halign:'right'},5:{cellWidth:13},6:{cellWidth:24},7:{cellWidth:23}}
                 });
                 y = doc.lastAutoTable.finalY+5;
             }
@@ -11952,6 +12195,10 @@
             if (currencySelect) {
                 currencySelect.addEventListener('change', updateTotals);
             }
+
+            // Populate the TDS Section dropdown from the catalog. Safe to call
+            // regardless of whether the modal is open — the <select> is in the DOM.
+            initTDSSectionDropdown();
         });
 
         // ════════════════════════════════════════════════════════════════════
