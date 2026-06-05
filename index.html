@@ -991,6 +991,62 @@
                     <p class="text-xs text-gray-400 mt-1">Select which bank account will receive payment for this invoice</p>
                 </div>
 
+                <!-- ════════════════════════════════════════════════════════════
+                     PAYMENTS RECEIVED (Invoice category only)
+                     Tracks one or more incoming payments against this invoice.
+                     Each entry: amount, date, mode, ref, remarks.
+                     Visibility toggled by toggleTxnPaymentsSection() based on
+                     txnCategory === 'INVOICE'. Balance is auto-computed.
+                     ════════════════════════════════════════════════════════════ -->
+                <div id="txnPaymentsSection" class="mt-4 pt-4 border-t hidden">
+                    <div class="flex items-center justify-between mb-3">
+                        <div>
+                            <h3 class="text-base font-bold text-gray-800">💰 Payments Received</h3>
+                            <p class="text-xs text-gray-500">Record advance, partial, or final payments against this invoice</p>
+                        </div>
+                        <button type="button" id="addPaymentBtn" onclick="addInvoicePaymentRow()"
+                            class="px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700">
+                            + Add Payment
+                        </button>
+                    </div>
+
+                    <!-- Balance summary tiles -->
+                    <div id="txnBalanceSummary" class="grid grid-cols-3 gap-3 mb-3 text-sm">
+                        <div class="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                            <p class="text-[10px] text-gray-500 uppercase font-semibold">Grand Total</p>
+                            <p class="font-bold text-gray-900" id="balGrandTotal">₹0.00</p>
+                        </div>
+                        <div class="rounded-lg border border-green-200 bg-green-50 p-3">
+                            <p class="text-[10px] text-green-700 uppercase font-semibold">Received</p>
+                            <p class="font-bold text-green-700" id="balReceived">₹0.00</p>
+                        </div>
+                        <div id="balanceDueTile" class="rounded-lg border border-red-200 bg-red-50 p-3">
+                            <p class="text-[10px] text-red-700 uppercase font-semibold">Balance Due</p>
+                            <p class="font-bold text-red-700" id="balDue">₹0.00</p>
+                        </div>
+                    </div>
+
+                    <!-- Payment rows table -->
+                    <div class="overflow-x-auto border rounded-lg">
+                        <table class="w-full text-sm">
+                            <thead class="bg-gray-50 text-xs text-gray-600 uppercase">
+                                <tr>
+                                    <th class="px-3 py-2 text-left">Date</th>
+                                    <th class="px-3 py-2 text-right">Amount (INR)</th>
+                                    <th class="px-3 py-2 text-left">Mode</th>
+                                    <th class="px-3 py-2 text-left">Ref / TXN No.</th>
+                                    <th class="px-3 py-2 text-left">Remarks</th>
+                                    <th class="px-3 py-2 text-center w-16">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="txnPaymentsBody">
+                                <!-- Rows injected by addInvoicePaymentRow() -->
+                            </tbody>
+                        </table>
+                    </div>
+                    <p id="txnPaymentsEmpty" class="text-xs text-gray-400 text-center py-2">No payments recorded yet.</p>
+                </div>
+
                 <div class="flex gap-3 justify-end pt-4 border-t">
                     <button type="button" onclick="closeTransactionModal()" class="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
                     <button type="submit" class="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Save</button>
@@ -7113,19 +7169,43 @@
         }
 
         // Build one transaction row
-        function txnRow(t) {
+        function txnRow(t, withBalance = false) {
             const locked = (t.txnCategory === 'PO' && t.status === 'Paid') ||
                            (t.txnCategory === 'INVOICE' && t.status === 'Completed');
             const hasAttach = (t.attachments||[]).length > 0;
             const showDocs  = (t.txnCategory === 'INVOICE' || t.txnCategory === 'PO') &&
                               ['Approved','Sent','Completed','Paid'].includes(t.status);
             const tJson = JSON.stringify(t).replace(/'/g,"&apos;");
+            // Balance-due cell — INVOICE category only. Reads payment history
+            // and compares with computed line-item grand total. Colour-coded:
+            //   green = fully paid, red = balance pending, amber = no payments yet, grey = none recorded.
+            let balanceCell = '';
+            if (withBalance) {
+                const tot = calculateTotals(t.items || []);
+                const grandTotal = parseFloat(tot.total) || 0;
+                const received = (t.paymentsReceived || []).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
+                const balance  = +(grandTotal - received).toFixed(2);
+                const fmt = n => '₹' + (typeof formatNumber === 'function' ? formatNumber(n) : Number(n).toFixed(2));
+                let chip;
+                if ((t.paymentsReceived||[]).length === 0) {
+                    chip = `<span class="text-xs text-gray-400">— no payments —</span>`;
+                } else if (Math.abs(balance) < 0.005) {
+                    chip = `<span class="px-2 py-1 rounded-full bg-green-100 text-green-700 text-xs font-bold">✓ Paid in full</span>`;
+                } else if (balance < 0) {
+                    chip = `<span class="px-2 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-bold" title="Received more than invoiced">⚠ Overpaid ${fmt(-balance)}</span>`;
+                } else {
+                    chip = `<span class="px-2 py-1 rounded-full bg-red-100 text-red-700 text-xs font-bold">${fmt(balance)} due</span>
+                            <div class="text-[10px] text-gray-500 mt-0.5">Recd ${fmt(received)} / ${fmt(grandTotal)}</div>`;
+                }
+                balanceCell = `<td class="px-3 py-2 text-right whitespace-nowrap">${chip}</td>`;
+            }
             return `<tr class="border-b hover:bg-gray-50 text-sm">
                 <td class="px-3 py-2 font-medium text-indigo-700 whitespace-nowrap">${t.txnID}</td>
                 <td class="px-3 py-2 max-w-xs truncate" title="${t.partyName}">${t.partyName}</td>
                 <td class="px-3 py-2 text-gray-500 whitespace-nowrap">${t.txnDate}</td>
                 <td class="px-3 py-2 text-gray-500">${t.reference || '—'}</td>
                 <td class="px-3 py-2">${statusBadge(t.status)}</td>
+                ${balanceCell}
                 <td class="px-3 py-2 text-right whitespace-nowrap">
                     <button onclick='exportTransactionToPDF(${tJson})' class="text-blue-600 hover:text-blue-800 mr-1" title="PDF">
                         <svg class="inline" width="15" height="15" fill="currentColor" viewBox="0 0 24 24"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/></svg>
@@ -7197,6 +7277,9 @@
                     t.txnCategory === g.cat && (g.dir === null || t.txnDirection === g.dir)
                 );
                 if (rows.length === 0) return '';
+                // Only the Invoice group gets a Balance Due column — that's where
+                // payment tracking happens. Other categories use the standard layout.
+                const isInvoiceGroup = g.cat === 'INVOICE';
                 return `
                 <div class="bg-white rounded-2xl shadow-sm mb-4 overflow-hidden">
                     <div class="${g.color} px-4 py-2 flex justify-between items-center">
@@ -7212,10 +7295,11 @@
                                     <th class="px-3 py-2 text-left">Date</th>
                                     <th class="px-3 py-2 text-left">Reference</th>
                                     <th class="px-3 py-2 text-left">Status</th>
+                                    ${isInvoiceGroup ? '<th class="px-3 py-2 text-right">Balance Due</th>' : ''}
                                     <th class="px-3 py-2 text-right">Actions</th>
                                 </tr>
                             </thead>
-                            <tbody>${rows.map(txnRow).join('')}</tbody>
+                            <tbody>${rows.map(t => txnRow(t, isInvoiceGroup)).join('')}</tbody>
                         </table>
                     </div>
                 </div>`;
@@ -11548,7 +11632,7 @@
                 const clone = el.cloneNode(true);
                 el.parentNode.replaceChild(clone, el);
             });
-            document.getElementById('txnCategory').addEventListener('change', () => { toggleSupportingDocs(); updateReferenceField(); updateTxnBankSection(); });
+            document.getElementById('txnCategory').addEventListener('change', () => { toggleSupportingDocs(); updateReferenceField(); updateTxnBankSection(); toggleTxnPaymentsSection(); });
             document.getElementById('txnDirection').addEventListener('change', () => { updatePartyDropdown(); updateReferenceField(); updateTxnBankSection(); });
             document.getElementById('txnStatus').addEventListener('change', toggleSupportingDocs);
             // When the party changes, the GST mode (CGST/SGST vs IGST) may flip.
@@ -11640,6 +11724,14 @@
             if (txn && txn.bankAccountId) {
                 document.getElementById('txnBankAccount').value = txn.bankAccountId;
             }
+
+            // Reset and (if INVOICE) load saved payments
+            clearInvoicePaymentRows();
+            if (txn && Array.isArray(txn.paymentsReceived)) {
+                txn.paymentsReceived.forEach(p => addInvoicePaymentRow(p));
+            }
+            toggleTxnPaymentsSection();   // show/hide based on category
+            recomputeInvoicePaymentBalance();
 
             toggleSupportingDocs();
             updateTxnBankSection();  // Show/hide and populate bank dropdown
@@ -11877,6 +11969,101 @@
             const wordsEl = document.getElementById('totalAmountWords');
             const currCode = document.getElementById('txnCurrency')?.value || 'INR';
             if (wordsEl) wordsEl.textContent = `(${currCode} ${wordsLabel})`;
+
+            // Grand total changed → balance summary tiles need a refresh.
+            // Safe to call even when the payments section isn't visible (it no-ops).
+            recomputeInvoicePaymentBalance();
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        // INVOICE PAYMENT TRACKING — payments received against an invoice
+        // ────────────────────────────────────────────────────────────────
+        // Each row in #txnPaymentsBody holds one payment. Rows are dynamic
+        // (no fixed count) and are serialised on save into the txn's
+        // `paymentsReceived` array. The balance tile updates as the user
+        // types in any amount field. Section is shown only when the
+        // transaction category is INVOICE (final invoice, not proforma).
+        // ════════════════════════════════════════════════════════════════
+
+        // Show/hide the Payments Received section based on category.
+        function toggleTxnPaymentsSection() {
+            const cat = document.getElementById('txnCategory')?.value || '';
+            const section = document.getElementById('txnPaymentsSection');
+            if (section) section.classList.toggle('hidden', cat !== 'INVOICE');
+        }
+
+        // Compute and render the Grand Total / Received / Balance Due tiles.
+        // Reads the form's current Grand Total (already in updateTotals)
+        // and sums every payment row's amount input.
+        function recomputeInvoicePaymentBalance() {
+            const totalEl = document.getElementById('totalAmount');
+            if (!totalEl) return;
+            // Strip the currency symbol and grouping commas to parse a number.
+            const grandTotal = parseFloat((totalEl.textContent || '').replace(/[^0-9.\-]/g, '')) || 0;
+            const rows = document.querySelectorAll('#txnPaymentsBody tr');
+            let received = 0;
+            rows.forEach(tr => {
+                received += parseFloat(tr.querySelector('.pay-amt')?.value) || 0;
+            });
+            const balance = +(grandTotal - received).toFixed(2);
+            const fmt = n => '₹' + (typeof formatNumber === 'function' ? formatNumber(n) : Number(n).toFixed(2));
+            const elTot = document.getElementById('balGrandTotal');
+            const elRcv = document.getElementById('balReceived');
+            const elDue = document.getElementById('balDue');
+            const tile  = document.getElementById('balanceDueTile');
+            if (elTot) elTot.textContent = fmt(grandTotal);
+            if (elRcv) elRcv.textContent = fmt(received);
+            if (elDue) elDue.textContent = fmt(balance);
+            // Recolour the Balance Due tile: red for outstanding, green for settled,
+            // amber for over-paid (which is a data-entry warning, not a real state).
+            if (tile) {
+                tile.className = 'rounded-lg border p-3 ' +
+                    (Math.abs(balance) < 0.005 ? 'border-green-200 bg-green-50' :
+                     balance < 0              ? 'border-amber-300 bg-amber-50' :
+                                                 'border-red-200 bg-red-50');
+                const lbl = tile.querySelector('p:first-child');
+                const amt = tile.querySelector('p:last-child');
+                const cls = Math.abs(balance) < 0.005 ? 'green' : balance < 0 ? 'amber' : 'red';
+                if (lbl) lbl.className = `text-[10px] text-${cls}-700 uppercase font-semibold`;
+                if (amt) amt.className = `font-bold text-${cls}-700`;
+                if (lbl) lbl.textContent = balance < 0 ? 'Overpaid by' : Math.abs(balance) < 0.005 ? 'Fully Paid' : 'Balance Due';
+            }
+            // Toggle empty-state line.
+            const empty = document.getElementById('txnPaymentsEmpty');
+            if (empty) empty.classList.toggle('hidden', rows.length > 0);
+        }
+
+        // Append a new payment row. Optional `p` arg pre-fills from a saved entry.
+        function addInvoicePaymentRow(p = null) {
+            const body = document.getElementById('txnPaymentsBody');
+            if (!body) return;
+            const tr = document.createElement('tr');
+            tr.className = 'border-t';
+            // Default the date to today for fresh rows
+            const today = new Date().toISOString().split('T')[0];
+            const modes = ['Cash','G-Pay / UPI','Bank Transfer (NEFT/RTGS/IMPS)','Cheque','Credit Card','Debit Card'];
+            tr.innerHTML = `
+                <td class="px-3 py-2"><input type="date" class="pay-date w-full px-2 py-1 border rounded text-sm" value="${p?.date || today}" max="${today}"/></td>
+                <td class="px-3 py-2"><input type="number" min="0" step="0.01" class="pay-amt w-full px-2 py-1 border rounded text-sm text-right" value="${p?.amount ?? ''}" placeholder="0.00" oninput="recomputeInvoicePaymentBalance()"/></td>
+                <td class="px-3 py-2">
+                    <select class="pay-mode w-full px-2 py-1 border rounded text-sm">
+                        <option value="">-- Select --</option>
+                        ${modes.map(m => `<option value="${m}" ${p?.mode===m?'selected':''}>${m}</option>`).join('')}
+                    </select>
+                </td>
+                <td class="px-3 py-2"><input type="text" class="pay-ref w-full px-2 py-1 border rounded text-sm" value="${(p?.refNo||'').replace(/"/g,'&quot;')}" placeholder="UPI / Cheque No."/></td>
+                <td class="px-3 py-2"><input type="text" class="pay-remarks w-full px-2 py-1 border rounded text-sm" value="${(p?.remarks||'').replace(/"/g,'&quot;')}" placeholder="optional"/></td>
+                <td class="px-3 py-2 text-center"><button type="button" onclick="this.closest('tr').remove(); recomputeInvoicePaymentBalance();" class="text-red-600 hover:text-red-800 text-xs font-medium">Remove</button></td>
+            `;
+            body.appendChild(tr);
+            recomputeInvoicePaymentBalance();
+        }
+
+        // Clear all payment rows (called when modal opens fresh / on category change).
+        function clearInvoicePaymentRows() {
+            const body = document.getElementById('txnPaymentsBody');
+            if (body) body.innerHTML = '';
+            recomputeInvoicePaymentBalance();
         }
 
         document.getElementById('transactionForm').addEventListener('submit', async (e) => {
@@ -11932,7 +12119,16 @@
                     attachments: currentTransaction?.attachments || [],
                     items: items,
                     convertedToInvoice: currentTransaction?.convertedToInvoice,
-                    convertedFromProforma: currentTransaction?.convertedFromProforma
+                    convertedFromProforma: currentTransaction?.convertedFromProforma,
+                    // Payments received against this invoice (only meaningful for txnCategory === 'INVOICE').
+                    // Persist regardless of category so a category change later doesn't silently lose entries.
+                    paymentsReceived: Array.from(document.querySelectorAll('#txnPaymentsBody tr')).map(tr => ({
+                        date:    tr.querySelector('.pay-date')?.value || '',
+                        amount:  parseFloat(tr.querySelector('.pay-amt')?.value) || 0,
+                        mode:    tr.querySelector('.pay-mode')?.value || '',
+                        refNo:   (tr.querySelector('.pay-ref')?.value || '').trim(),
+                        remarks: (tr.querySelector('.pay-remarks')?.value || '').trim()
+                    })).filter(p => p.amount > 0 || p.date)  // drop completely-empty rows
                 };
                 _stampRecord(txnData);
                 
