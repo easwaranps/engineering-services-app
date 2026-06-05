@@ -11551,6 +11551,11 @@
             document.getElementById('txnCategory').addEventListener('change', () => { toggleSupportingDocs(); updateReferenceField(); updateTxnBankSection(); });
             document.getElementById('txnDirection').addEventListener('change', () => { updatePartyDropdown(); updateReferenceField(); updateTxnBankSection(); });
             document.getElementById('txnStatus').addEventListener('change', toggleSupportingDocs);
+            // When the party changes, the GST mode (CGST/SGST vs IGST) may flip.
+            // Re-build all existing line items so the right rate fields become
+            // editable. We snapshot current values first so the user's data is
+            // preserved across the rebuild — only the readonly flags change.
+            document.getElementById('txnParty').addEventListener('change', refreshLineItemsForParty);
 
             if (txn) {
                 // Restore values AFTER clone (clone resets them)
@@ -11662,21 +11667,60 @@
         }
 
         // Enhanced addLineItem with smart GST calculation
+        // When the party changes mid-edit (or is selected after lines were added),
+        // we need to re-evaluate intrastate vs interstate and refresh the
+        // editable/readonly state of each line's CGST/SGST/IGST inputs.
+        // We do NOT touch the values themselves — only the readonly flag — so
+        // any user data is preserved. If there's a now-incorrect rate (e.g. an
+        // IGST value remaining from when the form thought it was interstate),
+        // it stays visible so the user notices and corrects it.
+        function refreshLineItemsForParty() {
+            const partyName = document.getElementById('txnParty').value;
+            const party = parties.find(p => p.partyName === partyName);
+            const useIGST = shouldUseIGST(settings.gstNumber, party?.gstNumber);
+            const lockStyle = 'background:#f3f4f6';
+            document.querySelectorAll('#lineItems tr').forEach(tr => {
+                const sgstInput = tr.querySelector('.item-sgst');
+                const cgstInput = tr.querySelector('.item-cgst');
+                const igstInput = tr.querySelector('.item-igst');
+                [sgstInput, cgstInput].forEach(el => {
+                    if (!el) return;
+                    if (useIGST) { el.setAttribute('readonly',''); el.style.background = '#f3f4f6'; }
+                    else        { el.removeAttribute('readonly'); el.style.background = ''; }
+                });
+                if (igstInput) {
+                    if (!useIGST) { igstInput.setAttribute('readonly',''); igstInput.style.background = '#f3f4f6'; }
+                    else          { igstInput.removeAttribute('readonly'); igstInput.style.background = ''; }
+                }
+            });
+        }
+
         function addLineItem(item = null) {
             lineItemCounter++;
             const id = item?.itemID || `item-${lineItemCounter}`;
             const rowNum = document.getElementById('lineItems').children.length + 1;
             
-            // Determine default GST based on party and company GST
+            // Determine GST mode based on company vs party state.
             const partyName = document.getElementById('txnParty').value;
             const party = parties.find(p => p.partyName === partyName);
             const useIGST = shouldUseIGST(settings.gstNumber, party?.gstNumber);
             
-            // IMPORTANT: Preserve exact GST values when editing (including 0%, 2.5%, etc)
-            // Use !== undefined instead of || to avoid treating 0 as falsy
-            const defaultSGST = useIGST ? 0 : (item && item.sgstPct !== undefined ? item.sgstPct : 9);
-            const defaultCGST = useIGST ? 0 : (item && item.cgstPct !== undefined ? item.cgstPct : 9);
-            const defaultIGST = useIGST ? (item && item.igstPct !== undefined ? item.igstPct : 18) : 0;
+            // Honour stored values FIRST. Only fall back to mode-based defaults
+            // when the item has no stored value (i.e. brand new line). Zeroing
+            // saved data based on the current mode is destructive — if a line
+            // was saved with 2.5%/2.5% CGST/SGST and the mode is currently
+            // IGST (e.g. because the party wasn't loaded yet), we must not
+            // overwrite those numbers.
+            const hasStored = item && (item.sgstPct !== undefined || item.cgstPct !== undefined || item.igstPct !== undefined);
+            const defaultSGST = hasStored
+                ? (item.sgstPct !== undefined ? item.sgstPct : 0)
+                : (useIGST ? 0 : 9);
+            const defaultCGST = hasStored
+                ? (item.cgstPct !== undefined ? item.cgstPct : 0)
+                : (useIGST ? 0 : 9);
+            const defaultIGST = hasStored
+                ? (item.igstPct !== undefined ? item.igstPct : 0)
+                : (useIGST ? 18 : 0);
             
             const tr = document.createElement('tr');
             tr.id = `line-${id}`;
