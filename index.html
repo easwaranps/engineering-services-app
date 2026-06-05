@@ -432,7 +432,10 @@
                     <div id="expTDSFields" class="grid grid-cols-2 md:grid-cols-4 gap-4 hidden">
                         <div class="md:col-span-2">
                             <label class="block text-xs font-semibold text-gray-600 mb-1">TDS Section <span class="text-red-600">*</span></label>
-                            <select id="expTDSSectionCode" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" onchange="onTDSSectionChange()" required>
+                            <!-- `required` is added/removed by the TDS Applicable checkbox handler.
+                                 Keeping it static here would make the form unsubmittable when TDS is
+                                 unchecked (browser tries to focus a hidden element and silently aborts). -->
+                            <select id="expTDSSectionCode" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" onchange="onTDSSectionChange()">
                                 <option value="">— Select section —</option>
                                 <!-- Options injected at runtime by initTDSSectionDropdown(), driven by the TDS_SECTIONS catalog -->
                             </select>
@@ -8298,11 +8301,17 @@
                                        || (TDS_SECTION_BY_ID[exp.tdsSection] ? exp.tdsSection : '')
                                        || (TDS_SECTION_BY_OLDCODE[exp.tdsSection || '']?.id || '');
                         sectSel.value = candidate || '';
+                        // Re-attach required since the static HTML no longer carries it
+                        // (we manage it dynamically via the checkbox handler).
+                        sectSel.setAttribute('required', '');
                     }
                     document.getElementById('expTaxableAmt').value = exp.taxableAmt||'';
                     document.getElementById('expTDSPct').value     = exp.tdsPct||'2';
                     document.getElementById('expTDSAmt').value     = exp.tdsAmt||'';
                     document.getElementById('expNetAmt').value     = exp.netAmt||'';
+                } else {
+                    // Defensive: ensure required is OFF if record has TDS unchecked
+                    document.getElementById('expTDSSectionCode')?.removeAttribute('required');
                 }
                 // Load deductions
                 document.getElementById('expDeductionsApplicable').checked = exp.deductionsApplicable||false;
@@ -8795,6 +8804,17 @@
 
         document.getElementById('expTDSApplicable')?.addEventListener('change', function() {
             document.getElementById('expTDSFields').classList.toggle('hidden', !this.checked);
+            // Toggle `required` on the section dropdown to match checkbox state.
+            // Browsers refuse to submit a form when a required <select> has no value
+            // and refuse to focus an invisible element to show the error — so the
+            // submit silently fails. Removing `required` when TDS is unchecked
+            // unblocks the form; re-adding it when TDS is checked preserves the
+            // mandatory-section validation we still run in saveExpense().
+            const sectSel = document.getElementById('expTDSSectionCode');
+            if (sectSel) {
+                if (this.checked) sectSel.setAttribute('required', '');
+                else              sectSel.removeAttribute('required');
+            }
             if (!this.checked) {
                 // Reset custom pct field when TDS unchecked
                 document.getElementById('expTDSCustomPctWrap')?.classList.add('hidden');
