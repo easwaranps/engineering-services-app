@@ -9499,11 +9499,15 @@
                       (e.tdsSectionNew  ? `<div class="font-mono text-[9px] text-gray-500">→ ${e.tdsSectionNew}</div>` : '') +
                       (e.tdsTracesCode  ? `<div class="text-[9px] text-blue-600">TRACES ${e.tdsTracesCode}</div>` : '')
                     : '<span class="text-gray-400">—</span>';
+                // Vendor PAN — prefer explicit field; derive from GSTIN as a fallback for legacy records.
+                const pan = (e.vendorPAN || '').trim() ||
+                    ((e.vendorGSTIN && e.vendorGSTIN.length >= 12) ? e.vendorGSTIN.substring(2,12) : '');
                 return `<tr class="border-t hover:bg-red-50 ${paid?'bg-green-50':''}">
                     <td class="px-3 py-2 text-xs">${i}</td>
                     <td class="px-3 py-2 text-xs font-medium">${e.billDate||'—'}</td>
                     <td class="px-3 py-2 text-xs">${sectionCell}</td>
                     <td class="px-3 py-2 text-xs">${e.companyName||'—'}</td>
+                    <td class="px-3 py-2 text-xs text-center font-mono">${pan?`<span class="text-gray-700">${pan}</span>`:'<span class="text-gray-300">—</span>'}</td>
                     <td class="px-3 py-2 text-xs">${e.voucherNo||e.billNo||'—'}</td>
                     <td class="px-3 py-2 text-xs text-right">${fmt(e.taxableAmt||e.billAmtINR||0)}</td>
                     <td class="px-3 py-2 text-xs text-center">${e.tdsPct||'—'}%</td>
@@ -9550,7 +9554,7 @@
                 const newCodeNote = sectionMeta?.newCode ? ` <span class="text-[10px] font-normal text-red-700">→ ${sectionMeta.newCode}</span>` : '';
                 const descNote    = sectionMeta?.description ? ` <span class="font-normal text-red-700 ml-1">— ${sectionMeta.description.replace(/—.*$/,'').trim()}</span>` : '';
                 const headerRow = `<tr class="bg-red-200">
-                    <td colspan="11" class="px-3 py-1.5 text-xs font-bold text-red-900">
+                    <td colspan="12" class="px-3 py-1.5 text-xs font-bold text-red-900">
                         📌 Section ${sec}${newCodeNote}${descNote}
                         <span class="float-right">Subtotal: <span class="font-mono">${fmt(subTotal)}</span> · ${items.length} entr${items.length===1?'y':'ies'}</span>
                         ${payeeBreakdown}
@@ -9620,6 +9624,7 @@
                                 <th class="px-3 py-2 text-left">Bill Date</th>
                                 <th class="px-3 py-2 text-left">Section</th>
                                 <th class="px-3 py-2 text-left">Vendor / Party</th>
+                                <th class="px-3 py-2 text-center">PAN</th>
                                 <th class="px-3 py-2 text-left">Bill Log Ref No</th>
                                 <th class="px-3 py-2 text-right">Taxable Amt</th>
                                 <th class="px-3 py-2 text-center">TDS %</th>
@@ -9632,7 +9637,7 @@
                         <tbody>${tdsRows}</tbody>
                         <tfoot class="bg-red-100">
                             <tr>
-                                <td colspan="7" class="px-3 py-2 text-xs font-bold text-right text-red-800">TOTAL TDS TO DEPOSIT:</td>
+                                <td colspan="8" class="px-3 py-2 text-xs font-bold text-right text-red-800">TOTAL TDS TO DEPOSIT:</td>
                                 <td class="px-3 py-2 text-sm font-bold text-right text-red-800">${fmt(d.totalTDSDeducted)}</td>
                                 <td colspan="3"></td>
                             </tr>
@@ -9694,6 +9699,7 @@
                 return `<tr class="border-t hover:bg-amber-50">
                     <td class="px-3 py-2 text-xs">${e.billDate||'—'}</td>
                     <td class="px-3 py-2 text-xs font-medium">${e.companyName||'—'}</td>
+                    <td class="px-3 py-2 text-xs text-center font-mono">${e.vendorGSTIN?`<span class="text-gray-700">${e.vendorGSTIN}</span>`:'<span class="text-gray-300">—</span>'}</td>
                     <td class="px-3 py-2 text-xs">${e.voucherNo||e.billNo||'—'}</td>
                     <td class="px-3 py-2 text-xs">${e.description||'—'}</td>
                     <td class="px-3 py-2 text-xs text-right">${fmt(e.billAmtINR||0)}</td>
@@ -9706,9 +9712,13 @@
 
             const gstOutputRows = d.outInvoices.map(t => {
                 const tot = calculateTotals(t.items||[]);
+                // Look up client's GSTIN from the linked party record (invoices link by name).
+                const party = (parties||[]).find(p => p.partyName === t.partyName);
+                const gstin = party?.gstNumber || t.gstNumber || '';
                 return `<tr class="border-t hover:bg-purple-50">
                     <td class="px-3 py-2 text-xs">${t.txnDate||'—'}</td>
                     <td class="px-3 py-2 text-xs font-medium">${t.partyName||'—'}</td>
+                    <td class="px-3 py-2 text-xs text-center font-mono">${gstin?`<span class="text-gray-700">${gstin}</span>`:'<span class="text-gray-300">—</span>'}</td>
                     <td class="px-3 py-2 text-xs">${t.txnID||'—'}</td>
                     <td class="px-3 py-2 text-xs">${t.reference||'—'}</td>
                     <td class="px-3 py-2 text-xs text-right">${fmt(tot.subtotal||0)}</td>
@@ -9785,6 +9795,7 @@
                             <tr>
                                 <th class="px-3 py-2 text-left">Date</th>
                                 <th class="px-3 py-2 text-left">Vendor / Director</th>
+                                <th class="px-3 py-2 text-center">GSTIN</th>
                                 <th class="px-3 py-2 text-left">Ref No</th>
                                 <th class="px-3 py-2 text-left">Description</th>
                                 <th class="px-3 py-2 text-right">Taxable</th>
@@ -9803,6 +9814,7 @@
                                 return `<tr class="border-t bg-indigo-50 hover:bg-indigo-100">
                                     <td class="px-3 py-2 text-xs text-indigo-700">${de.expDate||'—'}</td>
                                     <td class="px-3 py-2 text-xs font-medium text-indigo-700">${de.vendor||dirName} <span class="text-indigo-400 text-xs">(Director)</span></td>
+                                    <td class="px-3 py-2 text-xs text-center font-mono text-indigo-600">${de.vendorGSTIN?`<span>${de.vendorGSTIN}</span>`:'<span class="text-indigo-300">—</span>'}</td>
                                     <td class="px-3 py-2 text-xs text-indigo-600">${de.billNo||'Dir-Exp'}</td>
                                     <td class="px-3 py-2 text-xs text-indigo-600">${de.description||de.category||'—'}</td>
                                     <td class="px-3 py-2 text-xs text-right text-indigo-600">${fmt(de.amount||0)}</td>
@@ -9815,7 +9827,7 @@
                         </tbody>
                         <tfoot class="bg-amber-100 font-bold text-xs">
                             <tr>
-                                <td colspan="5" class="px-3 py-2 text-right text-amber-800">TOTAL INPUT CREDIT:</td>
+                                <td colspan="6" class="px-3 py-2 text-right text-amber-800">TOTAL INPUT CREDIT:</td>
                                 <td class="px-3 py-2 text-right text-amber-800">${fmt(d.gstInputCGST)}</td>
                                 <td class="px-3 py-2 text-right text-amber-800">${fmt(d.gstInputSGST)}</td>
                                 <td class="px-3 py-2 text-right text-amber-800">${fmt(d.gstInputIGST)}</td>
@@ -9837,6 +9849,7 @@
                             <tr>
                                 <th class="px-3 py-2 text-left">Date</th>
                                 <th class="px-3 py-2 text-left">Client</th>
+                                <th class="px-3 py-2 text-center">GSTIN</th>
                                 <th class="px-3 py-2 text-left">Invoice No</th>
                                 <th class="px-3 py-2 text-left">Reference</th>
                                 <th class="px-3 py-2 text-right">Taxable</th>
@@ -9849,7 +9862,7 @@
                         <tbody>${gstOutputRows}</tbody>
                         <tfoot class="bg-purple-100 font-bold text-xs">
                             <tr>
-                                <td colspan="5" class="px-3 py-2 text-right text-purple-800">TOTAL OUTPUT:</td>
+                                <td colspan="6" class="px-3 py-2 text-right text-purple-800">TOTAL OUTPUT:</td>
                                 <td class="px-3 py-2 text-right text-purple-800">${fmt(d.gstOutputCGST)}</td>
                                 <td class="px-3 py-2 text-right text-purple-800">${fmt(d.gstOutputSGST)}</td>
                                 <td class="px-3 py-2 text-right text-purple-800">${fmt(d.gstOutputIGST)}</td>
