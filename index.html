@@ -4639,6 +4639,103 @@
 
                 let finalY = doc.lastAutoTable.finalY + 8;
 
+                // ── Payments Received (INVOICE only, when payments exist) ──
+                // Renders a compact summary card (Received / Balance Due) plus
+                // a per-payment table. Page-break aware: if there's not enough
+                // space for the heading + at least one row, jump to a fresh page.
+                if (txn.txnCategory === 'INVOICE' && Array.isArray(txn.paymentsReceived) && txn.paymentsReceived.length > 0) {
+                    const payments = txn.paymentsReceived.filter(p => (parseFloat(p.amount) || 0) > 0);
+                    if (payments.length > 0) {
+                        const totalReceived = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
+                        const balance       = +(grandTotal - totalReceived).toFixed(2);
+
+                        // Estimate space needed: heading + 2 summary rows + table head + payment rows + padding
+                        const estimatedH = 12 + 12 + 8 + (payments.length * 7) + 6;
+                        if (finalY + estimatedH > 272) { doc.addPage(); addHeader(doc, doc.internal.getNumberOfPages()); finalY = 50; }
+
+                        // Section heading
+                        doc.setFontSize(9); doc.setFont(undefined, 'bold'); doc.setTextColor(30, 30, 100);
+                        doc.text('Payments Received', 14, finalY);
+                        doc.setTextColor(0, 0, 0);
+                        finalY += 4;
+
+                        // Summary mini-table: Grand Total / Received / Balance Due
+                        // Colour the Balance Due row based on outstanding amount.
+                        const balLabel = Math.abs(balance) < 0.005 ? 'Paid in Full'
+                                        : balance < 0              ? 'Overpaid by'
+                                        :                            'Balance Due';
+                        const summaryRows = [
+                            ['Grand Total',                fmtAmt(grandTotal)],
+                            ['Less: Payments Received',    fmtAmt(totalReceived)],
+                            [balLabel,                     fmtAmt(Math.abs(balance))]
+                        ];
+                        doc.autoTable({
+                            startY: finalY,
+                            margin: { top: 35, left: 14, right: 14, bottom: 20 },
+                            tableWidth: totalTableWidth,
+                            head: [],
+                            body: summaryRows,
+                            theme: 'grid',
+                            styles: { fontSize: 8, textColor: [30, 30, 30] },
+                            columnStyles: {
+                                0: { cellWidth: labelColW,  halign: 'right',  fillColor: [240, 248, 240] },
+                                1: { cellWidth: amountColW, halign: 'right',  fillColor: [240, 248, 240] }
+                            },
+                            didParseCell: function(data) {
+                                if (data.row.index === 2) {
+                                    // Balance row — colour-coded
+                                    data.cell.styles.fontStyle = 'bold';
+                                    data.cell.styles.fontSize  = 9;
+                                    if (Math.abs(balance) < 0.005) {
+                                        data.cell.styles.fillColor = [210, 245, 215];   // green — paid
+                                        data.cell.styles.textColor = [21, 90, 40];
+                                    } else if (balance < 0) {
+                                        data.cell.styles.fillColor = [255, 240, 210];   // amber — overpaid
+                                        data.cell.styles.textColor = [120, 70, 0];
+                                    } else {
+                                        data.cell.styles.fillColor = [250, 215, 215];   // red — outstanding
+                                        data.cell.styles.textColor = [130, 30, 30];
+                                    }
+                                }
+                            }
+                        });
+                        finalY = doc.lastAutoTable.finalY + 4;
+
+                        // Payment history table
+                        // Check space again before drawing the table.
+                        const tableH = 8 + (payments.length * 6) + 4;
+                        if (finalY + tableH > 272) { doc.addPage(); addHeader(doc, doc.internal.getNumberOfPages()); finalY = 50; }
+                        doc.autoTable({
+                            startY: finalY,
+                            margin: { top: 35, left: 14, right: 14, bottom: 20 },
+                            head: [['#', 'Date', 'Mode', 'Ref / TXN No.', 'Remarks', 'Amount']],
+                            body: payments.map((p, i) => [
+                                String(i + 1),
+                                p.date || '—',
+                                p.mode || '—',
+                                p.refNo || '—',
+                                p.remarks || '—',
+                                fmtAmt(parseFloat(p.amount) || 0)
+                            ]),
+                            theme: 'grid',
+                            headStyles: { fillColor: [22, 163, 74], textColor: 255, fontSize: 7.5, fontStyle: 'bold', halign: 'center' },
+                            bodyStyles: { fontSize: 7.5, textColor: [30, 30, 30] },
+                            columnStyles: {
+                                0: { cellWidth: 8,  halign: 'center' },
+                                1: { cellWidth: 22, halign: 'center' },
+                                2: { cellWidth: 42, halign: 'left'   },
+                                3: { cellWidth: 36, halign: 'left'   },
+                                4: { cellWidth: 'auto', halign: 'left' },
+                                5: { cellWidth: 28, halign: 'right'  }
+                            },
+                            didDrawPage: function(data) {
+                                if (data.pageNumber > 1) addHeader(doc, data.pageNumber);
+                            }
+                        });
+                        finalY = doc.lastAutoTable.finalY + 8;
+                    }
+                }
+
                 // ── Terms & Conditions (Quotation only) ────────────────────
                 if (txn.txnCategory === 'QUOTATION' && txn.terms) {
                     // Check space for heading
