@@ -5148,7 +5148,7 @@
                 // ── Director Expenses Sheet ──────────────────────────────
                 const dirExpRows = [['Exp ID','Director','Date','Category','Description','Vendor',
                     'Amount','GST?','CGST','SGST','IGST','GST Total','ITC Eligible','ITC Amt',
-                    'Bill No','Bill Date','GSTIN','HSN/SAC','Pay Mode','Reimbursed','Reimb Amt',
+                    'Bill No','Bill Date','GSTIN','HSN/SAC','Pay Mode','Card Issuer','Card Last4','Reimbursed','Reimb Amt',
                     'Reimb Date','Attachments','Ref']];
                 (directorExpenses||[]).forEach(d => {
                     const dirName = d.director==='dir1'?(settings.director1Name||'Director 1')
@@ -5165,7 +5165,7 @@
                         parseFloat((d.cgst||0)+(d.sgst||0)+(d.igst||0)),
                         d.itcEligible||'', parseFloat(d.itcAmt||0),
                         d.billNo||'', d.billDate||'', d.vendorGSTIN||'', d.hsnSac||'',
-                        d.payMode||'', d.reimbursed?'Yes':'No',
+                        d.payMode||'', d.cardIssuer||'', d.cardLast4||'', d.reimbursed?'Yes':'No',
                         parseFloat(d.reimbursedAmt||0), d.reimbursedDate||'',
                         attLinks, d.expRef||''
                     ]);
@@ -16632,7 +16632,10 @@ Automated WFH alert — ${company} Attendance System.`;
                                         ${d.tallyUpdated?`<span style="font-size:10px;background:#ccfbf1;color:#0d9488;padding:1px 6px;border-radius:4px">✓ Tally${d.tallyVoucherNo?' #'+d.tallyVoucherNo:''}</span>`:''}
                                     </td>
                                     <td class="px-3 py-2 text-xs ${d.projectNo?'text-blue-600 font-medium':''}">${d.projectNo||'—'}</td>
-                                    <td class="px-3 py-2 text-xs">${d.payMode||'—'}</td>
+                                    <td class="px-3 py-2 text-xs">
+                                        ${d.payMode||'—'}
+                                        ${(d.cardIssuer||d.cardLast4)?`<div class="text-[10px] text-gray-500 mt-0.5">${[d.cardIssuer,d.cardLast4?'****'+d.cardLast4:''].filter(Boolean).join(' ')}</div>`:''}
+                                    </td>
                                     <td class="px-3 py-2 text-right font-semibold text-gray-800">${fmtC(d.amount)}</td>
                                     <td class="px-3 py-2 text-center">
                                         ${d.reimbursed
@@ -16680,7 +16683,7 @@ Automated WFH alert — ${company} Attendance System.`;
                                 ${d.vendorGSTIN?`<p style="font-size:11px;color:#6b7280">GSTIN: ${d.vendorGSTIN}</p>`:''}
                                 ${d.billNo?`<p style="font-size:11px;color:#6b7280">Bill No: ${d.billNo} ${d.billDate||''}</p>`:''}
                                 ` : `<p style="font-size:12px;color:#9ca3af">No GST bill</p>`}
-                                                <p style="font-size:12px"><span class="text-gray-500">Mode:</span> ${d.payMode||'—'}${d.cardLast4?' ****'+d.cardLast4:''}</p>
+                                                <p style="font-size:12px"><span class="text-gray-500">Mode:</span> ${d.payMode||'—'}${d.cardIssuer?' · '+d.cardIssuer:''}${d.cardLast4?' ****'+d.cardLast4:''}</p>
                                                 ${d.paymentAccount?`<p style="font-size:12px"><span class="text-gray-500">Account:</span> <span class="text-amber-700 font-medium">${d.paymentAccount}</span></p>`:''}
                                                 ${d.refNo?`<p style="font-size:12px"><span class="text-gray-500">Ref/TXN No:</span> ${d.refNo}</p>`:''}
                                             </div>
@@ -16881,6 +16884,31 @@ Automated WFH alert — ${company} Attendance System.`;
                                 ${['Cash','G-Pay / UPI','Bank Transfer (NEFT/RTGS/IMPS)','Credit Card','Debit Card','Cheque','Company Card','Personal - To Reimburse'].map(m=>`<option value="${m}" ${exp?.payMode===m?'selected':''}>${m}</option>`).join('')}
                             </select>
                         </div>
+                        <div id="deCardIssuerWrap">
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Bank / Card Issuer</label>
+                            <input type="text" id="deCardIssuer" value="${exp?.cardIssuer||''}"
+                                placeholder="e.g. ICICI, HDFC, SBI"
+                                list="deCardIssuerOptions"
+                                autocomplete="off"
+                                class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                            <!-- Datalist suggestions come from bankAccounts so users can pick from already-configured
+                                 banks for consistency, but can also type a new issuer name freely. -->
+                            <datalist id="deCardIssuerOptions">
+                                ${(() => {
+                                    // Build a deduplicated list of bank+account-name combinations
+                                    const seen = new Set();
+                                    const items = [];
+                                    (bankAccounts||[]).forEach(b => {
+                                        const candidates = [b.bankName, b.accountName].filter(Boolean);
+                                        candidates.forEach(c => {
+                                            const k = c.trim();
+                                            if (k && !seen.has(k.toLowerCase())) { seen.add(k.toLowerCase()); items.push(k); }
+                                        });
+                                    });
+                                    return items.sort().map(n => `<option value="${n.replace(/"/g,'&quot;')}"></option>`).join('');
+                                })()}
+                            </datalist>
+                        </div>
                         <div id="deCardWrap">
                             <label class="block text-xs font-semibold text-gray-600 mb-1">Card Last 4 Digits</label>
                             <input type="text" id="deCardLast4" value="${exp?.cardLast4||''}" maxlength="4" placeholder="1234" class="w-full px-3 py-2 border rounded-lg text-sm"/>
@@ -17079,8 +17107,14 @@ Automated WFH alert — ${company} Attendance System.`;
 
         function toggleDePayFields() {
             const mode = document.getElementById('dePayMode')?.value||'';
-            const cardWrap = document.getElementById('deCardWrap');
-            if (cardWrap) cardWrap.classList.toggle('hidden', !['Credit Card','Debit Card','Company Card'].includes(mode));
+            const isCard = ['Credit Card','Debit Card','Company Card'].includes(mode);
+            const cardWrap   = document.getElementById('deCardWrap');
+            const issuerWrap = document.getElementById('deCardIssuerWrap');
+            // Both Bank/Card Issuer and Card Last 4 are gated together — they
+            // only make sense for the three card modes. For Cash/UPI/Cheque/etc.
+            // they're hidden to keep the modal compact.
+            if (cardWrap)   cardWrap.classList.toggle('hidden',   !isCard);
+            if (issuerWrap) issuerWrap.classList.toggle('hidden', !isCard);
         }
 
         function toggleDeReimbFields() {
@@ -17239,6 +17273,7 @@ Automated WFH alert — ${company} Attendance System.`;
                     projectNo:      document.getElementById('deProjectNo').value,
                     payMode:        document.getElementById('dePayMode').value,
                     cardLast4:      document.getElementById('deCardLast4')?.value||'',
+                    cardIssuer:     (document.getElementById('deCardIssuer')?.value||'').trim(),
                     paymentAccount: (document.getElementById('dePayAccount')?.value||'').trim(),
                     refNo:          document.getElementById('deRefNo').value,
                     payDate:        document.getElementById('dePayDate').value,
