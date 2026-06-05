@@ -8337,7 +8337,12 @@
                 if (exp.toBankAccountId)   document.getElementById('expToBankAccount').value   = exp.toBankAccountId;
                 if (exp.transferAmount)    document.getElementById('expTransferAmount').value  = exp.transferAmount;
                 // Salary fields
-                if (exp.staffID)       document.getElementById('expEmployeeId').value  = exp.staffID;
+                if (exp.staffID) {
+                    document.getElementById('expEmployeeId').value  = exp.staffID;
+                    // If the existing record has no vendorPAN but does have a staff link,
+                    // pull PAN from the staff record (only fills empty field — won't overwrite).
+                    onExpEmployeeChange();
+                }
                 if (exp.salaryMonth)   document.getElementById('expSalaryMonth').value = exp.salaryMonth;
                 // Statutory fields
                 if (exp.statutoryType)   document.getElementById('expStatutoryType').value   = exp.statutoryType;
@@ -8619,6 +8624,26 @@
                 : [];
             sel.innerHTML = '<option value="">-- Select Staff --</option>' +
                 activeStaff.map(s => `<option value="${s.staffID}">${s.name} (${s.staffType || ''})</option>`).join('');
+            // Wire the auto-PAN handler. We attach via addEventListener (rather than
+            // an inline onchange in the HTML) so we don't disturb any other change
+            // listeners that might be added later.
+            sel.onchange = onExpEmployeeChange;
+        }
+
+        // When a staff member is picked in the SALARY bill flow, auto-populate the
+        // Vendor PAN field from that staff's pan attribute. Only fills if the PAN
+        // field is empty — manual entries are preserved.
+        function onExpEmployeeChange() {
+            const sel = document.getElementById('expEmployeeId');
+            const panEl = document.getElementById('expVendorPAN');
+            if (!sel || !panEl) return;
+            const id = sel.value;
+            if (!id) return;
+            const s = (typeof staff !== 'undefined' && Array.isArray(staff))
+                ? staff.find(x => x.staffID === id) : null;
+            if (s && s.pan && !panEl.value.trim()) {
+                panEl.value = String(s.pan).toUpperCase();
+            }
         }
 
         // ─── GST State Code Map (EXP-003 / ITC GSTIN) ──────────────────────
@@ -9506,7 +9531,7 @@
                     <td class="px-3 py-2 text-xs">${i}</td>
                     <td class="px-3 py-2 text-xs font-medium">${e.billDate||'—'}</td>
                     <td class="px-3 py-2 text-xs">${sectionCell}</td>
-                    <td class="px-3 py-2 text-xs">${e.companyName||'—'}</td>
+                    <td class="px-3 py-2 text-xs">${e.companyName || e.staffName || e.vendor || '—'}</td>
                     <td class="px-3 py-2 text-xs text-center font-mono">${pan?`<span class="text-gray-700">${pan}</span>`:'<span class="text-gray-300">—</span>'}</td>
                     <td class="px-3 py-2 text-xs">${e.voucherNo||e.billNo||'—'}</td>
                     <td class="px-3 py-2 text-xs text-right">${fmt(e.taxableAmt||e.billAmtINR||0)}</td>
@@ -9698,7 +9723,7 @@
                 const tax = (parseFloat(e.cgst)||0)+(parseFloat(e.sgst)||0)+(parseFloat(e.igst)||0);
                 return `<tr class="border-t hover:bg-amber-50">
                     <td class="px-3 py-2 text-xs">${e.billDate||'—'}</td>
-                    <td class="px-3 py-2 text-xs font-medium">${e.companyName||'—'}</td>
+                    <td class="px-3 py-2 text-xs font-medium">${e.companyName || e.staffName || e.vendor || '—'}</td>
                     <td class="px-3 py-2 text-xs text-center font-mono">${e.vendorGSTIN?`<span class="text-gray-700">${e.vendorGSTIN}</span>`:'<span class="text-gray-300">—</span>'}</td>
                     <td class="px-3 py-2 text-xs">${e.voucherNo||e.billNo||'—'}</td>
                     <td class="px-3 py-2 text-xs">${e.description||'—'}</td>
@@ -10086,7 +10111,9 @@
                         return [e.billDate||'—',
                             {content:e.tdsSection||'—',styles:{fontStyle:'bold'}},
                             {content:e.tdsTracesCode||'—',styles:{halign:'center'}},
-                            e.companyName||'—',
+                            // Vendor cell — SALARY records hold the payee name in `staffName`
+                            // (not companyName), so fall back across the chain used elsewhere.
+                            e.companyName || e.staffName || e.vendor || '—',
                             {content:pan,styles:{halign:'center',fontStyle:pan!=='—'?'normal':'normal',fontSize:6.5}},
                             e.voucherNo||e.billNo||'—',
                             {content:INR(e.taxableAmt||e.billAmtINR||0),styles:{halign:'right'}},
@@ -10112,7 +10139,7 @@
                         ...d.gstInputExps.map(e=>{
                             const tax=(parseFloat(e.cgst)||0)+(parseFloat(e.sgst)||0)+(parseFloat(e.igst)||0);
                             return [e.billDate||'—',
-                                e.companyName||'—',
+                                e.companyName || e.staffName || e.vendor || '—',
                                 {content:e.vendorGSTIN||'—',styles:{fontSize:6.5,halign:'center'}},
                                 e.voucherNo||e.billNo||'—',
                                 {content:INR(e.billAmtINR||0),styles:{halign:'right'}},
