@@ -268,6 +268,15 @@
                         <label class="block text-xs font-semibold text-gray-600 mb-1" id="expCompanyLabel">Company / Vendor Name <span class="text-red-500">*</span></label>
                         <input type="text" id="expCompanyName" placeholder="Vendor / Supplier" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" required/>
                     </div>
+                    <!-- Vendor PAN — needed for TDS filings (Form 26Q). For GST-registered
+                         vendors, this auto-derives from the GSTIN (chars 3-12). For unregistered
+                         vendors or where TDS applies without GST, fill manually. -->
+                    <div id="expVendorPANWrap">
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Vendor PAN <span class="text-gray-400 font-normal text-[10px]">(for TDS)</span></label>
+                        <input type="text" id="expVendorPAN" maxlength="10" placeholder="e.g. AAACX0892J"
+                               class="field-editable w-full px-3 py-2 border rounded-lg text-sm uppercase tracking-wide"
+                               oninput="this.value=this.value.toUpperCase()"/>
+                    </div>
                     <!-- Salary-only: Employee dropdown (shown when Bill Type = SALARY) -->
                     <div id="expEmployeeWrap" class="hidden">
                         <label class="block text-xs font-semibold text-gray-600 mb-1">Employee / Staff <span class="text-red-500">*</span></label>
@@ -8260,6 +8269,7 @@
                 document.getElementById('expBillNo').value        = exp.billNo||'';
                 document.getElementById('expBillDate').value      = exp.billDate||'';
                 document.getElementById('expCompanyName').value   = exp.companyName||'';
+                document.getElementById('expVendorPAN').value     = exp.vendorPAN||'';
                 document.getElementById('expDescription').value   = exp.description||'';
                 document.getElementById('expCurrency').value      = exp.currency||'INR';
                 document.getElementById('expExchRate').value      = exp.exchRate||'1';
@@ -8711,6 +8721,18 @@
             }
             if (errEl) errEl.classList.add('hidden');
 
+            // ── Auto-derive Vendor PAN from GSTIN ──
+            // GSTIN format: [state-code:2][PAN:10][entity:1][Z][checksum:1] = 15 chars.
+            // Chars at positions 2-11 (0-indexed) are the PAN. We only set it if the PAN
+            // field is empty so we don't overwrite a user's manual entry.
+            const panEl = document.getElementById('expVendorPAN');
+            if (panEl && !panEl.value.trim()) {
+                const derivedPAN = val.substring(2, 12);
+                if (derivedPAN.length === 10) {
+                    panEl.value = derivedPAN;
+                }
+            }
+
             // Valid GSTIN — detect state and decide IGST vs CGST/SGST
             const partyStateCode = getStateFromGST(val);
             const partyState     = GST_STATE_CODES[partyStateCode] || `State code ${partyStateCode}`;
@@ -9018,6 +9040,10 @@
                 billNo:            document.getElementById('expBillNo').value,
                 billDate:          document.getElementById('expBillDate').value,
                 companyName:       document.getElementById('expCompanyName').value,
+                // Vendor PAN — needed for TDS filings (Form 26Q). Stored uppercased.
+                // For GST-registered vendors this typically equals chars 3-12 of vendorGSTIN
+                // but we store it separately so TDS-only (non-GST) vendors can have it too.
+                vendorPAN:         (document.getElementById('expVendorPAN')?.value || '').trim().toUpperCase(),
                 description:       document.getElementById('expDescription').value,
                 currency:          document.getElementById('expCurrency').value,
                 exchRate:          rate,
@@ -10037,18 +10063,27 @@
                 doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
                     styles:{fontSize:7,cellPadding:2},
                     headStyles:{fillColor:[239,68,68],textColor:[255,255,255],fontStyle:'bold'},
-                    head:[['Date','Section','TRACES','Vendor','Bill No','Taxable','TDS %','TDS Amt','Status']],
-                    body:d.tdsExpenses.map(e=>[e.billDate||'—',
-                        {content:e.tdsSection||'—',styles:{fontStyle:'bold'}},
-                        {content:e.tdsTracesCode||'—',styles:{halign:'center'}},
-                        e.companyName||'—',e.voucherNo||e.billNo||'—',
-                        {content:INR(e.taxableAmt||e.billAmtINR||0),styles:{halign:'right'}},
-                        {content:(e.tdsPct||'—')+'%',styles:{halign:'center'}},
-                        {content:INR(e.tdsAmt),styles:{halign:'right',fontStyle:'bold',textColor:[185,28,28]}},
-                        {content:e.tdsPaid?'Paid':'Pending',styles:{halign:'center',textColor:e.tdsPaid?[21,128,61]:[220,38,38]}}
-                    ]),
-                    foot:[[{content:'TOTAL',colSpan:7,styles:{fontStyle:'bold',halign:'right'}},{content:INR(d.totalTDSDeducted),styles:{fontStyle:'bold',halign:'right',textColor:[185,28,28]}},'']],
-                    columnStyles:{0:{cellWidth:18},1:{cellWidth:18},2:{cellWidth:14},3:{cellWidth:34},4:{cellWidth:22},5:{cellWidth:22,halign:'right'},6:{cellWidth:12},7:{cellWidth:22},8:{cellWidth:20}}
+                    head:[['Date','Section','TRACES','Vendor','PAN','Bill No','Taxable','TDS %','TDS Amt','Status']],
+                    body:d.tdsExpenses.map(e=>{
+                        // Vendor PAN priority: explicit vendorPAN field > derive from GSTIN chars 3-12 > '—'.
+                        // The derive step covers records saved before the PAN field existed but with a GSTIN.
+                        const pan = (e.vendorPAN || '').trim() ||
+                            ((e.vendorGSTIN && e.vendorGSTIN.length >= 12) ? e.vendorGSTIN.substring(2,12) : '') ||
+                            '—';
+                        return [e.billDate||'—',
+                            {content:e.tdsSection||'—',styles:{fontStyle:'bold'}},
+                            {content:e.tdsTracesCode||'—',styles:{halign:'center'}},
+                            e.companyName||'—',
+                            {content:pan,styles:{halign:'center',fontStyle:pan!=='—'?'normal':'normal',fontSize:6.5}},
+                            e.voucherNo||e.billNo||'—',
+                            {content:INR(e.taxableAmt||e.billAmtINR||0),styles:{halign:'right'}},
+                            {content:(e.tdsPct||'—')+'%',styles:{halign:'center'}},
+                            {content:INR(e.tdsAmt),styles:{halign:'right',fontStyle:'bold',textColor:[185,28,28]}},
+                            {content:e.tdsPaid?'Paid':'Pending',styles:{halign:'center',textColor:e.tdsPaid?[21,128,61]:[220,38,38]}}
+                        ];
+                    }),
+                    foot:[[{content:'TOTAL',colSpan:8,styles:{fontStyle:'bold',halign:'right'}},{content:INR(d.totalTDSDeducted),styles:{fontStyle:'bold',halign:'right',textColor:[185,28,28]}},'']],
+                    columnStyles:{0:{cellWidth:16},1:{cellWidth:16},2:{cellWidth:13},3:{cellWidth:26},4:{cellWidth:22},5:{cellWidth:18},6:{cellWidth:20,halign:'right'},7:{cellWidth:11},8:{cellWidth:22},9:{cellWidth:18}}
                 });
                 y = doc.lastAutoTable.finalY+5;
             }
@@ -10059,11 +10094,14 @@
                 doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
                     styles:{fontSize:7.5,cellPadding:2.5},
                     headStyles:{fillColor:[180,83,9],textColor:[255,255,255],fontStyle:'bold'},
-                    head:[['Date','Vendor','Bill No','Taxable','CGST','SGST','IGST','Total Tax']],
+                    head:[['Date','Vendor','GSTIN','Bill No','Taxable','CGST','SGST','IGST','Total Tax']],
                     body:[
                         ...d.gstInputExps.map(e=>{
                             const tax=(parseFloat(e.cgst)||0)+(parseFloat(e.sgst)||0)+(parseFloat(e.igst)||0);
-                            return [e.billDate||'—',e.companyName||'—',e.voucherNo||e.billNo||'—',
+                            return [e.billDate||'—',
+                                e.companyName||'—',
+                                {content:e.vendorGSTIN||'—',styles:{fontSize:6.5,halign:'center'}},
+                                e.voucherNo||e.billNo||'—',
                                 {content:INR(e.billAmtINR||0),styles:{halign:'right'}},
                                 {content:INR(e.cgst||0),styles:{halign:'right'}},
                                 {content:INR(e.sgst||0),styles:{halign:'right'}},
@@ -10076,6 +10114,7 @@
                             const dirName=de.director==='dir1'?(settings.director1Name||'Director 1'):(settings.director2Name||'Director 2');
                             return [{content:de.expDate||'—',styles:{textColor:[99,102,241]}},
                                 {content:de.vendor||de.description||dirName,styles:{textColor:[99,102,241]}},
+                                {content:de.vendorGSTIN||'—',styles:{fontSize:6.5,halign:'center',textColor:[99,102,241]}},
                                 {content:de.billNo||de.expRef||'Dir-Exp',styles:{textColor:[99,102,241]}},
                                 {content:INR(de.amount||0),styles:{halign:'right',textColor:[99,102,241]}},
                                 {content:INR(de.cgstAmt||de.cgst||0),styles:{halign:'right',textColor:[99,102,241]}},
@@ -10084,12 +10123,12 @@
                                 {content:INR(parseFloat(de.itcAmt)||tax),styles:{halign:'right',fontStyle:'bold',textColor:[99,102,241]}}];
                         }),
                     ],
-                    foot:[[{content:'GST INPUT TOTAL',colSpan:4,styles:{fontStyle:'bold',halign:'right',fillColor:[254,243,199]}},
+                    foot:[[{content:'GST INPUT TOTAL',colSpan:5,styles:{fontStyle:'bold',halign:'right',fillColor:[254,243,199]}},
                         {content:INR(d.gstInputCGST),styles:{halign:'right',fontStyle:'bold',fillColor:[254,243,199]}},
                         {content:INR(d.gstInputSGST),styles:{halign:'right',fontStyle:'bold',fillColor:[254,243,199]}},
                         {content:INR(d.gstInputIGST),styles:{halign:'right',fontStyle:'bold',fillColor:[254,243,199]}},
                         {content:INR(d.combinedITCTotal),styles:{halign:'right',fontStyle:'bold',fillColor:[254,243,199],textColor:[180,83,9]}}]],
-                    columnStyles:{0:{cellWidth:18},1:{cellWidth:42},2:{cellWidth:24},3:{cellWidth:24},4:{cellWidth:22},5:{cellWidth:22},6:{cellWidth:18},7:{cellWidth:22}}
+                    columnStyles:{0:{cellWidth:16},1:{cellWidth:32},2:{cellWidth:28},3:{cellWidth:20},4:{cellWidth:22},5:{cellWidth:18},6:{cellWidth:18},7:{cellWidth:16},8:{cellWidth:18}}
                 });
                 y = doc.lastAutoTable.finalY+5;
             }
@@ -10100,22 +10139,28 @@
                 doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
                     styles:{fontSize:7.5,cellPadding:2.5},
                     headStyles:{fillColor:[126,34,206],textColor:[255,255,255],fontStyle:'bold'},
-                    head:[['Date','Client','Invoice No','Taxable','CGST','SGST','IGST','Total Tax']],
+                    head:[['Date','Client','GSTIN','Invoice No','Taxable','CGST','SGST','IGST','Total Tax']],
                     body:d.outInvoices.map(t=>{
                         const tot=calculateTotals(t.items||[]);
-                        return [t.txnDate||'—',t.partyName||'—',t.txnID||'—',
+                        // Look up the party's GSTIN — invoices link to parties by partyName.
+                        // Falls back to a per-transaction gstNumber field if a party-level one isn't found.
+                        const party = (parties||[]).find(p => p.partyName === t.partyName);
+                        const gstin = party?.gstNumber || t.gstNumber || '—';
+                        return [t.txnDate||'—',t.partyName||'—',
+                            {content:gstin,styles:{fontSize:6.5,halign:'center'}},
+                            t.txnID||'—',
                             {content:INR(tot.subtotal||0),styles:{halign:'right'}},
                             {content:INR(tot.cgst||0),styles:{halign:'right'}},
                             {content:INR(tot.sgst||0),styles:{halign:'right'}},
                             {content:INR(tot.igst||0),styles:{halign:'right'}},
                             {content:INR(tot.totalTax||0),styles:{halign:'right',fontStyle:'bold',textColor:[126,34,206]}}];
                     }),
-                    foot:[[{content:'GST OUTPUT TOTAL',colSpan:4,styles:{fontStyle:'bold',halign:'right',fillColor:[126,34,206],textColor:[255,255,255]}},
+                    foot:[[{content:'GST OUTPUT TOTAL',colSpan:5,styles:{fontStyle:'bold',halign:'right',fillColor:[126,34,206],textColor:[255,255,255]}},
                         {content:INR(d.gstOutputCGST),styles:{halign:'right',fontStyle:'bold',fillColor:[126,34,206],textColor:[255,255,255]}},
                         {content:INR(d.gstOutputSGST),styles:{halign:'right',fontStyle:'bold',fillColor:[126,34,206],textColor:[255,255,255]}},
                         {content:INR(d.gstOutputIGST),styles:{halign:'right',fontStyle:'bold',fillColor:[126,34,206],textColor:[255,255,255]}},
                         {content:INR(d.gstOutput),styles:{halign:'right',fontStyle:'bold',fillColor:[88,22,162],textColor:[255,255,255]}}]],
-                    columnStyles:{0:{cellWidth:18},1:{cellWidth:42},2:{cellWidth:24},3:{cellWidth:24},4:{cellWidth:22},5:{cellWidth:22},6:{cellWidth:18},7:{cellWidth:22}}
+                    columnStyles:{0:{cellWidth:16},1:{cellWidth:32},2:{cellWidth:28},3:{cellWidth:20},4:{cellWidth:22},5:{cellWidth:18},6:{cellWidth:18},7:{cellWidth:16},8:{cellWidth:18}}
                 });
                 y = doc.lastAutoTable.finalY+5;
             }
@@ -16755,8 +16800,8 @@ Automated WFH alert — ${company} Attendance System.`;
                         </div>
                     </div>
 
-                    <!-- Description + Vendor -->
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- Description + Vendor + PAN -->
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div>
                             <label class="block text-xs font-semibold text-gray-600 mb-1">Description <span class="text-red-500">*</span></label>
                             <input type="text" id="deDesc" value="${exp?.description||''}" placeholder="Brief description of expense" class="w-full px-3 py-2 border rounded-lg text-sm" required/>
@@ -16764,6 +16809,12 @@ Automated WFH alert — ${company} Attendance System.`;
                         <div>
                             <label class="block text-xs font-semibold text-gray-600 mb-1">Vendor / Merchant</label>
                             <input type="text" id="deVendor" value="${exp?.vendor||''}" placeholder="e.g. Taj Hotel, Swiggy" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Vendor PAN <span class="text-gray-400 font-normal text-[10px]">(for TDS)</span></label>
+                            <input type="text" id="deVendorPAN" value="${exp?.vendorPAN||''}" maxlength="10" placeholder="e.g. AAACX0892J"
+                                class="w-full px-3 py-2 border rounded-lg text-sm font-mono uppercase tracking-wide"
+                                oninput="this.value=this.value.toUpperCase()"/>
                         </div>
                     </div>
 
@@ -16811,7 +16862,9 @@ Automated WFH alert — ${company} Attendance System.`;
                                 </div>
                                 <div>
                                     <label class="block text-xs font-semibold text-gray-600 mb-1">Vendor GSTIN</label>
-                                    <input type="text" id="deVendorGSTIN" value="${exp?.vendorGSTIN||''}" placeholder="27AABCU9603R1ZX" maxlength="15" class="w-full px-3 py-2 border rounded-lg text-sm font-mono" oninput="this.value=this.value.toUpperCase()"/>
+                                    <!-- onInput: uppercase + auto-derive PAN to deVendorPAN if it's empty.
+                                         GSTIN chars 3-12 are the PAN. We don't overwrite a user's manual entry. -->
+                                    <input type="text" id="deVendorGSTIN" value="${exp?.vendorGSTIN||''}" placeholder="27AABCU9603R1ZX" maxlength="15" class="w-full px-3 py-2 border rounded-lg text-sm font-mono" oninput="this.value=this.value.toUpperCase(); (function(){ const panEl=document.getElementById('deVendorPAN'); if(panEl && !panEl.value.trim() && this.value.length>=12){ panEl.value = this.value.substring(2,12); } }).call(this)"/>
                                 </div>
                                 <div>
                                     <label class="block text-xs font-semibold text-gray-600 mb-1">HSN / SAC Code</label>
@@ -17117,6 +17170,16 @@ Automated WFH alert — ${company} Attendance System.`;
             if (issuerWrap) issuerWrap.classList.toggle('hidden', !isCard);
         }
 
+        // Settle Reimbursement modal — mirror logic: show issuer + last4
+        // only when paying via Credit/Debit Card. "Company Card" is NOT in
+        // this dropdown (a settlement IS the reimbursement, so company-card
+        // wouldn't apply here — see comment near dsMode2 options).
+        function toggleDsCardFields() {
+            const mode = document.getElementById('dsMode2')?.value||'';
+            const isCard = ['Credit Card','Debit Card'].includes(mode);
+            document.getElementById('dsCardRow')?.classList.toggle('hidden', !isCard);
+        }
+
         function toggleDeReimbFields() {
             const on = document.getElementById('deReimbursed')?.checked;
             document.getElementById('deReimbFields')?.classList.toggle('hidden', !on);
@@ -17255,6 +17318,7 @@ Automated WFH alert — ${company} Attendance System.`;
                     category:       document.getElementById('deCategory').value,
                     description:    document.getElementById('deDesc').value,
                     vendor:         document.getElementById('deVendor').value,
+                    vendorPAN:      (document.getElementById('deVendorPAN')?.value || '').trim().toUpperCase(),
                     amount:         parseFloat(document.getElementById('deAmount').value)||0,
                     gstApplicable:  document.getElementById('deGSTApplicable')?.checked||false,
                     billNo:         document.getElementById('deBillNo')?.value||'',
@@ -17853,7 +17917,7 @@ Automated WFH alert — ${company} Attendance System.`;
                             </div>
                             <div>
                                 <label class="block text-xs font-semibold text-gray-600 mb-1">Payment Mode</label>
-                                <select id="dsMode2" class="w-full px-3 py-2 border rounded-lg text-sm">
+                                <select id="dsMode2" class="w-full px-3 py-2 border rounded-lg text-sm" onchange="toggleDsCardFields()">
                                     ${['Cash','G-Pay / UPI','Bank Transfer (NEFT/RTGS/IMPS)','Credit Card','Debit Card','Cheque'].map(m=>`<option value="${m}">${m}</option>`).join('')}
                                 </select>
                                 <!-- "Personal - To Reimburse" and "Company Card" intentionally omitted —
@@ -17862,6 +17926,36 @@ Automated WFH alert — ${company} Attendance System.`;
                             <div>
                                 <label class="block text-xs font-semibold text-gray-600 mb-1">Voucher / Ref</label>
                                 <input type="text" id="dsRef" placeholder="REIMB-${monthYM}-${dirKey.toUpperCase()}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                            </div>
+                        </div>
+                        <!-- Card-mode-only row: only revealed when Payment Mode is Credit/Debit Card.
+                             Helps audit which company card actually paid the reimbursement.
+                             Issuer field uses autocomplete from bankAccounts for consistency. -->
+                        <div id="dsCardRow" class="grid grid-cols-2 gap-3 hidden">
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-600 mb-1">Bank / Card Issuer</label>
+                                <input type="text" id="dsCardIssuer"
+                                    placeholder="e.g. ICICI, HDFC, SBI"
+                                    list="dsCardIssuerOptions"
+                                    autocomplete="off"
+                                    class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                                <datalist id="dsCardIssuerOptions">
+                                    ${(() => {
+                                        const seen = new Set();
+                                        const items = [];
+                                        (bankAccounts||[]).forEach(b => {
+                                            [b.bankName, b.accountName].filter(Boolean).forEach(c => {
+                                                const k = c.trim();
+                                                if (k && !seen.has(k.toLowerCase())) { seen.add(k.toLowerCase()); items.push(k); }
+                                            });
+                                        });
+                                        return items.sort().map(n => `<option value="${n.replace(/"/g,'&quot;')}"></option>`).join('');
+                                    })()}
+                                </datalist>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-600 mb-1">Card Last 4 Digits</label>
+                                <input type="text" id="dsCardLast4" maxlength="4" placeholder="1234" class="w-full px-3 py-2 border rounded-lg text-sm"/>
                             </div>
                         </div>
                         <div>
@@ -18122,6 +18216,12 @@ Automated WFH alert — ${company} Attendance System.`;
             const settleAmt= parseFloat(document.getElementById('dsAmount').value)||0;
             const payDate  = document.getElementById('dsDate').value;
             const payMode  = document.getElementById('dsMode2').value;
+            // Card metadata — only meaningful when the mode is Credit/Debit Card.
+            // Captured so each settled record retains "which company card actually
+            // paid the reimbursement" for audit. Empty for other modes.
+            const isCardMode    = ['Credit Card','Debit Card'].includes(payMode);
+            const reimbCardIssuer = isCardMode ? (document.getElementById('dsCardIssuer')?.value || '').trim() : '';
+            const reimbCardLast4  = isCardMode ? (document.getElementById('dsCardLast4')?.value || '').trim() : '';
             const refNo    = document.getElementById('dsRef').value.trim() || ('REIMB-'+monthYM+'-'+dirKey.toUpperCase());
             const notes    = document.getElementById('dsNotes').value.trim();
             const mode     = window._dsState?.mode || 'fifo';
@@ -18185,6 +18285,10 @@ Automated WFH alert — ${company} Attendance System.`;
                         reimbursedAmt: parseFloat(d.amount)||0,
                         reimbursedRef: refNo,
                         reimbursedMode: payMode,
+                        // Card-specific fields — only populated when the reimbursement
+                        // was made via Credit/Debit Card. Empty strings for other modes.
+                        reimbursedCardIssuer: reimbCardIssuer,
+                        reimbursedCardLast4:  reimbCardLast4,
                         reimbursedNotes: notes,
                     };
                 }
