@@ -1348,6 +1348,50 @@
         // available alongside this-month leave taken; older encashments are
         // already baked into the carry-in.
         // ════════════════════════════════════════════════════════════════
+        // CARD ISSUER PRESETS — for the autocomplete dropdown in expense modals
+        // ────────────────────────────────────────────────────────────────
+        // These are common Indian card-issuing banks. They appear as suggestions
+        // in the Bank/Card Issuer autocomplete alongside whatever bank accounts
+        // the user has configured. Users can still type anything (it's a
+        // free-text field with a datalist — not a restricted dropdown).
+        // ════════════════════════════════════════════════════════════════
+        const CARD_ISSUER_PRESETS = [
+            'HDFC Bank',
+            'SBI',
+            'ICICI Bank',
+            'HSBC Bank',
+            'Axis Bank',
+            'Kotak Mahindra Bank',
+            'IndusInd Bank',
+            'Yes Bank',
+            'IDFC FIRST Bank',
+            'Citi Bank',
+            'American Express',
+            'Standard Chartered'
+        ];
+
+        // Build the deduplicated, sorted list of card-issuer suggestions used by
+        // both the Director Expense modal and the Settle Reimbursement modal.
+        // Combines: (a) any bank+account names from the bankAccounts module, and
+        // (b) the CARD_ISSUER_PRESETS constant above. Returns ready-to-inline HTML.
+        function buildCardIssuerOptions() {
+            const seen = new Set();
+            const items = [];
+            // From bankAccounts first (so user's actual banks are included)
+            (bankAccounts || []).forEach(b => {
+                [b.bankName, b.accountName].filter(Boolean).forEach(c => {
+                    const k = c.trim();
+                    if (k && !seen.has(k.toLowerCase())) { seen.add(k.toLowerCase()); items.push(k); }
+                });
+            });
+            // Then the common-issuer presets
+            CARD_ISSUER_PRESETS.forEach(n => {
+                if (!seen.has(n.toLowerCase())) { seen.add(n.toLowerCase()); items.push(n); }
+            });
+            return items.sort().map(n => `<option value="${n.replace(/"/g,'&quot;')}"></option>`).join('');
+        }
+
+        // ════════════════════════════════════════════════════════════════
         // TDS SECTION CATALOG — FY 2026-27 (Income Tax Act 2025)
         // ────────────────────────────────────────────────────────────────
         // Each entry combines OLD code (ITA 1961), NEW code (ITA 2025 from
@@ -17349,19 +17393,7 @@ Automated WFH alert — ${company} Attendance System.`;
                             <!-- Datalist suggestions come from bankAccounts so users can pick from already-configured
                                  banks for consistency, but can also type a new issuer name freely. -->
                             <datalist id="deCardIssuerOptions">
-                                ${(() => {
-                                    // Build a deduplicated list of bank+account-name combinations
-                                    const seen = new Set();
-                                    const items = [];
-                                    (bankAccounts||[]).forEach(b => {
-                                        const candidates = [b.bankName, b.accountName].filter(Boolean);
-                                        candidates.forEach(c => {
-                                            const k = c.trim();
-                                            if (k && !seen.has(k.toLowerCase())) { seen.add(k.toLowerCase()); items.push(k); }
-                                        });
-                                    });
-                                    return items.sort().map(n => `<option value="${n.replace(/"/g,'&quot;')}"></option>`).join('');
-                                })()}
+                                ${buildCardIssuerOptions()}
                             </datalist>
                         </div>
                         <div id="deCardWrap">
@@ -18342,17 +18374,7 @@ Automated WFH alert — ${company} Attendance System.`;
                                     autocomplete="off"
                                     class="w-full px-3 py-2 border rounded-lg text-sm"/>
                                 <datalist id="dsCardIssuerOptions">
-                                    ${(() => {
-                                        const seen = new Set();
-                                        const items = [];
-                                        (bankAccounts||[]).forEach(b => {
-                                            [b.bankName, b.accountName].filter(Boolean).forEach(c => {
-                                                const k = c.trim();
-                                                if (k && !seen.has(k.toLowerCase())) { seen.add(k.toLowerCase()); items.push(k); }
-                                            });
-                                        });
-                                        return items.sort().map(n => `<option value="${n.replace(/"/g,'&quot;')}"></option>`).join('');
-                                    })()}
+                                    ${buildCardIssuerOptions()}
                                 </datalist>
                             </div>
                             <div>
