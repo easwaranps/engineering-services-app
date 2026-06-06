@@ -387,6 +387,24 @@
                             <input type="text" id="expCreditNoteDetails" placeholder="Reference / description of credit note" class="field-editable w-full px-3 py-2 border rounded-lg text-sm"/>
                         </div>
                     </div>
+
+                    <!-- ── Reverse Charge Mechanism (RCM) toggle ──
+                         Use this when the vendor is unregistered or the supply
+                         falls under Section 9(3) — you pay the GST to govt directly
+                         rather than the vendor collecting it. The GST amounts above
+                         act as both your liability AND your ITC.
+                    -->
+                    <div class="bg-orange-50 border border-orange-200 rounded-lg p-3 mb-4">
+                        <label class="flex items-center cursor-pointer">
+                            <input type="checkbox" id="expRCMApplicable" class="w-4 h-4 accent-orange-600" onchange="toggleRCMHelpText(); calcExpAmounts();"/>
+                            <span class="ml-2 text-sm font-semibold text-orange-900">🔄 Reverse Charge (RCM) Applicable</span>
+                        </label>
+                        <p id="expRCMHelpText" class="text-[11px] text-orange-700 mt-1 ml-6 hidden">
+                            ✓ Vendor does NOT collect GST · You pay GST to govt directly via GSTR-3B · Same amount becomes claimable as ITC.<br/>
+                            <strong>Total Bill Amount above EXCLUDES the RCM GST</strong> — you pay vendor the Taxable Amount only.
+                            The GST amounts you enter (CGST/SGST/IGST) will appear as RCM Liability in Tax tab AND become ITC.
+                        </p>
+                    </div>
                 </div>
 
                 <!-- Simple amount block — shown for STATUTORY and SALARY (replaces the hidden GST taxable amount) -->
@@ -786,6 +804,11 @@
                             <option value="GBP" data-symbol="£">GBP (£)</option>
                             <option value="SGD" data-symbol="S$">SGD (S$)</option>
                         </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-2">Document Date *</label>
+                        <input type="date" id="txnDate" class="w-full px-4 py-2 border border-gray-300 rounded-lg" required />
+                        <p class="text-xs text-gray-400 mt-1">Date shown on the quotation/invoice PDF</p>
                     </div>
                     <div>
                         <label class="block text-sm font-semibold text-gray-700 mb-2">Reference</label>
@@ -8598,6 +8621,10 @@
             document.getElementById('expTDSFields').classList.add('hidden');
             document.getElementById('expDeductionFields')?.classList.add('hidden');
             document.getElementById('expAttachList').innerHTML = '';
+            // RCM defaults to off + hidden help text on form reset
+            const rcmDefault = document.getElementById('expRCMApplicable');
+            if (rcmDefault) rcmDefault.checked = false;
+            toggleRCMHelpText();
 
             // Populate bank account dropdown (expense accounts only)
             const bankSelect = document.getElementById('expBankAccount');
@@ -8640,6 +8667,10 @@
                 document.getElementById('expIGST').value          = exp.igst||'';
                 document.getElementById('expCreditNote').value    = exp.creditNote||'';
                 document.getElementById('expCreditNoteDetails').value = exp.creditNoteDetails||'';
+                // Restore RCM toggle + sync help text + recalc total (RCM excludes GST from total)
+                const rcmEl = document.getElementById('expRCMApplicable');
+                if (rcmEl) rcmEl.checked = !!exp.rcmApplicable;
+                toggleRCMHelpText();
                 document.getElementById('expTDSApplicable').checked   = exp.tdsApplicable||false;
                 if (exp.tdsApplicable) {
                     document.getElementById('expTDSFields').classList.remove('hidden');
@@ -8774,6 +8805,13 @@
             _concurEndEdit();
         }
 
+        // Show/hide RCM help text when toggle flips
+        function toggleRCMHelpText() {
+            const on = !!document.getElementById('expRCMApplicable')?.checked;
+            const help = document.getElementById('expRCMHelpText');
+            if (help) help.classList.toggle('hidden', !on);
+        }
+
         function calcExpAmounts() {
             const bill    = parseFloat(document.getElementById('expBillAmount')?.value)||0;
             const rate    = parseFloat(document.getElementById('expExchRate')?.value)||1;
@@ -8782,14 +8820,20 @@
             const igst    = parseFloat(document.getElementById('expIGST')?.value)||0;
             const cn      = parseFloat(document.getElementById('expCreditNote')?.value)||0;
             const adv     = parseFloat(document.getElementById('expAdvanceAmt')?.value)||0;
+            const isRCM   = !!document.getElementById('expRCMApplicable')?.checked;
             const billINR = bill * rate;                    // Bill Amount in INR (ex-GST / taxable)
-            const totalTax = cgst + sgst + igst;            // Total GST
-            const grossTotal = billINR + totalTax;          // Gross invoice = Bill + GST
+            const totalTax = cgst + sgst + igst;            // Total GST amount
+
+            // Under RCM the vendor is NOT collecting GST — you pay them the
+            // taxable amount only. The GST amounts are tracked but treated as
+            // your direct govt liability (with matching ITC). So the bill total
+            // = taxable amount, regardless of GST figures entered.
+            const grossTotal = isRCM ? billINR : (billINR + totalTax);
 
             const billAmtINREl = document.getElementById('expBillAmtINR');
             if (billAmtINREl) billAmtINREl.value = billINR.toFixed(2);
 
-            // Total Bill Amount = Taxable + CGST + SGST + IGST
+            // Total Bill Amount — excludes GST under RCM (you pay vendor only the taxable)
             const totalBillAmtEl = document.getElementById('expTotalBillAmt');
             if (totalBillAmtEl) totalBillAmtEl.value = grossTotal.toFixed(2);
 
@@ -9452,6 +9496,11 @@
                 billAmtINR:        billINR,
                 totalBillAmt:      grossTotal,
                 cgst, sgst, igst,
+                // ── Reverse Charge Mechanism flag (Section 9(3) / unregistered vendor cases) ──
+                // When true, the GST amounts above are NOT collected by the vendor;
+                // they are the buyer's direct liability to govt AND become ITC.
+                // Tax tab surfaces these as separate "RCM Liability" and "RCM ITC" rows.
+                rcmApplicable:     billType === 'SUPPLIER' ? !!document.getElementById('expRCMApplicable')?.checked : false,
                 creditNote:        cn,
                 creditNoteDetails: document.getElementById('expCreditNoteDetails').value,
                 tdsApplicable:     tdsOn,
@@ -9805,7 +9854,26 @@
                 return s + (parseFloat(tot.igst)||0);
             }, 0);
 
-            const netGST    = gstOutput - combinedITCTotal;
+            // ── RCM (Reverse Charge Mechanism) — Section 9(3) / unregistered vendor ──
+            // For expenses flagged rcmApplicable: the buyer (you) is liable to deposit
+            // the GST to govt AND simultaneously gets to claim it as ITC. So each RCM
+            // bill adds to BOTH the output liability total AND the input ITC total.
+            // This produces a net-zero effect on the GST payable for that period.
+            const rcmExps = (expenses||[]).filter(e =>
+                e.rcmApplicable && (e.billDate||'').startsWith(pfx)
+            );
+            const rcmCGST  = rcmExps.reduce((s,e) => s + (parseFloat(e.cgst)||0), 0);
+            const rcmSGST  = rcmExps.reduce((s,e) => s + (parseFloat(e.sgst)||0), 0);
+            const rcmIGST  = rcmExps.reduce((s,e) => s + (parseFloat(e.igst)||0), 0);
+            const rcmTotal = rcmCGST + rcmSGST + rcmIGST;
+            // Add RCM to BOTH sides — net effect on payable is zero, but visibility matters
+            const gstOutputWithRCM     = gstOutput + rcmTotal;
+            const gstOutputCGSTWithRCM = gstOutputCGST + rcmCGST;
+            const gstOutputSGSTWithRCM = gstOutputSGST + rcmSGST;
+            const gstOutputIGSTWithRCM = gstOutputIGST + rcmIGST;
+            const combinedITCWithRCM   = combinedITCTotal + rcmTotal;
+
+            const netGST    = gstOutputWithRCM - combinedITCWithRCM;
             const months    = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
             const monthName = months[month-1];
 
@@ -9816,15 +9884,39 @@
             const tdsDaysLeft = Math.ceil((tdsDueDate - today) / (1000*60*60*24));
             const gstDaysLeft = Math.ceil((gstDueDate - today) / (1000*60*60*24));
 
+            // ── GST Payment Status for the period ──
+            // Per the single-source-of-truth model: GST payment is recorded as a Bill
+            // (billType=GST). We check whether any GST-type bill in the period is
+            // marked Paid, and surface that on the dashboard.
+            // The bill's `payDate` and `chequeNo` capture the actual challan info.
+            const gstPaymentBills = (expenses||[]).filter(e =>
+                e.billType === 'GST' && (e.billDate||'').startsWith(pfx)
+            );
+            const gstPaidBills = gstPaymentBills.filter(e => e.payStatus === 'Paid');
+            const gstPaidTotal = gstPaidBills.reduce((s,e) =>
+                s + (parseFloat(e.netPayable) || parseFloat(e.billAmtINR) || 0), 0);
+            const gstPaymentStatus = gstPaymentBills.length === 0
+                ? 'unrecorded'   // no GST bill exists for this period yet
+                : (gstPaidBills.length === gstPaymentBills.length ? 'paid' : 'partial');
+
             return {
                 month, year, monthName, pfx, fmt, pad,
                 tdsExpenses, tdsReceivable, outInvoices, gstInputExps,
                 totalTDSDeducted, totalTDSReceivable,
                 gstInputTotal, gstInputCGST, gstInputSGST, gstInputIGST,
                 dirGSTExps, dirITCEligible, dirITCTotal, dirGSTTotal, dirBlockedITC,
-                combinedITCTotal,
-                gstOutput, gstOutputCGST, gstOutputSGST, gstOutputIGST,
-                netGST, tdsDaysLeft, gstDaysLeft, tdsDueDate, gstDueDate
+                combinedITCTotal: combinedITCWithRCM,    // RCM-inclusive for display
+                rcmExps, rcmCGST, rcmSGST, rcmIGST, rcmTotal,
+                gstOutput:       gstOutputWithRCM,
+                gstOutputCGST:   gstOutputCGSTWithRCM,
+                gstOutputSGST:   gstOutputSGSTWithRCM,
+                gstOutputIGST:   gstOutputIGSTWithRCM,
+                // Raw figures (without RCM) — kept for any view that needs to distinguish
+                gstOutputRaw:    gstOutput,
+                combinedITCRaw:  combinedITCTotal,
+                netGST, tdsDaysLeft, gstDaysLeft, tdsDueDate, gstDueDate,
+                // GST payment status for this period
+                gstPaymentBills, gstPaidBills, gstPaidTotal, gstPaymentStatus
             };
         }
 
@@ -10160,14 +10252,15 @@
                         <p class="text-xs text-amber-600 mt-2">${d.gstInputExps.length} expense bill${d.gstInputExps.length!==1?'s':''} + ${d.dirITCEligible.length} director expense${d.dirITCEligible.length!==1?'s':''}</p>
                     </div>
                     <div class="p-5 border-r">
-                        <p class="text-xs font-bold text-purple-600 uppercase mb-2">📤 GST Output (Invoices)</p>
+                        <p class="text-xs font-bold text-purple-600 uppercase mb-2">📤 GST Output (Invoices${d.rcmExps.length?' + RCM':''})</p>
                         <p class="text-2xl font-bold text-purple-700">${fmt(d.gstOutput)}</p>
                         <div class="mt-2 space-y-1 text-xs text-gray-500">
                             <div class="flex justify-between"><span>CGST</span><span class="font-medium">${fmt(d.gstOutputCGST)}</span></div>
                             <div class="flex justify-between"><span>SGST</span><span class="font-medium">${fmt(d.gstOutputSGST)}</span></div>
                             <div class="flex justify-between"><span>IGST</span><span class="font-medium">${fmt(d.gstOutputIGST)}</span></div>
+                            ${d.rcmTotal > 0 ? `<div class="flex justify-between text-orange-600 pt-1 border-t border-orange-100"><span>incl. RCM</span><span class="font-bold">${fmt(d.rcmTotal)}</span></div>` : ''}
                         </div>
-                        <p class="text-xs text-purple-600 mt-2">${d.outInvoices.length} outgoing invoice(s)</p>
+                        <p class="text-xs text-purple-600 mt-2">${d.outInvoices.length} outgoing invoice(s)${d.rcmExps.length?' + '+d.rcmExps.length+' RCM bill(s)':''}</p>
                     </div>
                     <div class="p-5 ${d.netGST>0?'bg-purple-50':'bg-teal-50'}">
                         <p class="text-xs font-bold uppercase mb-2 ${d.netGST>0?'text-purple-600':'text-teal-600'}">
@@ -10187,9 +10280,9 @@
                 <!-- GST Input table -->
                 <div class="px-5 py-2 bg-amber-50 flex items-center justify-between border-b">
                     <span class="text-xs font-bold text-amber-700 uppercase">📥 Input Tax Credit Details (Expenses)</span>
-                    <span class="text-xs text-amber-600">${d.gstInputExps.length} bills + ${d.dirITCEligible.length} dir · ${fmt(d.combinedITCTotal)} total ITC</span>
+                    <span class="text-xs text-amber-600">${d.gstInputExps.length} bills + ${d.dirITCEligible.length} dir${d.rcmExps.length?' + '+d.rcmExps.length+' RCM':''} · ${fmt(d.combinedITCTotal)} total ITC</span>
                 </div>
-                ${(d.gstInputExps.length || d.dirITCEligible.length) ? `
+                ${(d.gstInputExps.length || d.dirITCEligible.length || d.rcmExps.length) ? `
                 <div class="overflow-x-auto">
                     <table class="w-full text-sm">
                         <thead class="bg-amber-50 text-xs text-gray-500 uppercase">
@@ -10225,6 +10318,25 @@
                                     <td class="px-3 py-2 text-xs text-right font-bold text-indigo-700">${fmt(itc)}</td>
                                 </tr>`;
                             }).join('')}
+                            ${d.rcmExps.length ? `
+                            <tr class="bg-orange-100"><td colspan="10" class="px-3 py-1.5 text-xs font-bold text-orange-900">
+                                🔄 Reverse Charge (RCM) — ITC available against your own RCM liability (same amount as RCM Liability below)
+                            </td></tr>
+                            ${d.rcmExps.map(e => {
+                                const tax = (parseFloat(e.cgst)||0)+(parseFloat(e.sgst)||0)+(parseFloat(e.igst)||0);
+                                return `<tr class="border-t bg-orange-50 hover:bg-orange-100">
+                                    <td class="px-3 py-2 text-xs text-orange-800">${e.billDate||'—'}</td>
+                                    <td class="px-3 py-2 text-xs font-medium text-orange-800">${e.companyName||e.staffName||e.vendor||'—'} <span class="text-orange-500 text-[10px]">(RCM)</span></td>
+                                    <td class="px-3 py-2 text-xs text-center font-mono text-orange-700">${e.vendorGSTIN || '<span class="text-orange-300">—</span>'}</td>
+                                    <td class="px-3 py-2 text-xs text-orange-700">${e.voucherNo||e.billNo||'—'}</td>
+                                    <td class="px-3 py-2 text-xs text-orange-700">${e.description||e.billType||'RCM Bill'}</td>
+                                    <td class="px-3 py-2 text-xs text-right text-orange-700">${fmt(e.billAmtINR||0)}</td>
+                                    <td class="px-3 py-2 text-xs text-right text-orange-700">${fmt(e.cgst||0)}</td>
+                                    <td class="px-3 py-2 text-xs text-right text-orange-700">${fmt(e.sgst||0)}</td>
+                                    <td class="px-3 py-2 text-xs text-right text-orange-700">${fmt(e.igst||0)}</td>
+                                    <td class="px-3 py-2 text-xs text-right font-bold text-orange-800">${fmt(tax)}</td>
+                                </tr>`;
+                            }).join('')}` : ''}
                         </tbody>
                         <tfoot class="bg-amber-100 font-bold text-xs">
                             <tr>
@@ -10240,10 +10352,10 @@
 
                 <!-- GST Output table -->
                 <div class="px-5 py-2 bg-purple-50 flex items-center justify-between border-t border-b">
-                    <span class="text-xs font-bold text-purple-700 uppercase">📤 Output Tax Details (Invoices)</span>
-                    <span class="text-xs text-purple-600">${d.outInvoices.length} invoice(s) · ${fmt(d.gstOutput)}</span>
+                    <span class="text-xs font-bold text-purple-700 uppercase">📤 Output Tax Details (Invoices${d.rcmExps.length?' + RCM':''})</span>
+                    <span class="text-xs text-purple-600">${d.outInvoices.length} invoice(s)${d.rcmExps.length?' + '+d.rcmExps.length+' RCM bill(s)':''} · ${fmt(d.gstOutput)}</span>
                 </div>
-                ${d.outInvoices.length ? `
+                ${(d.outInvoices.length || d.rcmExps.length) ? `
                 <div class="overflow-x-auto">
                     <table class="w-full text-sm">
                         <thead class="bg-purple-50 text-xs text-gray-500 uppercase">
@@ -10260,7 +10372,27 @@
                                 <th class="px-3 py-2 text-right">Total Tax</th>
                             </tr>
                         </thead>
-                        <tbody>${gstOutputRows}</tbody>
+                        <tbody>${gstOutputRows}
+                            ${d.rcmExps.length ? `
+                            <tr class="bg-orange-100"><td colspan="10" class="px-3 py-1.5 text-xs font-bold text-orange-900">
+                                🔄 Reverse Charge (RCM) Liability — buyer pays GST to govt directly (Section 9(3) / unregistered vendor cases)
+                            </td></tr>
+                            ${d.rcmExps.map(e => {
+                                const tax = (parseFloat(e.cgst)||0)+(parseFloat(e.sgst)||0)+(parseFloat(e.igst)||0);
+                                return `<tr class="border-t bg-orange-50 hover:bg-orange-100">
+                                    <td class="px-3 py-2 text-xs text-orange-800">${e.billDate||'—'}</td>
+                                    <td class="px-3 py-2 text-xs font-medium text-orange-800">${e.companyName||e.staffName||e.vendor||'—'} <span class="text-orange-500 text-[10px]">(RCM)</span></td>
+                                    <td class="px-3 py-2 text-xs text-center font-mono text-orange-700">${e.vendorGSTIN || '<span class="text-orange-300">—</span>'}</td>
+                                    <td class="px-3 py-2 text-xs text-orange-700">${e.voucherNo||e.billNo||'—'}</td>
+                                    <td class="px-3 py-2 text-xs text-orange-700">${e.description||e.billType||'RCM Bill'}</td>
+                                    <td class="px-3 py-2 text-xs text-right text-orange-700">${fmt(e.billAmtINR||0)}</td>
+                                    <td class="px-3 py-2 text-xs text-right text-orange-700">${fmt(e.cgst||0)}</td>
+                                    <td class="px-3 py-2 text-xs text-right text-orange-700">${fmt(e.sgst||0)}</td>
+                                    <td class="px-3 py-2 text-xs text-right text-orange-700">${fmt(e.igst||0)}</td>
+                                    <td class="px-3 py-2 text-xs text-right font-bold text-orange-800">${fmt(tax)}</td>
+                                </tr>`;
+                            }).join('')}` : ''}
+                        </tbody>
                         <tfoot class="bg-purple-100 font-bold text-xs">
                             <tr>
                                 <td colspan="6" class="px-3 py-2 text-right text-purple-800">TOTAL OUTPUT:</td>
@@ -10271,8 +10403,96 @@
                             </tr>
                         </tfoot>
                     </table>
-                </div>` : `<p class="text-gray-400 text-center py-4 text-sm">No outgoing invoices in ${d.monthName} ${year}</p>`}
+                </div>` : `<p class="text-gray-400 text-center py-4 text-sm">No outgoing invoices or RCM bills in ${d.monthName} ${year}</p>`}
             </div>`;
+
+            // ── GST PAYMENT STATUS PANEL ──────────────────────────────────
+            // Per single-source-of-truth: GST is paid via a billType='GST' entry
+            // in Expenses & Bills. This panel surfaces whether such a bill exists
+            // for the period AND whether it's been marked paid. Color-coded:
+            //   green = paid (challan recorded)
+            //   amber = bill exists but pending payment
+            //   gray  = no GST bill yet recorded for this period
+            const gstStatusPanel = (() => {
+                const status = d.gstPaymentStatus;
+                const netPay = +d.netGST.toFixed(2);
+                // Don't show payable-action if net is zero or negative (ITC carry-fwd)
+                const hasLiability = netPay > 0.005;
+                const bg = status === 'paid' ? 'bg-green-50 border-green-300'
+                         : status === 'partial' ? 'bg-amber-50 border-amber-300'
+                         : !hasLiability ? 'bg-gray-50 border-gray-200'
+                         : 'bg-amber-50 border-amber-300';
+                const titleColor = status === 'paid' ? 'text-green-800'
+                                 : !hasLiability ? 'text-gray-600'
+                                 : 'text-amber-800';
+                const icon = status === 'paid' ? '✅' : !hasLiability ? '➖' : '⏳';
+                const title = status === 'paid' ? 'GST Paid'
+                            : status === 'partial' ? 'GST Partially Paid'
+                            : !hasLiability ? 'No GST Payable This Period'
+                            : 'GST Payment Pending';
+
+                // Build list of GST bills found (if any)
+                const billsList = (d.gstPaymentBills || []).map(b => `
+                    <tr class="border-t">
+                        <td class="px-3 py-2 text-xs">${b.billDate || '—'}</td>
+                        <td class="px-3 py-2 text-xs">${b.companyName || b.vendor || 'GST Department'}</td>
+                        <td class="px-3 py-2 text-xs">${b.voucherNo || b.billNo || '—'}</td>
+                        <td class="px-3 py-2 text-xs text-right font-medium">${fmt(b.netPayable || b.billAmtINR || 0)}</td>
+                        <td class="px-3 py-2 text-xs text-center">
+                            ${b.payStatus === 'Paid'
+                                ? `<span class="px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-bold text-[10px]">✓ Paid ${(b.payDate||'').substring(0,10)}</span>`
+                                : `<span class="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-bold text-[10px]">⏳ Pending</span>`}
+                        </td>
+                        <td class="px-3 py-2 text-xs text-center text-gray-500 font-mono">${b.chequeNo || '—'}</td>
+                        <td class="px-3 py-2 text-xs text-center">
+                            <button onclick="openExpenseModal(expenses.find(x=>x.expID==='${b.expID}'))" class="text-indigo-600 hover:text-indigo-800 text-xs font-medium">Open</button>
+                        </td>
+                    </tr>
+                `).join('');
+
+                return `
+                <div class="bg-white rounded-2xl shadow-sm mb-6 p-5 border-2 ${bg}">
+                    <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+                        <div>
+                            <h3 class="font-bold ${titleColor} text-base">${icon} ${title} — ${d.monthName} ${year}</h3>
+                            <p class="text-xs text-gray-500 mt-1">
+                                Net GST liability for the period:
+                                <strong class="${hasLiability ? 'text-red-700' : 'text-green-700'}">${fmt(netPay)}</strong>
+                                ${hasLiability ? ' · Due by 20 ' + months[month%12] : ' (no payment needed — ITC carry-forward)'}
+                            </p>
+                        </div>
+                        ${hasLiability && status === 'unrecorded' ? `
+                        <button onclick="createGSTPaymentBill(${month},${year},${netPay})"
+                            class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700">
+                            + Record GST Bill
+                        </button>` : ''}
+                        ${(status === 'partial' || (status === 'unrecorded' && !hasLiability)) ? '' : ''}
+                    </div>
+                    ${d.gstPaymentBills.length ? `
+                    <div class="overflow-x-auto rounded-lg border border-gray-200">
+                        <table class="w-full text-sm">
+                            <thead class="bg-gray-50 text-xs text-gray-500 uppercase">
+                                <tr>
+                                    <th class="px-3 py-2 text-left">Bill Date</th>
+                                    <th class="px-3 py-2 text-left">Payee</th>
+                                    <th class="px-3 py-2 text-left">Voucher / Bill No</th>
+                                    <th class="px-3 py-2 text-right">Amount</th>
+                                    <th class="px-3 py-2 text-center">Status</th>
+                                    <th class="px-3 py-2 text-center">Challan / Ref</th>
+                                    <th class="px-3 py-2 text-center">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>${billsList}</tbody>
+                        </table>
+                    </div>
+                    ${status === 'paid' ? `<p class="text-xs text-green-700 mt-2">✓ Total GST paid for this period: <strong>${fmt(d.gstPaidTotal)}</strong></p>` : ''}` : `
+                    <p class="text-xs text-gray-500 italic">
+                        ${hasLiability
+                            ? `No GST payment bill recorded yet for ${d.monthName} ${year}. Click "+ Record GST Bill" above to log the GST payment as a bill (which then gets marked Paid like any other payable).`
+                            : `Net GST is zero or negative — no GST bill needed this period.`}
+                    </p>`}
+                </div>`;
+            })();
 
             // ── COMPLIANCE CHECKLIST ──────────────────────────────────────
             const tdsPending = d.tdsExpenses.filter(e=>!e.tdsPaid).length;
@@ -10313,7 +10533,53 @@
                 </div>
             </div>`;
 
-            return cards + tdsSectionBreakdown + tdsPanel + tdsRecPanel + gstPanel + checklist;
+            return cards + tdsSectionBreakdown + tdsPanel + tdsRecPanel + gstPanel + gstStatusPanel + checklist;
+        }
+
+        // ── Create a GST payment bill (single source of truth — per user spec) ──
+        // Opens the Expense modal pre-filled with billType=GST, the payee as
+        // "GST Department", the period's net liability as the amount, and the
+        // due date = 20th of next month. User edits/confirms then saves like any
+        // other bill. Once saved + payStatus=Paid, the Tax tab panel turns green.
+        function createGSTPaymentBill(month, year, amount) {
+            // Build the prefilled record
+            const nextMonth = month === 12 ? 1 : month + 1;
+            const nextYear  = month === 12 ? year + 1 : year;
+            const dueDate   = `${nextYear}-${String(nextMonth).padStart(2,'0')}-20`;
+            const periodLabel = (['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'])[month-1] + ' ' + year;
+
+            const prefill = {
+                expID: '',                       // saveExpense will assign
+                billType: 'GST',
+                billDate: dueDate,
+                billNo: `GST-${year}${String(month).padStart(2,'0')}`,
+                companyName: 'GST Department',
+                vendor: 'GST Department',
+                description: `GST Net Payable for ${periodLabel} (GSTR-3B)`,
+                billAmount: amount,
+                billAmtINR: amount,
+                totalBillAmt: amount,
+                netPayable: amount,
+                currency: 'INR',
+                exchRate: 1,
+                payStatus: 'Pending',
+                payMode: '',
+                cgst: 0, sgst: 0, igst: 0,
+                tdsApplicable: false,
+                tdsAmt: 0,
+                rcmApplicable: false,
+                gstInputClaimable: false   // GST payment is not itself an ITC
+            };
+            // Open the expense modal in "new" mode but pre-fill from this template
+            openExpenseModal(prefill);
+            // Show user the prompt so they know the bill is ready to save
+            setTimeout(() => {
+                alert(`ℹ A GST payment bill for ${periodLabel} has been pre-filled:\n\n` +
+                      `Amount: ₹${Number(amount).toLocaleString('en-IN', {minimumFractionDigits:2})}\n` +
+                      `Due Date: ${dueDate}\n` +
+                      `Payee: GST Department\n\n` +
+                      `Review and click Save to record it. When paid, mark it as Paid in Expenses & Bills (with challan ref in the Cheque No / Reference field).`);
+            }, 200);
         }
 
         // ── TDS PAYMENT MODAL ─────────────────────────────────────────────
@@ -11920,11 +12186,14 @@
                 document.getElementById('txnParty').value     = txn.partyName;
                 document.getElementById('txnCurrency').value  = txn.currency || 'INR';
                 document.getElementById('txnStatus').value    = txn.status;
+                // Document date — defaults to today on new entries, restores from record on edit
+                document.getElementById('txnDate').value      = txn.txnDate || new Date().toISOString().split('T')[0];
             } else {
                 // New transaction defaults — leave category empty so user selects
                 document.getElementById('txnCategory').value  = '';
                 document.getElementById('txnDirection').value = 'Outgoing';
                 document.getElementById('txnStatus').value    = 'Draft';
+                document.getElementById('txnDate').value      = new Date().toISOString().split('T')[0];
             }
 
             // Populate reference dropdown based on current category+direction, THEN restore saved values
@@ -12387,7 +12656,7 @@
                     status: document.getElementById('txnStatus').value,
                     currency: document.getElementById('txnCurrency').value,
                     bankAccountId: document.getElementById('txnBankAccount')?.value || '',
-                    txnDate: currentTransaction?.txnDate || new Date().toISOString().split('T')[0],
+                    txnDate: document.getElementById('txnDate')?.value || currentTransaction?.txnDate || new Date().toISOString().split('T')[0],
                     attachments: currentTransaction?.attachments || [],
                     items: items,
                     convertedToInvoice: currentTransaction?.convertedToInvoice,
@@ -13338,7 +13607,7 @@
         function _attBadge(status){const c=ATT_STATUS_COLORS[status]||{bg:'#f3f4f6',text:'#374151'};return `<span style="background:${c.bg};color:${c.text};border-radius:99px;padding:2px 9px;font-size:11px;font-weight:500;white-space:nowrap">${status}</span>`;}
 
         // Attendance grid state for the tab
-        let attGridState = { staffID:'', periodMonth:new Date().getMonth()+1, periodYear:new Date().getFullYear() };
+        let attGridState = { staffID:'', periodMonth:new Date().getMonth()+1, periodYear:new Date().getFullYear(), dateFilter:'' };
         const ATT_TYPES_MAP = {
             '':              {label:'—',               short:'—',   color:'#9ca3af', bg:'#f9fafb', text:'#6b7280'},
             Working:         {label:'Working',          short:'WRK', color:'#15803d', bg:'#dcfce7', text:'#14532d'},
@@ -13374,7 +13643,11 @@
             const isTech=selSt?.staffType==='Technician';
             const shM=attGridState.periodMonth,shY=attGridState.periodYear;
             const allAtt=[];staff.forEach(s=>(s.attendance||[]).forEach(a=>allAtt.push({...a,staffName:s.name,staffType:s.staffType})));allAtt.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
-            const showingAtt=selID?allAtt.filter(a=>a.staffID===selID):allAtt;
+            // Apply staff filter, then optional date filter (exact-day match)
+            let showingAtt = selID ? allAtt.filter(a=>a.staffID===selID) : allAtt;
+            if (attGridState.dateFilter) {
+                showingAtt = showingAtt.filter(a => (a.date||'') === attGridState.dateFilter);
+            }
             let gridHTML='';
             if(selID&&isTech){
                 const dates=_attPeriodDates(shY,shM),lookup=_attLookup(selID,dates);
@@ -13415,6 +13688,11 @@
                         <select onchange="attGridChangePeriod('periodYear',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm">
                             ${[2024,2025,2026,2027,2028].map(y=>`<option value="${y}" ${y===shY?'selected':''}>${y}</option>`).join('')}
                         </select></div>
+                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Filter by Date</label>
+                        <div class="flex gap-1">
+                            <input type="date" value="${attGridState.dateFilter||''}" onchange="attGridSetDateFilter(this.value)" class="flex-1 px-3 py-2 border rounded-lg text-sm" />
+                            ${attGridState.dateFilter ? `<button onclick="attGridSetDateFilter('')" class="px-2 py-2 text-xs text-gray-500 hover:text-red-600" title="Clear date filter">✕</button>` : ''}
+                        </div></div>
                 </div>
                 ${selID&&isTech?'<p class="text-xs text-blue-600 mt-2">⬇ Click any day to cycle through attendance types. 💾 Save Month to record.</p>':''}
             </div>
@@ -13508,14 +13786,23 @@
             <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
                 <div class="px-4 py-3 border-b border-gray-100 font-semibold text-sm text-gray-700">Records ${selID&&selSt?'— '+selSt.name:'(All)'} (${showingAtt.length})</div>
                 ${!showingAtt.length?'<p class="text-center text-gray-400 py-10 text-sm">No attendance records.</p>':
-                `<div class="overflow-x-auto"><table class="w-full text-sm"><thead class="bg-blue-50 text-xs text-gray-500 uppercase"><tr><th class="px-3 py-2 text-left">Date</th><th class="px-3 py-2 text-left">Staff</th><th class="px-3 py-2 text-left">Type</th><th class="px-3 py-2 text-left">Project</th><th class="px-3 py-2 text-left">Remarks</th><th class="px-3 py-2 text-center">Actions</th></tr></thead>
-                <tbody>${showingAtt.slice(0,150).map(a=>`<tr class="border-b hover:bg-blue-50"><td class="px-3 py-2 text-xs">${a.date}</td><td class="px-3 py-2 font-medium">${a.staffName}</td><td class="px-3 py-2">${_attBadge(a.status)}</td><td class="px-3 py-2 text-xs">${a.project||'—'}</td><td class="px-3 py-2 text-xs text-gray-500">${a.remarks||'—'}</td><td class="px-3 py-2 text-center whitespace-nowrap"><button onclick="editAttendance('${a.staffID}','${a.attID}')" class="text-indigo-500 hover:text-indigo-700 text-xs font-medium mr-2">✏️ Edit</button><button onclick="deleteAttendance('${a.staffID}','${a.attID}')" class="text-red-400 hover:text-red-600 text-xs">✕</button></td></tr>`).join('')}</tbody>
+                `<div class="overflow-x-auto"><table class="w-full text-sm"><thead class="bg-blue-50 text-xs text-gray-500 uppercase"><tr><th class="px-3 py-2 text-left">Date</th><th class="px-3 py-2 text-left">Staff</th><th class="px-3 py-2 text-left">Type</th><th class="px-3 py-2 text-center">OT</th><th class="px-3 py-2 text-left">Project</th><th class="px-3 py-2 text-left">Remarks</th><th class="px-3 py-2 text-center">Actions</th></tr></thead>
+                <tbody>${showingAtt.slice(0,150).map(a=>{
+                    // OT display: prefer numeric otHours; fall back to text "OT" status flag for office staff
+                    const ot = parseFloat(a.otHours)||0;
+                    const otCell = ot > 0
+                        ? `<span class="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-xs font-semibold">⏱ ${ot}h</span>`
+                        : (a.status === 'OT' ? `<span class="text-amber-600 text-xs font-semibold">OT day</span>` : '<span class="text-gray-300">—</span>');
+                    return `<tr class="border-b hover:bg-blue-50"><td class="px-3 py-2 text-xs">${a.date}</td><td class="px-3 py-2 font-medium">${a.staffName}</td><td class="px-3 py-2">${_attBadge(a.status)}</td><td class="px-3 py-2 text-xs text-center">${otCell}</td><td class="px-3 py-2 text-xs">${a.project||'—'}</td><td class="px-3 py-2 text-xs text-gray-500">${a.remarks||'—'}</td><td class="px-3 py-2 text-center whitespace-nowrap"><button onclick="editAttendance('${a.staffID}','${a.attID}')" class="text-indigo-500 hover:text-indigo-700 text-xs font-medium mr-2">✏️ Edit</button><button onclick="deleteAttendance('${a.staffID}','${a.attID}')" class="text-red-400 hover:text-red-600 text-xs">✕</button></td></tr>`;
+                }).join('')}</tbody>
                 </table></div>`}
             </div>`;
         }
 
         function attGridChangeStaff(sid){attGridState.staffID=sid;renderView();}
         function attGridChangePeriod(f,v){attGridState[f]=+v;renderView();}
+        // Single-day filter on the Records table — empty string clears it.
+        function attGridSetDateFilter(d){attGridState.dateFilter=d||'';renderView();}
 
         // ── ATTENDANCE EXPORT ──────────────────────────────────────
 
