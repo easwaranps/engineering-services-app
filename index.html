@@ -1263,6 +1263,12 @@
         let payslips  = [];        // Approved payslip records
         let fundRequests = [];    // Fund requests raised by technicians (Pending/Approved/Disbursed/Rejected)
         let fundPools    = [];    // Active and Closed fund pools (one per disbursement)
+        // ── Monthly Payment Requests (treasury management) ──
+        // Each request consolidates pending Bills, Director Reimbursements, Salaries,
+        // Wages, TDS, and GST for a target month, for management's item-by-item
+        // approval and a single HDFC → SBI fund transfer authorisation.
+        // Status flow: Draft → Approved → Disbursed → Closed (or Cancelled).
+        let paymentRequests = [];
         let currentView = 'dashboard';
         let currentTransaction = null;
         let settingsUnlocked = false;  // Password protection for Settings
@@ -1456,6 +1462,118 @@
             if (!m[s.oldCode]) m[s.oldCode] = s;
             return m;
         }, {});
+
+        // ════════════════════════════════════════════════════════════════
+        // PAYMENT REQUEST CONSTANTS (treasury management)
+        // ────────────────────────────────────────────────────────────────
+        // Item categories shown in the request:
+        //   BILLS           — Pending bills/expenses (payStatus = Pending)
+        //   DIRECTOR_REIMB  — Director out-of-pocket expenses not yet reimbursed
+        //   OFFICE_SAL      — Office-staff salaries for the pay period
+        //   TECH_WAGE       — Technician wages for the pay period
+        //   TDS             — TDS amounts pending deposit (due 7th of next month)
+        //   GST             — Net GST output – ITC for the month (due 20th)
+        //
+        // Period rule for salary/wages: 26th of prev month → 25th of current.
+        // Period rule for bills/director-exp: anything pending through 30th of current.
+        // Period rule for TDS/GST: based on current month's bills + invoices.
+        // Disbursement target: 1st of NEXT month.
+        // ════════════════════════════════════════════════════════════════
+        // ── Categories (now just two — single source: expenses + directorExpenses) ──
+        // Per user spec: ALL payment obligations (salary, wages, rent, electricity,
+        // water, PF, ESIC, TDS, GST, vendor bills) are recorded in Expenses & Bills.
+        // So the PR has just TWO categories: regular Bills and Director reimbursements.
+        // Within BILLS, we visually group/sort by the `billType` subcategory.
+        const PR_CATEGORIES = ['BILLS', 'DIRECTOR_REIMB'];
+        const PR_CATEGORY_LABEL = {
+            BILLS:           '📜 Bills & Expenses (all payables)',
+            DIRECTOR_REIMB:  '👔 Director Reimbursements'
+        };
+        const PR_CATEGORY_COLOR = {
+            BILLS:           'red',
+            DIRECTOR_REIMB:  'purple'
+        };
+        // Subcategory ordering for the flat BILLS list — controls display order.
+        // Bills not in this list show under "Other".
+        const PR_BILLTYPE_ORDER = [
+            'SALARY', 'WAGES', 'RENT', 'ELECTRICITY', 'WATER',
+            'PF', 'EPF', 'ESIC', 'PT', 'TDS', 'GST',
+            'TELEPHONE', 'INTERNET', 'INSURANCE', 'FUEL',
+            'MATERIAL', 'SERVICE', 'STATIONERY', 'TRAVEL',
+            'PROFESSIONAL', 'CONTRACTOR'
+        ];
+        const PR_BILLTYPE_LABEL = {
+            SALARY:        '💼 Salary',
+            WAGES:         '🔧 Wages',
+            RENT:          '🏠 Rent',
+            ELECTRICITY:   '⚡ Electricity',
+            WATER:         '💧 Water',
+            PF:            '🏦 PF',
+            EPF:           '🏦 EPF',
+            ESIC:          '🏥 ESIC',
+            PT:            '📋 Prof. Tax',
+            TDS:           '🧾 TDS',
+            GST:           '📊 GST',
+            TELEPHONE:     '📞 Telephone',
+            INTERNET:      '🌐 Internet',
+            INSURANCE:     '🛡 Insurance',
+            FUEL:          '⛽ Fuel',
+            MATERIAL:      '📦 Material',
+            SERVICE:       '🔨 Service',
+            STATIONERY:    '✏️ Stationery',
+            TRAVEL:        '✈️ Travel',
+            PROFESSIONAL:  '👔 Professional',
+            CONTRACTOR:    '🛠 Contractor'
+        };
+        // Get label for any billType (falls back to the raw type or "Other")
+        function _prBillTypeLabel(bt) {
+            if (!bt) return '📄 Other';
+            return PR_BILLTYPE_LABEL[bt] || ('📄 ' + bt);
+        }
+        // Statuses progress strictly: Draft → Approved → Disbursed → Closed.
+        // Cancelled can occur from any pre-Disbursed state.
+        const PR_STATUSES = ['Draft', 'Approved', 'Disbursed', 'Closed', 'Cancelled'];
+
+        // Per-item decision possibilities (set during review in Phase 2):
+        const PR_ITEM_DECISIONS = ['Pending', 'Approved', 'Deferred', 'Rejected'];
+
+        // ── Period helpers ──
+        // Pay period for salaries/wages: 26th-prev → 25th-current.
+        function _prPayPeriod(month, year) {
+            // month/year refer to the disbursement-target month-of-record
+            // (e.g. month=6, year=2026 means "the June 2026 request" covering
+            //  the period 26-May-2026 to 25-Jun-2026).
+            const prevMonth = month === 1 ? 12 : month - 1;
+            const prevYear  = month === 1 ? year - 1 : year;
+            const ym = (m, y) => String(y) + '-' + String(m).padStart(2, '0');
+            return {
+                startDate: `${prevYear}-${String(prevMonth).padStart(2,'0')}-26`,
+                endDate:   `${year}-${String(month).padStart(2,'0')}-25`,
+                periodMonth: month,
+                periodYear:  year,
+                periodYM:    ym(month, year),
+                prevPeriodYM: ym(prevMonth, prevYear)
+            };
+        }
+
+        // Generate the next sequential Payment Request ID for the given FY.
+        function generatePaymentRequestID(date = new Date()) {
+            const fyCode = (typeof getFinancialYearCode === 'function')
+                ? getFinancialYearCode(date) : '2627';
+            const prefix = 'PR' + fyCode;
+            const existing = (paymentRequests || [])
+                .map(r => (r.prID||''))
+                .filter(id => id.startsWith(prefix))
+                .map(id => parseInt(id.substring(prefix.length)) || 0);
+            const next = (existing.length ? Math.max(...existing) : 0) + 1;
+            return prefix + String(next).padStart(3, '0');
+        }
+
+        // Format a YYYY-MM into "Mon YYYY"
+        function _prMonthLabel(month, year) {
+            const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            return `${names[month-1]} ${year}`;
+        }
 
         // ════════════════════════════════════════════════════════════════
         // All statuses that count as leave (1 day each)
@@ -2672,6 +2790,7 @@
                 { type: 'payslips',        getMem: () => payslips,        setMem: (d) => { payslips = d; } },
                 { type: 'fundRequests',    getMem: () => fundRequests,    setMem: (d) => { fundRequests = d; } },
                 { type: 'fundPools',       getMem: () => fundPools,       setMem: (d) => { fundPools = d; } },
+                { type: 'paymentRequests', getMem: () => paymentRequests, setMem: (d) => { paymentRequests = d; } },
                 { type: 'parties',         getMem: () => parties,         setMem: (d) => { parties = d; } },
                 { type: 'bankAccounts',    getMem: () => bankAccounts,    setMem: (d) => { bankAccounts = d; } },
                 { type: 'settings',        getMem: () => settings,        setMem: (d) => { settings = d; } }
@@ -3820,12 +3939,22 @@
                 }
                 fundPools           = Array.isArray(fundPoolData)  ? fundPoolData  : [];
 
+                // Payment Requests (treasury management — monthly disbursement workflow)
+                let payReqData = await loadFileFromDrive('paymentRequests.json');
+                if (!payReqData) {
+                    console.log('📄 Auto-creating paymentRequests.json (first run)');
+                    try { await saveFileToDrive('paymentRequests.json', []); payReqData = []; }
+                    catch(e) { console.warn('Could not auto-create paymentRequests.json:', e.message); }
+                }
+                paymentRequests = Array.isArray(payReqData) ? payReqData : [];
+
                 console.log('✅ Data loaded — transactions:', transactions.length,
                     '| parties:', parties.length,
                     '| staff:', staff.length,
                     '| expenses:', expenses.length,
                     '| fundRequests:', fundRequests.length,
-                    '| fundPools:', fundPools.length);
+                    '| fundPools:', fundPools.length,
+                    '| paymentRequests:', paymentRequests.length);
 
                 // ── Phase C: Recompute pool status on load + auto-retry unallocated ──
                 // This corrects any stale runningBalance/status from field app saves
@@ -5638,6 +5767,7 @@
                             <button onclick="switchView('staff')" class="px-4 py-2 rounded-lg ${currentView === 'staff' ? 'bg-teal-100 text-teal-700' : 'text-gray-600 hover:bg-gray-100'}">👥 Staff</button>
                             <button onclick="switchView('projexp')" class="px-4 py-2 rounded-lg ${currentView === 'projexp' ? 'bg-yellow-100 text-yellow-700' : 'text-gray-600 hover:bg-gray-100'}">🧳 Projects</button>
                             <button onclick="switchView('funds')" class="px-4 py-2 rounded-lg ${currentView === 'funds' ? 'bg-emerald-100 text-emerald-700' : 'text-gray-600 hover:bg-gray-100'}">💰 Funds${(()=>{const p=fundRequests.filter(r=>r.status==='Pending').length;return p>0?` <span class="ml-1 px-1.5 py-0.5 bg-rose-500 text-white rounded-full text-xs font-bold">${p}</span>`:'';})()}</button>
+                            <button onclick="switchView('payreq')" class="px-4 py-2 rounded-lg ${currentView === 'payreq' ? 'bg-cyan-100 text-cyan-700' : 'text-gray-600 hover:bg-gray-100'}">💼 Pay Requests${(()=>{const p=(paymentRequests||[]).filter(r=>r.status==='Draft').length;return p>0?` <span class="ml-1 px-1.5 py-0.5 bg-amber-500 text-white rounded-full text-xs font-bold">${p}</span>`:'';})()}</button>
                             <button onclick="switchView('direxp')" class="px-4 py-2 rounded-lg ${currentView === 'direxp' ? 'bg-rose-100 text-rose-700' : 'text-gray-600 hover:bg-gray-100'}">👔 Directors</button>
                             <button onclick="switchView('tax')" class="px-4 py-2 rounded-lg ${currentView === 'tax' ? 'bg-red-100 text-red-700' : 'text-gray-600 hover:bg-gray-100'}">🧾 Tax</button>
                             <button onclick="switchView('mis')" class="px-4 py-2 rounded-lg ${currentView === 'mis' ? 'bg-green-100 text-green-700' : 'text-gray-600 hover:bg-gray-100'}">📊 MIS Report</button>
@@ -5680,6 +5810,7 @@
             else if (currentView === 'staff') renderStaff(content);
             else if (currentView === 'projexp') renderProjectExpenses(content);
             else if (currentView === 'funds')   renderFunds(content);
+            else if (currentView === 'payreq')  renderPaymentRequests(content);
             else if (currentView === 'direxp')  renderDirectorExpenses(content);
             else if (currentView === 'worklogs') renderWorkLogs(content);
             else if (currentView === 'tax')      renderTaxCompliance(content);
@@ -20628,6 +20759,1335 @@ Automated WFH alert — ${company} Attendance System.`;
             }
 
             doc.save(`WorkReport_${projectName.replace(/\s+/g,'_')}_${new Date().toISOString().slice(0,10)}.pdf`);
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        //  PAYMENT REQUESTS MODULE (treasury management)
+        //  ────────────────────────────────────────────────────────────────
+        //  Monthly aggregation of pending Bills, Director Reimbursements,
+        //  Salaries, Wages, TDS, and GST for management's approval and
+        //  HDFC → SBI fund transfer authorisation.
+        //
+        //  Period rules (from user spec):
+        //  - Generated 26th–30th of current month, disbursed 1st of next.
+        //  - Salaries/Wages: 26-prev → 25-current.
+        //  - Bills/Director Expenses: pending through 30-current.
+        //  - TDS: due 7th of next month.
+        //  - GST: due 20th of next month.
+        // ════════════════════════════════════════════════════════════════════
+
+        // ── Aggregator 1: ALL pending bills (single source of truth) ──
+        // Per user spec: every payment obligation (salary, wages, rent, electricity,
+        // water, PF, ESIC, TDS, GST, vendor invoices, etc.) is recorded in
+        // Expenses & Bills with the appropriate `billType`. The PR just picks up
+        // any expense with `payStatus === 'Pending'` and `billDate ≤ periodEnd`.
+        //
+        // We tag each item with its `billType` as a sub-grouping hint for the UI.
+        // The gap detector (_prCollectStaffSalaryGaps) checks for missing salary
+        // bills and the result is surfaced as a warning banner on the request.
+        function _prCollectPendingBills(periodEnd) {
+            return (expenses || [])
+                .filter(e => e.payStatus === 'Pending' && (e.billDate || '') <= periodEnd)
+                .map(e => {
+                    const payeeName = e.companyName || e.staffName || e.vendor || '—';
+                    const desc = e.description ||
+                                 (e.billType === 'SALARY' ? `${e.staffName || ''} — Salary` :
+                                  e.billType === 'WAGES'  ? `${e.staffName || ''} — Wages`  :
+                                                            (e.billType || 'Bill'));
+                    return {
+                        itemID:        'BILL-' + e.expID,
+                        category:      'BILLS',
+                        billType:      e.billType || '',   // subcategory tag for grouping in the UI
+                        sourceID:      e.expID,
+                        sourceType:    'expense',
+                        description:   `${payeeName} — ${desc}`.trim(),
+                        payee:         payeeName,
+                        amount:        +((parseFloat(e.netPayable) || 0).toFixed(2)),
+                        dueDate:       e.billDate || '',
+                        decision:      'Pending',
+                        decisionRemark:'',
+                        paid:          false,
+                        paidDate:      '',
+                        paidRef:       '',
+                        sourceSnapshot:{
+                            expID: e.expID, billNo: e.billNo, billDate: e.billDate, voucherNo: e.voucherNo,
+                            billType: e.billType, staffID: e.staffID || '', staffName: e.staffName || '',
+                            billAmtINR: e.billAmtINR, netPayable: e.netPayable,
+                            tdsAmt: e.tdsAmt || 0, vendorPAN: e.vendorPAN || ''
+                        }
+                    };
+                });
+        }
+
+        // ── Aggregator 2: unsettled Director Reimbursements ──
+        function _prCollectUnsettledDirectorExpenses(periodEnd) {
+            return (directorExpenses || [])
+                .filter(d => !d.reimbursed && (d.expDate || '') <= periodEnd)
+                .map(d => {
+                    const dirName = d.director === 'dir1'
+                        ? (settings.director1Name || 'Director 1')
+                        : (settings.director2Name || 'Director 2');
+                    return {
+                        itemID:        'DIR-' + d.deID,
+                        category:      'DIRECTOR_REIMB',
+                        sourceID:      d.deID,
+                        sourceType:    'directorExpense',
+                        description:   `${dirName}: ${d.description || d.category || 'Expense'}`,
+                        payee:         dirName,
+                        amount:        +((parseFloat(d.amount) || 0).toFixed(2)),
+                        dueDate:       d.expDate || '',
+                        decision:      'Pending',
+                        decisionRemark:'',
+                        paid:          false,
+                        paidDate:      '',
+                        paidRef:       '',
+                        sourceSnapshot:{
+                            deID: d.deID, director: d.director, expDate: d.expDate,
+                            vendor: d.vendor, billNo: d.billNo, payMode: d.payMode
+                        }
+                    };
+                });
+        }
+
+        // ── Salary/Wage gap detector (replaces the compute-based aggregators) ──
+        // Per the workflow: HR records salary/wage as a Bill (billType=SALARY/WAGES,
+        // with staffID) in Expenses & Bills before the 30th. The BILLS aggregator
+        // routes those bills into OFFICE_SAL / TECH_WAGE automatically.
+        //
+        // This helper finds active staff WITHOUT a recorded salary bill for the
+        // period — these are the gaps HR needs to fill before disbursement.
+        // Returns an array of {staffID, name, staffType, expectedCategory} entries
+        // that the Generate flow stores on the PR as a warning list (not actual items).
+        function _prCollectStaffSalaryGaps(month, year) {
+            const ym = `${year}-${String(month).padStart(2,'0')}`;
+            const periodStart = `${year}-${String(month).padStart(2,'0')}-01`;
+            const periodEnd   = `${year}-${String(month).padStart(2,'0')}-30`;
+
+            // Which staff are active and expected to be paid this period?
+            const activeStaff = (staff || []).filter(s =>
+                s.status !== 'Resigned' && s.status !== 'Terminated' && s.status !== 'Inactive'
+            );
+
+            // Existing SALARY/WAGES bills for the period — keyed by staffID
+            const billedStaffIds = new Set();
+            (expenses || []).forEach(e => {
+                if ((e.billType === 'SALARY' || e.billType === 'WAGES') && e.staffID) {
+                    // The bill date must fall in the request period for it to count
+                    const bd = e.billDate || '';
+                    if (bd.startsWith(ym) || (bd >= periodStart && bd <= periodEnd)) {
+                        billedStaffIds.add(e.staffID);
+                    }
+                }
+            });
+
+            return activeStaff
+                .filter(s => !billedStaffIds.has(s.staffID))
+                .map(s => {
+                    const stype = (s.staffType || '').toLowerCase();
+                    const expectedCategory = (stype.includes('tech') || stype.includes('field'))
+                                             ? 'TECH_WAGE' : 'OFFICE_SAL';
+                    return {
+                        staffID: s.staffID,
+                        name: s.name,
+                        staffType: s.staffType || '',
+                        expectedCategory
+                    };
+                });
+        }
+
+        // ── Main: assemble the request from the two sources ──
+        // Per the simplified single-source-of-truth model:
+        //  - All payables (Salary, Wages, Rent, Electricity, Water, PF, ESIC,
+        //    TDS, GST, vendor bills, etc.) live in `expenses[]` with payStatus='Pending'.
+        //  - Director out-of-pocket reimbursements live separately in `directorExpenses[]`
+        //    because they have specialised fields (director1/dir2, GST ITC, etc.).
+        // The salary gap detector runs alongside to surface missing salary bills
+        // as a warning on the request (stored on `pr.salaryGaps`).
+        function _prAggregateAll(month, year) {
+            const periodEnd = `${year}-${String(month).padStart(2,'0')}-30`;
+            const items = [
+                ..._prCollectPendingBills(periodEnd),
+                ..._prCollectUnsettledDirectorExpenses(periodEnd)
+            ];
+            const totalGenerated = items.reduce((s, it) => s + (parseFloat(it.amount) || 0), 0);
+            const salaryGaps = _prCollectStaffSalaryGaps(month, year);
+            return {
+                items,
+                totalGenerated: +totalGenerated.toFixed(2),
+                salaryGaps
+            };
+        }
+
+        // ── Generate a fresh Payment Request and persist it ──
+        async function generatePaymentRequest() {
+            const today = new Date();
+            // Default: current month (if in 26-30 window) or current month otherwise.
+            const dom = today.getDate();
+            const defaultMonth = today.getMonth() + 1;
+            const defaultYear  = today.getFullYear();
+
+            // Simple prompts for month/year (Phase 1 — minimal UI)
+            const monthIn = prompt(
+                'Generate Payment Request for which month?\n\n' +
+                'Enter month number (1-12). Current default: ' + defaultMonth +
+                '\n\nThe request will cover:\n' +
+                '• Salaries: 26-prev → 25-current of selected month\n' +
+                '• Bills & Director expenses: pending through 30th\n' +
+                '• TDS (due 7th of next month) & GST (due 20th)',
+                String(defaultMonth)
+            );
+            if (monthIn === null) return;
+            const month = parseInt(monthIn);
+            if (!month || month < 1 || month > 12) { alert('Invalid month — must be 1–12'); return; }
+
+            const yearIn = prompt('Year? (e.g. ' + defaultYear + ')', String(defaultYear));
+            if (yearIn === null) return;
+            const year = parseInt(yearIn);
+            if (!year || year < 2020 || year > 2100) { alert('Invalid year'); return; }
+
+            // Sanity: don't allow duplicate for same month/year
+            const existing = (paymentRequests || []).find(r =>
+                r.periodMonth === month && r.periodYear === year && r.status !== 'Cancelled'
+            );
+            if (existing) {
+                if (!confirm(
+                    `A Payment Request already exists for ${_prMonthLabel(month, year)}:\n\n` +
+                    `${existing.prID} — Status: ${existing.status}\n\n` +
+                    `Generate ANOTHER one anyway? (Both will appear in the list.)`
+                )) return;
+            }
+
+            // Aggregate data
+            const { items, totalGenerated, salaryGaps } = _prAggregateAll(month, year);
+            if (items.length === 0 && (!salaryGaps || salaryGaps.length === 0)) {
+                alert(`No pending items found for ${_prMonthLabel(month, year)}.\n\nNothing to generate.`);
+                return;
+            }
+
+            // Pre-generation warning: any active staff without a salary bill?
+            // We let the user proceed but make sure they see the gap explicitly.
+            if (salaryGaps && salaryGaps.length > 0) {
+                const byCat = { OFFICE_SAL: [], TECH_WAGE: [] };
+                salaryGaps.forEach(g => (byCat[g.expectedCategory] || (byCat[g.expectedCategory] = [])).push(g));
+                const oList = byCat.OFFICE_SAL.length ? '\n  Office: ' + byCat.OFFICE_SAL.map(g => g.name).join(', ') : '';
+                const tList = byCat.TECH_WAGE.length  ? '\n  Tech:   ' + byCat.TECH_WAGE.map(g => g.name).join(', ')  : '';
+                if (!confirm(
+                    `⚠ Salary Gap Warning\n\n` +
+                    `${salaryGaps.length} active staff have NO salary/wage bill recorded for ${_prMonthLabel(month, year)}:${oList}${tList}\n\n` +
+                    `These won't be in the Payment Request unless you go to Expenses & Bills first and record them.\n\n` +
+                    `Generate anyway?`
+                )) return;
+            }
+
+            // Construct the new request
+            const nextMonth = month === 12 ? 1 : month + 1;
+            const nextYear  = month === 12 ? year + 1 : year;
+            const disbursementDate = `${nextYear}-${String(nextMonth).padStart(2,'0')}-01`;
+            const pr = {
+                prID:             generatePaymentRequestID(),
+                periodMonth:      month,
+                periodYear:       year,
+                periodLabel:      _prMonthLabel(month, year),
+                disbursementDate,
+                status:           'Draft',
+                generatedBy:      (typeof currentUser !== 'undefined' && currentUser?.name) || 'User',
+                generatedAt:      new Date().toISOString(),
+                approvedBy:       '', approvedAt: '',
+                disbursedAt:      '', transferRef: '',
+                fromBankAccountId:'', toBankAccountId: '',
+                items,
+                salaryGaps:       salaryGaps || [],   // {staffID, name, staffType, expectedCategory}
+                totalGenerated,
+                totalApproved:    0,
+                totalDeferred:    0,
+                totalRejected:    0,
+                totalPaid:        0
+            };
+            _stampRecord && _stampRecord(pr);
+            paymentRequests.push(pr);
+
+            try {
+                await saveData('paymentRequests', paymentRequests);
+                alert(`✅ Payment Request ${pr.prID} generated for ${pr.periodLabel}\n\n` +
+                      `Items: ${items.length}\n` +
+                      `Total: ₹${totalGenerated.toLocaleString('en-IN', {minimumFractionDigits:2,maximumFractionDigits:2})}` +
+                      ((salaryGaps && salaryGaps.length) ? `\n\n⚠ ${salaryGaps.length} staff missing salary bills — see warning banner in the request.` : '') +
+                      `\n\nOpen it to review and approve.`);
+                renderView();
+            } catch (e) {
+                console.error('Save failed:', e);
+                alert('Could not save Payment Request: ' + e.message);
+                paymentRequests.pop();
+            }
+        }
+
+        // ── Render Payment Requests list view ──
+        // Persistent filter state across re-renders
+        if (typeof window._prFilter === 'undefined') window._prFilter = { status: '', year: '', q: '' };
+
+        function _prSetFilter(key, val) {
+            window._prFilter[key] = val;
+            renderView();
+        }
+
+        function _prClearFilters() {
+            window._prFilter = { status: '', year: '', q: '' };
+            renderView();
+        }
+
+        function renderPaymentRequests(content) {
+            const allReqs = (paymentRequests || []).slice().sort((a, b) => {
+                if (b.periodYear !== a.periodYear) return b.periodYear - a.periodYear;
+                if (b.periodMonth !== a.periodMonth) return b.periodMonth - a.periodMonth;
+                return (b.generatedAt || '').localeCompare(a.generatedAt || '');
+            });
+
+            // Apply filters
+            const F = window._prFilter || { status: '', year: '', q: '' };
+            const qLow = (F.q || '').toLowerCase().trim();
+            const reqs = allReqs.filter(r => {
+                if (F.status && r.status !== F.status) return false;
+                if (F.year && String(r.periodYear) !== F.year) return false;
+                if (qLow) {
+                    const hay = `${r.prID} ${r.periodLabel} ${r.generatedBy||''} ${r.approvedBy||''} ${r.transferRef||''}`.toLowerCase();
+                    if (!hay.includes(qLow)) return false;
+                }
+                return true;
+            });
+
+            const fmt = n => '₹' + Math.max(0, +n || 0).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
+            const today = new Date();
+            const inGenWindow = today.getDate() >= 26 && today.getDate() <= 30;
+            const currentMonthLabel = _prMonthLabel(today.getMonth()+1, today.getFullYear());
+
+            const statusColor = (s) => ({
+                'Draft':     'bg-yellow-100 text-yellow-700',
+                'Approved':  'bg-blue-100 text-blue-700',
+                'Disbursed': 'bg-purple-100 text-purple-700',
+                'Closed':    'bg-green-100 text-green-700',
+                'Cancelled': 'bg-gray-100 text-gray-500'
+            })[s] || 'bg-gray-100 text-gray-700';
+
+            // Summary stats across ALL requests (not filtered)
+            const stats = allReqs.reduce((acc, r) => {
+                acc.byStatus[r.status] = (acc.byStatus[r.status] || 0) + 1;
+                if (r.status === 'Disbursed' || r.status === 'Closed') acc.disbursedTotal += (parseFloat(r.totalApproved)||0);
+                if (r.status === 'Closed') acc.paidTotal += (parseFloat(r.totalPaid)||0);
+                if (r.status === 'Draft' || r.status === 'Approved') acc.pendingTotal += (parseFloat(r.totalApproved||r.totalGenerated)||0);
+                return acc;
+            }, { byStatus: {}, disbursedTotal: 0, paidTotal: 0, pendingTotal: 0 });
+
+            // Unique years for filter
+            const years = [...new Set(allReqs.map(r => r.periodYear))].sort((a, b) => b - a);
+
+            content.innerHTML = `
+                <div class="mb-6 flex justify-between items-center">
+                    <div>
+                        <h2 class="text-2xl font-bold text-gray-800">💼 Monthly Payment Requests</h2>
+                        <p class="text-sm text-gray-500">Consolidated monthly disbursement requests for management approval</p>
+                    </div>
+                    <button onclick="generatePaymentRequest()" class="px-5 py-2.5 bg-emerald-600 text-white rounded-lg font-semibold hover:bg-emerald-700 shadow-sm">
+                        + Generate New Request
+                    </button>
+                </div>
+
+                <!-- Summary tiles -->
+                ${allReqs.length > 0 ? `
+                <div class="grid grid-cols-4 gap-3 mb-4">
+                    <div class="bg-white rounded-xl shadow-sm p-3 border-l-4 border-yellow-400">
+                        <p class="text-xs text-gray-500 font-semibold uppercase">Draft</p>
+                        <p class="text-xl font-bold text-yellow-700">${stats.byStatus['Draft']||0}</p>
+                    </div>
+                    <div class="bg-white rounded-xl shadow-sm p-3 border-l-4 border-blue-400">
+                        <p class="text-xs text-gray-500 font-semibold uppercase">Approved (pending disb.)</p>
+                        <p class="text-xl font-bold text-blue-700">${stats.byStatus['Approved']||0}</p>
+                    </div>
+                    <div class="bg-white rounded-xl shadow-sm p-3 border-l-4 border-purple-400">
+                        <p class="text-xs text-gray-500 font-semibold uppercase">Disbursed</p>
+                        <p class="text-xl font-bold text-purple-700">${stats.byStatus['Disbursed']||0}</p>
+                        <p class="text-[10px] text-gray-500">${fmt(stats.disbursedTotal)} total</p>
+                    </div>
+                    <div class="bg-white rounded-xl shadow-sm p-3 border-l-4 border-green-400">
+                        <p class="text-xs text-gray-500 font-semibold uppercase">Closed</p>
+                        <p class="text-xl font-bold text-green-700">${stats.byStatus['Closed']||0}</p>
+                        <p class="text-[10px] text-gray-500">${fmt(stats.paidTotal)} paid</p>
+                    </div>
+                </div>` : ''}
+
+                ${inGenWindow ? `
+                <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-4 mb-4 flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <span class="text-2xl">📅</span>
+                        <div>
+                            <p class="font-semibold text-emerald-900">Generation window open — Day ${today.getDate()} of ${currentMonthLabel}</p>
+                            <p class="text-xs text-emerald-700">Generate the Payment Request for ${currentMonthLabel} now. Disbursement target: 1 ${_prMonthLabel(today.getMonth()===11?1:today.getMonth()+2, today.getMonth()===11?today.getFullYear()+1:today.getFullYear())}.</p>
+                        </div>
+                    </div>
+                </div>` : ''}
+
+                <!-- Filters -->
+                ${allReqs.length > 0 ? `
+                <div class="bg-white rounded-xl shadow-sm p-3 mb-4 flex flex-wrap gap-3 items-center">
+                    <input type="text" placeholder="Search PR id, period, ref..."
+                        value="${(F.q||'').replace(/"/g,'&quot;')}"
+                        oninput="_prSetFilter('q', this.value)"
+                        class="flex-1 min-w-48 px-3 py-2 border rounded-lg text-sm"/>
+                    <select onchange="_prSetFilter('status', this.value)" class="px-3 py-2 border rounded-lg text-sm">
+                        <option value="">All Statuses</option>
+                        ${PR_STATUSES.map(s => `<option value="${s}" ${F.status===s?'selected':''}>${s}</option>`).join('')}
+                    </select>
+                    <select onchange="_prSetFilter('year', this.value)" class="px-3 py-2 border rounded-lg text-sm">
+                        <option value="">All Years</option>
+                        ${years.map(y => `<option value="${y}" ${F.year===String(y)?'selected':''}>${y}</option>`).join('')}
+                    </select>
+                    ${(F.q || F.status || F.year) ? `
+                    <button onclick="_prClearFilters()" class="px-3 py-2 text-sm text-gray-600 hover:text-gray-800 underline">Clear filters</button>` : ''}
+                    <span class="text-xs text-gray-500">${reqs.length} of ${allReqs.length}</span>
+                </div>` : ''}
+
+                ${reqs.length === 0 ? `
+                <div class="bg-white rounded-2xl shadow-sm p-12 text-center">
+                    <div class="text-5xl mb-3">${allReqs.length === 0 ? '📭' : '🔍'}</div>
+                    <p class="text-gray-500 font-semibold">${allReqs.length === 0 ? 'No Payment Requests yet' : 'No matches for the current filters'}</p>
+                    <p class="text-xs text-gray-400 mt-1">${allReqs.length === 0 ? 'Click "Generate New Request" to create the first one for this month.' : 'Try clearing filters or adjusting search.'}</p>
+                </div>` : `
+                <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="w-full">
+                            <thead class="bg-gray-50 text-xs text-gray-500 uppercase">
+                                <tr>
+                                    <th class="px-4 py-2 text-left">PR ID</th>
+                                    <th class="px-4 py-2 text-left">Period</th>
+                                    <th class="px-4 py-2 text-left">Disbursement Date</th>
+                                    <th class="px-4 py-2 text-center">Items</th>
+                                    <th class="px-4 py-2 text-right">Generated</th>
+                                    <th class="px-4 py-2 text-right">Approved</th>
+                                    <th class="px-4 py-2 text-right">Paid</th>
+                                    <th class="px-4 py-2 text-center">Status</th>
+                                    <th class="px-4 py-2 text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${reqs.map(r => `
+                                <tr class="border-b hover:bg-gray-50">
+                                    <td class="px-4 py-3 font-mono text-sm font-semibold text-emerald-700">${r.prID}</td>
+                                    <td class="px-4 py-3 text-sm">${r.periodLabel}</td>
+                                    <td class="px-4 py-3 text-sm text-gray-600">${r.disbursementDate}</td>
+                                    <td class="px-4 py-3 text-sm text-center">${(r.items||[]).length}</td>
+                                    <td class="px-4 py-3 text-sm text-right">${fmt(r.totalGenerated)}</td>
+                                    <td class="px-4 py-3 text-sm text-right ${r.totalApproved > 0 ? 'font-bold text-blue-700' : 'text-gray-400'}">${fmt(r.totalApproved||0)}</td>
+                                    <td class="px-4 py-3 text-sm text-right ${r.totalPaid > 0 ? 'font-bold text-green-700' : 'text-gray-400'}">${fmt(r.totalPaid||0)}</td>
+                                    <td class="px-4 py-3 text-center">
+                                        <span class="px-2 py-1 rounded-full text-xs font-bold ${statusColor(r.status)}">${r.status}</span>
+                                    </td>
+                                    <td class="px-4 py-3 text-right whitespace-nowrap">
+                                        <button onclick="openPaymentRequestDetail('${r.prID}')" class="text-indigo-600 hover:text-indigo-800 text-sm font-medium mr-2">Open</button>
+                                        <button onclick="exportPaymentRequestCSV('${r.prID}')" class="text-blue-600 hover:text-blue-800 text-sm font-medium mr-2" title="Export CSV">CSV</button>
+                                        ${r.status === 'Draft' ? `<button onclick="cancelPaymentRequest('${r.prID}')" class="text-red-600 hover:text-red-800 text-sm font-medium">Cancel</button>` : ''}
+                                    </td>
+                                </tr>`).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>`}
+            `;
+        }
+
+        // ── CSV export of a single Payment Request ──
+        function exportPaymentRequestCSV(prID) {
+            const pr = paymentRequests.find(r => r.prID === prID);
+            if (!pr) return;
+            const esc = (v) => {
+                const s = v === null || v === undefined ? '' : String(v);
+                return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+            };
+            const lines = [];
+            // Header section
+            lines.push(`Payment Request,${esc(pr.prID)}`);
+            lines.push(`Period,${esc(pr.periodLabel)}`);
+            lines.push(`Disbursement Date,${esc(pr.disbursementDate)}`);
+            lines.push(`Status,${esc(pr.status)}`);
+            lines.push(`Generated By,${esc(pr.generatedBy)}`);
+            lines.push(`Generated At,${esc((pr.generatedAt||'').substring(0,10))}`);
+            lines.push(`Approved By,${esc(pr.approvedBy||'')}`);
+            lines.push(`Approved At,${esc((pr.approvedAt||'').substring(0,10))}`);
+            lines.push(`Disbursed At,${esc((pr.disbursedAt||'').substring(0,10))}`);
+            lines.push(`Transfer Ref,${esc(pr.transferRef||'')}`);
+            lines.push(`Total Generated,${(pr.totalGenerated||0).toFixed(2)}`);
+            lines.push(`Total Approved,${(pr.totalApproved||0).toFixed(2)}`);
+            lines.push(`Total Deferred,${(pr.totalDeferred||0).toFixed(2)}`);
+            lines.push(`Total Rejected,${(pr.totalRejected||0).toFixed(2)}`);
+            lines.push(`Total Paid,${(pr.totalPaid||0).toFixed(2)}`);
+            lines.push('');
+            // Items table — Bill Type column added after Category for sortability
+            lines.push(['#','Category','Bill Type','Item ID','Description','Payee','Due Date','Amount','Decision','Decision Remark','Paid','Paid Date','Paid Ref','Source Type','Source ID'].map(esc).join(','));
+            (pr.items || []).forEach((it, i) => {
+                lines.push([
+                    i + 1,
+                    PR_CATEGORY_LABEL[it.category] || it.category,
+                    it.billType || '',
+                    it.itemID,
+                    it.description,
+                    it.payee,
+                    it.dueDate,
+                    (parseFloat(it.amount)||0).toFixed(2),
+                    it.decision,
+                    it.decisionRemark || '',
+                    it.paid ? 'Yes' : 'No',
+                    it.paidDate || '',
+                    it.paidRef || '',
+                    it.sourceType,
+                    it.sourceID
+                ].map(esc).join(','));
+            });
+            const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${pr.prID}_${pr.periodLabel.replace(' ','_')}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        // ── Open detail modal for a Payment Request ──
+        // Phase 2: items get interactive Approve/Defer/Reject controls and the
+        // totals update live. Once management is done reviewing, "Finalise Approval"
+        // transitions Draft → Approved (locks decisions, allows Disbursement next).
+        function openPaymentRequestDetail(prID) {
+            const pr = paymentRequests.find(r => r.prID === prID);
+            if (!pr) { alert('Payment Request not found'); return; }
+            // Stash current request id on window for the decision handlers
+            window._currentPR = prID;
+            _renderPaymentRequestDetail(pr);
+        }
+
+        function _renderPaymentRequestDetail(pr) {
+            const fmt = n => '₹' + Math.max(0, +n || 0).toLocaleString('en-IN', {minimumFractionDigits:2,maximumFractionDigits:2});
+
+            // Recompute roll-ups from item decisions (live)
+            const totals = (pr.items || []).reduce((acc, it) => {
+                const amt = parseFloat(it.amount) || 0;
+                acc.generated += amt;
+                if (it.decision === 'Approved') acc.approved += amt;
+                else if (it.decision === 'Deferred') acc.deferred += amt;
+                else if (it.decision === 'Rejected') acc.rejected += amt;
+                else acc.pending += amt;
+                return acc;
+            }, { generated:0, approved:0, deferred:0, rejected:0, pending:0 });
+
+            const isDraft     = pr.status === 'Draft';
+            const isApproved  = pr.status === 'Approved';
+            const isDisbursed = pr.status === 'Disbursed';
+            const isClosed    = pr.status === 'Closed';
+            const editable    = isDraft; // decisions only editable in Draft
+
+            // Group items by category
+            const byCat = {};
+            (pr.items || []).forEach(it => {
+                (byCat[it.category] = byCat[it.category] || []).push(it);
+            });
+
+            const html = `
+            <div id="prDetailModalInner" style="background:#fff;border-radius:16px;max-width:1180px;width:97%;max-height:92vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
+                <div style="background:linear-gradient(135deg,#0891b2,#0e7490);padding:16px 20px;border-radius:16px 16px 0 0;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:10">
+                    <div>
+                        <h2 style="color:#fff;font-weight:700;font-size:18px">💼 ${pr.prID} — ${pr.periodLabel}</h2>
+                        <p style="color:#ccfbf1;font-size:11px;margin-top:2px">
+                            Generated ${(pr.generatedAt||'').substring(0,10)} by ${pr.generatedBy || '—'}
+                            · Disbursement target: ${pr.disbursementDate}
+                            ${pr.approvedBy ? ` · Approved ${(pr.approvedAt||'').substring(0,10)} by ${pr.approvedBy}` : ''}
+                        </p>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:12px">
+                        <span style="padding:4px 12px;background:rgba(255,255,255,0.2);color:#fff;border-radius:12px;font-size:12px;font-weight:600">${pr.status}</span>
+                        <button onclick="closePaymentRequestDetail()" style="color:#fff;font-size:24px;background:none;border:none;cursor:pointer">✕</button>
+                    </div>
+                </div>
+                <div style="padding:20px">
+                    <!-- Live running totals -->
+                    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px">
+                        <div style="border:1px solid #e5e7eb;border-radius:10px;padding:10px;background:#f9fafb">
+                            <p style="font-size:10px;color:#6b7280;font-weight:600;text-transform:uppercase">Total Generated</p>
+                            <p style="font-size:14px;font-weight:700;color:#111827">${fmt(totals.generated)}</p>
+                            <p style="font-size:9px;color:#9ca3af">${(pr.items||[]).length} item(s)</p>
+                        </div>
+                        <div style="border:1px solid #dcfce7;border-radius:10px;padding:10px;background:#f0fdf4">
+                            <p style="font-size:10px;color:#15803d;font-weight:600;text-transform:uppercase">Approved</p>
+                            <p style="font-size:14px;font-weight:700;color:#15803d">${fmt(totals.approved)}</p>
+                        </div>
+                        <div style="border:1px solid #fef3c7;border-radius:10px;padding:10px;background:#fffbeb">
+                            <p style="font-size:10px;color:#a16207;font-weight:600;text-transform:uppercase">Pending</p>
+                            <p style="font-size:14px;font-weight:700;color:#a16207">${fmt(totals.pending)}</p>
+                        </div>
+                        <div style="border:1px solid #fde68a;border-radius:10px;padding:10px;background:#fef9c3">
+                            <p style="font-size:10px;color:#a16207;font-weight:600;text-transform:uppercase">Deferred</p>
+                            <p style="font-size:14px;font-weight:700;color:#a16207">${fmt(totals.deferred)}</p>
+                        </div>
+                        <div style="border:1px solid #fecaca;border-radius:10px;padding:10px;background:#fef2f2">
+                            <p style="font-size:10px;color:#991b1b;font-weight:600;text-transform:uppercase">Rejected</p>
+                            <p style="font-size:14px;font-weight:700;color:#991b1b">${fmt(totals.rejected)}</p>
+                        </div>
+                    </div>
+
+                    ${editable ? `
+                    <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#1e40af">
+                        💡 <strong>Review mode</strong> — pick Approve / Defer / Reject for each item. Totals update live. Click <strong>Finalise Approval</strong> at the bottom when done.
+                    </div>` : isApproved ? `
+                    <div style="background:#dcfce7;border:1px solid #86efac;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#166534">
+                        ✅ <strong>Approved</strong> — ready for disbursement via "Mark Disbursed" (Phase 3).
+                    </div>` : isDisbursed ? `
+                    <div style="background:#f3e8ff;border:1px solid #d8b4fe;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#6b21a8">
+                        💰 <strong>Disbursed</strong> on ${(pr.disbursedAt||'').substring(0,10)} · Transfer ref: ${pr.transferRef || '—'} · Mark items as paid as they go out (Phase 4).
+                    </div>` : isClosed ? `
+                    <div style="background:#dcfce7;border:1px solid #86efac;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#166534">
+                        ✓ <strong>Closed</strong> — all approved items have been marked paid.
+                    </div>` : ''}
+
+                    ${(pr.salaryGaps && pr.salaryGaps.length > 0) ? `
+                    <!-- Salary Gap Warning Banner -->
+                    <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:12px 14px;margin-bottom:14px">
+                        <p style="font-size:13px;font-weight:700;color:#991b1b;margin-bottom:6px">
+                            ⚠ Salary Gap — ${pr.salaryGaps.length} staff missing salary/wage bills for ${pr.periodLabel}
+                        </p>
+                        <p style="font-size:11px;color:#7f1d1d;margin-bottom:4px">These active staff have NO Bills entry recorded. Go to Expenses &amp; Bills to add them, then regenerate the request:</p>
+                        <ul style="font-size:11px;color:#7f1d1d;margin-left:14px;list-style:disc">
+                            ${pr.salaryGaps.map(g => `<li><strong>${g.name}</strong> <span style="color:#9ca3af">(${g.staffType || '—'} → expected ${g.expectedCategory === 'TECH_WAGE' ? 'Wages' : 'Salary'})</span></li>`).join('')}
+                        </ul>
+                    </div>` : ''}
+
+                    <!-- Items by category -->
+                    ${PR_CATEGORIES.map(cat => {
+                        let items = byCat[cat] || [];
+                        if (items.length === 0) return '';
+                        // For BILLS: sort by billType in the configured order, then by dueDate
+                        if (cat === 'BILLS') {
+                            const orderIdx = (bt) => {
+                                const i = PR_BILLTYPE_ORDER.indexOf(bt || '');
+                                return i < 0 ? 999 : i;
+                            };
+                            items = items.slice().sort((a, b) => {
+                                const oa = orderIdx(a.billType), ob = orderIdx(b.billType);
+                                if (oa !== ob) return oa - ob;
+                                if ((a.billType||'') !== (b.billType||'')) return (a.billType||'').localeCompare(b.billType||'');
+                                return (a.dueDate||'').localeCompare(b.dueDate||'');
+                            });
+                        }
+                        const sub = items.reduce((s, it) => s + (parseFloat(it.amount)||0), 0);
+                        const subApproved = items.reduce((s, it) =>
+                            s + (it.decision === 'Approved' ? (parseFloat(it.amount)||0) : 0), 0);
+                        // Build subcategory roll-ups for BILLS (Salary, Wages, TDS, etc.)
+                        const subBreakdown = (cat === 'BILLS') ? (() => {
+                            const tot = {};
+                            items.forEach(it => {
+                                const k = it.billType || 'Other';
+                                tot[k] = (tot[k] || 0) + (parseFloat(it.amount)||0);
+                            });
+                            return Object.entries(tot).map(([k, v]) =>
+                                `<span style="font-size:10px;color:#6b7280;background:#f3f4f6;padding:1px 6px;border-radius:4px;margin-right:4px">${_prBillTypeLabel(k).replace(/^[^a-zA-Z]+/,'').trim()}: <strong style="color:#374151">${fmt(v)}</strong></span>`
+                            ).join('');
+                        })() : '';
+                        return `
+                        <div style="margin-bottom:18px;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden">
+                            <div style="background:#f9fafb;padding:8px 14px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #e5e7eb">
+                                <span style="font-weight:700;font-size:13px;color:#374151">${PR_CATEGORY_LABEL[cat]}</span>
+                                <span style="font-size:12px;color:#6b7280">
+                                    ${items.length} item${items.length===1?'':'s'} · Total <strong>${fmt(sub)}</strong>
+                                    ${subApproved > 0 ? ` · Approved <strong style="color:#15803d">${fmt(subApproved)}</strong>` : ''}
+                                </span>
+                            </div>
+                            ${subBreakdown ? `<div style="padding:6px 14px;background:#fafafa;border-bottom:1px solid #f3f4f6">${subBreakdown}</div>` : ''}
+                            <table style="width:100%;border-collapse:collapse;font-size:12px">
+                                <thead style="background:#f3f4f6;color:#6b7280;font-size:10px;text-transform:uppercase">
+                                    <tr>
+                                        ${cat === 'BILLS' ? '<th style="padding:6px 10px;text-align:left">Type</th>' : ''}
+                                        <th style="padding:6px 10px;text-align:left">Description</th>
+                                        <th style="padding:6px 10px;text-align:left">Payee</th>
+                                        <th style="padding:6px 10px;text-align:left">Due</th>
+                                        <th style="padding:6px 10px;text-align:right">Amount</th>
+                                        <th style="padding:6px 10px;text-align:left">Decision</th>
+                                        <th style="padding:6px 10px;text-align:left">Remark</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${items.map(it => `
+                                    <tr style="border-top:1px solid #f3f4f6">
+                                        ${cat === 'BILLS' ? `<td style="padding:7px 10px;font-size:11px;color:#6b7280;white-space:nowrap">${_prBillTypeLabel(it.billType)}</td>` : ''}
+                                        <td style="padding:7px 10px">${(it.description||'').replace(/</g,'&lt;')}</td>
+                                        <td style="padding:7px 10px;color:#4b5563">${(it.payee||'').replace(/</g,'&lt;')}</td>
+                                        <td style="padding:7px 10px;color:#6b7280;font-size:11px">${it.dueDate||'—'}</td>
+                                        <td style="padding:7px 10px;text-align:right;font-weight:600">${fmt(it.amount)}</td>
+                                        <td style="padding:7px 10px">
+                                            ${editable ? `
+                                            <select onchange="setPRItemDecision('${it.itemID}', this.value)"
+                                                style="padding:3px 6px;border:1px solid ${
+                                                    it.decision === 'Approved' ? '#86efac' :
+                                                    it.decision === 'Deferred' ? '#fcd34d' :
+                                                    it.decision === 'Rejected' ? '#fca5a5' : '#d1d5db'
+                                                };border-radius:4px;font-size:11px;background:${
+                                                    it.decision === 'Approved' ? '#f0fdf4' :
+                                                    it.decision === 'Deferred' ? '#fffbeb' :
+                                                    it.decision === 'Rejected' ? '#fef2f2' : '#fff'
+                                                }">
+                                                <option value="Pending"  ${it.decision==='Pending'?'selected':''}>⏳ Pending</option>
+                                                <option value="Approved" ${it.decision==='Approved'?'selected':''}>✅ Approve</option>
+                                                <option value="Deferred" ${it.decision==='Deferred'?'selected':''}>⏸ Defer</option>
+                                                <option value="Rejected" ${it.decision==='Rejected'?'selected':''}>❌ Reject</option>
+                                            </select>` : `
+                                            <span style="padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;background:${
+                                                it.decision === 'Approved' ? '#dcfce7' :
+                                                it.decision === 'Deferred' ? '#fef3c7' :
+                                                it.decision === 'Rejected' ? '#fee2e2' : '#e5e7eb'
+                                            };color:${
+                                                it.decision === 'Approved' ? '#166534' :
+                                                it.decision === 'Deferred' ? '#92400e' :
+                                                it.decision === 'Rejected' ? '#991b1b' : '#6b7280'
+                                            }">${it.decision}</span>`}
+                                            ${(isDisbursed || isClosed) && it.decision === 'Approved' ? `
+                                            <div style="margin-top:4px">
+                                                <button onclick="markPRItemPaid('${it.itemID}')"
+                                                    style="padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;cursor:pointer;border:1px solid ${it.paid?'#86efac':'#fcd34d'};background:${it.paid?'#dcfce7':'#fffbeb'};color:${it.paid?'#166534':'#92400e'}">
+                                                    ${it.paid ? '✓ Paid '+(it.paidDate||'').substring(5,10) : '⏳ Mark Paid'}
+                                                </button>
+                                            </div>` : ''}
+                                        </td>
+                                        <td style="padding:7px 10px">
+                                            ${editable ? `
+                                            <input type="text" value="${(it.decisionRemark||'').replace(/"/g,'&quot;')}"
+                                                onchange="setPRItemRemark('${it.itemID}', this.value)"
+                                                placeholder="optional"
+                                                style="width:100%;padding:3px 6px;border:1px solid #e5e7eb;border-radius:4px;font-size:11px"/>
+                                            ` : `<span style="font-size:11px;color:#6b7280">${(it.decisionRemark||'').replace(/</g,'&lt;')||'—'}</span>`}
+                                        </td>
+                                    </tr>`).join('')}
+                                </tbody>
+                            </table>
+                        </div>`;
+                    }).join('')}
+
+                    <!-- Action buttons -->
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:18px;padding-top:14px;border-top:1px solid #e5e7eb">
+                        <div style="font-size:14px;color:#0e7490;font-weight:600">
+                            Approved Total: <span style="font-size:18px;font-weight:800">${fmt(totals.approved)}</span>
+                        </div>
+                        <div style="display:flex;gap:10px">
+                            ${editable && totals.approved > 0 ? `
+                            <button onclick="finalisePaymentRequest('${pr.prID}')"
+                                style="padding:10px 20px;background:#0891b2;color:#fff;border-radius:8px;font-weight:600;border:none;cursor:pointer">
+                                ✓ Finalise Approval
+                            </button>` : ''}
+                            ${editable ? `
+                            <button onclick="markAllPendingAs('${pr.prID}','Approved')"
+                                style="padding:8px 14px;background:#f0fdf4;color:#15803d;border:1px solid #86efac;border-radius:8px;font-weight:600;cursor:pointer;font-size:12px">
+                                Approve All Pending
+                            </button>` : ''}
+                            ${isApproved ? `
+                            <button onclick="openMarkDisbursedModal('${pr.prID}')"
+                                style="padding:10px 20px;background:#6b21a8;color:#fff;border-radius:8px;font-weight:600;border:none;cursor:pointer">
+                                💰 Mark Disbursed
+                            </button>
+                            <button onclick="exportPaymentRequestPDF('${pr.prID}')"
+                                style="padding:10px 20px;background:#fff;color:#0e7490;border:1px solid #0891b2;border-radius:8px;font-weight:600;cursor:pointer">
+                                📄 Authorisation PDF
+                            </button>` : ''}
+                            ${isDisbursed ? `
+                            <button onclick="exportPaymentRequestPDF('${pr.prID}')"
+                                style="padding:10px 20px;background:#fff;color:#0e7490;border:1px solid #0891b2;border-radius:8px;font-weight:600;cursor:pointer">
+                                📄 Authorisation PDF
+                            </button>` : ''}
+                            <button onclick="closePaymentRequestDetail()"
+                                style="padding:10px 20px;background:#fff;color:#374151;border:1px solid #d1d5db;border-radius:8px;font-weight:600;cursor:pointer">
+                                Close
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+
+            let modal = document.getElementById('prDetailModal');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'prDetailModal';
+                modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;z-index:10000;padding:16px';
+                document.body.appendChild(modal);
+            }
+            modal.innerHTML = html;
+            modal.style.display = 'flex';
+        }
+
+        function closePaymentRequestDetail() {
+            const modal = document.getElementById('prDetailModal');
+            if (modal) modal.style.display = 'none';
+            window._currentPR = null;
+        }
+
+        // ── Item decision handlers (write to in-memory + persist on close/finalise) ──
+        // Decisions live in memory until the user explicitly Finalises. This means
+        // they can experiment with combinations before committing.
+        function setPRItemDecision(itemID, decision) {
+            const pr = paymentRequests.find(r => r.prID === window._currentPR);
+            if (!pr || pr.status !== 'Draft') return;
+            const item = (pr.items || []).find(i => i.itemID === itemID);
+            if (!item) return;
+            item.decision = decision;
+            // Re-render to update tile totals — preserve modal state
+            _renderPaymentRequestDetail(pr);
+        }
+
+        function setPRItemRemark(itemID, remark) {
+            const pr = paymentRequests.find(r => r.prID === window._currentPR);
+            if (!pr || pr.status !== 'Draft') return;
+            const item = (pr.items || []).find(i => i.itemID === itemID);
+            if (!item) return;
+            item.decisionRemark = remark;
+            // No re-render needed for remark text
+        }
+
+        function markAllPendingAs(prID, decision) {
+            const pr = paymentRequests.find(r => r.prID === prID);
+            if (!pr || pr.status !== 'Draft') return;
+            let n = 0;
+            (pr.items || []).forEach(it => {
+                if (it.decision === 'Pending') { it.decision = decision; n++; }
+            });
+            if (n === 0) {
+                alert('All items already have decisions — nothing to update.');
+                return;
+            }
+            _renderPaymentRequestDetail(pr);
+        }
+
+        // ── Finalise: Draft → Approved + persist ──
+        async function finalisePaymentRequest(prID) {
+            const pr = paymentRequests.find(r => r.prID === prID);
+            if (!pr) return;
+            if (pr.status !== 'Draft') {
+                alert('Cannot finalise — current status: ' + pr.status);
+                return;
+            }
+            // Roll up totals
+            const totals = (pr.items || []).reduce((acc, it) => {
+                const amt = parseFloat(it.amount) || 0;
+                if (it.decision === 'Approved') acc.approved += amt;
+                else if (it.decision === 'Deferred') acc.deferred += amt;
+                else if (it.decision === 'Rejected') acc.rejected += amt;
+                return acc;
+            }, { approved: 0, deferred: 0, rejected: 0 });
+
+            if (totals.approved <= 0) {
+                alert('At least one item must be Approved before finalisation.');
+                return;
+            }
+
+            // Any still-Pending items?
+            const stillPending = (pr.items || []).filter(it => it.decision === 'Pending').length;
+            if (stillPending > 0) {
+                if (!confirm(
+                    `${stillPending} item(s) are still marked Pending.\n\n` +
+                    `On finalisation, they will be auto-set to "Deferred" (not paid this month).\n\n` +
+                    `Proceed?`
+                )) return;
+                (pr.items || []).forEach(it => {
+                    if (it.decision === 'Pending') it.decision = 'Deferred';
+                });
+                // Recompute deferred total
+                totals.deferred = (pr.items || []).reduce((s, it) =>
+                    s + (it.decision === 'Deferred' ? (parseFloat(it.amount)||0) : 0), 0);
+            }
+
+            const fmt = n => '₹' + Math.max(0, +n || 0).toLocaleString('en-IN', {minimumFractionDigits:2,maximumFractionDigits:2});
+            if (!confirm(
+                `Finalise Payment Request ${pr.prID}?\n\n` +
+                `Approved: ${fmt(totals.approved)}\n` +
+                `Deferred: ${fmt(totals.deferred)}\n` +
+                `Rejected: ${fmt(totals.rejected)}\n\n` +
+                `After finalisation, decisions cannot be changed.`
+            )) return;
+
+            pr.status = 'Approved';
+            pr.approvedBy = (typeof currentUser !== 'undefined' && currentUser?.name) || 'User';
+            pr.approvedAt = new Date().toISOString();
+            pr.totalApproved = +totals.approved.toFixed(2);
+            pr.totalDeferred = +totals.deferred.toFixed(2);
+            pr.totalRejected = +totals.rejected.toFixed(2);
+            _stampRecord && _stampRecord(pr);
+
+            try {
+                await saveData('paymentRequests', paymentRequests);
+                _renderPaymentRequestDetail(pr);
+                renderView();
+            } catch (e) {
+                console.error('Finalise save failed:', e);
+                alert('Could not save: ' + e.message);
+            }
+        }
+
+        // ── Cancel a Draft Payment Request ──
+        async function cancelPaymentRequest(prID) {
+            const pr = paymentRequests.find(r => r.prID === prID);
+            if (!pr) return;
+            if (pr.status !== 'Draft') {
+                alert(`Cannot cancel — current status is "${pr.status}". Only Draft requests can be cancelled.`);
+                return;
+            }
+            if (!confirm(`Cancel Payment Request ${pr.prID} (${pr.periodLabel})?\n\nThe record stays for audit, just marked Cancelled.`)) return;
+            pr.status = 'Cancelled';
+            _stampRecord && _stampRecord(pr);
+            try {
+                await saveData('paymentRequests', paymentRequests);
+                renderView();
+            } catch (e) {
+                console.error('Cancel failed:', e);
+                alert('Could not save: ' + e.message);
+            }
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        //  PHASE 3 — Mark Disbursed + Bank Transfer Authorisation PDF
+        // ────────────────────────────────────────────────────────────────────
+        //  After approval, management performs the HDFC → SBI transfer and
+        //  records it here. We capture: source account (HDFC), target account
+        //  (SBI), transfer reference, and date.
+        // ════════════════════════════════════════════════════════════════════
+        function openMarkDisbursedModal(prID) {
+            const pr = paymentRequests.find(r => r.prID === prID);
+            if (!pr) return;
+            if (pr.status !== 'Approved') {
+                alert('Only Approved requests can be marked Disbursed. Current status: ' + pr.status);
+                return;
+            }
+            const fmt = n => '₹' + Math.max(0, +n || 0).toLocaleString('en-IN', {minimumFractionDigits:2,maximumFractionDigits:2});
+            const today = new Date().toISOString().split('T')[0];
+            const accounts = bankAccounts || [];
+
+            // Try to default From = HDFC and To = SBI
+            const findByKeyword = (kw) => accounts.find(b =>
+                (b.bankName||'').toLowerCase().includes(kw.toLowerCase()) ||
+                (b.accountName||'').toLowerCase().includes(kw.toLowerCase())
+            );
+            const defaultFrom = findByKeyword('HDFC');
+            const defaultTo   = findByKeyword('SBI');
+
+            const html = `
+            <div style="background:#fff;border-radius:16px;max-width:600px;width:96%;max-height:88vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
+                <div style="background:linear-gradient(135deg,#6b21a8,#9333ea);padding:16px 20px;border-radius:16px 16px 0 0;display:flex;justify-content:space-between;align-items:center">
+                    <h2 style="color:#fff;font-weight:700;font-size:18px">💰 Mark Disbursed — ${pr.prID}</h2>
+                    <button onclick="closeMarkDisbursedModal()" style="color:#fff;font-size:22px;background:none;border:none;cursor:pointer">✕</button>
+                </div>
+                <div style="padding:20px">
+                    <div style="background:#f9fafb;border-radius:10px;padding:12px;margin-bottom:14px">
+                        <p style="font-size:11px;color:#6b7280">Period: ${pr.periodLabel} · Target date: ${pr.disbursementDate}</p>
+                        <p style="font-size:18px;font-weight:800;color:#6b21a8;margin-top:4px">Disbursement Amount: ${fmt(pr.totalApproved)}</p>
+                        <p style="font-size:11px;color:#6b7280;margin-top:2px">${(pr.items||[]).filter(i => i.decision==='Approved').length} approved item(s)</p>
+                    </div>
+
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+                        <div>
+                            <label style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:4px">From Account (HDFC) <span style="color:#dc2626">*</span></label>
+                            <select id="prFromBank" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
+                                <option value="">-- Select source account --</option>
+                                ${accounts.map(b => `<option value="${b.accountId || b.id || ''}" ${defaultFrom && (b.accountId||b.id) === (defaultFrom.accountId||defaultFrom.id) ? 'selected' : ''}>${b.bankName || ''} — ${b.accountName || ''} ${b.accountNo?'(****'+String(b.accountNo).slice(-4)+')':''}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:4px">To Account (SBI) <span style="color:#dc2626">*</span></label>
+                            <select id="prToBank" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
+                                <option value="">-- Select target account --</option>
+                                ${accounts.map(b => `<option value="${b.accountId || b.id || ''}" ${defaultTo && (b.accountId||b.id) === (defaultTo.accountId||defaultTo.id) ? 'selected' : ''}>${b.bankName || ''} — ${b.accountName || ''} ${b.accountNo?'(****'+String(b.accountNo).slice(-4)+')':''}</option>`).join('')}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+                        <div>
+                            <label style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:4px">Transfer Date <span style="color:#dc2626">*</span></label>
+                            <input type="date" id="prTransferDate" value="${today}" max="${today}" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px"/>
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:4px">Transfer Ref / NEFT-RTGS No.</label>
+                            <input type="text" id="prTransferRef" placeholder="e.g. NEFT-N20260701..." style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px"/>
+                        </div>
+                    </div>
+
+                    <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:10px 12px;margin-top:14px;font-size:11px;color:#92400e">
+                        ⚠ Once marked Disbursed, you can begin marking individual items as Paid (Phase 4) as they go out from the SBI account.
+                    </div>
+
+                    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px">
+                        <button onclick="closeMarkDisbursedModal()" style="padding:9px 18px;background:#fff;color:#374151;border:1px solid #d1d5db;border-radius:8px;font-weight:600;cursor:pointer">Cancel</button>
+                        <button onclick="confirmMarkDisbursed('${pr.prID}')" style="padding:9px 18px;background:#6b21a8;color:#fff;border-radius:8px;font-weight:600;border:none;cursor:pointer">Mark Disbursed</button>
+                    </div>
+                </div>
+            </div>`;
+
+            let modal = document.getElementById('prDisburseModal');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'prDisburseModal';
+                modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;z-index:10001;padding:16px';
+                document.body.appendChild(modal);
+            }
+            modal.innerHTML = html;
+            modal.style.display = 'flex';
+        }
+
+        function closeMarkDisbursedModal() {
+            const m = document.getElementById('prDisburseModal');
+            if (m) m.style.display = 'none';
+        }
+
+        async function confirmMarkDisbursed(prID) {
+            const pr = paymentRequests.find(r => r.prID === prID);
+            if (!pr) return;
+            const fromId = document.getElementById('prFromBank')?.value;
+            const toId   = document.getElementById('prToBank')?.value;
+            const date   = document.getElementById('prTransferDate')?.value;
+            const ref    = (document.getElementById('prTransferRef')?.value || '').trim();
+            if (!fromId || !toId) { alert('Please select both From and To accounts.'); return; }
+            if (fromId === toId)  { alert('From and To accounts must be different.'); return; }
+            if (!date)            { alert('Please set the Transfer Date.'); return; }
+
+            pr.status = 'Disbursed';
+            pr.fromBankAccountId = fromId;
+            pr.toBankAccountId   = toId;
+            pr.transferRef       = ref;
+            pr.disbursedAt       = date;
+            _stampRecord && _stampRecord(pr);
+            try {
+                await saveData('paymentRequests', paymentRequests);
+                closeMarkDisbursedModal();
+                _renderPaymentRequestDetail(pr); // refresh detail
+                renderView();
+            } catch (e) {
+                console.error('Disbursement save failed:', e);
+                alert('Could not save: ' + e.message);
+            }
+        }
+
+        // ── Export the Bank Transfer Authorisation PDF ──
+        // A single-page authorisation document showing:
+        //   - PR ID + period
+        //   - From account / To account
+        //   - Amount + items list grouped by category
+        //   - Approval signature line
+        function exportPaymentRequestPDF(prID) {
+            const pr = paymentRequests.find(r => r.prID === prID);
+            if (!pr) return;
+            const { jsPDF } = window.jspdf || {};
+            if (!jsPDF) { alert('PDF library not loaded'); return; }
+            const fmt = n => Math.max(0, +n || 0).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
+            const accounts = bankAccounts || [];
+            const fromAcct = accounts.find(b => (b.accountId||b.id) === pr.fromBankAccountId);
+            const toAcct   = accounts.find(b => (b.accountId||b.id) === pr.toBankAccountId);
+            const acctLabel = (a) => a ? `${a.bankName || ''} — ${a.accountName || ''}${a.accountNo ? ' (A/c ****' + String(a.accountNo).slice(-4) + ')' : ''}` : '—';
+
+            const doc = new jsPDF('p', 'mm', 'a4');
+            const ML = 14, MR = 14;
+            const CW = 210 - ML - MR;
+            let y = 14;
+
+            // Header
+            doc.setFontSize(15); doc.setTextColor(13, 78, 99); doc.setFont(undefined, 'bold');
+            doc.text(settings.companyName || 'IMSE TECH - SERVICES PVT LTD', ML, y); y += 5;
+            doc.setFontSize(8); doc.setTextColor(75, 85, 99); doc.setFont(undefined, 'normal');
+            if (settings.gstNumber) { doc.text('GST: ' + settings.gstNumber, ML, y); y += 4; }
+
+            y += 4;
+            doc.setFontSize(14); doc.setTextColor(13, 78, 99); doc.setFont(undefined, 'bold');
+            doc.text('BANK TRANSFER AUTHORISATION', 105, y, { align: 'center' }); y += 6;
+            doc.setFontSize(10); doc.setTextColor(75, 85, 99); doc.setFont(undefined, 'normal');
+            doc.text(`Monthly Payment Request — ${pr.periodLabel}`, 105, y, { align: 'center' }); y += 8;
+
+            // Header info box
+            doc.autoTable({
+                startY: y, margin: { left: ML, right: MR }, theme: 'plain',
+                styles: { fontSize: 9, cellPadding: 2 },
+                body: [
+                    [{ content: 'PR No:', styles: { fontStyle: 'bold' } }, pr.prID,
+                     { content: 'Generated:', styles: { fontStyle: 'bold' } }, (pr.generatedAt || '').substring(0, 10)],
+                    [{ content: 'Period:', styles: { fontStyle: 'bold' } }, pr.periodLabel,
+                     { content: 'Approved:', styles: { fontStyle: 'bold' } }, (pr.approvedAt || '').substring(0, 10) + ' by ' + (pr.approvedBy || '—')],
+                    [{ content: 'Disbursement Date:', styles: { fontStyle: 'bold' } }, pr.disbursementDate,
+                     { content: 'Status:', styles: { fontStyle: 'bold', textColor: [107, 33, 168] } }, { content: pr.status, styles: { fontStyle: 'bold', textColor: [107, 33, 168] } }]
+                ],
+                columnStyles: { 0: { cellWidth: 28 }, 1: { cellWidth: 58 }, 2: { cellWidth: 28 }, 3: { cellWidth: 68 } }
+            });
+            y = doc.lastAutoTable.finalY + 6;
+
+            // Transfer instruction
+            doc.setFillColor(247, 232, 254);
+            doc.rect(ML, y, CW, 28, 'F');
+            doc.setTextColor(107, 33, 168); doc.setFontSize(10); doc.setFont(undefined, 'bold');
+            doc.text('TRANSFER INSTRUCTION', ML + 4, y + 5);
+            doc.setFontSize(11); doc.setFont(undefined, 'normal'); doc.setTextColor(60, 60, 60);
+            doc.text('From:', ML + 4, y + 11);
+            doc.setFont(undefined, 'bold'); doc.text(acctLabel(fromAcct), ML + 18, y + 11);
+            doc.setFont(undefined, 'normal'); doc.text('To:', ML + 4, y + 17);
+            doc.setFont(undefined, 'bold'); doc.text(acctLabel(toAcct), ML + 18, y + 17);
+            doc.setFont(undefined, 'normal'); doc.text('Amount:', ML + 4, y + 23);
+            doc.setFont(undefined, 'bold'); doc.setTextColor(107, 33, 168); doc.setFontSize(13);
+            doc.text('₹' + fmt(pr.totalApproved), ML + 22, y + 23);
+            doc.setFontSize(10); doc.setTextColor(107, 33, 168);
+            if (pr.transferRef) {
+                doc.setFont(undefined, 'normal');
+                doc.text('Ref:', ML + 80, y + 23);
+                doc.setFont(undefined, 'bold'); doc.text(pr.transferRef, ML + 88, y + 23);
+            }
+            y += 33;
+
+            // Category-wise summary
+            doc.setFontSize(11); doc.setTextColor(13, 78, 99); doc.setFont(undefined, 'bold');
+            doc.text('Category Breakdown (Approved Items Only)', ML, y); y += 4;
+            const byCat = {};
+            (pr.items || []).filter(i => i.decision === 'Approved').forEach(it => {
+                (byCat[it.category] = byCat[it.category] || []).push(it);
+            });
+            const summaryBody = PR_CATEGORIES.map(cat => {
+                const items = byCat[cat] || [];
+                if (items.length === 0) return null;
+                const sub = items.reduce((s, it) => s + (parseFloat(it.amount) || 0), 0);
+                return [
+                    PR_CATEGORY_LABEL[cat],
+                    { content: String(items.length), styles: { halign: 'center' } },
+                    { content: '₹' + fmt(sub), styles: { halign: 'right', fontStyle: 'bold' } }
+                ];
+            }).filter(Boolean);
+            doc.autoTable({
+                startY: y, margin: { left: ML, right: MR }, theme: 'grid',
+                styles: { fontSize: 9, cellPadding: 2.5 },
+                headStyles: { fillColor: [13, 78, 99], textColor: [255, 255, 255], fontStyle: 'bold' },
+                head: [['Category', 'Items', 'Approved Amount']],
+                body: summaryBody,
+                foot: [[
+                    { content: 'GRAND TOTAL', styles: { fontStyle: 'bold' } },
+                    { content: String((pr.items||[]).filter(i => i.decision === 'Approved').length), styles: { halign: 'center', fontStyle: 'bold' } },
+                    { content: '₹' + fmt(pr.totalApproved), styles: { halign: 'right', fontStyle: 'bold', textColor: [107, 33, 168] } }
+                ]],
+                columnStyles: { 0: { cellWidth: 110 }, 1: { cellWidth: 28, halign: 'center' }, 2: { cellWidth: 44, halign: 'right' } }
+            });
+            y = doc.lastAutoTable.finalY + 6;
+
+            // Detailed items per category (new page if needed)
+            PR_CATEGORIES.forEach(cat => {
+                let items = byCat[cat] || [];
+                if (items.length === 0) return;
+                if (y > 250) { doc.addPage(); y = 15; }
+                // For BILLS: sort by billType order then dueDate; show a Type column
+                if (cat === 'BILLS') {
+                    const orderIdx = (bt) => {
+                        const i = PR_BILLTYPE_ORDER.indexOf(bt || '');
+                        return i < 0 ? 999 : i;
+                    };
+                    items = items.slice().sort((a, b) => {
+                        const oa = orderIdx(a.billType), ob = orderIdx(b.billType);
+                        if (oa !== ob) return oa - ob;
+                        if ((a.billType||'') !== (b.billType||'')) return (a.billType||'').localeCompare(b.billType||'');
+                        return (a.dueDate||'').localeCompare(b.dueDate||'');
+                    });
+                }
+                doc.setFontSize(10); doc.setTextColor(13, 78, 99); doc.setFont(undefined, 'bold');
+                doc.text(PR_CATEGORY_LABEL[cat], ML, y); y += 3;
+                if (cat === 'BILLS') {
+                    // Subtotal-by-billType strip just under the heading
+                    const sub = {};
+                    items.forEach(it => {
+                        const k = it.billType || 'Other';
+                        sub[k] = (sub[k] || 0) + (parseFloat(it.amount)||0);
+                    });
+                    doc.autoTable({
+                        startY: y, margin: { left: ML, right: MR }, theme: 'plain',
+                        styles: { fontSize: 7, cellPadding: 1.5, textColor: [75, 85, 99] },
+                        body: [Object.entries(sub).map(([k, v]) =>
+                            `${_prBillTypeLabel(k).replace(/^[^a-zA-Z]+/,'').trim()}: ₹${fmt(v)}`
+                        ).join('  ·  ')].map(s => [s])
+                    });
+                    y = doc.lastAutoTable.finalY + 1;
+                }
+                doc.autoTable({
+                    startY: y, margin: { left: ML, right: MR }, theme: 'grid',
+                    styles: { fontSize: 8, cellPadding: 2 },
+                    headStyles: { fillColor: [243, 244, 246], textColor: [55, 65, 81], fontStyle: 'bold' },
+                    head: cat === 'BILLS'
+                        ? [['#', 'Type', 'Description', 'Payee', 'Due', 'Amount']]
+                        : [['#', 'Description', 'Payee', 'Due', 'Amount']],
+                    body: items.map((it, i) => cat === 'BILLS' ? [
+                        i + 1,
+                        { content: _prBillTypeLabel(it.billType).replace(/^[^a-zA-Z]+/,'').trim(), styles: { fontSize: 7 } },
+                        it.description || '',
+                        it.payee || '',
+                        it.dueDate || '—',
+                        { content: '₹' + fmt(it.amount), styles: { halign: 'right' } }
+                    ] : [
+                        i + 1,
+                        it.description || '',
+                        it.payee || '',
+                        it.dueDate || '—',
+                        { content: '₹' + fmt(it.amount), styles: { halign: 'right' } }
+                    ]),
+                    columnStyles: cat === 'BILLS'
+                        ? { 0: { cellWidth: 8 }, 1: { cellWidth: 26 }, 2: { cellWidth: 66 }, 3: { cellWidth: 40 }, 4: { cellWidth: 18 }, 5: { cellWidth: 24, halign: 'right' } }
+                        : { 0: { cellWidth: 10 }, 1: { cellWidth: 80 }, 2: { cellWidth: 50 }, 3: { cellWidth: 18 }, 4: { cellWidth: 24, halign: 'right' } }
+                });
+                y = doc.lastAutoTable.finalY + 4;
+            });
+
+            // Signature line at the bottom
+            if (y > 250) { doc.addPage(); y = 15; }
+            y += 10;
+            doc.setDrawColor(150, 150, 150); doc.setLineWidth(0.3);
+            doc.line(ML, y, ML + 70, y);
+            doc.line(ML + 110, y, ML + 180, y);
+            y += 4;
+            doc.setFontSize(9); doc.setTextColor(75, 85, 99); doc.setFont(undefined, 'normal');
+            doc.text('Authorised by (Director)', ML, y);
+            doc.text('Verified by (Accounts)', ML + 110, y);
+            y += 4;
+            doc.setFontSize(8); doc.setTextColor(120, 120, 120);
+            doc.text((pr.approvedBy ? pr.approvedBy + ' · ' : '') + (pr.approvedAt || '').substring(0, 10), ML, y);
+
+            // Footer
+            const totalPages = doc.internal.getNumberOfPages();
+            for (let p = 1; p <= totalPages; p++) {
+                doc.setPage(p);
+                doc.setFontSize(7); doc.setTextColor(150, 150, 150);
+                doc.text(`Page ${p} of ${totalPages}  ·  ${pr.prID} · Bank Transfer Authorisation  ·  ${settings.companyName || ''}`, 105, 292, { align: 'center' });
+            }
+
+            doc.save(`PR_${pr.prID}_BankTransfer_${pr.periodLabel.replace(' ','_')}.pdf`);
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        //  PHASE 4 — Mark Items Paid + Auto-link Back to Sources
+        // ────────────────────────────────────────────────────────────────────
+        //  After disbursement (HDFC → SBI lump-sum done), individual outflows
+        //  happen one by one from SBI. As each goes out, the user marks the
+        //  corresponding PR item as Paid. We auto-update the source record
+        //  (expense.payStatus = 'Paid', directorExpense.reimbursed = true, etc.)
+        //  so the data stays consistent across modules.
+        //
+        //  When all approved items are paid, the request auto-flips to Closed.
+        // ════════════════════════════════════════════════════════════════════
+
+        // Re-render the detail modal with mark-paid controls visible (Phase 4).
+        // The render function above already detects Disbursed status and adds
+        // a Paid/Not Paid indicator next to each item's decision; we add
+        // inline "Mark Paid" buttons via a separate update to the template.
+        // Implementation here: replace the previous detail renderer to enrich
+        // Disbursed-state rows with action buttons.
+
+        async function markPRItemPaid(itemID) {
+            const pr = paymentRequests.find(r => r.prID === window._currentPR);
+            if (!pr) return;
+            if (pr.status !== 'Disbursed') {
+                alert('Mark-Paid only available after the request is Disbursed.');
+                return;
+            }
+            const item = (pr.items || []).find(i => i.itemID === itemID);
+            if (!item) return;
+            if (item.decision !== 'Approved') {
+                alert('Only Approved items can be marked Paid.');
+                return;
+            }
+            if (item.paid) {
+                if (!confirm('This item is already marked Paid. Unmark it?')) return;
+                item.paid = false; item.paidDate = ''; item.paidRef = '';
+                // Note: we don't auto-rollback the source-record fan-out on unmark
+                // (could corrupt other workflows). User can update source manually if needed.
+            } else {
+                const today = new Date().toISOString().split('T')[0];
+                const paidDate = prompt('Payment date (YYYY-MM-DD):', today);
+                if (!paidDate) return;
+                const ref = prompt('Reference / cheque / UTR number (optional):', '') || '';
+                item.paid     = true;
+                item.paidDate = paidDate;
+                item.paidRef  = ref;
+
+                // Fan out to source record
+                try {
+                    await _prLinkBackPayment(item);
+                } catch (e) {
+                    console.warn('Fan-out warning:', e.message);
+                    alert('Item marked paid, but source-record update had an issue: ' + e.message);
+                }
+            }
+
+            // Re-roll totalPaid
+            pr.totalPaid = (pr.items || []).reduce((s, it) =>
+                s + (it.paid ? (parseFloat(it.amount) || 0) : 0), 0);
+
+            // Auto-close: when every approved item is paid → status = Closed
+            const allApprovedPaid = (pr.items || [])
+                .filter(it => it.decision === 'Approved')
+                .every(it => it.paid);
+            if (allApprovedPaid && pr.status === 'Disbursed') {
+                pr.status = 'Closed';
+                console.log(`💼 ${pr.prID} auto-closed — all approved items paid`);
+            }
+
+            _stampRecord && _stampRecord(pr);
+            try {
+                await saveData('paymentRequests', paymentRequests);
+                _renderPaymentRequestDetail(pr);
+                renderView();
+            } catch (e) {
+                console.error('Save failed:', e);
+                alert('Could not save: ' + e.message);
+            }
+        }
+
+        // ── The fan-out: update underlying source records when an item is paid ──
+        // Single source of truth — only two source types in the simplified model:
+        //   expense          → expenses[i].payStatus = 'Paid' + payDate (+chequeNo)
+        //   directorExpense  → directorExpenses[i].reimbursed = true (+date/amt/ref/mode)
+        //
+        // Note: bills with billType='TDS' or 'GST' flow through `expense` like any
+        // other bill — payStatus is what we flip, no special TDS/GST handling.
+        // The legacy 'tdsPayable'/'staffSalary'/'techWage'/'gstNet' source types
+        // are still handled below for backward-compatibility with any old PRs
+        // generated before the single-source-of-truth refactor.
+        async function _prLinkBackPayment(item) {
+            const errs = [];
+            if (item.sourceType === 'expense') {
+                const exp = (expenses || []).find(e => e.expID === item.sourceID);
+                if (exp) {
+                    exp.payStatus = 'Paid';
+                    exp.payDate   = item.paidDate;
+                    if (item.paidRef && !exp.chequeNo) exp.chequeNo = item.paidRef;
+                    _stampRecord && _stampRecord(exp);
+                    try { await saveData('expenses', expenses); }
+                    catch(e) { errs.push('expenses: ' + e.message); }
+                } else { errs.push('Source expense not found: ' + item.sourceID); }
+            }
+            else if (item.sourceType === 'directorExpense') {
+                const de = (directorExpenses || []).find(d => d.deID === item.sourceID);
+                if (de) {
+                    de.reimbursed       = true;
+                    de.reimbursedDate   = item.paidDate;
+                    de.reimbursedAmt    = parseFloat(item.amount) || 0;
+                    de.reimbursedRef    = item.paidRef || '';
+                    de.reimbursedMode   = de.reimbursedMode || 'Bank Transfer (via Payment Request)';
+                    _stampRecord && _stampRecord(de);
+                    try { await saveData('directorExpenses', directorExpenses); }
+                    catch(e) { errs.push('directorExpenses: ' + e.message); }
+                } else { errs.push('Source director expense not found: ' + item.sourceID); }
+            }
+            // ── Legacy source types (older PRs only) ──
+            else if (item.sourceType === 'tdsPayable') {
+                const exp = (expenses || []).find(e => e.expID === item.sourceID);
+                if (exp) {
+                    exp.tdsPaid     = true;
+                    exp.tdsPaidDate = item.paidDate;
+                    exp.tdsChallan  = item.paidRef || exp.tdsChallan || '';
+                    _stampRecord && _stampRecord(exp);
+                    try { await saveData('expenses', expenses); }
+                    catch(e) { errs.push('expenses (TDS legacy): ' + e.message); }
+                } else { errs.push('TDS source expense not found: ' + item.sourceID); }
+            }
+            else if (item.sourceType === 'staffSalary' || item.sourceType === 'techWage' || item.sourceType === 'gstNet') {
+                console.log(`📌 Legacy source type ${item.sourceType} marked paid (${item.itemID}) — no source-record update.`);
+            }
+            if (errs.length) throw new Error(errs.join(' · '));
         }
     </script>
     <!-- WAGE REVISION MODAL — global permanent element -->
