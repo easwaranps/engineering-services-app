@@ -20820,33 +20820,75 @@ Automated WFH alert — ${company} Attendance System.`;
         }
 
         // ── Aggregator 2: unsettled Director Reimbursements ──
+        // ── Director reimbursements — CONSOLIDATED per director ──
+        // Groups all unsettled director expenses (with expDate ≤ periodEnd) into
+        // ONE summary item per director. Matches the real-world settlement pattern:
+        // a single transfer covers all the director's pending expenses for the period.
+        //
+        // Each rollup carries the constituent expense IDs in `sourceSnapshot.deIDs`
+        // so the fan-out (Mark Paid) marks ALL of them reimbursed in one shot.
         function _prCollectUnsettledDirectorExpenses(periodEnd) {
-            return (directorExpenses || [])
-                .filter(d => !d.reimbursed && (d.expDate || '') <= periodEnd)
-                .map(d => {
-                    const dirName = d.director === 'dir1'
-                        ? (settings.director1Name || 'Director 1')
-                        : (settings.director2Name || 'Director 2');
-                    return {
-                        itemID:        'DIR-' + d.deID,
-                        category:      'DIRECTOR_REIMB',
-                        sourceID:      d.deID,
-                        sourceType:    'directorExpense',
-                        description:   `${dirName}: ${d.description || d.category || 'Expense'}`,
-                        payee:         dirName,
-                        amount:        +((parseFloat(d.amount) || 0).toFixed(2)),
-                        dueDate:       d.expDate || '',
-                        decision:      'Pending',
-                        decisionRemark:'',
-                        paid:          false,
-                        paidDate:      '',
-                        paidRef:       '',
-                        sourceSnapshot:{
-                            deID: d.deID, director: d.director, expDate: d.expDate,
-                            vendor: d.vendor, billNo: d.billNo, payMode: d.payMode
-                        }
-                    };
+            const pending = (directorExpenses || [])
+                .filter(d => !d.reimbursed && (d.expDate || '') <= periodEnd);
+            if (pending.length === 0) return [];
+
+            // Group by director field (dir1/dir2). If a record has no director
+            // tag, bucket it under 'unknown' so it's still visible to the user.
+            const byDir = {};
+            pending.forEach(d => {
+                const k = d.director || 'unknown';
+                (byDir[k] = byDir[k] || []).push(d);
+            });
+
+            const items = [];
+            Object.entries(byDir).forEach(([dirKey, recs]) => {
+                const dirName = dirKey === 'dir1' ? (settings.director1Name || 'Director 1')
+                              : dirKey === 'dir2' ? (settings.director2Name || 'Director 2')
+                              : 'Unassigned Director';
+                const total = recs.reduce((s, d) => s + (parseFloat(d.amount) || 0), 0);
+                const dates = recs.map(d => d.expDate || '').filter(Boolean).sort();
+                const minDate = dates[0] || '';
+                const maxDate = dates[dates.length - 1] || '';
+                const periodSpan = (minDate && maxDate)
+                    ? (minDate === maxDate ? minDate : `${minDate} → ${maxDate}`)
+                    : '—';
+                items.push({
+                    itemID:        'DIR-CONS-' + dirKey + '-' + periodEnd.replace(/-/g,''),
+                    category:      'DIRECTOR_REIMB',
+                    sourceID:      dirKey,
+                    sourceType:    'directorExpenseConsolidated',
+                    description:   `${dirName} — ${recs.length} pending expense${recs.length===1?'':'s'} (${periodSpan})`,
+                    payee:         dirName,
+                    amount:        +(total.toFixed(2)),
+                    dueDate:       maxDate || '',
+                    decision:      'Pending',
+                    decisionRemark:'',
+                    paid:          false,
+                    paidDate:      '',
+                    paidRef:       '',
+                    sourceSnapshot:{
+                        director:   dirKey,
+                        dirName,
+                        periodEnd,
+                        count:      recs.length,
+                        firstDate:  minDate,
+                        lastDate:   maxDate,
+                        total:      +(total.toFixed(2)),
+                        // List of constituent IDs — used by the fan-out to mark ALL reimbursed
+                        deIDs:      recs.map(d => d.deID),
+                        // Lightweight breakdown for audit display (no full record copy)
+                        items:      recs.map(d => ({
+                            deID: d.deID,
+                            date: d.expDate || '',
+                            vendor: d.vendor || '',
+                            description: d.description || d.category || '',
+                            amount: +((parseFloat(d.amount)||0).toFixed(2))
+                        }))
+                    }
                 });
+            });
+            // Sort by director name for stable ordering
+            return items.sort((a, b) => (a.payee||'').localeCompare(b.payee||''));
         }
 
         // ── Salary/Wage gap detector (replaces the compute-based aggregators) ──
@@ -21183,7 +21225,8 @@ Automated WFH alert — ${company} Attendance System.`;
                                     <td class="px-4 py-3 text-right whitespace-nowrap">
                                         <button onclick="openPaymentRequestDetail('${r.prID}')" class="text-indigo-600 hover:text-indigo-800 text-sm font-medium mr-2">Open</button>
                                         <button onclick="exportPaymentRequestCSV('${r.prID}')" class="text-blue-600 hover:text-blue-800 text-sm font-medium mr-2" title="Export CSV">CSV</button>
-                                        ${r.status === 'Draft' ? `<button onclick="cancelPaymentRequest('${r.prID}')" class="text-red-600 hover:text-red-800 text-sm font-medium">Cancel</button>` : ''}
+                                        ${r.status === 'Draft' ? `<button onclick="cancelPaymentRequest('${r.prID}')" class="text-amber-600 hover:text-amber-800 text-sm font-medium mr-2" title="Mark Cancelled (audit-preserved)">Cancel</button>` : ''}
+                                        ${(r.status === 'Draft' || r.status === 'Cancelled') ? `<button onclick="deletePaymentRequest('${r.prID}')" class="text-red-600 hover:text-red-800 text-sm font-medium" title="Hard delete (cannot be undone)">🗑 Delete</button>` : ''}
                                     </td>
                                 </tr>`).join('')}
                             </tbody>
@@ -21414,7 +21457,12 @@ Automated WFH alert — ${company} Attendance System.`;
                                     ${items.map(it => `
                                     <tr style="border-top:1px solid #f3f4f6">
                                         ${cat === 'BILLS' ? `<td style="padding:7px 10px;font-size:11px;color:#6b7280;white-space:nowrap">${_prBillTypeLabel(it.billType)}</td>` : ''}
-                                        <td style="padding:7px 10px">${(it.description||'').replace(/</g,'&lt;')}</td>
+                                        <td style="padding:7px 10px">
+                                            ${(it.description||'').replace(/</g,'&lt;')}
+                                            ${it.sourceType === 'directorExpenseConsolidated' && it.sourceSnapshot?.items?.length ? `
+                                            <a href="javascript:void(0)" onclick="showDirectorConsolidatedBreakdown('${window._currentPR}','${it.itemID}')"
+                                               style="margin-left:6px;color:#0891b2;font-size:11px;text-decoration:underline">view breakdown</a>` : ''}
+                                        </td>
                                         <td style="padding:7px 10px;color:#4b5563">${(it.payee||'').replace(/</g,'&lt;')}</td>
                                         <td style="padding:7px 10px;color:#6b7280;font-size:11px">${it.dueDate||'—'}</td>
                                         <td style="padding:7px 10px;text-align:right;font-weight:600">${fmt(it.amount)}</td>
@@ -21486,15 +21534,17 @@ Automated WFH alert — ${company} Attendance System.`;
                             <button onclick="openMarkDisbursedModal('${pr.prID}')"
                                 style="padding:10px 20px;background:#6b21a8;color:#fff;border-radius:8px;font-weight:600;border:none;cursor:pointer">
                                 💰 Mark Disbursed
-                            </button>
-                            <button onclick="exportPaymentRequestPDF('${pr.prID}')"
-                                style="padding:10px 20px;background:#fff;color:#0e7490;border:1px solid #0891b2;border-radius:8px;font-weight:600;cursor:pointer">
-                                📄 Authorisation PDF
                             </button>` : ''}
-                            ${isDisbursed ? `
+                            ${/* PDF available at every status, with header variant for Draft vs Approved+ */''}
                             <button onclick="exportPaymentRequestPDF('${pr.prID}')"
                                 style="padding:10px 20px;background:#fff;color:#0e7490;border:1px solid #0891b2;border-radius:8px;font-weight:600;cursor:pointer">
-                                📄 Authorisation PDF
+                                📄 ${isDraft ? 'Draft Request PDF' : 'Authorisation PDF'}
+                            </button>
+                            ${(isDraft || pr.status === 'Cancelled') ? `
+                            <button onclick="deletePaymentRequest('${pr.prID}')"
+                                style="padding:10px 20px;background:#fff;color:#b91c1c;border:1px solid #fecaca;border-radius:8px;font-weight:600;cursor:pointer"
+                                title="Permanent delete — cannot be undone">
+                                🗑 Delete
                             </button>` : ''}
                             <button onclick="closePaymentRequestDetail()"
                                 style="padding:10px 20px;background:#fff;color:#374151;border:1px solid #d1d5db;border-radius:8px;font-weight:600;cursor:pointer">
@@ -21643,6 +21693,112 @@ Automated WFH alert — ${company} Attendance System.`;
             }
         }
 
+        // ── Show the constituent expenses of a consolidated director rollup ──
+        // Opens a simple inline modal listing each underlying directorExpense
+        // with date, vendor, description, amount. Read-only audit view.
+        function showDirectorConsolidatedBreakdown(prID, itemID) {
+            const pr = paymentRequests.find(r => r.prID === prID);
+            if (!pr) return;
+            const item = (pr.items || []).find(i => i.itemID === itemID);
+            if (!item || item.sourceType !== 'directorExpenseConsolidated') return;
+            const constituents = item.sourceSnapshot?.items || [];
+            const fmt = n => '₹' + Math.max(0, +n || 0).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
+            const total = constituents.reduce((s, c) => s + (parseFloat(c.amount)||0), 0);
+
+            const html = `
+            <div style="background:#fff;border-radius:14px;max-width:720px;width:95%;max-height:88vh;overflow-y:auto;box-shadow:0 18px 50px rgba(0,0,0,0.3)">
+                <div style="background:linear-gradient(135deg,#7c3aed,#a855f7);padding:14px 18px;border-radius:14px 14px 0 0;display:flex;justify-content:space-between;align-items:center">
+                    <h3 style="color:#fff;font-weight:700;font-size:15px">👔 ${item.payee} — Breakdown of pending expenses</h3>
+                    <button onclick="closeDirectorBreakdown()" style="color:#fff;font-size:22px;background:none;border:none;cursor:pointer">✕</button>
+                </div>
+                <div style="padding:16px">
+                    <p style="font-size:12px;color:#6b7280;margin-bottom:10px">
+                        ${constituents.length} unsettled expense${constituents.length===1?'':'s'} through ${pr.disbursementDate}
+                        · Total: <strong style="color:#7c3aed">${fmt(total)}</strong>
+                    </p>
+                    <table style="width:100%;border-collapse:collapse;font-size:12px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden">
+                        <thead style="background:#faf5ff;color:#6b21a8;font-size:10px;text-transform:uppercase">
+                            <tr>
+                                <th style="padding:6px 10px;text-align:left">Date</th>
+                                <th style="padding:6px 10px;text-align:left">Vendor</th>
+                                <th style="padding:6px 10px;text-align:left">Description</th>
+                                <th style="padding:6px 10px;text-align:right">Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${constituents.map(c => `
+                            <tr style="border-top:1px solid #f3f4f6">
+                                <td style="padding:6px 10px;color:#6b7280;font-size:11px;white-space:nowrap">${c.date || '—'}</td>
+                                <td style="padding:6px 10px">${(c.vendor||'—').replace(/</g,'&lt;')}</td>
+                                <td style="padding:6px 10px;color:#4b5563">${(c.description||'').replace(/</g,'&lt;')}</td>
+                                <td style="padding:6px 10px;text-align:right;font-weight:600">${fmt(c.amount)}</td>
+                            </tr>`).join('')}
+                        </tbody>
+                        <tfoot style="background:#faf5ff;font-weight:700">
+                            <tr>
+                                <td colspan="3" style="padding:8px 10px;text-align:right">Total</td>
+                                <td style="padding:8px 10px;text-align:right;color:#7c3aed">${fmt(total)}</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                    <p style="font-size:11px;color:#9ca3af;margin-top:10px">When this consolidated item is marked Paid, all ${constituents.length} constituent records will be marked reimbursed in one transaction.</p>
+                    <div style="text-align:right;margin-top:12px">
+                        <button onclick="closeDirectorBreakdown()" style="padding:7px 14px;background:#fff;color:#374151;border:1px solid #d1d5db;border-radius:6px;font-weight:600;cursor:pointer">Close</button>
+                    </div>
+                </div>
+            </div>`;
+            let modal = document.getElementById('prBreakdownModal');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'prBreakdownModal';
+                modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10002;padding:16px';
+                document.body.appendChild(modal);
+            }
+            modal.innerHTML = html;
+            modal.style.display = 'flex';
+        }
+        function closeDirectorBreakdown() {
+            const m = document.getElementById('prBreakdownModal');
+            if (m) m.style.display = 'none';
+        }
+
+        // ── Hard-delete a Payment Request ──
+        // Allowed only for Draft and Cancelled requests (status that has no
+        // downstream commitments). Approved/Disbursed/Closed records must be
+        // preserved for the audit trail and cannot be deleted by this action.
+        async function deletePaymentRequest(prID) {
+            const idx = paymentRequests.findIndex(r => r.prID === prID);
+            if (idx < 0) return;
+            const pr = paymentRequests[idx];
+            if (pr.status !== 'Draft' && pr.status !== 'Cancelled') {
+                alert(`Cannot delete — status is "${pr.status}". Only Draft or Cancelled requests can be permanently deleted.`);
+                return;
+            }
+            if (!confirm(
+                `⚠ Permanently DELETE Payment Request ${pr.prID} (${pr.periodLabel})?\n\n` +
+                `This removes the record completely. It cannot be undone.\n\n` +
+                `Items: ${(pr.items||[]).length}\n` +
+                `Status: ${pr.status}\n\n` +
+                `Continue?`
+            )) return;
+            // Close any open detail modal that's pointing at this record
+            if (window._currentPR === prID) {
+                closePaymentRequestDetail();
+            }
+            // Snapshot for rollback on save failure
+            const snap = paymentRequests.slice();
+            paymentRequests.splice(idx, 1);
+            try {
+                await saveData('paymentRequests', paymentRequests);
+                renderView();
+            } catch (e) {
+                console.error('Delete save failed — rolling back:', e);
+                paymentRequests = snap;
+                alert('Could not save deletion: ' + e.message);
+                renderView();
+            }
+        }
+
         // ════════════════════════════════════════════════════════════════════
         //  PHASE 3 — Mark Disbursed + Bank Transfer Authorisation PDF
         // ────────────────────────────────────────────────────────────────────
@@ -21782,6 +21938,18 @@ Automated WFH alert — ${company} Attendance System.`;
             const toAcct   = accounts.find(b => (b.accountId||b.id) === pr.toBankAccountId);
             const acctLabel = (a) => a ? `${a.bankName || ''} — ${a.accountName || ''}${a.accountNo ? ' (A/c ****' + String(a.accountNo).slice(-4) + ')' : ''}` : '—';
 
+            // ── Draft mode vs Approved+ mode ──
+            // Draft: management hasn't signed off yet. Show ALL non-rejected items
+            // (Pending + Approved + Deferred) so they can see the full proposal.
+            // Totals use the request's totalGenerated (pre-approval figure).
+            const isDraftPDF = pr.status === 'Draft';
+            const headerTitle = isDraftPDF ? 'PAYMENT REQUEST — PROPOSED DISBURSEMENT' : 'BANK TRANSFER AUTHORISATION';
+            // Which items to include + which label to use for the amount
+            const includeItem = (it) => isDraftPDF ? (it.decision !== 'Rejected') : (it.decision === 'Approved');
+            const totalForDoc = isDraftPDF ? (pr.totalGenerated || 0) : (pr.totalApproved || 0);
+            const sectionHeader = isDraftPDF ? 'Proposed Items (Draft — pending approval)' : 'Category Breakdown (Approved Items Only)';
+            const itemCountLabel = isDraftPDF ? 'Proposed Amount' : 'Approved Amount';
+
             const doc = new jsPDF('p', 'mm', 'a4');
             const ML = 14, MR = 14;
             const CW = 210 - ML - MR;
@@ -21795,9 +21963,21 @@ Automated WFH alert — ${company} Attendance System.`;
 
             y += 4;
             doc.setFontSize(14); doc.setTextColor(13, 78, 99); doc.setFont(undefined, 'bold');
-            doc.text('BANK TRANSFER AUTHORISATION', 105, y, { align: 'center' }); y += 6;
+            doc.text(headerTitle, 105, y, { align: 'center' }); y += 6;
             doc.setFontSize(10); doc.setTextColor(75, 85, 99); doc.setFont(undefined, 'normal');
             doc.text(`Monthly Payment Request — ${pr.periodLabel}`, 105, y, { align: 'center' }); y += 8;
+
+            // Draft watermark
+            if (isDraftPDF) {
+                doc.saveGraphicsState && doc.saveGraphicsState();
+                try {
+                    if (doc.GState) doc.setGState(new doc.GState({ opacity: 0.08 }));
+                    doc.setFont(undefined, 'bold'); doc.setFontSize(80); doc.setTextColor(220, 38, 38);
+                    doc.text('DRAFT', 105, 160, { align: 'center', angle: 30 });
+                    if (doc.GState) doc.setGState(new doc.GState({ opacity: 1 }));
+                } catch (e) { /* GState not available — skip watermark */ }
+                doc.restoreGraphicsState && doc.restoreGraphicsState();
+            }
 
             // Header info box
             doc.autoTable({
@@ -21807,40 +21987,54 @@ Automated WFH alert — ${company} Attendance System.`;
                     [{ content: 'PR No:', styles: { fontStyle: 'bold' } }, pr.prID,
                      { content: 'Generated:', styles: { fontStyle: 'bold' } }, (pr.generatedAt || '').substring(0, 10)],
                     [{ content: 'Period:', styles: { fontStyle: 'bold' } }, pr.periodLabel,
-                     { content: 'Approved:', styles: { fontStyle: 'bold' } }, (pr.approvedAt || '').substring(0, 10) + ' by ' + (pr.approvedBy || '—')],
+                     { content: 'Approved:', styles: { fontStyle: 'bold' } }, isDraftPDF ? '— pending —' : ((pr.approvedAt || '').substring(0, 10) + ' by ' + (pr.approvedBy || '—'))],
                     [{ content: 'Disbursement Date:', styles: { fontStyle: 'bold' } }, pr.disbursementDate,
-                     { content: 'Status:', styles: { fontStyle: 'bold', textColor: [107, 33, 168] } }, { content: pr.status, styles: { fontStyle: 'bold', textColor: [107, 33, 168] } }]
+                     { content: 'Status:', styles: { fontStyle: 'bold', textColor: isDraftPDF ? [180, 83, 9] : [107, 33, 168] } },
+                     { content: pr.status, styles: { fontStyle: 'bold', textColor: isDraftPDF ? [180, 83, 9] : [107, 33, 168] } }]
                 ],
                 columnStyles: { 0: { cellWidth: 28 }, 1: { cellWidth: 58 }, 2: { cellWidth: 28 }, 3: { cellWidth: 68 } }
             });
             y = doc.lastAutoTable.finalY + 6;
 
-            // Transfer instruction
-            doc.setFillColor(247, 232, 254);
-            doc.rect(ML, y, CW, 28, 'F');
-            doc.setTextColor(107, 33, 168); doc.setFontSize(10); doc.setFont(undefined, 'bold');
-            doc.text('TRANSFER INSTRUCTION', ML + 4, y + 5);
-            doc.setFontSize(11); doc.setFont(undefined, 'normal'); doc.setTextColor(60, 60, 60);
-            doc.text('From:', ML + 4, y + 11);
-            doc.setFont(undefined, 'bold'); doc.text(acctLabel(fromAcct), ML + 18, y + 11);
-            doc.setFont(undefined, 'normal'); doc.text('To:', ML + 4, y + 17);
-            doc.setFont(undefined, 'bold'); doc.text(acctLabel(toAcct), ML + 18, y + 17);
-            doc.setFont(undefined, 'normal'); doc.text('Amount:', ML + 4, y + 23);
-            doc.setFont(undefined, 'bold'); doc.setTextColor(107, 33, 168); doc.setFontSize(13);
-            doc.text('₹' + fmt(pr.totalApproved), ML + 22, y + 23);
-            doc.setFontSize(10); doc.setTextColor(107, 33, 168);
-            if (pr.transferRef) {
-                doc.setFont(undefined, 'normal');
-                doc.text('Ref:', ML + 80, y + 23);
-                doc.setFont(undefined, 'bold'); doc.text(pr.transferRef, ML + 88, y + 23);
+            // Transfer instruction box — adapted for Draft state
+            if (isDraftPDF) {
+                doc.setFillColor(254, 243, 199); // amber-50
+                doc.rect(ML, y, CW, 18, 'F');
+                doc.setTextColor(146, 64, 14); doc.setFontSize(10); doc.setFont(undefined, 'bold');
+                doc.text('DRAFT — PENDING APPROVAL', ML + 4, y + 5);
+                doc.setFontSize(9); doc.setFont(undefined, 'normal'); doc.setTextColor(120, 80, 30);
+                doc.text('No transfer is authorised by this document. For management review only.', ML + 4, y + 10);
+                doc.setFont(undefined, 'bold'); doc.setTextColor(146, 64, 14); doc.setFontSize(11);
+                doc.text('Proposed Amount:', ML + 4, y + 16);
+                doc.setFontSize(13); doc.text('₹' + fmt(totalForDoc), ML + 42, y + 16);
+                y += 23;
+            } else {
+                doc.setFillColor(247, 232, 254);
+                doc.rect(ML, y, CW, 28, 'F');
+                doc.setTextColor(107, 33, 168); doc.setFontSize(10); doc.setFont(undefined, 'bold');
+                doc.text('TRANSFER INSTRUCTION', ML + 4, y + 5);
+                doc.setFontSize(11); doc.setFont(undefined, 'normal'); doc.setTextColor(60, 60, 60);
+                doc.text('From:', ML + 4, y + 11);
+                doc.setFont(undefined, 'bold'); doc.text(acctLabel(fromAcct), ML + 18, y + 11);
+                doc.setFont(undefined, 'normal'); doc.text('To:', ML + 4, y + 17);
+                doc.setFont(undefined, 'bold'); doc.text(acctLabel(toAcct), ML + 18, y + 17);
+                doc.setFont(undefined, 'normal'); doc.text('Amount:', ML + 4, y + 23);
+                doc.setFont(undefined, 'bold'); doc.setTextColor(107, 33, 168); doc.setFontSize(13);
+                doc.text('₹' + fmt(totalForDoc), ML + 22, y + 23);
+                doc.setFontSize(10); doc.setTextColor(107, 33, 168);
+                if (pr.transferRef) {
+                    doc.setFont(undefined, 'normal');
+                    doc.text('Ref:', ML + 80, y + 23);
+                    doc.setFont(undefined, 'bold'); doc.text(pr.transferRef, ML + 88, y + 23);
+                }
+                y += 33;
             }
-            y += 33;
 
             // Category-wise summary
             doc.setFontSize(11); doc.setTextColor(13, 78, 99); doc.setFont(undefined, 'bold');
-            doc.text('Category Breakdown (Approved Items Only)', ML, y); y += 4;
+            doc.text(sectionHeader, ML, y); y += 4;
             const byCat = {};
-            (pr.items || []).filter(i => i.decision === 'Approved').forEach(it => {
+            (pr.items || []).filter(includeItem).forEach(it => {
                 (byCat[it.category] = byCat[it.category] || []).push(it);
             });
             const summaryBody = PR_CATEGORIES.map(cat => {
@@ -21857,12 +22051,12 @@ Automated WFH alert — ${company} Attendance System.`;
                 startY: y, margin: { left: ML, right: MR }, theme: 'grid',
                 styles: { fontSize: 9, cellPadding: 2.5 },
                 headStyles: { fillColor: [13, 78, 99], textColor: [255, 255, 255], fontStyle: 'bold' },
-                head: [['Category', 'Items', 'Approved Amount']],
+                head: [['Category', 'Items', itemCountLabel]],
                 body: summaryBody,
                 foot: [[
                     { content: 'GRAND TOTAL', styles: { fontStyle: 'bold' } },
-                    { content: String((pr.items||[]).filter(i => i.decision === 'Approved').length), styles: { halign: 'center', fontStyle: 'bold' } },
-                    { content: '₹' + fmt(pr.totalApproved), styles: { halign: 'right', fontStyle: 'bold', textColor: [107, 33, 168] } }
+                    { content: String((pr.items||[]).filter(includeItem).length), styles: { halign: 'center', fontStyle: 'bold' } },
+                    { content: '₹' + fmt(totalForDoc), styles: { halign: 'right', fontStyle: 'bold', textColor: isDraftPDF ? [180, 83, 9] : [107, 33, 168] } }
                 ]],
                 columnStyles: { 0: { cellWidth: 110 }, 1: { cellWidth: 28, halign: 'center' }, 2: { cellWidth: 44, halign: 'right' } }
             });
@@ -21932,7 +22126,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 y = doc.lastAutoTable.finalY + 4;
             });
 
-            // Signature line at the bottom
+            // Signature line at the bottom (adapted per state)
             if (y > 250) { doc.addPage(); y = 15; }
             y += 10;
             doc.setDrawColor(150, 150, 150); doc.setLineWidth(0.3);
@@ -21940,21 +22134,31 @@ Automated WFH alert — ${company} Attendance System.`;
             doc.line(ML + 110, y, ML + 180, y);
             y += 4;
             doc.setFontSize(9); doc.setTextColor(75, 85, 99); doc.setFont(undefined, 'normal');
-            doc.text('Authorised by (Director)', ML, y);
-            doc.text('Verified by (Accounts)', ML + 110, y);
+            if (isDraftPDF) {
+                doc.text('Director Sign-off (Pending)', ML, y);
+                doc.text('Date', ML + 110, y);
+            } else {
+                doc.text('Authorised by (Director)', ML, y);
+                doc.text('Verified by (Accounts)', ML + 110, y);
+            }
             y += 4;
             doc.setFontSize(8); doc.setTextColor(120, 120, 120);
-            doc.text((pr.approvedBy ? pr.approvedBy + ' · ' : '') + (pr.approvedAt || '').substring(0, 10), ML, y);
+            if (!isDraftPDF && pr.approvedBy) {
+                doc.text(pr.approvedBy + ' · ' + (pr.approvedAt || '').substring(0, 10), ML, y);
+            }
 
             // Footer
             const totalPages = doc.internal.getNumberOfPages();
+            const footerLabel = isDraftPDF ? 'Draft Payment Request — Proposed Disbursement' : 'Bank Transfer Authorisation';
             for (let p = 1; p <= totalPages; p++) {
                 doc.setPage(p);
                 doc.setFontSize(7); doc.setTextColor(150, 150, 150);
-                doc.text(`Page ${p} of ${totalPages}  ·  ${pr.prID} · Bank Transfer Authorisation  ·  ${settings.companyName || ''}`, 105, 292, { align: 'center' });
+                doc.text(`Page ${p} of ${totalPages}  ·  ${pr.prID} · ${footerLabel}  ·  ${settings.companyName || ''}`, 105, 292, { align: 'center' });
             }
 
-            doc.save(`PR_${pr.prID}_BankTransfer_${pr.periodLabel.replace(' ','_')}.pdf`);
+            const prefix = isDraftPDF ? 'PR_DRAFT_' : 'PR_';
+            const suffix = isDraftPDF ? 'Proposed'  : 'BankTransfer';
+            doc.save(`${prefix}${pr.prID}_${suffix}_${pr.periodLabel.replace(' ','_')}.pdf`);
         }
 
         // ════════════════════════════════════════════════════════════════════
@@ -22071,6 +22275,34 @@ Automated WFH alert — ${company} Attendance System.`;
                     try { await saveData('directorExpenses', directorExpenses); }
                     catch(e) { errs.push('directorExpenses: ' + e.message); }
                 } else { errs.push('Source director expense not found: ' + item.sourceID); }
+            }
+            // ── Consolidated director reimbursement — mark ALL constituent records ──
+            else if (item.sourceType === 'directorExpenseConsolidated') {
+                const deIDs = item.sourceSnapshot?.deIDs || [];
+                if (deIDs.length === 0) {
+                    errs.push('Consolidated item has no constituent deIDs: ' + item.itemID);
+                } else {
+                    let matched = 0, missed = [];
+                    deIDs.forEach(deID => {
+                        const de = (directorExpenses || []).find(d => d.deID === deID);
+                        if (de) {
+                            de.reimbursed     = true;
+                            de.reimbursedDate = item.paidDate;
+                            // Stored amount per individual record (NOT the rollup total)
+                            de.reimbursedAmt  = parseFloat(de.amount) || 0;
+                            de.reimbursedRef  = item.paidRef || '';
+                            de.reimbursedMode = de.reimbursedMode || 'Bank Transfer (via Payment Request — consolidated)';
+                            _stampRecord && _stampRecord(de);
+                            matched++;
+                        } else { missed.push(deID); }
+                    });
+                    if (matched > 0) {
+                        try { await saveData('directorExpenses', directorExpenses); }
+                        catch(e) { errs.push('directorExpenses (consolidated): ' + e.message); }
+                    }
+                    if (missed.length) errs.push(`Some constituent expenses not found: ${missed.join(', ')}`);
+                    console.log(`✅ Consolidated reimbursement: marked ${matched}/${deIDs.length} director expenses reimbursed.`);
+                }
             }
             // ── Legacy source types (older PRs only) ──
             else if (item.sourceType === 'tdsPayable') {
