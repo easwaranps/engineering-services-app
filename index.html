@@ -764,7 +764,81 @@
         </div>
     </div>
 
-    <!-- Transaction Modal -->
+    <!-- Ad-hoc Payment Request Modal -->
+    <div id="adhocPRModal" class="modal">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[92vh] overflow-y-auto m-4">
+            <div class="bg-gradient-to-r from-orange-500 to-amber-500 p-5 text-white flex justify-between items-center sticky top-0 z-10">
+                <div>
+                    <h3 class="text-lg font-bold">⚡ Ad-hoc Payment Request</h3>
+                    <p class="text-orange-100 text-xs mt-1">Pick specific pending bills for off-cycle payment. Reason / justification required.</p>
+                </div>
+                <button onclick="closeAdHocPRModal()" class="text-white text-2xl hover:bg-white hover:bg-opacity-20 rounded-full w-9 h-9 flex items-center justify-center">×</button>
+            </div>
+            <div class="p-5 space-y-4">
+                <!-- Top form fields -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1">Disbursement Date *</label>
+                        <input type="date" id="adhocDisbDate" required
+                            class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        <p class="text-[10px] text-gray-400 mt-1">When the transfer is planned</p>
+                    </div>
+                    <div class="md:col-span-2">
+                        <label class="block text-xs font-semibold text-gray-700 mb-1">Reason / Justification *
+                            <span class="text-red-500">required</span></label>
+                        <input type="text" id="adhocReason" required maxlength="200"
+                            placeholder="e.g. Urgent vendor payment to avoid service disconnection; advance payment per agreement..."
+                            class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        <p class="text-[10px] text-gray-400 mt-1">Audit trail — explains why this is being paid outside the monthly cycle</p>
+                    </div>
+                </div>
+
+                <!-- Bills picker -->
+                <div class="border border-gray-200 rounded-xl overflow-hidden">
+                    <div class="bg-gray-50 px-4 py-2.5 flex flex-wrap gap-2 items-center border-b">
+                        <span class="text-sm font-bold text-gray-700">📋 Pick pending bills</span>
+                        <input type="text" id="adhocSearchQ" placeholder="🔍 Search vendor / description / bill no"
+                            oninput="_adhocRenderBills()"
+                            class="flex-1 min-w-48 px-3 py-1.5 border rounded text-sm"/>
+                        <select id="adhocFilterType" onchange="_adhocRenderBills()" class="px-2 py-1.5 border rounded text-sm">
+                            <option value="">All Types</option>
+                            <option value="SALARY">💼 Salary</option>
+                            <option value="WAGES">🔧 Wages</option>
+                            <option value="RENT">🏠 Rent</option>
+                            <option value="ELECTRICITY">⚡ Electricity</option>
+                            <option value="WATER">💧 Water</option>
+                            <option value="PF">🏦 PF</option>
+                            <option value="ESIC">🏥 ESIC</option>
+                            <option value="TDS">🧾 TDS</option>
+                            <option value="GST">📊 GST</option>
+                            <option value="MATERIAL">📦 Material</option>
+                            <option value="SERVICE">🔨 Service</option>
+                            <option value="OTHER">📄 Other</option>
+                        </select>
+                        <span class="text-[11px] text-gray-500" id="adhocPickStats">— no bills loaded —</span>
+                    </div>
+                    <div id="adhocBillsBody" class="max-h-80 overflow-y-auto"></div>
+                </div>
+
+                <!-- Live total -->
+                <div class="bg-orange-50 border border-orange-200 rounded-xl p-4 flex justify-between items-center">
+                    <div>
+                        <p class="text-xs text-orange-700 font-semibold uppercase">Selected for Ad-hoc PR</p>
+                        <p class="text-[10px] text-orange-600" id="adhocSelectedCount">0 items</p>
+                    </div>
+                    <p class="text-2xl font-bold text-orange-700" id="adhocTotalAmount">₹0.00</p>
+                </div>
+
+                <!-- Footer actions -->
+                <div class="flex justify-end gap-3 pt-2">
+                    <button onclick="closeAdHocPRModal()" class="px-5 py-2 border border-gray-300 text-gray-600 rounded-xl hover:bg-gray-50">Cancel</button>
+                    <button onclick="saveAdHocPR()" class="px-6 py-2 bg-orange-600 text-white rounded-xl hover:bg-orange-700 font-semibold">
+                        ⚡ Create Ad-hoc PR (Draft)
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
     <div id="transactionModal" class="modal">
         <div class="bg-white rounded-2xl shadow-2xl w-full max-w-7xl max-h-[90vh] overflow-y-auto m-4">
             <div class="bg-gradient-to-r from-indigo-600 to-purple-600 p-6 text-white">
@@ -1946,6 +2020,12 @@
         function _prMonthLabel(month, year) {
             const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
             return `${names[month-1]} ${year}`;
+        }
+
+        // ── PR type read with backward-compat ──
+        // Existing PRs (pre-AdHoc feature) don't carry a `prType` field — treat as Monthly.
+        function _prType(pr) {
+            return (pr && pr.prType === 'AdHoc') ? 'AdHoc' : 'Monthly';
         }
 
         // ════════════════════════════════════════════════════════════════
@@ -22604,6 +22684,7 @@ Automated WFH alert — ${company} Attendance System.`;
             const disbursementDate = `${nextYear}-${String(nextMonth).padStart(2,'0')}-01`;
             const pr = {
                 prID:             generatePaymentRequestID(),
+                prType:           'Monthly',    // distinguishes from ad-hoc PRs
                 periodMonth:      month,
                 periodYear:       year,
                 periodLabel:      _prMonthLabel(month, year),
@@ -22640,9 +22721,272 @@ Automated WFH alert — ${company} Attendance System.`;
             }
         }
 
+        // ══════════════════════════════════════════════════════════════════
+        // AD-HOC PAYMENT REQUEST
+        // ──────────────────────────────────────────────────────────────────
+        // Off-cycle PRs for specific bills (urgent vendor payments, advances,
+        // disconnection threats, etc.) — same lifecycle as monthly PRs but:
+        //   • No period — user picks bills explicitly
+        //   • Disbursement date user-chosen (default: today)
+        //   • Required justification field (audit trail)
+        //   • prType: 'AdHoc' (distinguishes from Monthly in list/filter/PDF)
+        //   • Same approval → disbursement → mark-paid lifecycle
+        //   • Same fan-out (marks source expense.payStatus = 'Paid')
+        // ══════════════════════════════════════════════════════════════════
+        // Selected expense IDs (set, persisted across modal re-renders)
+        window._adhocSelected = window._adhocSelected || new Set();
+
+        function openAdHocPRModal() {
+            window._adhocSelected = new Set();   // fresh start each open
+            // Default disbursement date = today
+            const today = new Date().toISOString().split('T')[0];
+            document.getElementById('adhocDisbDate').value = today;
+            document.getElementById('adhocReason').value = '';
+            document.getElementById('adhocSearchQ').value = '';
+            document.getElementById('adhocFilterType').value = '';
+            _adhocRenderBills();
+            document.getElementById('adhocPRModal').classList.add('show');
+        }
+        function closeAdHocPRModal() {
+            document.getElementById('adhocPRModal').classList.remove('show');
+            window._adhocSelected = new Set();
+        }
+
+        // Render the pending-bills picker. Re-renders on search/filter change.
+        function _adhocRenderBills() {
+            const body = document.getElementById('adhocBillsBody');
+            if (!body) return;
+            const fmt = n => '₹' + (+n || 0).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
+            const qLow = (document.getElementById('adhocSearchQ').value || '').toLowerCase().trim();
+            const typeFilter = document.getElementById('adhocFilterType').value || '';
+
+            // Bills already on an active (non-Cancelled, non-Closed) PR shouldn't be eligible —
+            // they'd double-process if approved/paid via this ad-hoc.
+            const billsLockedByPR = new Set();
+            (paymentRequests || []).forEach(pr => {
+                if (pr.status === 'Cancelled' || pr.status === 'Closed') return;
+                (pr.items || []).forEach(it => {
+                    if (it.sourceType === 'expense' && !it.paid) {
+                        billsLockedByPR.add(it.sourceID);
+                    }
+                });
+            });
+
+            const pending = (expenses || []).filter(e => {
+                if (e.payStatus !== 'Pending') return false;
+                if (billsLockedByPR.has(e.expID)) return false;
+                if (typeFilter) {
+                    if (typeFilter === 'OTHER') {
+                        // Anything not in the known types
+                        const known = ['SALARY','WAGES','RENT','ELECTRICITY','WATER','PF','ESIC','TDS','GST','MATERIAL','SERVICE'];
+                        if (known.includes(e.billType||'')) return false;
+                    } else {
+                        if ((e.billType || '') !== typeFilter) return false;
+                    }
+                }
+                if (qLow) {
+                    const hay = `${e.companyName||''} ${e.staffName||''} ${e.vendor||''} ${e.description||''} ${e.billType||''} ${e.billNo||''} ${e.voucherNo||''}`.toLowerCase();
+                    if (!hay.includes(qLow)) return false;
+                }
+                return true;
+            }).sort((a,b) => (a.billDate||'').localeCompare(b.billDate||''));
+
+            // Stats line
+            const statsEl = document.getElementById('adhocPickStats');
+            if (statsEl) {
+                const lockedNote = billsLockedByPR.size > 0
+                    ? ` · ${billsLockedByPR.size} hidden (on another PR)`
+                    : '';
+                statsEl.textContent = `${pending.length} pending bill${pending.length===1?'':'s'}${lockedNote}`;
+            }
+
+            if (pending.length === 0) {
+                body.innerHTML = `
+                <div class="p-8 text-center text-gray-400">
+                    <div class="text-4xl mb-2">📭</div>
+                    <p class="text-sm">No matching pending bills found.</p>
+                    <p class="text-[11px] mt-1">If the bill isn't yet in the system, go to <strong>Expenses & Bills</strong> first to record it, then come back to create the ad-hoc request.</p>
+                </div>`;
+                _adhocUpdateTotal();
+                return;
+            }
+
+            const _prBillTypeLabel = (bt) => {
+                const map = {SALARY:'💼 Salary', WAGES:'🔧 Wages', RENT:'🏠 Rent', ELECTRICITY:'⚡ Electricity',
+                             WATER:'💧 Water', PF:'🏦 PF', ESIC:'🏥 ESIC', TDS:'🧾 TDS', GST:'📊 GST',
+                             MATERIAL:'📦 Material', SERVICE:'🔨 Service'};
+                return map[bt] || ('📄 ' + (bt || 'Other'));
+            };
+
+            body.innerHTML = `
+            <table class="w-full text-sm">
+                <thead class="bg-gray-100 text-xs text-gray-600 uppercase sticky top-0">
+                    <tr>
+                        <th class="px-3 py-2 w-8"><input type="checkbox" id="adhocSelectAll" onchange="_adhocToggleAll(this.checked)" class="w-4 h-4 accent-orange-600 cursor-pointer"/></th>
+                        <th class="px-3 py-2 text-left">Date</th>
+                        <th class="px-3 py-2 text-left">Type</th>
+                        <th class="px-3 py-2 text-left">Payee / Description</th>
+                        <th class="px-3 py-2 text-left">Bill / Voucher No</th>
+                        <th class="px-3 py-2 text-right">Amount</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${pending.map(e => {
+                        const checked = window._adhocSelected.has(e.expID);
+                        const amt = parseFloat(e.netPayable) || 0;
+                        const payee = e.companyName || e.staffName || e.vendor || '—';
+                        const desc = e.description || e.billType || '';
+                        return `
+                        <tr class="border-t ${checked?'bg-orange-50':'hover:bg-gray-50'}">
+                            <td class="px-3 py-2 text-center">
+                                <input type="checkbox" ${checked?'checked':''} onchange="_adhocToggleBill('${e.expID}')"
+                                    class="w-4 h-4 accent-orange-600 cursor-pointer"/>
+                            </td>
+                            <td class="px-3 py-2 text-gray-600 whitespace-nowrap">${e.billDate || '—'}</td>
+                            <td class="px-3 py-2 text-xs">${_prBillTypeLabel(e.billType)}</td>
+                            <td class="px-3 py-2">
+                                <div class="font-medium text-gray-800">${payee.replace(/</g,'&lt;')}</div>
+                                <div class="text-xs text-gray-500">${desc.replace(/</g,'&lt;').substring(0,80)}${desc.length>80?'…':''}</div>
+                            </td>
+                            <td class="px-3 py-2 text-xs text-gray-500 font-mono">${e.billNo || e.voucherNo || '—'}</td>
+                            <td class="px-3 py-2 text-right font-semibold whitespace-nowrap">${fmt(amt)}</td>
+                        </tr>`;
+                    }).join('')}
+                </tbody>
+            </table>`;
+            _adhocUpdateTotal();
+        }
+
+        function _adhocToggleBill(expID) {
+            if (window._adhocSelected.has(expID)) window._adhocSelected.delete(expID);
+            else window._adhocSelected.add(expID);
+            _adhocRenderBills();
+        }
+        function _adhocToggleAll(checked) {
+            // Toggle all CURRENTLY VISIBLE bills (after filters)
+            const visibleExpIDs = [];
+            document.querySelectorAll('#adhocBillsBody input[type="checkbox"]').forEach(cb => {
+                const m = cb.getAttribute('onchange') || '';
+                const match = m.match(/_adhocToggleBill\('([^']+)'\)/);
+                if (match) visibleExpIDs.push(match[1]);
+            });
+            if (checked) visibleExpIDs.forEach(id => window._adhocSelected.add(id));
+            else visibleExpIDs.forEach(id => window._adhocSelected.delete(id));
+            _adhocRenderBills();
+        }
+
+        function _adhocUpdateTotal() {
+            const fmt = n => '₹' + (+n || 0).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
+            let total = 0, count = 0;
+            window._adhocSelected.forEach(expID => {
+                const e = (expenses || []).find(x => x.expID === expID);
+                if (e) { total += parseFloat(e.netPayable) || 0; count++; }
+            });
+            const totalEl = document.getElementById('adhocTotalAmount');
+            const countEl = document.getElementById('adhocSelectedCount');
+            if (totalEl) totalEl.textContent = fmt(total);
+            if (countEl) countEl.textContent = `${count} item${count===1?'':'s'} selected`;
+        }
+
+        async function saveAdHocPR() {
+            const disbDate = document.getElementById('adhocDisbDate').value;
+            const reason   = document.getElementById('adhocReason').value.trim();
+            if (!disbDate) { alert('Please pick a disbursement date.'); return; }
+            if (!reason) {
+                alert('Reason / justification is required for ad-hoc payment requests.\n\nThis is the audit trail — please explain why this payment is being made outside the monthly cycle.');
+                document.getElementById('adhocReason').focus();
+                return;
+            }
+            if (window._adhocSelected.size === 0) {
+                alert('Please pick at least one pending bill to include in this ad-hoc request.');
+                return;
+            }
+            // Build the items from selected expenses (same shape as monthly _prCollectPendingBills)
+            const items = [];
+            window._adhocSelected.forEach(expID => {
+                const e = (expenses || []).find(x => x.expID === expID);
+                if (!e) return;
+                const payeeName = e.companyName || e.staffName || e.vendor || '—';
+                const desc = e.description ||
+                             (e.billType === 'SALARY' ? `${e.staffName || ''} — Salary` :
+                              e.billType === 'WAGES'  ? `${e.staffName || ''} — Wages`  :
+                                                        (e.billType || 'Bill'));
+                items.push({
+                    itemID:        'BILL-' + e.expID,
+                    category:      'BILLS',
+                    billType:      e.billType || '',
+                    sourceID:      e.expID,
+                    sourceType:    'expense',
+                    description:   `${payeeName} — ${desc}`.trim(),
+                    payee:         payeeName,
+                    amount:        +((parseFloat(e.netPayable) || 0).toFixed(2)),
+                    dueDate:       e.billDate || '',
+                    decision:      'Pending',
+                    decisionRemark:'',
+                    paid:          false,
+                    paidDate:      '',
+                    paidRef:       '',
+                    sourceSnapshot:{
+                        expID: e.expID, billNo: e.billNo, billDate: e.billDate, voucherNo: e.voucherNo,
+                        billType: e.billType, staffID: e.staffID || '', staffName: e.staffName || '',
+                        billAmtINR: e.billAmtINR, netPayable: e.netPayable,
+                        tdsAmt: e.tdsAmt || 0, vendorPAN: e.vendorPAN || ''
+                    }
+                });
+            });
+            const totalGenerated = +(items.reduce((s, it) => s + (parseFloat(it.amount) || 0), 0)).toFixed(2);
+
+            // Derive period from disbursement date for sorting in list view (uses disb date's
+            // month/year — gives ad-hoc PRs a sensible sort position next to monthly ones).
+            const dD = new Date(disbDate);
+            const periodMonth = dD.getMonth() + 1;
+            const periodYear  = dD.getFullYear();
+
+            const pr = {
+                prID:             generatePaymentRequestID(),
+                prType:           'AdHoc',
+                periodMonth,
+                periodYear,
+                periodLabel:      `Ad-hoc · ${disbDate}`,
+                reason,                         // justification text
+                disbursementDate: disbDate,
+                status:           'Draft',
+                generatedBy:      (typeof currentUser !== 'undefined' && currentUser?.name) || 'User',
+                generatedAt:      new Date().toISOString(),
+                approvedBy:       '', approvedAt: '',
+                disbursedAt:      '', transferRef: '',
+                fromBankAccountId:'', toBankAccountId: '',
+                items,
+                salaryGaps:       [],           // not relevant for ad-hoc
+                totalGenerated,
+                totalApproved:    0,
+                totalDeferred:    0,
+                totalRejected:    0,
+                totalPaid:        0
+            };
+            _stampRecord && _stampRecord(pr);
+            paymentRequests.push(pr);
+            try {
+                await saveData('paymentRequests', paymentRequests);
+                const fmt = n => '₹' + Math.max(0, +n || 0).toLocaleString('en-IN', {minimumFractionDigits:2,maximumFractionDigits:2});
+                alert(`⚡ Ad-hoc Payment Request ${pr.prID} created (Draft)\n\n` +
+                      `Items: ${items.length}\n` +
+                      `Total: ${fmt(totalGenerated)}\n` +
+                      `Disbursement: ${disbDate}\n` +
+                      `Reason: ${reason}\n\n` +
+                      `Open it to review and approve.`);
+                closeAdHocPRModal();
+                renderView();
+            } catch (e) {
+                console.error('Ad-hoc PR save failed:', e);
+                alert('Could not save Ad-hoc PR: ' + e.message);
+                paymentRequests.pop();
+            }
+        }
+
         // ── Render Payment Requests list view ──
         // Persistent filter state across re-renders
-        if (typeof window._prFilter === 'undefined') window._prFilter = { status: '', year: '', q: '' };
+        if (typeof window._prFilter === 'undefined') window._prFilter = { status: '', year: '', q: '', prType: '' };
 
         function _prSetFilter(key, val) {
             window._prFilter[key] = val;
@@ -22650,7 +22994,7 @@ Automated WFH alert — ${company} Attendance System.`;
         }
 
         function _prClearFilters() {
-            window._prFilter = { status: '', year: '', q: '' };
+            window._prFilter = { status: '', year: '', q: '', prType: '' };
             renderView();
         }
 
@@ -22662,13 +23006,14 @@ Automated WFH alert — ${company} Attendance System.`;
             });
 
             // Apply filters
-            const F = window._prFilter || { status: '', year: '', q: '' };
+            const F = window._prFilter || { status: '', year: '', q: '', prType: '' };
             const qLow = (F.q || '').toLowerCase().trim();
             const reqs = allReqs.filter(r => {
                 if (F.status && r.status !== F.status) return false;
                 if (F.year && String(r.periodYear) !== F.year) return false;
+                if (F.prType && _prType(r) !== F.prType) return false;
                 if (qLow) {
-                    const hay = `${r.prID} ${r.periodLabel} ${r.generatedBy||''} ${r.approvedBy||''} ${r.transferRef||''}`.toLowerCase();
+                    const hay = `${r.prID} ${r.periodLabel} ${r.reason||''} ${r.generatedBy||''} ${r.approvedBy||''} ${r.transferRef||''}`.toLowerCase();
                     if (!hay.includes(qLow)) return false;
                 }
                 return true;
@@ -22700,14 +23045,19 @@ Automated WFH alert — ${company} Attendance System.`;
             const years = [...new Set(allReqs.map(r => r.periodYear))].sort((a, b) => b - a);
 
             content.innerHTML = `
-                <div class="mb-6 flex justify-between items-center">
+                <div class="mb-6 flex justify-between items-center flex-wrap gap-3">
                     <div>
-                        <h2 class="text-2xl font-bold text-gray-800">💼 Monthly Payment Requests</h2>
-                        <p class="text-sm text-gray-500">Consolidated monthly disbursement requests for management approval</p>
+                        <h2 class="text-2xl font-bold text-gray-800">💼 Payment Requests</h2>
+                        <p class="text-sm text-gray-500">Monthly cycle + on-demand ad-hoc requests for management approval</p>
                     </div>
-                    <button onclick="generatePaymentRequest()" class="px-5 py-2.5 bg-emerald-600 text-white rounded-lg font-semibold hover:bg-emerald-700 shadow-sm">
-                        + Generate New Request
-                    </button>
+                    <div class="flex gap-2">
+                        <button onclick="generatePaymentRequest()" class="px-5 py-2.5 bg-emerald-600 text-white rounded-lg font-semibold hover:bg-emerald-700 shadow-sm">
+                            + Monthly Request
+                        </button>
+                        <button onclick="openAdHocPRModal()" class="px-5 py-2.5 bg-orange-500 text-white rounded-lg font-semibold hover:bg-orange-600 shadow-sm" title="Create a payment request for a specific bill outside the monthly cycle">
+                            ⚡ Ad-hoc Request
+                        </button>
+                    </div>
                 </div>
 
                 <!-- Summary tiles -->
@@ -22755,11 +23105,16 @@ Automated WFH alert — ${company} Attendance System.`;
                         <option value="">All Statuses</option>
                         ${PR_STATUSES.map(s => `<option value="${s}" ${F.status===s?'selected':''}>${s}</option>`).join('')}
                     </select>
+                    <select onchange="_prSetFilter('prType', this.value)" class="px-3 py-2 border rounded-lg text-sm">
+                        <option value="">All Types</option>
+                        <option value="Monthly" ${F.prType==='Monthly'?'selected':''}>📅 Monthly</option>
+                        <option value="AdHoc" ${F.prType==='AdHoc'?'selected':''}>⚡ Ad-hoc</option>
+                    </select>
                     <select onchange="_prSetFilter('year', this.value)" class="px-3 py-2 border rounded-lg text-sm">
                         <option value="">All Years</option>
                         ${years.map(y => `<option value="${y}" ${F.year===String(y)?'selected':''}>${y}</option>`).join('')}
                     </select>
-                    ${(F.q || F.status || F.year) ? `
+                    ${(F.q || F.status || F.year || F.prType) ? `
                     <button onclick="_prClearFilters()" class="px-3 py-2 text-sm text-gray-600 hover:text-gray-800 underline">Clear filters</button>` : ''}
                     <span class="text-xs text-gray-500">${reqs.length} of ${allReqs.length}</span>
                 </div>` : ''}
@@ -22776,7 +23131,8 @@ Automated WFH alert — ${company} Attendance System.`;
                             <thead class="bg-gray-50 text-xs text-gray-500 uppercase">
                                 <tr>
                                     <th class="px-4 py-2 text-left">PR ID</th>
-                                    <th class="px-4 py-2 text-left">Period</th>
+                                    <th class="px-4 py-2 text-center">Type</th>
+                                    <th class="px-4 py-2 text-left">Period / Reason</th>
                                     <th class="px-4 py-2 text-left">Disbursement Date</th>
                                     <th class="px-4 py-2 text-center">Items</th>
                                     <th class="px-4 py-2 text-right">Generated</th>
@@ -22787,10 +23143,19 @@ Automated WFH alert — ${company} Attendance System.`;
                                 </tr>
                             </thead>
                             <tbody>
-                                ${reqs.map(r => `
+                                ${reqs.map(r => {
+                                    const isAdHoc = _prType(r) === 'AdHoc';
+                                    const typeBadge = isAdHoc
+                                        ? '<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-orange-100 text-orange-700">⚡ Ad-hoc</span>'
+                                        : '<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-700">📅 Monthly</span>';
+                                    const periodOrReason = isAdHoc
+                                        ? `<span class="text-orange-600" title="${(r.reason||'').replace(/"/g,'&quot;')}">${(r.reason||r.periodLabel||'—').substring(0,50)}${(r.reason||'').length>50?'…':''}</span>`
+                                        : (r.periodLabel || '—');
+                                    return `
                                 <tr class="border-b hover:bg-gray-50">
-                                    <td class="px-4 py-3 font-mono text-sm font-semibold text-emerald-700">${r.prID}</td>
-                                    <td class="px-4 py-3 text-sm">${r.periodLabel}</td>
+                                    <td class="px-4 py-3 font-mono text-sm font-semibold ${isAdHoc?'text-orange-700':'text-emerald-700'}">${r.prID}</td>
+                                    <td class="px-4 py-3 text-center">${typeBadge}</td>
+                                    <td class="px-4 py-3 text-sm">${periodOrReason}</td>
                                     <td class="px-4 py-3 text-sm text-gray-600">${r.disbursementDate}</td>
                                     <td class="px-4 py-3 text-sm text-center">${(r.items||[]).length}</td>
                                     <td class="px-4 py-3 text-sm text-right">${fmt(r.totalGenerated)}</td>
@@ -22805,7 +23170,8 @@ Automated WFH alert — ${company} Attendance System.`;
                                         ${r.status === 'Draft' ? `<button onclick="cancelPaymentRequest('${r.prID}')" class="text-amber-600 hover:text-amber-800 text-sm font-medium mr-2" title="Mark Cancelled (audit-preserved)">Cancel</button>` : ''}
                                         ${(r.status === 'Draft' || r.status === 'Cancelled') ? `<button onclick="deletePaymentRequest('${r.prID}')" class="text-red-600 hover:text-red-800 text-sm font-medium" title="Hard delete (cannot be undone)">🗑 Delete</button>` : ''}
                                     </td>
-                                </tr>`).join('')}
+                                </tr>`;
+                                }).join('')}
                             </tbody>
                         </table>
                     </div>
@@ -22824,7 +23190,11 @@ Automated WFH alert — ${company} Attendance System.`;
             const lines = [];
             // Header section
             lines.push(`Payment Request,${esc(pr.prID)}`);
+            lines.push(`Type,${esc(_prType(pr))}`);
             lines.push(`Period,${esc(pr.periodLabel)}`);
+            if (_prType(pr) === 'AdHoc') {
+                lines.push(`Reason,${esc(pr.reason || '')}`);
+            }
             lines.push(`Disbursement Date,${esc(pr.disbursementDate)}`);
             lines.push(`Status,${esc(pr.status)}`);
             lines.push(`Generated By,${esc(pr.generatedBy)}`);
@@ -22902,6 +23272,7 @@ Automated WFH alert — ${company} Attendance System.`;
             const isDisbursed = pr.status === 'Disbursed';
             const isClosed    = pr.status === 'Closed';
             const editable    = isDraft; // decisions only editable in Draft
+            const isAdHoc     = _prType(pr) === 'AdHoc';
 
             // Group items by category
             const byCat = {};
@@ -22911,21 +23282,28 @@ Automated WFH alert — ${company} Attendance System.`;
 
             const html = `
             <div id="prDetailModalInner" style="background:#fff;border-radius:16px;max-width:1180px;width:97%;max-height:92vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
-                <div style="background:linear-gradient(135deg,#0891b2,#0e7490);padding:16px 20px;border-radius:16px 16px 0 0;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:10">
+                <div style="background:${isAdHoc ? 'linear-gradient(135deg,#f97316,#ea580c)' : 'linear-gradient(135deg,#0891b2,#0e7490)'};padding:16px 20px;border-radius:16px 16px 0 0;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:10">
                     <div>
-                        <h2 style="color:#fff;font-weight:700;font-size:18px">💼 ${pr.prID} — ${pr.periodLabel}</h2>
-                        <p style="color:#ccfbf1;font-size:11px;margin-top:2px">
+                        <h2 style="color:#fff;font-weight:700;font-size:18px">${isAdHoc ? '⚡' : '💼'} ${pr.prID} — ${pr.periodLabel}</h2>
+                        <p style="color:${isAdHoc?'#ffedd5':'#ccfbf1'};font-size:11px;margin-top:2px">
                             Generated ${(pr.generatedAt||'').substring(0,10)} by ${pr.generatedBy || '—'}
                             · Disbursement target: ${pr.disbursementDate}
                             ${pr.approvedBy ? ` · Approved ${(pr.approvedAt||'').substring(0,10)} by ${pr.approvedBy}` : ''}
                         </p>
                     </div>
                     <div style="display:flex;align-items:center;gap:12px">
+                        ${isAdHoc ? '<span style="padding:3px 10px;background:rgba(255,255,255,0.25);color:#fff;border-radius:10px;font-size:11px;font-weight:700">⚡ Ad-hoc</span>' : ''}
                         <span style="padding:4px 12px;background:rgba(255,255,255,0.2);color:#fff;border-radius:12px;font-size:12px;font-weight:600">${pr.status}</span>
                         <button onclick="closePaymentRequestDetail()" style="color:#fff;font-size:24px;background:none;border:none;cursor:pointer">✕</button>
                     </div>
                 </div>
                 <div style="padding:20px">
+                    ${isAdHoc && pr.reason ? `
+                    <!-- Ad-hoc justification banner -->
+                    <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:12px 14px;margin-bottom:14px">
+                        <p style="font-size:11px;font-weight:700;color:#9a3412;margin-bottom:4px;text-transform:uppercase">⚡ Ad-hoc Justification</p>
+                        <p style="font-size:13px;color:#7c2d12;line-height:1.5">${(pr.reason||'').replace(/</g,'&lt;')}</p>
+                    </div>` : ''}
                     <!-- Live running totals -->
                     <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px">
                         <div style="border:1px solid #e5e7eb;border-radius:10px;padding:10px;background:#f9fafb">
@@ -23542,7 +23920,26 @@ Automated WFH alert — ${company} Attendance System.`;
             doc.setFontSize(14); doc.setTextColor(13, 78, 99); doc.setFont(undefined, 'bold');
             doc.text(headerTitle, 105, y, { align: 'center' }); y += 6;
             doc.setFontSize(10); doc.setTextColor(75, 85, 99); doc.setFont(undefined, 'normal');
-            doc.text(`Monthly Payment Request — ${pr.periodLabel}`, 105, y, { align: 'center' }); y += 8;
+            const isAdHocPR = _prType(pr) === 'AdHoc';
+            const subtitleText = isAdHocPR
+                ? `⚡ AD-HOC PAYMENT REQUEST — ${pr.periodLabel}`
+                : `Monthly Payment Request — ${pr.periodLabel}`;
+            doc.text(subtitleText, 105, y, { align: 'center' }); y += 8;
+
+            // Ad-hoc justification box (just below subtitle, before status info)
+            if (isAdHocPR && pr.reason) {
+                doc.setFillColor(255, 247, 237);   // orange-50
+                doc.rect(ML, y, CW, 12, 'F');
+                doc.setDrawColor(254, 215, 170);   // orange-200
+                doc.rect(ML, y, CW, 12, 'S');
+                doc.setTextColor(154, 52, 18); doc.setFontSize(8); doc.setFont(undefined, 'bold');
+                doc.text('AD-HOC JUSTIFICATION:', ML + 3, y + 4);
+                doc.setFont(undefined, 'normal'); doc.setTextColor(124, 45, 18); doc.setFontSize(9);
+                // Wrap reason if it's long — split at ~110 chars
+                const reasonLines = doc.splitTextToSize(pr.reason || '', CW - 8);
+                doc.text(reasonLines.slice(0, 2), ML + 3, y + 9);
+                y += 14;
+            }
 
             // Draft watermark
             if (isDraftPDF) {
