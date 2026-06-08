@@ -18868,13 +18868,29 @@ Automated WFH alert — ${company} Attendance System.`;
             dirSettlePreview();
         }
         // Toggle ALL expenses for a given account group
+        // ── Compute the "account key" for grouping a director expense in the Settle modal ──
+        // Records now use `cardIssuer` + `cardLast4` (added when the Card Issuer presets
+        // were introduced). Older records may still have only the legacy `paymentAccount`
+        // free-text. Falls back through the chain so all record vintages group sensibly.
+        function _deAccountKey(d) {
+            if (d.cardIssuer || d.cardLast4) {
+                const issuer = (d.cardIssuer || '').trim();
+                const last4  = (d.cardLast4  || '').trim();
+                if (issuer && last4) return `${issuer} ****${last4}`;
+                if (issuer)          return issuer;
+                if (last4)           return `**** ${last4}`;
+            }
+            if (d.paymentAccount && d.paymentAccount.trim()) return d.paymentAccount.trim();
+            return '(no account specified)';
+        }
+
         function dsToggleAccount(accountKey) {
             if (!window._dsState) return;
             const through = document.getElementById('dsThrough').value;
             const { dirKey } = window._dsState;
             const groupIDs = (directorExpenses||[]).filter(d =>
                 d.director===dirKey && !d.reimbursed && (d.expDate||'') <= through
-                && (d.paymentAccount||'(no account)') === accountKey
+                && _deAccountKey(d) === accountKey
             ).map(d => d.deID);
             const set = window._dsState.selectedIDs;
             const allSelected = groupIDs.every(id => set.has(id));
@@ -18942,7 +18958,7 @@ Automated WFH alert — ${company} Attendance System.`;
             if (mode === 'pick') {
                 const groups = {};
                 unpaid.forEach(d => {
-                    const k = d.paymentAccount || '(no account specified)';
+                    const k = _deAccountKey(d);
                     if (!groups[k]) groups[k] = { account: k, items: [], total: 0 };
                     groups[k].items.push(d);
                     groups[k].total += parseFloat(d.amount)||0;
@@ -18976,6 +18992,15 @@ Automated WFH alert — ${company} Attendance System.`;
                             <tbody>
                                 ${g.items.map((d,i) => {
                                     const checked = selectedIDs.has(d.deID);
+                                    // Compose a richer payment label: "Debit Card · HSBC Bank ****2006"
+                                    // Falls back through cardIssuer/cardLast4/paymentAccount so older
+                                    // records still display whatever info they carry.
+                                    const cardBits = [];
+                                    if (d.cardIssuer) cardBits.push(d.cardIssuer);
+                                    if (d.cardLast4)  cardBits.push('****' + d.cardLast4);
+                                    const cardSuffix = cardBits.length ? ' · ' + cardBits.join(' ')
+                                                     : (d.paymentAccount ? ' · ' + d.paymentAccount : '');
+                                    const payLabel = d.payMode ? `${d.payMode}${cardSuffix}` : cardSuffix.replace(/^ · /,'');
                                     return `<tr class="${checked?'bg-emerald-50/60':'hover:bg-gray-50'} border-t border-gray-100">
                                         <td class="px-2 py-1.5 w-6 text-center">
                                             <input type="checkbox" ${checked?'checked':''}
@@ -18983,7 +19008,7 @@ Automated WFH alert — ${company} Attendance System.`;
                                                 class="w-4 h-4 accent-emerald-600 cursor-pointer"/>
                                         </td>
                                         <td class="px-2 py-1.5 font-mono text-gray-700">${d.expDate||'—'}</td>
-                                        <td class="px-2 py-1.5 text-gray-700">${(d.description||d.category||'—').substring(0,40)}${d.payMode?` <span class="text-gray-400">[${d.payMode}]</span>`:''}</td>
+                                        <td class="px-2 py-1.5 text-gray-700">${(d.description||d.category||'—').substring(0,40)}${payLabel?` <span class="text-gray-400">[${payLabel}]</span>`:''}</td>
                                         <td class="px-2 py-1.5 text-right font-semibold">${fmt(d.amount)}</td>
                                     </tr>`;
                                 }).join('')}
@@ -19032,12 +19057,19 @@ Automated WFH alert — ${company} Attendance System.`;
                     <tbody>
                         ${allocs.map((a,i) => {
                             const settled = a.allocated > 0;
+                            const d = a.exp;
+                            // Same card composite as the pick view: HSBC Bank ****2006, or fallback
+                            const cardBits = [];
+                            if (d.cardIssuer) cardBits.push(d.cardIssuer);
+                            if (d.cardLast4)  cardBits.push('****' + d.cardLast4);
+                            const accountDisplay = cardBits.length ? cardBits.join(' ')
+                                                 : (d.paymentAccount || '—');
                             return `<tr class="${settled?'bg-emerald-50':'bg-amber-50/40'} border-t border-gray-100">
                                 <td class="px-2 py-1.5 text-gray-500">${i+1}</td>
-                                <td class="px-2 py-1.5 font-mono text-gray-700">${a.exp.expDate||'—'}</td>
-                                <td class="px-2 py-1.5 text-gray-700">${(a.exp.description||a.exp.category||'—').substring(0,32)}</td>
-                                <td class="px-2 py-1.5 text-amber-700 text-[11px]">${a.exp.paymentAccount||'—'}</td>
-                                <td class="px-2 py-1.5 text-right font-semibold">${fmt(a.exp.amount)}</td>
+                                <td class="px-2 py-1.5 font-mono text-gray-700">${d.expDate||'—'}</td>
+                                <td class="px-2 py-1.5 text-gray-700">${(d.description||d.category||'—').substring(0,32)}</td>
+                                <td class="px-2 py-1.5 text-amber-700 text-[11px]">${accountDisplay}</td>
+                                <td class="px-2 py-1.5 text-right font-semibold">${fmt(d.amount)}</td>
                                 <td class="px-2 py-1.5 text-center">
                                     ${settled
                                         ? '<span class="text-emerald-700 font-bold">✓ Settle</span>'
