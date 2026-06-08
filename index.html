@@ -1339,6 +1339,216 @@
         }
         function _calcESIC(basis,esicPct){return basis<=21000?+(basis*(parseFloat(esicPct)||0.75)/100).toFixed(2):0;} // basis includes variable; exempt if >₹21,000
 
+        // ── Statutory contribution rates (employer side + admin charges) ──
+        // Defaults match current India statutory rates. Can be overridden per-establishment
+        // via settings if rates change in future (no current UI exposure — defaults suffice).
+        function _statutoryRates() {
+            return {
+                employerPFPct:   (settings?.employerPFPct  != null) ? +settings.employerPFPct   : 12,    // ER PF
+                epfAdminPct:     (settings?.epfAdminPct    != null) ? +settings.epfAdminPct     : 0.5,   // EPF admin charges
+                edliPct:         (settings?.edliPct        != null) ? +settings.edliPct         : 0.5,   // EDLI insurance
+                employerESICPct: (settings?.employerESICPct!= null) ? +settings.employerESICPct : 3.25,  // ER ESIC
+                epfAdminMin:     500,    // statutory minimum per month for an establishment
+                pfWageCap:       15000   // monthly wage cap for PF — matches _calcOfficePF
+            };
+        }
+
+        // Compute PF liability per staff for a given period, returning a row per staff.
+        // Each row carries the staff's PF wages, employee PF (already on payslip),
+        // employer PF (matching), EPF admin, EDLI, and total contribution.
+        // Returns: { rows: [{staffID, name, staffType, pfGross, employeePF, employerPF, admin, edli, total, capped}], totals: {...} }
+        function _periodPFLiability(month, year) {
+            const rates = _statutoryRates();
+            const rows = [];
+            const isOfficeType = t => t === 'Office' || t === 'Admin' || t === 'Office Staff';
+            const isTechType   = t => t === 'Technician' || t === 'Tech' || t === 'Field';
+            // Only active staff (skip resigned/terminated)
+            const candidates = (staff || []).filter(s =>
+                s.status !== 'Resigned' && s.status !== 'Terminated' && s.status !== 'Inactive'
+            );
+            for (const s of candidates) {
+                let pfGross = 0, employeePF = 0, capped = false;
+                try {
+                    if (isOfficeType(s.staffType)) {
+                        const op = {
+                            staffID: s.staffID, periodMonth: month, periodYear: year,
+                            leaveTaken: 0, addlAllowance: 0, addlDeduction: 0,
+                            pfPct: null, esicPct: null, ptBase: null, tdsAmt: null
+                        };
+                        const c = computeOfficeSalary(s, op);
+                        pfGross    = +c.pfGross || 0;
+                        employeePF = +c.pfAmt || 0;
+                        capped     = !!c.pfCapped;
+                    } else if (isTechType(s.staffType)) {
+                        // Tech: build period attendance, compute wage + deductions
+                        const dates = getTechWagePeriodDates(year, month);
+                        const att = dates.map(d => {
+                            const key = _localDateKey ? _localDateKey(d) :
+                                `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+                            const rec = (s.attendance || []).find(a => a.date === key);
+                            return rec && ATT_ORDER.includes(rec.status) ? rec.status : '';
+                        });
+                        const state = {
+                            att, otHours: dates.map(() => 0),
+                            basic: +s.basicSalary || 0,
+                            hraPct: +(s.techHRAPct ?? 50),
+                            daPct:  +(s.techDAPct  ?? 65),
+                            gradePay: +(s.techGPPct ?? 30),
+                            variableAllow: +s.techVariable || 0,
+                            periodMonth: month, periodYear: year,
+                            rates: {
+                                outstationPct: +(s.outstationPct ?? 20),
+                                sailingPct: +(s.sailingPct ?? 30),
+                                anchoragePct: +(s.anchoragePct ?? 30),
+                                t15extra: +(s.thresh15pct ?? 50),
+                                t20extra: +(s.thresh20pct ?? 30)
+                            },
+                            pfPct: +(s.techPFPct ?? 12),
+                            esicPct: +(s.techESICPct ?? 0.75),
+                            tdsAmt: null,
+                            staffID: s.staffID
+                        };
+                        const w = calcTechWage(state);
+                        const d = calcTechDeductions(w.gross, state.basic, w.fixedAllow, 0, state);
+                        pfGross    = +d.pfGross || 0;
+                        employeePF = +d.pfAmt   || 0;
+                        capped     = !!d.pfCapped;
+                    } else continue;
+                } catch (e) {
+                    console.warn('PF liability calc failed for', s.staffID, e.message);
+                    continue;
+                }
+                if (pfGross <= 0 && employeePF <= 0) continue;   // skip zero-contribution staff
+                // Employer/admin rates apply on the SAME basis as employee PF
+                // (capped at ₹15k if the employee was capped)
+                const effectiveBasis = capped ? rates.pfWageCap : pfGross;
+                const employerPF = +(effectiveBasis * rates.employerPFPct / 100).toFixed(2);
+                const admin      = +(effectiveBasis * rates.epfAdminPct / 100).toFixed(2);
+                const edli       = +(effectiveBasis * rates.edliPct / 100).toFixed(2);
+                const total      = +(employeePF + employerPF + admin + edli).toFixed(2);
+                rows.push({
+                    staffID: s.staffID, name: s.name, staffType: s.staffType,
+                    pfGross, employeePF, employerPF, admin, edli, total, capped
+                });
+            }
+            // Totals + apply minimum admin/EDLI charges (₹500 each per establishment)
+            const totals = rows.reduce((acc, r) => {
+                acc.pfGross    += r.pfGross;
+                acc.employeePF += r.employeePF;
+                acc.employerPF += r.employerPF;
+                acc.admin      += r.admin;
+                acc.edli       += r.edli;
+                acc.total      += r.total;
+                return acc;
+            }, { pfGross:0, employeePF:0, employerPF:0, admin:0, edli:0, total:0 });
+            // Min admin/EDLI applies once per establishment, only if at least one PF-eligible staff exists
+            if (rows.length > 0) {
+                if (totals.admin < rates.epfAdminMin) {
+                    totals.adminShortfall = +(rates.epfAdminMin - totals.admin).toFixed(2);
+                    totals.admin = rates.epfAdminMin;
+                    totals.total += totals.adminShortfall;
+                }
+                if (totals.edli < rates.epfAdminMin) {
+                    totals.edliShortfall = +(rates.epfAdminMin - totals.edli).toFixed(2);
+                    totals.edli = rates.epfAdminMin;
+                    totals.total += totals.edliShortfall;
+                }
+            }
+            // Round totals
+            ['pfGross','employeePF','employerPF','admin','edli','total'].forEach(k =>
+                totals[k] = +totals[k].toFixed(2)
+            );
+            return { rows, totals, rates };
+        }
+
+        // Same idea for ESIC liability — employer adds 3.25% on top of employee 0.75%
+        // ESIC is waived when ESIC wages > ₹21,000 (per-staff check, same as payslip logic).
+        function _periodESICLiability(month, year) {
+            const rates = _statutoryRates();
+            const rows = [];
+            const isOfficeType = t => t === 'Office' || t === 'Admin' || t === 'Office Staff';
+            const isTechType   = t => t === 'Technician' || t === 'Tech' || t === 'Field';
+            const candidates = (staff || []).filter(s =>
+                s.status !== 'Resigned' && s.status !== 'Terminated' && s.status !== 'Inactive'
+            );
+            for (const s of candidates) {
+                let esicBasis = 0, employeeESIC = 0, waived = false;
+                try {
+                    if (isOfficeType(s.staffType)) {
+                        const op = {
+                            staffID: s.staffID, periodMonth: month, periodYear: year,
+                            leaveTaken: 0, addlAllowance: 0, addlDeduction: 0,
+                            pfPct: null, esicPct: null, ptBase: null, tdsAmt: null
+                        };
+                        const c = computeOfficeSalary(s, op);
+                        esicBasis    = +c.grossWithVar || 0;
+                        employeeESIC = +c.esicAmt || 0;
+                        waived       = !!c.esicWaived;
+                    } else if (isTechType(s.staffType)) {
+                        const dates = getTechWagePeriodDates(year, month);
+                        const att = dates.map(d => {
+                            const key = _localDateKey ? _localDateKey(d) :
+                                `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+                            const rec = (s.attendance || []).find(a => a.date === key);
+                            return rec && ATT_ORDER.includes(rec.status) ? rec.status : '';
+                        });
+                        const state = {
+                            att, otHours: dates.map(() => 0),
+                            basic: +s.basicSalary || 0,
+                            hraPct: +(s.techHRAPct ?? 50),
+                            daPct: +(s.techDAPct ?? 65),
+                            gradePay: +(s.techGPPct ?? 30),
+                            variableAllow: +s.techVariable || 0,
+                            periodMonth: month, periodYear: year,
+                            rates: {
+                                outstationPct: +(s.outstationPct ?? 20),
+                                sailingPct: +(s.sailingPct ?? 30),
+                                anchoragePct: +(s.anchoragePct ?? 30),
+                                t15extra: +(s.thresh15pct ?? 50),
+                                t20extra: +(s.thresh20pct ?? 30)
+                            },
+                            pfPct: +(s.techPFPct ?? 12),
+                            esicPct: +(s.techESICPct ?? 0.75),
+                            tdsAmt: null,
+                            staffID: s.staffID
+                        };
+                        const w = calcTechWage(state);
+                        const d = calcTechDeductions(w.gross, state.basic, w.fixedAllow, 0, state);
+                        esicBasis    = +d.basisForESIC || 0;
+                        employeeESIC = +d.esicAmt || 0;
+                        waived       = !!d.esicWaived;
+                    } else continue;
+                } catch (e) {
+                    console.warn('ESIC liability calc failed for', s.staffID, e.message);
+                    continue;
+                }
+                if (waived || (esicBasis <= 0 && employeeESIC <= 0)) {
+                    if (waived) rows.push({ staffID: s.staffID, name: s.name, staffType: s.staffType,
+                        esicBasis, employeeESIC: 0, employerESIC: 0, total: 0, waived: true });
+                    continue;
+                }
+                const employerESIC = +(esicBasis * rates.employerESICPct / 100).toFixed(2);
+                const total = +(employeeESIC + employerESIC).toFixed(2);
+                rows.push({
+                    staffID: s.staffID, name: s.name, staffType: s.staffType,
+                    esicBasis, employeeESIC, employerESIC, total, waived: false
+                });
+            }
+            const totals = rows.reduce((acc, r) => {
+                if (r.waived) { acc.waivedCount++; return acc; }
+                acc.esicBasis    += r.esicBasis;
+                acc.employeeESIC += r.employeeESIC;
+                acc.employerESIC += r.employerESIC;
+                acc.total        += r.total;
+                acc.contributingCount++;
+                return acc;
+            }, { esicBasis:0, employeeESIC:0, employerESIC:0, total:0, waivedCount:0, contributingCount:0 });
+            ['esicBasis','employeeESIC','employerESIC','total'].forEach(k =>
+                totals[k] = +totals[k].toFixed(2)
+            );
+            return { rows, totals, rates };
+        }
+
         // ── LEAVE CALCULATION ─────────────────────────────────────────────────
         // ════════════════════════════════════════════════════════════════
         // OFFICE LEAVE BALANCE — RUNNING LEDGER MODEL
@@ -7698,6 +7908,7 @@
                                <option value="Completed">Completed</option>
                                <option value="Paid">Paid</option>`}
                            </select>
+                           <button onclick="duplicateTransaction('${t.txnID}')" class="text-teal-600 hover:text-teal-800 text-xs font-medium mr-1" title="Create a new transaction as a copy of this one">📋 Copy</button>
                            <button onclick='requestUnlockDelete(${tJson})' class="text-orange-500 hover:text-red-700 text-xs font-medium" title="Delete with Admin PIN">🔓 Del</button>`
                         : `${t.txnCategory === 'PROFORMA_INVOICE' && t.status === 'Approved' && !t.convertedToInvoice
                             ? `<button onclick='convertToInvoice(${tJson})' class="text-green-700 hover:text-green-900 mr-2 text-xs font-bold bg-green-50 px-2 py-1 rounded border border-green-300" title="Convert to Final Invoice">✓ Convert to Invoice</button>`
@@ -7706,6 +7917,7 @@
                             ? `<span class="text-xs text-green-700 mr-2 bg-green-50 px-2 py-1 rounded" title="Converted to ${t.convertedToInvoice}">✓ Converted → ${t.convertedToInvoice}</span>`
                             : ''}
                            <button onclick='editTransaction(${tJson})' class="text-indigo-600 hover:text-indigo-800 mr-1 text-xs font-medium">Edit</button>
+                           <button onclick="duplicateTransaction('${t.txnID}')" class="text-teal-600 hover:text-teal-800 mr-1 text-xs font-medium" title="Create a new ${(t.txnCategory||'transaction').toLowerCase().replace('_',' ')} as a copy of this one">📋 Copy</button>
                            <button onclick="deleteTransaction('${t.txnID}')" class="text-red-600 hover:text-red-800 text-xs font-medium">Del</button>`
                     }
                 </td>
@@ -10075,6 +10287,33 @@
                 ? 'unrecorded'   // no GST bill exists for this period yet
                 : (gstPaidBills.length === gstPaymentBills.length ? 'paid' : 'partial');
 
+            // ── PF Liability (employee + employer + admin + EDLI) ──
+            // Computed live from staff salaries for the period. Payment status comes
+            // from any billType='PF' entry in Expenses & Bills falling in the period.
+            // Statutory due: 15th of the next month.
+            const pfLiability = _periodPFLiability(month, year);
+            const pfPaymentBills = (expenses||[]).filter(e =>
+                (e.billType === 'PF' || e.billType === 'EPF') && (e.billDate||'').startsWith(pfx)
+            );
+            const pfPaidBills = pfPaymentBills.filter(e => e.payStatus === 'Paid');
+            const pfPaidTotal = pfPaidBills.reduce((s,e) =>
+                s + (parseFloat(e.netPayable) || parseFloat(e.billAmtINR) || 0), 0);
+            const pfPaymentStatus = pfPaymentBills.length === 0
+                ? 'unrecorded'
+                : (pfPaidBills.length === pfPaymentBills.length ? 'paid' : 'partial');
+
+            // ── ESIC Liability (employee + employer) ──
+            const esicLiability = _periodESICLiability(month, year);
+            const esicPaymentBills = (expenses||[]).filter(e =>
+                e.billType === 'ESIC' && (e.billDate||'').startsWith(pfx)
+            );
+            const esicPaidBills = esicPaymentBills.filter(e => e.payStatus === 'Paid');
+            const esicPaidTotal = esicPaidBills.reduce((s,e) =>
+                s + (parseFloat(e.netPayable) || parseFloat(e.billAmtINR) || 0), 0);
+            const esicPaymentStatus = esicPaymentBills.length === 0
+                ? 'unrecorded'
+                : (esicPaidBills.length === esicPaidBills.length ? 'paid' : 'partial');
+
             return {
                 month, year, monthName, pfx, fmt, pad,
                 tdsExpenses, tdsReceivable, outInvoices, gstInputExps,
@@ -10092,7 +10331,10 @@
                 combinedITCRaw:  combinedITCTotal,
                 netGST, tdsDaysLeft, gstDaysLeft, tdsDueDate, gstDueDate,
                 // GST payment status for this period
-                gstPaymentBills, gstPaidBills, gstPaidTotal, gstPaymentStatus
+                gstPaymentBills, gstPaidBills, gstPaidTotal, gstPaymentStatus,
+                // PF + ESIC liability and payment status for this period
+                pfLiability, pfPaymentBills, pfPaidBills, pfPaidTotal, pfPaymentStatus,
+                esicLiability, esicPaymentBills, esicPaidBills, esicPaidTotal, esicPaymentStatus
             };
         }
 
@@ -10709,7 +10951,248 @@
                 </div>
             </div>`;
 
-            return cards + tdsSectionBreakdown + tdsPanel + tdsRecPanel + gstPanel + gstStatusPanel + checklist;
+            // ── PF Liability Panel ──
+            // Shows per-staff PF breakdown for the period (employee, employer, admin, EDLI)
+            // with a Generate Bill button that creates billType=PF in Expenses & Bills.
+            const pfStatusPanel = (() => {
+                const lib = d.pfLiability;
+                const total = lib.totals.total;
+                const hasLiability = total > 0.005;
+                const status = d.pfPaymentStatus;
+                const bg = status === 'paid' ? 'bg-green-50 border-green-300'
+                         : status === 'partial' ? 'bg-amber-50 border-amber-300'
+                         : !hasLiability ? 'bg-gray-50 border-gray-200'
+                         : 'bg-blue-50 border-blue-300';
+                const titleColor = status === 'paid' ? 'text-green-800'
+                                 : !hasLiability ? 'text-gray-600'
+                                 : 'text-blue-800';
+                const icon = status === 'paid' ? '✅' : !hasLiability ? '➖' : '🏦';
+                const title = status === 'paid' ? 'PF Paid'
+                            : status === 'partial' ? 'PF Partially Paid'
+                            : !hasLiability ? 'No PF Payable This Period'
+                            : 'PF Payment Pending';
+                const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                const nextMonthLabel = months[month % 12] + ' (15)';
+
+                const billsList = (d.pfPaymentBills || []).map(b => `
+                    <tr class="border-t">
+                        <td class="px-3 py-2 text-xs">${b.billDate || '—'}</td>
+                        <td class="px-3 py-2 text-xs">${b.companyName || 'EPFO'}</td>
+                        <td class="px-3 py-2 text-xs">${b.voucherNo || b.billNo || '—'}</td>
+                        <td class="px-3 py-2 text-xs text-right font-medium">${fmt(b.netPayable || b.billAmtINR || 0)}</td>
+                        <td class="px-3 py-2 text-xs text-center">
+                            ${b.payStatus === 'Paid'
+                                ? `<span class="px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-bold text-[10px]">✓ Paid ${(b.payDate||'').substring(0,10)}</span>`
+                                : `<span class="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-bold text-[10px]">⏳ Pending</span>`}
+                        </td>
+                        <td class="px-3 py-2 text-xs text-center text-gray-500 font-mono">${b.chequeNo || '—'}</td>
+                        <td class="px-3 py-2 text-xs text-center">
+                            <button onclick="openExpenseModal(expenses.find(x=>x.expID==='${b.expID}'))" class="text-indigo-600 hover:text-indigo-800 text-xs font-medium">Open</button>
+                        </td>
+                    </tr>
+                `).join('');
+
+                const breakdownTable = lib.rows.length === 0 ? '' : `
+                <div class="overflow-x-auto rounded-lg border border-blue-200 mb-3">
+                    <table class="w-full text-sm">
+                        <thead class="bg-blue-100 text-xs text-blue-900 uppercase">
+                            <tr>
+                                <th class="px-3 py-2 text-left">Staff</th>
+                                <th class="px-3 py-2 text-center">Type</th>
+                                <th class="px-3 py-2 text-right">PF Wages</th>
+                                <th class="px-3 py-2 text-right">Employee 12%</th>
+                                <th class="px-3 py-2 text-right">Employer 12%</th>
+                                <th class="px-3 py-2 text-right">Admin 0.5%</th>
+                                <th class="px-3 py-2 text-right">EDLI 0.5%</th>
+                                <th class="px-3 py-2 text-right">Total</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${lib.rows.map(r => `
+                            <tr class="border-t hover:bg-blue-50/40">
+                                <td class="px-3 py-2 text-xs font-medium">${r.name}${r.capped?' <span class="text-[10px] text-blue-500">(capped)</span>':''}</td>
+                                <td class="px-3 py-2 text-xs text-center text-gray-500">${r.staffType}</td>
+                                <td class="px-3 py-2 text-xs text-right">${fmt(r.pfGross)}</td>
+                                <td class="px-3 py-2 text-xs text-right">${fmt(r.employeePF)}</td>
+                                <td class="px-3 py-2 text-xs text-right">${fmt(r.employerPF)}</td>
+                                <td class="px-3 py-2 text-xs text-right text-gray-500">${fmt(r.admin)}</td>
+                                <td class="px-3 py-2 text-xs text-right text-gray-500">${fmt(r.edli)}</td>
+                                <td class="px-3 py-2 text-xs text-right font-bold text-blue-700">${fmt(r.total)}</td>
+                            </tr>`).join('')}
+                        </tbody>
+                        <tfoot class="bg-blue-50 font-bold">
+                            <tr>
+                                <td colspan="2" class="px-3 py-2 text-xs text-right">PERIOD TOTAL</td>
+                                <td class="px-3 py-2 text-xs text-right text-blue-800">${fmt(lib.totals.pfGross)}</td>
+                                <td class="px-3 py-2 text-xs text-right text-blue-800">${fmt(lib.totals.employeePF)}</td>
+                                <td class="px-3 py-2 text-xs text-right text-blue-800">${fmt(lib.totals.employerPF)}</td>
+                                <td class="px-3 py-2 text-xs text-right text-blue-800">${fmt(lib.totals.admin)}${lib.totals.adminShortfall?` <span class="text-[10px] text-amber-600 font-normal">(min ₹500)</span>`:''}</td>
+                                <td class="px-3 py-2 text-xs text-right text-blue-800">${fmt(lib.totals.edli)}${lib.totals.edliShortfall?` <span class="text-[10px] text-amber-600 font-normal">(min ₹500)</span>`:''}</td>
+                                <td class="px-3 py-2 text-xs text-right text-blue-900 font-bold">${fmt(lib.totals.total)}</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>`;
+
+                return `
+                <div class="bg-white rounded-2xl shadow-sm mb-6 p-5 border-2 ${bg}">
+                    <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+                        <div>
+                            <h3 class="font-bold ${titleColor} text-base">${icon} PF Liability — ${d.monthName} ${year}</h3>
+                            <p class="text-xs text-gray-500 mt-1">
+                                ${lib.rows.length} contributing staff · Total payable: <strong class="${hasLiability ? 'text-blue-700' : 'text-green-700'}">${fmt(total)}</strong>
+                                ${hasLiability ? ' · Due by 15 ' + nextMonthLabel.replace(' (15)', '') : ''}
+                            </p>
+                        </div>
+                        ${hasLiability && status === 'unrecorded' ? `
+                        <button onclick="createPFPaymentBill(${month},${year},${total})"
+                            class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700">
+                            + Generate PF Payable Bill
+                        </button>` : ''}
+                    </div>
+                    ${breakdownTable}
+                    ${d.pfPaymentBills.length ? `
+                    <div class="overflow-x-auto rounded-lg border border-gray-200">
+                        <table class="w-full text-sm">
+                            <thead class="bg-gray-50 text-xs text-gray-500 uppercase">
+                                <tr>
+                                    <th class="px-3 py-2 text-left">Bill Date</th>
+                                    <th class="px-3 py-2 text-left">Payee</th>
+                                    <th class="px-3 py-2 text-left">Voucher / Bill No</th>
+                                    <th class="px-3 py-2 text-right">Amount</th>
+                                    <th class="px-3 py-2 text-center">Status</th>
+                                    <th class="px-3 py-2 text-center">Challan</th>
+                                    <th class="px-3 py-2 text-center">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>${billsList}</tbody>
+                        </table>
+                    </div>
+                    ${status === 'paid' ? `<p class="text-xs text-green-700 mt-2">✓ Total PF paid for this period: <strong>${fmt(d.pfPaidTotal)}</strong></p>` : ''}` : (lib.rows.length > 0 ? `
+                    <p class="text-xs text-gray-500 italic">No PF payment bill recorded for ${d.monthName} ${year}. Click "+ Generate PF Payable Bill" above to create one (it'll appear in the next Payment Request).</p>` : '')}
+                </div>`;
+            })();
+
+            // ── ESIC Liability Panel ──
+            const esicStatusPanel = (() => {
+                const lib = d.esicLiability;
+                const total = lib.totals.total;
+                const hasLiability = total > 0.005;
+                const status = d.esicPaymentStatus;
+                const bg = status === 'paid' ? 'bg-green-50 border-green-300'
+                         : status === 'partial' ? 'bg-amber-50 border-amber-300'
+                         : !hasLiability ? 'bg-gray-50 border-gray-200'
+                         : 'bg-teal-50 border-teal-300';
+                const titleColor = status === 'paid' ? 'text-green-800'
+                                 : !hasLiability ? 'text-gray-600'
+                                 : 'text-teal-800';
+                const icon = status === 'paid' ? '✅' : !hasLiability ? '➖' : '🏥';
+                const title = status === 'paid' ? 'ESIC Paid'
+                            : status === 'partial' ? 'ESIC Partially Paid'
+                            : !hasLiability ? 'No ESIC Payable This Period'
+                            : 'ESIC Payment Pending';
+                const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                const nextMonthLabel = months[month % 12];
+
+                const billsList = (d.esicPaymentBills || []).map(b => `
+                    <tr class="border-t">
+                        <td class="px-3 py-2 text-xs">${b.billDate || '—'}</td>
+                        <td class="px-3 py-2 text-xs">${b.companyName || 'ESIC Department'}</td>
+                        <td class="px-3 py-2 text-xs">${b.voucherNo || b.billNo || '—'}</td>
+                        <td class="px-3 py-2 text-xs text-right font-medium">${fmt(b.netPayable || b.billAmtINR || 0)}</td>
+                        <td class="px-3 py-2 text-xs text-center">
+                            ${b.payStatus === 'Paid'
+                                ? `<span class="px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-bold text-[10px]">✓ Paid ${(b.payDate||'').substring(0,10)}</span>`
+                                : `<span class="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-bold text-[10px]">⏳ Pending</span>`}
+                        </td>
+                        <td class="px-3 py-2 text-xs text-center text-gray-500 font-mono">${b.chequeNo || '—'}</td>
+                        <td class="px-3 py-2 text-xs text-center">
+                            <button onclick="openExpenseModal(expenses.find(x=>x.expID==='${b.expID}'))" class="text-indigo-600 hover:text-indigo-800 text-xs font-medium">Open</button>
+                        </td>
+                    </tr>
+                `).join('');
+
+                const breakdownTable = lib.rows.length === 0 ? '' : `
+                <div class="overflow-x-auto rounded-lg border border-teal-200 mb-3">
+                    <table class="w-full text-sm">
+                        <thead class="bg-teal-100 text-xs text-teal-900 uppercase">
+                            <tr>
+                                <th class="px-3 py-2 text-left">Staff</th>
+                                <th class="px-3 py-2 text-center">Type</th>
+                                <th class="px-3 py-2 text-right">ESIC Wages</th>
+                                <th class="px-3 py-2 text-right">Employee 0.75%</th>
+                                <th class="px-3 py-2 text-right">Employer 3.25%</th>
+                                <th class="px-3 py-2 text-right">Total</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${lib.rows.map(r => r.waived ? `
+                            <tr class="border-t opacity-60 italic">
+                                <td class="px-3 py-2 text-xs">${r.name}</td>
+                                <td class="px-3 py-2 text-xs text-center text-gray-500">${r.staffType}</td>
+                                <td colspan="4" class="px-3 py-2 text-xs text-center text-gray-500">— waived (wages above ₹21,000) —</td>
+                            </tr>` : `
+                            <tr class="border-t hover:bg-teal-50/40">
+                                <td class="px-3 py-2 text-xs font-medium">${r.name}</td>
+                                <td class="px-3 py-2 text-xs text-center text-gray-500">${r.staffType}</td>
+                                <td class="px-3 py-2 text-xs text-right">${fmt(r.esicBasis)}</td>
+                                <td class="px-3 py-2 text-xs text-right">${fmt(r.employeeESIC)}</td>
+                                <td class="px-3 py-2 text-xs text-right">${fmt(r.employerESIC)}</td>
+                                <td class="px-3 py-2 text-xs text-right font-bold text-teal-700">${fmt(r.total)}</td>
+                            </tr>`).join('')}
+                        </tbody>
+                        <tfoot class="bg-teal-50 font-bold">
+                            <tr>
+                                <td colspan="2" class="px-3 py-2 text-xs text-right">PERIOD TOTAL ${lib.totals.waivedCount?`<span class="text-[10px] text-gray-500 font-normal">(${lib.totals.waivedCount} waived)</span>`:''}</td>
+                                <td class="px-3 py-2 text-xs text-right text-teal-800">${fmt(lib.totals.esicBasis)}</td>
+                                <td class="px-3 py-2 text-xs text-right text-teal-800">${fmt(lib.totals.employeeESIC)}</td>
+                                <td class="px-3 py-2 text-xs text-right text-teal-800">${fmt(lib.totals.employerESIC)}</td>
+                                <td class="px-3 py-2 text-xs text-right text-teal-900 font-bold">${fmt(lib.totals.total)}</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>`;
+
+                return `
+                <div class="bg-white rounded-2xl shadow-sm mb-6 p-5 border-2 ${bg}">
+                    <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+                        <div>
+                            <h3 class="font-bold ${titleColor} text-base">${icon} ESIC Liability — ${d.monthName} ${year}</h3>
+                            <p class="text-xs text-gray-500 mt-1">
+                                ${lib.totals.contributingCount} contributing staff${lib.totals.waivedCount?', '+lib.totals.waivedCount+' waived':''} · Total payable: <strong class="${hasLiability ? 'text-teal-700' : 'text-green-700'}">${fmt(total)}</strong>
+                                ${hasLiability ? ' · Due by 15 ' + nextMonthLabel : ''}
+                            </p>
+                        </div>
+                        ${hasLiability && status === 'unrecorded' ? `
+                        <button onclick="createESICPaymentBill(${month},${year},${total})"
+                            class="px-4 py-2 bg-teal-600 text-white rounded-lg text-sm font-semibold hover:bg-teal-700">
+                            + Generate ESIC Payable Bill
+                        </button>` : ''}
+                    </div>
+                    ${breakdownTable}
+                    ${d.esicPaymentBills.length ? `
+                    <div class="overflow-x-auto rounded-lg border border-gray-200">
+                        <table class="w-full text-sm">
+                            <thead class="bg-gray-50 text-xs text-gray-500 uppercase">
+                                <tr>
+                                    <th class="px-3 py-2 text-left">Bill Date</th>
+                                    <th class="px-3 py-2 text-left">Payee</th>
+                                    <th class="px-3 py-2 text-left">Voucher / Bill No</th>
+                                    <th class="px-3 py-2 text-right">Amount</th>
+                                    <th class="px-3 py-2 text-center">Status</th>
+                                    <th class="px-3 py-2 text-center">Challan</th>
+                                    <th class="px-3 py-2 text-center">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>${billsList}</tbody>
+                        </table>
+                    </div>
+                    ${status === 'paid' ? `<p class="text-xs text-green-700 mt-2">✓ Total ESIC paid for this period: <strong>${fmt(d.esicPaidTotal)}</strong></p>` : ''}` : (lib.totals.contributingCount > 0 ? `
+                    <p class="text-xs text-gray-500 italic">No ESIC payment bill recorded for ${d.monthName} ${year}. Click "+ Generate ESIC Payable Bill" above to create one.</p>` : '')}
+                </div>`;
+            })();
+
+            return cards + tdsSectionBreakdown + tdsPanel + tdsRecPanel + gstPanel + gstStatusPanel + pfStatusPanel + esicStatusPanel + checklist;
         }
 
         // ── Create a GST payment bill (single source of truth — per user spec) ──
@@ -10755,6 +11238,86 @@
                       `Due Date: ${dueDate}\n` +
                       `Payee: GST Department\n\n` +
                       `Review and click Save to record it. When paid, mark it as Paid in Expenses & Bills (with challan ref in the Cheque No / Reference field).`);
+            }, 200);
+        }
+
+        // ── Create a PF Payment Bill (employee + employer + admin + EDLI) ──
+        // Mirrors createGSTPaymentBill but for billType=PF. The bill amount is the
+        // TOTAL period liability across all contributing staff. Due date = 15th of
+        // next month per EPFO rules.
+        function createPFPaymentBill(month, year, amount) {
+            const nextMonth = month === 12 ? 1 : month + 1;
+            const nextYear  = month === 12 ? year + 1 : year;
+            const dueDate   = `${nextYear}-${String(nextMonth).padStart(2,'0')}-15`;
+            const periodLabel = (['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'])[month-1] + ' ' + year;
+            const prefill = {
+                expID: '',
+                billType: 'PF',
+                billDate: dueDate,
+                billNo: `PF-${year}${String(month).padStart(2,'0')}`,
+                companyName: 'EPFO',
+                vendor: 'EPFO',
+                description: `PF (Employee+Employer+Admin+EDLI) for ${periodLabel} payslips`,
+                billAmount: amount,
+                billAmtINR: amount,
+                totalBillAmt: amount,
+                netPayable: amount,
+                currency: 'INR',
+                exchRate: 1,
+                payStatus: 'Pending',
+                payMode: '',
+                cgst: 0, sgst: 0, igst: 0,
+                tdsApplicable: false,
+                tdsAmt: 0,
+                rcmApplicable: false,
+                gstInputClaimable: false   // PF payment is not GST ITC
+            };
+            openExpenseModal(prefill);
+            setTimeout(() => {
+                alert(`ℹ A PF payment bill for ${periodLabel} has been pre-filled:\n\n` +
+                      `Amount: ₹${Number(amount).toLocaleString('en-IN', {minimumFractionDigits:2})}\n` +
+                      `Due Date: ${dueDate} (15th of next month)\n` +
+                      `Payee: EPFO\n\n` +
+                      `Review the breakdown in Tax tab. Click Save to record it. When paid, mark as Paid (challan TRRN in Cheque No / Reference).`);
+            }, 200);
+        }
+
+        // ── Create an ESIC Payment Bill (employee 0.75% + employer 3.25%) ──
+        // Due date = 15th of next month per ESIC rules.
+        function createESICPaymentBill(month, year, amount) {
+            const nextMonth = month === 12 ? 1 : month + 1;
+            const nextYear  = month === 12 ? year + 1 : year;
+            const dueDate   = `${nextYear}-${String(nextMonth).padStart(2,'0')}-15`;
+            const periodLabel = (['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'])[month-1] + ' ' + year;
+            const prefill = {
+                expID: '',
+                billType: 'ESIC',
+                billDate: dueDate,
+                billNo: `ESIC-${year}${String(month).padStart(2,'0')}`,
+                companyName: 'ESIC Department',
+                vendor: 'ESIC Department',
+                description: `ESIC (Employee 0.75% + Employer 3.25%) for ${periodLabel} payslips`,
+                billAmount: amount,
+                billAmtINR: amount,
+                totalBillAmt: amount,
+                netPayable: amount,
+                currency: 'INR',
+                exchRate: 1,
+                payStatus: 'Pending',
+                payMode: '',
+                cgst: 0, sgst: 0, igst: 0,
+                tdsApplicable: false,
+                tdsAmt: 0,
+                rcmApplicable: false,
+                gstInputClaimable: false
+            };
+            openExpenseModal(prefill);
+            setTimeout(() => {
+                alert(`ℹ An ESIC payment bill for ${periodLabel} has been pre-filled:\n\n` +
+                      `Amount: ₹${Number(amount).toLocaleString('en-IN', {minimumFractionDigits:2})}\n` +
+                      `Due Date: ${dueDate} (15th of next month)\n` +
+                      `Payee: ESIC Department\n\n` +
+                      `Review the breakdown in Tax tab. Click Save to record it. When paid, mark as Paid (challan ref in Cheque No / Reference).`);
             }, 200);
         }
 
@@ -12857,9 +13420,12 @@
                 // For new transactions, txnID was generated at modal-open via
                 // generateTxnID() against the local snapshot. Re-check against
                 // fresh data; renumber with confirmation if collided.
+                // Duplicates also count as "new" — they have a pre-generated ID
+                // that may collide with concurrent inserts.
+                const _isNewOrDuplicate = !currentTransaction || !!currentTransaction._isDuplicate;
                 const _freshTxn = await _refetchFresh('transactions');
                 if (_freshTxn) {
-                    if (!currentTransaction) {
+                    if (_isNewOrDuplicate) {
                         const category = txnData.txnCategory;
                         const fyCode   = getFinancialYearCode(new Date());
                         const prefix   = category === 'QUOTATION'         ? 'QTE'
@@ -12892,10 +13458,12 @@
                         }
                         txnData.txnID = seq.id;
                     }
-                    transactions = _mergeRecordIntoFresh(_freshTxn, transactions, 'txnID', txnData, !!currentTransaction);
+                    // For duplicates: passing isEdit=false so the merge pushes a new record
+                    // rather than overwriting the source. (For genuine edits, isEdit=true updates in place.)
+                    transactions = _mergeRecordIntoFresh(_freshTxn, transactions, 'txnID', txnData, !_isNewOrDuplicate);
                 } else {
                     // Fallback if refetch failed
-                    if (currentTransaction) {
+                    if (currentTransaction && !currentTransaction._isDuplicate) {
                         const index = transactions.findIndex(t => t.txnID === currentTransaction.txnID);
                         if (index >= 0) transactions[index] = txnData; else transactions.push(txnData);
                     } else {
@@ -12926,6 +13494,94 @@
 
         function editTransaction(txn) {
             openTransactionModal(txn);
+        }
+
+        // ── Duplicate a transaction (Copy) ──
+        // Creates a new transaction populated with the same party, items, currency,
+        // bank account, and other fields from the source — but with:
+        //   - fresh txnID (next sequence in current FY)
+        //   - new txnDate = today (user can change in the modal)
+        //   - status reset to Draft
+        //   - cleared payment, conversion, and locking fields (each copy starts fresh)
+        // The source transaction is NOT modified or saved. The duplicate is held in
+        // currentTransaction as an "unsaved new" record; user reviews/edits and clicks Save.
+        // To duplicate ACROSS categories (e.g., quotation → invoice), use the existing
+        // conversion flow instead — this duplicate keeps the same category.
+        function duplicateTransaction(txnID) {
+            const src = transactions.find(t => t.txnID === txnID);
+            if (!src) { alert('Source transaction not found.'); return; }
+
+            // Deep clone via JSON to break all references (line items, addresses, etc.)
+            const copy = JSON.parse(JSON.stringify(src));
+
+            // Reset identity fields
+            copy.txnID    = generateTxnID(src.txnCategory);
+            copy.txnDate  = new Date().toISOString().split('T')[0];
+            copy.status   = 'Draft';
+
+            // Reset lifecycle/workflow state — each copy starts fresh
+            delete copy.lockedAt;
+            delete copy.lockedBy;
+            delete copy.convertedToInvoice;
+            delete copy.convertedFromProforma;
+            delete copy.convertedAt;
+            delete copy.paymentsReceived;
+            delete copy.linkedInvoiceID;     // for credit notes — break the link to the source's source
+
+            // Credit notes: also clear creditNoteFor field — user must explicitly
+            // re-pick the invoice this CN is against (if any), otherwise it stays unlinked
+            if (copy.txnCategory === 'CREDIT_NOTE') {
+                delete copy.creditNoteFor;
+                delete copy.creditNoteForRef;
+            }
+
+            // Reset attachments — each transaction has its own attachment list
+            // (the source's attachments aren't yours to claim on the new doc)
+            copy.attachments = [];
+
+            // Reset audit timestamps — _stampRecord on save will write new ones
+            delete copy.createdAt;
+            delete copy.createdBy;
+            delete copy.updatedAt;
+            delete copy.updatedBy;
+            delete copy.version;
+
+            // Mark this as a duplicate so saveTransaction treats it as a NEW record
+            // (runs the sequence-conflict check against fresh data, which is skipped
+            // for normal edits). This flag is stripped before persisting.
+            copy._isDuplicate = true;
+
+            // Open in the modal. Crucially, pass null as the "existing" param so the
+            // modal treats this as a NEW record (saveTransaction will push to the
+            // transactions array rather than updating in place).
+            //
+            // We do this by stashing the copy in currentTransaction and opening
+            // the modal in NEW mode, then manually populating fields via openTransactionModal.
+            // openTransactionModal(null) clears currentTransaction; so we open with the
+            // copy as "txn" but it has no matching txnID in the transactions array, so
+            // saveTransaction's findIndex returns -1 and the record gets pushed as new.
+            //
+            // Important: openTransactionModal currently sets currentTransaction = txn,
+            // which means saveTransaction reads currentTransaction.txnID from the COPY.
+            // That's the new ID we just generated. Since no existing transaction has
+            // that ID, findIndex returns -1 → push (correct behaviour for new record).
+            openTransactionModal(copy);
+
+            // Inform user what happened so they understand it's a new record
+            setTimeout(() => {
+                const catLabel = ({QUOTATION:'Quotation', PROFORMA_INVOICE:'Proforma Invoice',
+                                   PO:'Purchase Order', INVOICE:'Invoice',
+                                   CREDIT_NOTE:'Credit Note'})[src.txnCategory] || 'Transaction';
+                const note = src.txnCategory === 'CREDIT_NOTE'
+                    ? '\n\nNote: The link to the original invoice was cleared. Re-link if needed.'
+                    : '';
+                alert(`📋 New ${catLabel} created as a copy of ${src.txnID}\n\n` +
+                      `• New ID: ${copy.txnID}\n` +
+                      `• Date set to today\n` +
+                      `• Status reset to Draft\n` +
+                      `• Party, items, and amounts copied from source${note}\n\n` +
+                      `Edit any details, then click Save.`);
+            }, 200);
         }
 
 
@@ -21212,15 +21868,85 @@ Automated WFH alert — ${company} Attendance System.`;
             const p    = projectExpenses.find(x=>x.projExpID===projID);
             const item = (p?.items||[]).find(i=>i.itemID===itemID);
             if (!item) return;
-            const atts = item.billAttachments?.length ? item.billAttachments : (item.billData?[{data:item.billData,name:'attachment'}]:[]);
+            // Build a unified attachment list. Three possible shapes:
+            //  1. Drive upload (from field app):   { driveFileId, name, type }
+            //  2. Inline base64 (legacy/from main app): { data, name }
+            //  3. Legacy single-bill on the item itself: item.billDriveFileId or item.billData
+            const atts = item.billAttachments?.length
+                ? item.billAttachments
+                : (item.billDriveFileId
+                    ? [{ driveFileId: item.billDriveFileId, name: item.billName || 'bill', type: item.billMime || 'image' }]
+                    : (item.billData ? [{ data: item.billData, name: 'attachment' }] : []));
             if (!atts.length) return;
-            if (atts.length===1) {
-                const a=atts[0]; const w=window.open();
-                w.document.write(a.data.startsWith('data:application/pdf')?`<html><body style="margin:0"><embed src="${a.data}" type="application/pdf" width="100%" height="100%"/></body></html>`:`<html><body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${a.data}" style="max-width:100%;max-height:100vh;object-fit:contain"/></body></html>`);
+
+            // Each attachment renders into either an <img>, <embed> (PDF), or an
+            // open-in-Drive link (if it's a Drive file — we can't embed Drive into a window
+            // because Drive blocks framing; the user clicks through to Drive).
+            const renderOne = (a) => {
+                // Drive-hosted file (from field app upload)
+                if (a.driveFileId) {
+                    const url = `https://drive.google.com/file/d/${a.driveFileId}/view`;
+                    const isImg = (a.type || a.mime || '').startsWith('image/');
+                    const isPdf = (a.type || a.mime || '').includes('pdf') || (a.name||'').toLowerCase().endsWith('.pdf');
+                    // Use Drive's thumbnail endpoint for inline preview where possible
+                    const thumb = `https://drive.google.com/thumbnail?id=${a.driveFileId}&sz=w1000`;
+                    if (isImg) {
+                        return `<div style="display:flex;flex-direction:column;align-items:center;gap:6px">
+                                    <a href="${url}" target="_blank" rel="noopener">
+                                        <img src="${thumb}" alt="${a.name||'bill'}" style="max-width:100%;max-height:80vh;border-radius:6px;background:#222"
+                                             onerror="this.replaceWith(Object.assign(document.createElement('div'),{style:'padding:30px;background:#222;color:#fff;border-radius:6px;text-align:center',innerHTML:'⚠ Preview unavailable<br><small>${(a.name||'bill').replace(/'/g,'&apos;')}</small>'}))"/>
+                                    </a>
+                                    <a href="${url}" target="_blank" rel="noopener" style="color:#60a5fa;font-size:13px;text-decoration:underline">Open in Drive →</a>
+                                </div>`;
+                    }
+                    if (isPdf) {
+                        // Drive's preview-embed URL — works in iframe for PDFs
+                        const previewURL = `https://drive.google.com/file/d/${a.driveFileId}/preview`;
+                        return `<div style="display:flex;flex-direction:column;align-items:center;gap:6px;width:100%">
+                                    <iframe src="${previewURL}" style="width:100%;height:80vh;border:none;border-radius:6px;background:#fff"></iframe>
+                                    <a href="${url}" target="_blank" rel="noopener" style="color:#60a5fa;font-size:13px;text-decoration:underline">Open in Drive →</a>
+                                </div>`;
+                    }
+                    // Unknown type — link only
+                    return `<div style="padding:30px;background:#1f2937;color:#fff;border-radius:6px;text-align:center;width:100%">
+                                <div style="font-size:32px;margin-bottom:8px">📎</div>
+                                <div style="font-size:14px;margin-bottom:8px">${(a.name||'attachment').replace(/</g,'&lt;')}</div>
+                                <a href="${url}" target="_blank" rel="noopener" style="color:#60a5fa;text-decoration:underline">Open in Drive →</a>
+                            </div>`;
+                }
+                // Inline base64 — original behaviour
+                if (a.data) {
+                    if (a.data.startsWith('data:application/pdf')) {
+                        return `<embed src="${a.data}" type="application/pdf" style="width:100%;height:80vh;border:none;border-radius:6px"/>`;
+                    }
+                    return `<img src="${a.data}" alt="${a.name||'bill'}" title="${a.name||''}" style="max-width:100%;max-height:80vh;border-radius:6px;background:#222;object-fit:contain"/>`;
+                }
+                // Nothing renderable
+                return `<div style="padding:20px;color:#aaa;text-align:center;background:#1f2937;border-radius:6px">⚠ Attachment has no data or Drive ID — ${(a.name||'unknown').replace(/</g,'&lt;')}</div>`;
+            };
+
+            if (atts.length === 1) {
+                const w = window.open();
+                if (!w) { alert('Pop-up blocked — please allow pop-ups for this site to view bill attachments.'); return; }
+                w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${(atts[0].name||'Bill').replace(/</g,'&lt;')}</title></head>
+                    <body style="margin:0;padding:12px;background:#111;color:#fff;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh">
+                        <div style="max-width:96vw;width:100%">${renderOne(atts[0])}</div>
+                    </body></html>`);
                 return;
             }
-            const w=window.open();
-            w.document.write(`<html><head><title>Bills (${atts.length})</title><style>body{margin:0;background:#111;display:flex;flex-wrap:wrap;gap:8px;padding:12px}img{max-width:calc(50% - 4px);border-radius:6px}</style></head><body>`+atts.map(a=>a.data.startsWith('data:image')?`<img src="${a.data}" title="${a.name}"/>`:`<embed src="${a.data}" type="application/pdf" style="width:100%;height:600px;border:none;"/>`).join('')+`</body></html>`);
+            // Multiple — gallery view
+            const w = window.open();
+            if (!w) { alert('Pop-up blocked — please allow pop-ups for this site to view bill attachments.'); return; }
+            const cards = atts.map((a, i) => `
+                <div style="background:#1f2937;border-radius:8px;padding:10px;flex:1 1 calc(50% - 6px);min-width:300px">
+                    <div style="font-size:12px;color:#9ca3af;margin-bottom:6px">Attachment ${i+1} of ${atts.length} · ${(a.name||'unnamed').replace(/</g,'&lt;')}</div>
+                    ${renderOne(a)}
+                </div>`).join('');
+            w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Bills (${atts.length})</title></head>
+                <body style="margin:0;padding:12px;background:#111;color:#fff;font-family:system-ui,sans-serif">
+                    <h3 style="margin:0 0 10px 0;color:#e5e7eb">${(item.description||'Field Expense').replace(/</g,'&lt;')} — ${atts.length} attachment${atts.length===1?'':'s'}</h3>
+                    <div style="display:flex;flex-wrap:wrap;gap:12px">${cards}</div>
+                </body></html>`);
         }
 
         function viewProjExpBill(projID, itemID) {
