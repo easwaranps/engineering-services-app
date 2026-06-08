@@ -7851,8 +7851,15 @@
 
         // Build one transaction row
         function txnRow(t, withBalance = false) {
-            const locked = (t.txnCategory === 'PO' && t.status === 'Paid') ||
-                           (t.txnCategory === 'INVOICE' && t.status === 'Completed');
+            // ── Lock rule ──
+            // Any transaction (Quotation / PI / PO / Invoice / Credit Note) in a
+            // finalised status (Completed or Paid) is locked for accounting/audit
+            // safety: no Edit, no Delete, no status change. The Settings tab
+            // toggle `allowFinalisedTxnDelete` opens these actions (still gated
+            // by Admin PIN for Delete).
+            const isFinalised = (t.status === 'Completed' || t.status === 'Paid');
+            const locked      = isFinalised;
+            const adminBypass = !!settings.allowFinalisedTxnDelete;   // setting overrides the lock
             const hasAttach = (t.attachments||[]).length > 0;
             const showDocs  = (t.txnCategory === 'INVOICE' || t.txnCategory === 'PO') &&
                               ['Approved','Sent','Completed','Paid'].includes(t.status);
@@ -7896,8 +7903,10 @@
                         ${hasAttach ? `<span class="text-xs">(${t.attachments.length})</span>` : ''}
                     </button>` : ''}
                     ${locked
-                        ? `<span class="text-xs text-gray-400 italic mr-1" title="Record locked — use status dropdown to change">🔒</span>
-                           <select onchange="changeLockedTxnStatus('${t.txnID}',this.value)" class="text-xs border border-gray-200 rounded px-1 py-0.5 mr-1 bg-white cursor-pointer" title="Change status">
+                        ? (adminBypass
+                            ? /* Locked record, but Settings has unlock toggle ON — show admin-style actions */ `
+                           <span class="text-xs text-amber-600 italic mr-1" title="Finalised record — Settings allows admin override">🔓</span>
+                           <select onchange="changeLockedTxnStatus('${t.txnID}',this.value)" class="text-xs border border-gray-200 rounded px-1 py-0.5 mr-1 bg-white cursor-pointer" title="Change status (admin)">
                                <option value="" disabled selected>${t.status}</option>
                                ${t.txnCategory==='INVOICE'?`
                                <option value="Sent">Sent</option>
@@ -7908,8 +7917,12 @@
                                <option value="Completed">Completed</option>
                                <option value="Paid">Paid</option>`}
                            </select>
+                           <button onclick='editTransaction(${tJson})' class="text-indigo-600 hover:text-indigo-800 mr-1 text-xs font-medium" title="Edit (admin override)">Edit</button>
                            <button onclick="duplicateTransaction('${t.txnID}')" class="text-teal-600 hover:text-teal-800 text-xs font-medium mr-1" title="Create a new transaction as a copy of this one">📋 Copy</button>
                            <button onclick='requestUnlockDelete(${tJson})' class="text-orange-500 hover:text-red-700 text-xs font-medium" title="Delete with Admin PIN">🔓 Del</button>`
+                            : /* Locked + Settings says no override — show lock indicator + Copy only (safe action) */ `
+                           <span class="text-xs text-gray-500 italic mr-1" title="Record is finalised (${t.status}) — Edit/Delete locked. Enable 'Allow Finalised Transaction Override' in Settings to unlock.">🔒 ${t.status}</span>
+                           <button onclick="duplicateTransaction('${t.txnID}')" class="text-teal-600 hover:text-teal-800 text-xs font-medium" title="Create a new transaction as a copy of this one">📋 Copy</button>`)
                         : `${t.txnCategory === 'PROFORMA_INVOICE' && t.status === 'Approved' && !t.convertedToInvoice
                             ? `<button onclick='convertToInvoice(${tJson})' class="text-green-700 hover:text-green-900 mr-2 text-xs font-bold bg-green-50 px-2 py-1 rounded border border-green-300" title="Convert to Final Invoice">✓ Convert to Invoice</button>`
                             : ''}
@@ -7929,6 +7942,14 @@
             const idx = transactions.findIndex(t => t.txnID === txnID);
             if (idx < 0) return;
             const oldStatus = transactions[idx].status;
+            // Lock guard — moving a record out of Completed/Paid requires the setting override.
+            // (Moving INTO Completed/Paid from any other status is fine — that's normal workflow.)
+            if ((oldStatus === 'Completed' || oldStatus === 'Paid') && !settings.allowFinalisedTxnDelete) {
+                alert(`Cannot change status of ${transactions[idx].txnID} — currently "${oldStatus}" (finalised).\n\n` +
+                      `To change finalised transaction status, enable "Allow Finalised Transaction Override" in the Settings tab.`);
+                renderView();
+                return;
+            }
             if (!confirm(`Change status from "${oldStatus}" to "${newStatus}"?`)) {
                 renderView(); return;   // reset dropdown
             }
@@ -12400,6 +12421,20 @@
                     </div>
                 </div>
 
+                <!-- Finalised Transaction Override (Quotation / PI / PO / Invoice / Credit Note) -->
+                <div class="bg-white rounded-2xl shadow-lg p-6 mt-6">
+                    <div class="flex justify-between items-center">
+                        <div>
+                            <h3 class="text-xl font-bold text-purple-700">📋 Finalised Transaction Override</h3>
+                            <p class="text-xs text-gray-500 mt-1">When locked (default), <strong>Edit</strong>, <strong>Delete</strong>, and <strong>Status change</strong> are disabled for transactions in <em>Completed</em> or <em>Paid</em> status (Quotations, Proforma Invoices, Purchase Orders, Invoices, Credit Notes). Unlock only when correction is genuinely needed — even when unlocked, Delete still requires Admin PIN.</p>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <span class="text-xs px-3 py-1 rounded-full font-medium ${settings.allowFinalisedTxnDelete?'bg-red-100 text-red-700':'bg-green-100 text-green-700'}">${settings.allowFinalisedTxnDelete?'🔓 Override Enabled':'🔒 Override Locked'}</span>
+                            <button onclick="toggleFinalisedTxnLock()" class="px-3 py-1.5 text-sm border border-purple-300 text-purple-600 rounded-lg hover:bg-purple-50">${settings.allowFinalisedTxnDelete?'Lock Override':'Unlock Override'}</button>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Staff Edit Control -->
                 <div class="bg-white rounded-2xl shadow-lg p-6 mt-6">
                     <div class="flex justify-between items-center">
@@ -13493,6 +13528,12 @@
         });
 
         function editTransaction(txn) {
+            // Lock guard — see deleteTransaction for rationale
+            if (txn && (txn.status === 'Completed' || txn.status === 'Paid') && !settings.allowFinalisedTxnDelete) {
+                alert(`Cannot edit ${txn.txnID} — it is in "${txn.status}" status (finalised).\n\n` +
+                      `To edit finalised transactions, enable "Allow Finalised Transaction Override" in the Settings tab.`);
+                return;
+            }
             openTransactionModal(txn);
         }
 
@@ -13677,6 +13718,18 @@
         }
 
         async function deleteTransaction(txnID) {
+            // ── Lock guard ──
+            // Finalised records (Completed / Paid) can only be deleted when the
+            // Settings toggle `allowFinalisedTxnDelete` is on AND the user uses the
+            // admin-PIN unlock path (requestUnlockDelete). Direct deletion from a
+            // non-UI path (console, stale row) is refused here as a defence in depth.
+            const txn = transactions.find(t => t.txnID === txnID);
+            if (txn && (txn.status === 'Completed' || txn.status === 'Paid') && !settings.allowFinalisedTxnDelete) {
+                alert(`Cannot delete ${txn.txnID} — it is in "${txn.status}" status (finalised).\n\n` +
+                      `To delete finalised transactions, enable "Allow Finalised Transaction Override" in the Settings tab. ` +
+                      `Even then, deletion requires Admin PIN.`);
+                return;
+            }
             if (confirm('Delete this transaction?')) {
                 if (await _concurBlockIfStale('transactions', [{ id: txnID, idKey: 'txnID' }])) return;
                 transactions = transactions.filter(t => t.txnID !== txnID);
@@ -18024,6 +18077,9 @@ Automated WFH alert — ${company} Attendance System.`;
         async function toggleStaffEditLock(){settings.allowStaffEdit=!settings.allowStaffEdit;await saveData('settings',settings);renderView();}
         async function toggleStaffDeleteLock(){settings.allowStaffDelete=!settings.allowStaffDelete;await saveData('settings',settings);renderView();}
         async function togglePayslipEditLock(){settings.payslipEditUnlocked=!settings.payslipEditUnlocked;await saveData('settings',settings);renderView();}
+        // Toggle for finalised transactions (Quotation/PI/PO/Invoice/Credit Note in Completed/Paid).
+        // When ON, locked rows show Edit/Del/status-dropdown; Delete still routes through Admin PIN.
+        async function toggleFinalisedTxnLock(){settings.allowFinalisedTxnDelete=!settings.allowFinalisedTxnDelete;await saveData('settings',settings);renderView();}
 
         function generatePaySlipPDF(){const techV=!document.getElementById('twSection')?.classList.contains('hidden'),offV=!document.getElementById('opSection')?.classList.contains('hidden');if(techV)_pdfTech();else if(offV)_pdfOffice();else alert('Please select a staff member first.');}
         function _pdfHdr(doc,l1,l2,l3){doc.setFillColor(224,242,254);doc.rect(0,0,210,40,'F');doc.setFillColor(186,230,253);doc.rect(0,36,210,4,'F');doc.setFontSize(17);doc.setFont('helvetica','bold');doc.setTextColor(15,23,72);doc.text(l1,105,13,{align:'center'});doc.setFontSize(11);doc.setFont('helvetica','normal');doc.setTextColor(30,64,175);doc.text(l2,105,23,{align:'center'});doc.setFontSize(8.5);doc.setTextColor(71,85,105);doc.text(l3,105,31,{align:'center'});doc.setTextColor(0,0,0);}
