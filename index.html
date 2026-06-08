@@ -1487,6 +1487,146 @@
         }, {});
 
         // ════════════════════════════════════════════════════════════════
+        // STAFF LOAN HELPERS (interest-free salary advances)
+        // ────────────────────────────────────────────────────────────────
+        // Loans live on `staff[i].loans = []` per record. Each loan has:
+        //   loanID, disbursedDate, principal, installments, emi,
+        //   firstDeductMonth, firstDeductYear,
+        //   status: 'Active'|'Closed'|'Settled'|'WrittenOff',
+        //   deductionLog: [{month, year, amount, payslipRef}],
+        //   closedDate, closedReason, remarks.
+        //
+        // Behaviour:
+        //   - Deductions auto-schedule monthly starting from firstDeduct*.
+        //   - Defer: if salary - other deductions < EMI, skip this month (loan extends).
+        //   - Last installment auto-rounds down to remaining balance.
+        //   - When balance reaches 0, status auto-flips to Closed.
+        // ════════════════════════════════════════════════════════════════
+        const LOAN_STATUSES = ['Active', 'Closed', 'Settled', 'WrittenOff'];
+
+        // Generate next sequential Loan ID for the given FY
+        function generateLoanID(date = new Date()) {
+            const fyCode = (typeof getFinancialYearCode === 'function')
+                ? getFinancialYearCode(date) : '2627';
+            const prefix = 'LN-' + fyCode + '-';
+            const existing = [];
+            (staff || []).forEach(s => (s.loans || []).forEach(l => {
+                if ((l.loanID || '').startsWith(prefix)) {
+                    const n = parseInt(l.loanID.substring(prefix.length)) || 0;
+                    existing.push(n);
+                }
+            }));
+            const next = (existing.length ? Math.max(...existing) : 0) + 1;
+            return prefix + String(next).padStart(3, '0');
+        }
+
+        // Compute derived fields for a loan record.
+        // Returns: { deductedCount, deductedTotal, balance, installmentsRemaining }
+        function loanDerivedFields(loan) {
+            const log = Array.isArray(loan.deductionLog) ? loan.deductionLog : [];
+            const deductedCount = log.length;
+            const deductedTotal = log.reduce((s, d) => s + (parseFloat(d.amount) || 0), 0);
+            const principal = parseFloat(loan.principal) || 0;
+            const balance = +(principal - deductedTotal).toFixed(2);
+            const installments = parseInt(loan.installments) || 1;
+            const installmentsRemaining = Math.max(0, installments - deductedCount);
+            return { deductedCount, deductedTotal, balance, installmentsRemaining };
+        }
+
+        // Compute the loan deduction that WOULD apply for staff `st` in period (month,year)
+        // GIVEN available net pre-loan amount `availableNet`.
+        // Returns an array of {loan, deductionAmount, deferred:bool, reason:string}
+        // — one entry per active loan on the staff. Pass `availableNet=Infinity` to get
+        // the "ideal" deduction without deferral checks (useful for forecasting).
+        //
+        // Does NOT mutate the loan record. Recording happens at payslip save time.
+        function computeLoanDeductions(st, month, year, availableNet) {
+            const out = [];
+            const loans = (st && st.loans) || [];
+            let runningAvailable = availableNet;
+            for (const loan of loans) {
+                if (loan.status !== 'Active') continue;
+
+                // Has the schedule started yet?
+                const firstM = parseInt(loan.firstDeductMonth) || 0;
+                const firstY = parseInt(loan.firstDeductYear) || 0;
+                const periodKey = year * 12 + month;
+                const startKey  = firstY * 12 + firstM;
+                if (periodKey < startKey) {
+                    out.push({ loan, deductionAmount: 0, deferred: false, reason: 'not yet due' });
+                    continue;
+                }
+
+                // Already deducted this period? (idempotency — re-running compute shouldn't double-count)
+                const alreadyLogged = (loan.deductionLog || []).some(d =>
+                    parseInt(d.month) === month && parseInt(d.year) === year
+                );
+                if (alreadyLogged) {
+                    const logged = (loan.deductionLog || []).find(d =>
+                        parseInt(d.month) === month && parseInt(d.year) === year
+                    );
+                    out.push({ loan, deductionAmount: parseFloat(logged.amount)||0, deferred: false, reason: 'already recorded' });
+                    continue;
+                }
+
+                const { balance } = loanDerivedFields(loan);
+                if (balance <= 0.01) continue;   // already fully repaid (status will be flipped on next save)
+
+                const emi = parseFloat(loan.emi) || 0;
+                // Last installment auto-rounds down to remaining balance
+                const idealDeduction = Math.min(emi, balance);
+
+                // Deferral check: would deducting this leave net pay non-negative?
+                if (runningAvailable < idealDeduction) {
+                    out.push({ loan, deductionAmount: 0, deferred: true,
+                               reason: `insufficient net pay (need ₹${idealDeduction.toFixed(2)}, available ₹${runningAvailable.toFixed(2)})` });
+                    continue;
+                }
+
+                runningAvailable -= idealDeduction;
+                out.push({ loan, deductionAmount: idealDeduction, deferred: false, reason: '' });
+            }
+            return out;
+        }
+
+        // ── Record loan deductions on payslip finalisation ──
+        // Mutates the loan's deductionLog and auto-closes the loan if balance hits 0.
+        // Idempotent — won't double-record the same period.
+        // Caller is responsible for calling saveData('staff', staff) after.
+        // Returns: { recorded: N, deferred: N, autoClosed: [loanID,...] }
+        function recordLoanDeductions(st, loanDeductions, month, year, payslipRef = '') {
+            const result = { recorded: 0, deferred: 0, autoClosed: [] };
+            if (!st || !Array.isArray(st.loans)) return result;
+            for (const ld of (loanDeductions || [])) {
+                const loanInStaff = (st.loans || []).find(x => x.loanID === ld.loan.loanID);
+                if (!loanInStaff) continue;
+                // Already recorded for this period?
+                const exists = (loanInStaff.deductionLog || []).some(d =>
+                    parseInt(d.month) === month && parseInt(d.year) === year
+                );
+                if (exists) continue;
+                if (ld.deferred) { result.deferred++; continue; }
+                if (!(ld.deductionAmount > 0)) continue;
+                loanInStaff.deductionLog = loanInStaff.deductionLog || [];
+                loanInStaff.deductionLog.push({
+                    month, year,
+                    amount: +(parseFloat(ld.deductionAmount) || 0).toFixed(2),
+                    payslipRef: payslipRef || ''
+                });
+                result.recorded++;
+                // Auto-close on balance reaching zero
+                const dv = loanDerivedFields(loanInStaff);
+                if (dv.balance <= 0.01 && loanInStaff.status === 'Active') {
+                    loanInStaff.status = 'Closed';
+                    loanInStaff.closedDate = new Date().toISOString().split('T')[0];
+                    loanInStaff.closedReason = 'Fully repaid';
+                    result.autoClosed.push(loanInStaff.loanID);
+                }
+            }
+            return result;
+        }
+
+        // ════════════════════════════════════════════════════════════════
         // PAYMENT REQUEST CONSTANTS (treasury management)
         // ────────────────────────────────────────────────────────────────
         // Item categories shown in the request:
@@ -1827,8 +1967,18 @@
             // LOP = lopBase / periodDays × lopDays  (actual period days, not hardcoded 26)
             const lopBase=basic+hra+da+med+gp+cv+bonus;
             const lopA=+(lopDays*(lopBase/periodDays)).toFixed(2);
-            const addlD=+op.addlDeduction||0,totD=pf.pfAmt+esicAmt+ptAmt+tds+lopA+addlD,net=gross-totD;
-            return{basic,hra,hraPct,da,daPct,gradePay:gp,conveyance:cv,medical:med,bonus,variable:vr,addlAllow:addlA,gross,grossWithVar,grossExclVar,pfPct,pfGross:pf.pfGross,pfAmt:pf.pfAmt,pfCapped:pf.pfCapped,esicPct,esicAmt,esicWaived,ptAmt,ptApplies,isFebruary,isMarchFY,gender,tdsAmt:tds,leavePerMonth:lpM,carriedLeave:carried,leaveOpening:leaveResult.opening||0,available,leaveTaken:leaveTakenFinal,lopDays,lopAmt:lopA,leaveBalance:lbal,addlDed:addlD,totalDed:totD,netPay:net,periodDays,periodLabel};
+            const addlD=+op.addlDeduction||0;
+            // ── Loan deductions ──
+            // Compute total of non-loan deductions first, then check what's available
+            // for loan EMI. If salary is too low to cover the EMI, deferral logic in
+            // computeLoanDeductions skips the deduction for this period.
+            const otherDed = pf.pfAmt + esicAmt + ptAmt + tds + lopA + addlD;
+            const availableForLoan = gross - otherDed;
+            const loanDeductions = computeLoanDeductions(st, op.periodMonth, op.periodYear, availableForLoan);
+            const loanTotal = loanDeductions.reduce((s, ld) => s + (parseFloat(ld.deductionAmount) || 0), 0);
+            const totD = otherDed + loanTotal;
+            const net = gross - totD;
+            return{basic,hra,hraPct,da,daPct,gradePay:gp,conveyance:cv,medical:med,bonus,variable:vr,addlAllow:addlA,gross,grossWithVar,grossExclVar,pfPct,pfGross:pf.pfGross,pfAmt:pf.pfAmt,pfCapped:pf.pfCapped,esicPct,esicAmt,esicWaived,ptAmt,ptApplies,isFebruary,isMarchFY,gender,tdsAmt:tds,leavePerMonth:lpM,carriedLeave:carried,leaveOpening:leaveResult.opening||0,available,leaveTaken:leaveTakenFinal,lopDays,lopAmt:lopA,leaveBalance:lbal,addlDed:addlD,loanDeductions,loanTotal,totalDed:totD,netPay:net,periodDays,periodLabel};
         }
 
         function onPaySlipStaffChange(staffID){
@@ -1961,6 +2111,16 @@
             const esicThresh=21000,esicNote=c.esicWaived?`ESIC – NIL (Wages ₹${Math.round(c.grossWithVar).toLocaleString('en-IN')} > ₹21,000)`:`ESIC – 0.75% of Wages ₹${Math.round(c.grossWithVar).toLocaleString('en-IN')} (≤ ₹21,000)`;
             const ptNote=c.ptApplies?`PT${c.isFebruary?' (Feb ₹300)':''} – ₹${c.ptAmt} (${c.gender}, gross ₹${Math.round(c.gross).toLocaleString('en-IN')} > ${c.gender==='Female'?'₹25,000':'₹10,000'})`:(`PT – NIL (${c.gender}: gross ₹${Math.round(c.gross).toLocaleString('en-IN')} ≤ ${c.gender==='Female'?'₹25,000':'₹10,000'})`);
             const dr=[{n:pfLbl,a:c.pfAmt,s:true,col:'#1d4ed8',nil:false},{n:esicNote,a:c.esicAmt,s:true,col:c.esicWaived?'#9ca3af':'#0e7490',nil:c.esicWaived},{n:ptNote,a:c.ptAmt,s:true,col:c.ptApplies?'#7c3aed':'#9ca3af',nil:!c.ptApplies},{n:'TDS',a:c.tdsAmt,s:c.tdsAmt>0,col:'#b45309',nil:false},{n:`Loss of Pay – ${c.lopDays}d (LOP Base÷${c.periodDays} period days)`,a:c.lopAmt,s:c.lopDays>0,col:'#dc2626',nil:false},{n:op.addlDeductionRemark?'Other: '+op.addlDeductionRemark:'Other Ded.',a:c.addlDed,s:c.addlDed>0,col:'#4b5563',nil:false}].filter(r=>r.s||r.nil);
+            // Loan deduction rows — one per active loan that's being deducted this period
+            // (or deferred — shown greyed out so user knows why net pay didn't shrink).
+            ((c.loanDeductions||[]).forEach(ld => {
+                const lid = ld.loan.loanID || 'Loan';
+                if (ld.deferred) {
+                    dr.push({ n: `🔄 ${lid} – DEFERRED (${ld.reason})`, a: 0, s: true, col: '#9ca3af', nil: true });
+                } else if (ld.deductionAmount > 0) {
+                    dr.push({ n: `🏦 Loan EMI ${lid}`, a: ld.deductionAmount, s: true, col: '#b45309', nil: false });
+                }
+            }));
             return `<div style="font-size:12px;color:#374151;margin-bottom:10px;padding:8px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;font-weight:500"><strong>${st.name}</strong> · ${st.designation||'Staff'} · <strong style="color:#1d4ed8">${monthName}</strong> <span style="font-size:11px;color:#6b7280;font-weight:400">(${pl} · ${c.periodDays} days)</span>${c.isFebruary&&c.ptApplies?' <span style="background:#fef3c7;color:#78350f;padding:2px 6px;border-radius:99px;font-size:10px;font-weight:600">Feb PT ₹'+c.ptAmt+'</span>':''}${!c.ptApplies?' <span style="background:#f3f4f6;color:#6b7280;padding:2px 6px;border-radius:99px;font-size:10px">PT NIL</span>':''}</div>
             <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:12px">
                 <div style="background:#f0fdf4;border:1px solid #15803d55;border-radius:10px;padding:10px;text-align:center"><div style="font-size:10px;color:#6b7280;font-weight:500;margin-bottom:4px">CARRIED FWD</div><div style="font-size:18px;font-weight:600;color:#15803d">${c.carriedLeave}</div></div>
@@ -2122,11 +2282,18 @@
                 ptApplies=ptAmt>0;
             }
             const isFebruary=state.periodMonth===2;
-            const totalDed=+(pf.pfAmt+esicAmt+ptAmt+tdsAmt+addlDed).toFixed(2);
+            // ── Loan deductions ──
+            // Add loans AFTER other deductions to check what's affordable.
+            const otherDed = +(pf.pfAmt+esicAmt+ptAmt+tdsAmt+addlDed).toFixed(2);
+            const availableForLoan = (+(gross + (+exgratia||0)).toFixed(2)) - otherDed;
+            const loanDeductions = computeLoanDeductions(st, state.periodMonth, state.periodYear, availableForLoan);
+            const loanTotal = +loanDeductions.reduce((s, ld) => s + (parseFloat(ld.deductionAmount) || 0), 0).toFixed(2);
+            const totalDed = +(otherDed + loanTotal).toFixed(2);
             return{pfPct,pfGross:pf.pfGross,pfAmt:pf.pfAmt,pfCapped:pf.pfCapped,hasUAN,
                 esicPct,esicAmt,esicWaived,basisForESIC,esicThreshBasis,
                 ptAmt,ptApplies,isFebruary,
                 tdsAmt,tdsIsAuto,grossForTDS,tdsAuto,addlDed,
+                loanDeductions,loanTotal,
                 totalDed};
         }
 
@@ -2221,6 +2388,15 @@
                     a:ded.tdsAmt,col:'#b45309',nil:false,show:ded.tdsAmt>0},
                 {n:s.addlDeductionRemark?'Recovery – '+s.addlDeductionRemark:'Additional Deduction',a:ded.addlDed,col:'#4b5563',nil:false,show:ded.addlDed>0}
             ].filter(r=>r.show||r.nil);
+            // Loan EMI rows — one per active loan, with deferral notice for skipped months
+            ((ded.loanDeductions||[]).forEach(ld => {
+                const lid = ld.loan.loanID || 'Loan';
+                if (ld.deferred) {
+                    dedRowsArr.push({n:`🔄 ${lid} – DEFERRED (${ld.reason})`, a:0, col:'#9ca3af', nil:true, show:true});
+                } else if (ld.deductionAmount > 0) {
+                    dedRowsArr.push({n:`🏦 Loan EMI ${lid}`, a:ld.deductionAmount, col:'#b45309', nil:false, show:true});
+                }
+            }));
             const dedHTML=dedRowsArr.map(r=>`<tr style="border-bottom:0.5px solid #f3f4f6;${r.nil?'opacity:0.55':''}"><td style="padding:7px 12px;color:#374151;font-size:11px">${r.n}</td><td style="padding:7px 12px;text-align:right;font-weight:500;color:${r.col}">${r.nil?'NIL':INR(r.a)}</td></tr>`).join('');
             const pills=ATT_ORDER.filter(t=>t&&cal.c[t]>0).map(t=>`<span style="background:${ATT_TYPES[t].bg};border:1px solid ${ATT_TYPES[t].color}55;border-radius:99px;padding:3px 10px;font-size:11px;color:${ATT_TYPES[t].text};font-weight:500">${ATT_TYPES[t].label}: ${cal.c[t]}</span>`).join('');
             const rateRows=[
@@ -13440,6 +13616,21 @@
                                 </div>
                             </div>
                         </div>
+                        <!-- ── Staff Loans (interest-free salary advances) ──
+                             Loans auto-deduct from monthly payslip. Each loan tracks principal,
+                             EMI, installments, and a deduction log. Defer logic skips months
+                             when net pay can't cover the EMI. -->
+                        <div class="border-t pt-4">
+                            <div class="flex justify-between items-center mb-3">
+                                <h4 class="text-sm font-bold text-amber-700">🏦 Salary Advances / Loans <span class="text-gray-400 font-normal">(interest-free)</span></h4>
+                                <button type="button" onclick="addStaffLoanRow()" class="px-3 py-1 bg-amber-600 text-white rounded-lg text-xs hover:bg-amber-700 font-semibold">+ Add Loan</button>
+                            </div>
+                            <p class="text-xs text-gray-500 mb-3">Loans auto-deduct as EMI from each month's salary starting the first deduction month. If net pay is too low, that month's deduction is skipped and the schedule extends. Last installment auto-rounds to remaining balance.</p>
+                            <div id="sLoansBody" class="space-y-2">
+                                <!-- Loan rows injected here by renderStaffLoanRows() -->
+                            </div>
+                        </div>
+
                         <div><label class="block text-xs font-semibold text-gray-600 mb-1">Remarks</label>
                             <textarea id="sRemarks" rows="2" class="w-full px-3 py-2 border rounded-lg text-sm"></textarea></div>
                         <div class="flex gap-3 justify-end pt-2" id="staffFormFooter">
@@ -15455,11 +15646,178 @@ ${'─'.repeat(50)}
             <div id="opSection" class="${isOff&&selID?'':'hidden'}"><div id="opCalcBody">${isOff&&selID?buildOfficePayHTML():''}</div></div>`;
         }
 
+        // ── Staff Loan UI helpers ──
+        // The Staff modal has a Loans section that can have 0..N loan rows.
+        // We use a stable working buffer (`window._sLoanRows`) so users can
+        // add/remove/edit rows before saving, without mutating the staff record.
+        // On save, `_collectStaffLoansFromForm` reads the buffer and merges
+        // deductionLog from the original record (the form doesn't edit logs).
+        function renderStaffLoanRows() {
+            const body = document.getElementById('sLoansBody');
+            if (!body) return;
+            const rows = window._sLoanRows || [];
+            if (rows.length === 0) {
+                body.innerHTML = '<p class="text-xs text-gray-400 italic">No loans recorded. Click + Add Loan to record a new salary advance.</p>';
+                return;
+            }
+            const fmt = n => '₹' + Math.max(0, +n || 0).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
+            const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            body.innerHTML = rows.map((l, idx) => {
+                const deriv = loanDerivedFields(l);
+                const isActive = l.status === 'Active';
+                const statusColor = l.status === 'Active'   ? 'bg-amber-100 text-amber-700'
+                                  : l.status === 'Closed'   ? 'bg-green-100 text-green-700'
+                                  : l.status === 'Settled'  ? 'bg-blue-100 text-blue-700'
+                                  :                            'bg-gray-100 text-gray-500';
+                return `
+                <div class="border border-amber-200 rounded-lg p-3 bg-amber-50/40">
+                    <div class="flex justify-between items-center mb-2 flex-wrap gap-2">
+                        <span class="font-mono text-xs text-amber-700">${l.loanID || '(new — ID assigned on save)'}</span>
+                        <div class="flex items-center gap-2">
+                            <select onchange="updateStaffLoanField(${idx},'status',this.value)"
+                                class="px-2 py-1 rounded-full text-xs font-bold border-0 ${statusColor}">
+                                ${LOAN_STATUSES.map(s => `<option value="${s}" ${l.status===s?'selected':''}>${s}</option>`).join('')}
+                            </select>
+                            <button type="button" onclick="removeStaffLoanRow(${idx})" class="text-red-500 hover:text-red-700 text-xs">🗑 Remove</button>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 md:grid-cols-5 gap-2 mb-2">
+                        <div><label class="block text-[10px] font-semibold text-gray-600 mb-0.5">Disbursed Date</label>
+                            <input type="date" value="${l.disbursedDate || ''}" onchange="updateStaffLoanField(${idx},'disbursedDate',this.value)" class="w-full px-2 py-1 border rounded text-xs" /></div>
+                        <div><label class="block text-[10px] font-semibold text-gray-600 mb-0.5">Principal (₹)</label>
+                            <input type="number" min="0" step="0.01" value="${l.principal || ''}" onchange="updateStaffLoanField(${idx},'principal',parseFloat(this.value)||0)" class="w-full px-2 py-1 border rounded text-xs" /></div>
+                        <div><label class="block text-[10px] font-semibold text-gray-600 mb-0.5">Installments</label>
+                            <input type="number" min="1" step="1" value="${l.installments || 12}" onchange="updateStaffLoanField(${idx},'installments',parseInt(this.value)||1)" class="w-full px-2 py-1 border rounded text-xs" /></div>
+                        <div><label class="block text-[10px] font-semibold text-gray-600 mb-0.5">Monthly EMI (₹)</label>
+                            <input type="number" min="0" step="0.01" value="${l.emi || ''}" onchange="updateStaffLoanField(${idx},'emi',parseFloat(this.value)||0)" class="w-full px-2 py-1 border rounded text-xs font-bold" /></div>
+                        <div>
+                            <label class="block text-[10px] font-semibold text-gray-600 mb-0.5">First Deduct Month</label>
+                            <div class="flex gap-1">
+                                <select onchange="updateStaffLoanField(${idx},'firstDeductMonth',parseInt(this.value))" class="flex-1 px-1 py-1 border rounded text-xs">
+                                    ${months.map((m,i) => `<option value="${i+1}" ${(l.firstDeductMonth||0)===i+1?'selected':''}>${m}</option>`).join('')}
+                                </select>
+                                <input type="number" min="2020" max="2100" step="1" value="${l.firstDeductYear || new Date().getFullYear()}" onchange="updateStaffLoanField(${idx},'firstDeductYear',parseInt(this.value))" class="w-16 px-1 py-1 border rounded text-xs" />
+                            </div>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-4 gap-2 text-[11px] mb-2">
+                        <div class="bg-white rounded p-1.5 border border-amber-100">
+                            <p class="text-gray-500 text-[9px]">Deducted</p>
+                            <p class="font-bold text-amber-700">${deriv.deductedCount} of ${l.installments || '—'}</p>
+                        </div>
+                        <div class="bg-white rounded p-1.5 border border-amber-100">
+                            <p class="text-gray-500 text-[9px]">Paid So Far</p>
+                            <p class="font-bold text-green-700">${fmt(deriv.deductedTotal)}</p>
+                        </div>
+                        <div class="bg-white rounded p-1.5 border border-amber-100">
+                            <p class="text-gray-500 text-[9px]">Balance</p>
+                            <p class="font-bold text-red-700">${fmt(deriv.balance)}</p>
+                        </div>
+                        <div class="bg-white rounded p-1.5 border border-amber-100">
+                            <p class="text-gray-500 text-[9px]">EMIs Left</p>
+                            <p class="font-bold text-blue-700">${deriv.installmentsRemaining}</p>
+                        </div>
+                    </div>
+                    <div><label class="block text-[10px] font-semibold text-gray-600 mb-0.5">Remarks</label>
+                        <input type="text" value="${(l.remarks||'').replace(/"/g,'&quot;')}" onchange="updateStaffLoanField(${idx},'remarks',this.value)" placeholder="purpose / agreement ref" class="w-full px-2 py-1 border rounded text-xs" /></div>
+                    ${(l.deductionLog && l.deductionLog.length > 0) ? `
+                    <details class="mt-2">
+                        <summary class="text-[10px] text-gray-500 cursor-pointer hover:text-gray-700">View deduction history (${l.deductionLog.length})</summary>
+                        <ul class="text-[10px] text-gray-600 mt-1 ml-4 space-y-0.5">
+                            ${l.deductionLog.map(d => `<li>${months[(parseInt(d.month)||1)-1]} ${d.year}: <strong>${fmt(d.amount)}</strong>${d.payslipRef?' · ref '+d.payslipRef:''}</li>`).join('')}
+                        </ul>
+                    </details>` : ''}
+                </div>
+                `;
+            }).join('');
+        }
+        function addStaffLoanRow() {
+            window._sLoanRows = window._sLoanRows || [];
+            // Default EMI = principal/installments; user can override
+            const today = new Date().toISOString().split('T')[0];
+            window._sLoanRows.push({
+                loanID: '',  // assigned on save
+                disbursedDate: today,
+                principal: 0,
+                installments: 12,
+                emi: 0,
+                firstDeductMonth: new Date().getMonth() + 1,
+                firstDeductYear: new Date().getFullYear(),
+                status: 'Active',
+                deductionLog: [],
+                closedDate: '',
+                closedReason: '',
+                remarks: ''
+            });
+            renderStaffLoanRows();
+        }
+        function removeStaffLoanRow(idx) {
+            const rows = window._sLoanRows || [];
+            const l = rows[idx];
+            if (!l) return;
+            const hasHistory = (l.deductionLog && l.deductionLog.length > 0);
+            if (hasHistory) {
+                if (!confirm(`This loan has ${l.deductionLog.length} recorded deduction(s).\n\nRemoving deletes the history. To preserve audit trail, change Status to "Closed" instead.\n\nReally remove?`)) return;
+            } else {
+                if (!confirm('Remove this loan row?')) return;
+            }
+            rows.splice(idx, 1);
+            renderStaffLoanRows();
+        }
+        function updateStaffLoanField(idx, field, value) {
+            const rows = window._sLoanRows || [];
+            if (!rows[idx]) return;
+            rows[idx][field] = value;
+            // Auto-suggest EMI when principal or installments change and EMI is 0 or matches the
+            // last auto-computed value. Don't overwrite a user-typed EMI.
+            if (field === 'principal' || field === 'installments') {
+                const p = parseFloat(rows[idx].principal) || 0;
+                const n = parseInt(rows[idx].installments) || 1;
+                const suggested = +(p / n).toFixed(2);
+                const currentEMI = parseFloat(rows[idx].emi) || 0;
+                if (currentEMI === 0 || currentEMI === rows[idx]._lastSuggested) {
+                    rows[idx].emi = suggested;
+                    rows[idx]._lastSuggested = suggested;
+                }
+            }
+            // If status flipped off Active, stamp closedDate (only if not already set)
+            if (field === 'status' && value !== 'Active' && !rows[idx].closedDate) {
+                rows[idx].closedDate = new Date().toISOString().split('T')[0];
+            }
+            renderStaffLoanRows();
+        }
+        // Read loan rows back from buffer, preserving deductionLog from the original record.
+        function _collectStaffLoansFromForm(originalStaff) {
+            const rows = (window._sLoanRows || []).filter(l => parseFloat(l.principal) > 0);
+            return rows.map(l => {
+                const copy = { ...l };
+                delete copy._lastSuggested;  // working-state cruft
+                if (!copy.loanID) copy.loanID = generateLoanID(new Date(copy.disbursedDate || Date.now()));
+                // If status went to Closed/Settled but no closedDate stamped (e.g. on initial creation):
+                if (copy.status !== 'Active' && !copy.closedDate) {
+                    copy.closedDate = new Date().toISOString().split('T')[0];
+                }
+                // Preserve original deductionLog if not present in the row (which it shouldn't be edited via UI)
+                const orig = (originalStaff?.loans || []).find(x => x.loanID === copy.loanID);
+                if (orig && Array.isArray(orig.deductionLog)) {
+                    copy.deductionLog = orig.deductionLog;
+                } else if (!Array.isArray(copy.deductionLog)) {
+                    copy.deductionLog = [];
+                }
+                return copy;
+            });
+        }
+
         // Staff CRUD
         function openStaffModal(s = null) {
             currentStaff = s;
             document.getElementById('staffModalTitle').textContent = s ? 'Edit Staff Member' : 'Add Staff Member';
             document.getElementById('staffForm').reset();
+            // Initialize loans working buffer from staff record (deep-copy so cancel doesn't mutate)
+            window._sLoanRows = s && Array.isArray(s.loans)
+                ? JSON.parse(JSON.stringify(s.loans))
+                : [];
+            renderStaffLoanRows();
             if (s) {
                 document.getElementById('sType').value       = s.staffType||'Office';
                 document.getElementById('sName').value       = s.name||'';
@@ -15899,6 +16257,9 @@ ${'─'.repeat(50)}
                 leaveOpeningMonth: parseInt(document.getElementById('sLeaveOpeningMonth')?.value)||new Date().getMonth()+1,
                 leaveOpeningYear:  parseInt(document.getElementById('sLeaveOpeningYear')?.value)||new Date().getFullYear(),
                 leaveEncashments: currentStaff?.leaveEncashments || [],  // preserved on save
+                // Loans — read from DOM (form rows are editable) and merge with any
+                // deductionLog already on the original record (logs are not in the form).
+                loans: _collectStaffLoansFromForm(currentStaff),
                 carriedLeave:parseFloat(document.getElementById('sCarriedLeave')?.value)||0,
                 pfPct:parseFloat(document.getElementById('sPFPct')?.value)??12,esicPct:parseFloat(document.getElementById('sESICPct')?.value)??0.75,
                 ptBase:parseFloat(document.getElementById('sPTBase')?.value)??200,tdsMonthly:parseFloat(document.getElementById('sTDSMonthly')?.value)||0,
@@ -17078,6 +17439,14 @@ Automated WFH alert — ${company} Attendance System.`;
                     : 'TDS (Manual Override)',
                 INR(ded.tdsAmt)]);
             if(ded.addlDed>0)dedBody.push([s.addlDeductionRemark?'Recovery – '+s.addlDeductionRemark:'Additional Deduction',INR(ded.addlDed)]);
+            // Loan EMI rows
+            ((ded.loanDeductions||[]).forEach(ld => {
+                if (ld.deferred) {
+                    dedBody.push([`Loan EMI ${ld.loan.loanID} – DEFERRED`,'—']);
+                } else if (ld.deductionAmount > 0) {
+                    dedBody.push([`Loan EMI – ${ld.loan.loanID}`, INR(ld.deductionAmount)]);
+                }
+            }));
             doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:9},headStyles:{fillColor:[254,226,226],textColor:[153,27,27],fontStyle:'bold'},
                 head:[['Deduction Component','Amount (INR)']],body:dedBody,
                 columnStyles:{0:{cellWidth:140},1:{halign:'right',cellWidth:40}}});
@@ -17091,9 +17460,58 @@ Automated WFH alert — ${company} Attendance System.`;
                     if(d.row.index===0){d.cell.styles.fillColor=[254,226,226];d.cell.styles.textColor=[153,27,27];}
                     if(d.row.index===summaryBody.length-1){d.cell.styles.fillColor=[224,242,254];d.cell.styles.textColor=[15,23,72];d.cell.styles.fontSize=12;}}});
             y=doc.lastAutoTable.finalY+8;
+
+            // ── LOAN ACCOUNT(S) summary block ──
+            // Shows each loan's principal, EMIs paid, balance, and this-month's deduction.
+            const loansForBlock = (st?.loans || []).filter(l => l.status === 'Active' ||
+                (ded.loanDeductions||[]).some(ld => ld.loan.loanID === l.loanID));
+            if (loansForBlock.length > 0) {
+                if (y > 250) { doc.addPage(); y = 15; }
+                doc.setFontSize(10); doc.setTextColor(180, 83, 9); doc.setFont('helvetica','bold');
+                doc.text('🏦 LOAN ACCOUNT(S)', 14, y); y += 4;
+                const loanRows = loansForBlock.map(l => {
+                    const dv = loanDerivedFields(l);
+                    const thisMonth = (ded.loanDeductions||[]).find(ld => ld.loan.loanID === l.loanID);
+                    const tmAmt = thisMonth ? (thisMonth.deferred ? 'DEFERRED' : INR(thisMonth.deductionAmount)) : '—';
+                    return [
+                        l.loanID,
+                        l.disbursedDate || '—',
+                        INR(l.principal),
+                        `${dv.deductedCount}/${l.installments || '—'}`,
+                        INR(dv.deductedTotal),
+                        INR(dv.balance),
+                        tmAmt
+                    ];
+                });
+                doc.autoTable({startY: y, margin: {left:14, right:14}, theme: 'grid',
+                    styles: {fontSize: 8, cellPadding: 2},
+                    headStyles: {fillColor: [254, 215, 170], textColor: [120, 53, 15], fontStyle: 'bold'},
+                    head: [['Loan ID', 'Disbursed', 'Principal', 'EMIs Paid', 'Paid So Far', 'Balance', 'This Month']],
+                    body: loanRows,
+                    columnStyles: {
+                        0: {cellWidth: 26}, 1: {cellWidth: 22}, 2: {halign:'right', cellWidth: 25},
+                        3: {halign:'center', cellWidth: 20}, 4: {halign:'right', cellWidth: 26},
+                        5: {halign:'right', cellWidth: 26}, 6: {halign:'right', cellWidth: 27, fontStyle:'bold'}
+                    }
+                });
+                y = doc.lastAutoTable.finalY + 6;
+            }
+
             doc.setFontSize(8);doc.setFont('helvetica','italic');doc.setTextColor(100,100,100);doc.text('This is a computer generated payslip and does not require any signature.',105,282,{align:'center'});
             doc.setFont('helvetica','normal');doc.setFontSize(7);doc.setTextColor(150,150,150);doc.text('Generated by EASY EMS · '+new Date().toLocaleDateString('en-IN'),105,289,{align:'center'});
             doc.save('PaySlip_'+nm.replace(/\s+/g,'_')+'_'+mL.replace(/\s+/g,'_')+'.pdf');
+            // Record loan deductions to loan.deductionLog (idempotent — re-saving same period is no-op)
+            if (st && Array.isArray(st.loans) && st.loans.length > 0 && (ded.loanDeductions||[]).length > 0) {
+                const payslipRef = `TECH-${s.periodYear}-${String(s.periodMonth).padStart(2,'0')}-${st.staffID}`;
+                const res = recordLoanDeductions(st, ded.loanDeductions, s.periodMonth, s.periodYear, payslipRef);
+                if (res.recorded > 0 || res.autoClosed.length > 0) {
+                    saveData('staff', staff).then(() => {
+                        if (res.autoClosed.length > 0) {
+                            alert(`✅ Payslip generated. ${res.recorded} loan EMI(s) recorded.\n\n🏁 Loan${res.autoClosed.length>1?'s':''} fully repaid: ${res.autoClosed.join(', ')}`);
+                        }
+                    }).catch(e => console.error('Failed to save loan deduction log:', e));
+                }
+            }
         }
         function _pdfOffice(){
             const{jsPDF}=window.jspdf,op=officePayState,st=staff.find(x=>x.staffID===op.staffID);if(!st){alert('Please select a staff member.');return;}
@@ -17137,6 +17555,14 @@ Automated WFH alert — ${company} Attendance System.`;
             if(c.tdsAmt>0)dedRows.push(['Income Tax TDS',INR(c.tdsAmt)]);
             if(c.lopDays>0)dedRows.push([`Loss of Pay – ${c.lopDays} day${c.lopDays===1?'':'s'} (LOP Base / ${c.periodDays} period days)`,INR(c.lopAmt)]);
             if(c.addlDed>0)dedRows.push([(op.addlDeductionRemark?'Other: '+op.addlDeductionRemark:'Other Deduction'),INR(c.addlDed)]);
+            // Loan EMIs — appended after standard statutory deductions
+            ((c.loanDeductions||[]).forEach(ld => {
+                if (ld.deferred) {
+                    dedRows.push([`Loan EMI ${ld.loan.loanID} – DEFERRED`, '—']);
+                } else if (ld.deductionAmount > 0) {
+                    dedRows.push([`Loan EMI – ${ld.loan.loanID}`, INR(ld.deductionAmount)]);
+                }
+            }));
             if(!dedRows.length)dedRows.push(['No deductions this period','—']);
             dedRows.push([{content:'TOTAL DEDUCTIONS',styles:{fontStyle:'bold',fillColor:[254,226,226],textColor:[153,27,27]}},{content:INR(c.totalDed),styles:{fontStyle:'bold',fillColor:[254,202,202],textColor:[153,27,27]}}]);
             const maxR=Math.max(earRows.length,dedRows.length);
@@ -17145,9 +17571,59 @@ Automated WFH alert — ${company} Attendance System.`;
             const combined=earRows.map((er,i)=>[er[0],er[1],dedRows[i][0],dedRows[i][1]]);
             doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:8},headStyles:{fillColor:[186,230,253],textColor:[15,23,72],fontStyle:'bold',fontSize:9},head:[['EARNINGS','Amount (INR)','DEDUCTIONS','Amount (INR)']],body:combined,columnStyles:{0:{cellWidth:52},1:{halign:'right',cellWidth:34},2:{cellWidth:70},3:{halign:'right',cellWidth:28}}});y=doc.lastAutoTable.finalY+4;
             doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:12,fontStyle:'bold'},body:[['NET PAY — '+st.name.toUpperCase()+' — '+mL,INR(c.netPay)]],columnStyles:{0:{cellWidth:150,fillColor:[224,242,254],textColor:[15,23,72]},1:{halign:'right',fillColor:[186,230,253],textColor:[15,23,72],cellWidth:34}}});y=doc.lastAutoTable.finalY+8;
+
+            // ── LOAN ACCOUNT(S) summary block ──
+            // Shows each loan's principal, EMIs paid, balance, and this-month's deduction.
+            // Includes active loans plus any closed-this-period loans.
+            const _officeLoansForBlock = (st.loans || []).filter(l => l.status === 'Active' ||
+                (c.loanDeductions||[]).some(ld => ld.loan.loanID === l.loanID));
+            if (_officeLoansForBlock.length > 0) {
+                if (y > 250) { doc.addPage(); y = 15; }
+                doc.setFontSize(10); doc.setTextColor(180, 83, 9); doc.setFont('helvetica','bold');
+                doc.text('LOAN ACCOUNT(S)', 14, y); y += 4;
+                const _officeLoanRows = _officeLoansForBlock.map(l => {
+                    const dv = loanDerivedFields(l);
+                    const tm = (c.loanDeductions||[]).find(ld => ld.loan.loanID === l.loanID);
+                    const tmAmt = tm ? (tm.deferred ? 'DEFERRED' : INR(tm.deductionAmount)) : '—';
+                    return [
+                        l.loanID,
+                        l.disbursedDate || '—',
+                        INR(l.principal),
+                        `${dv.deductedCount}/${l.installments || '—'}`,
+                        INR(dv.deductedTotal),
+                        INR(dv.balance),
+                        tmAmt
+                    ];
+                });
+                doc.autoTable({startY: y, margin: {left:14, right:14}, theme: 'grid',
+                    styles: {fontSize: 8, cellPadding: 2},
+                    headStyles: {fillColor: [254, 215, 170], textColor: [120, 53, 15], fontStyle: 'bold'},
+                    head: [['Loan ID', 'Disbursed', 'Principal', 'EMIs Paid', 'Paid So Far', 'Balance', 'This Month']],
+                    body: _officeLoanRows,
+                    columnStyles: {
+                        0: {cellWidth: 26}, 1: {cellWidth: 22}, 2: {halign:'right', cellWidth: 25},
+                        3: {halign:'center', cellWidth: 20}, 4: {halign:'right', cellWidth: 26},
+                        5: {halign:'right', cellWidth: 26}, 6: {halign:'right', cellWidth: 27, fontStyle:'bold'}
+                    }
+                });
+                y = doc.lastAutoTable.finalY + 6;
+            }
+
             if(c.lopDays>0){doc.setFontSize(8);doc.setFont('helvetica','italic');doc.setTextColor(180,0,0);doc.text(`* LOP: ${c.leaveTaken} leave days taken, ${c.available} available (Carried ${c.carriedLeave} + Accrued ${c.leavePerMonth}). LOP base = Basic+HRA+DA+Med+Conv+GP+Bonus / ${c.periodDays} days.`,14,y);doc.setFont('helvetica','normal');doc.setTextColor(0,0,0);y+=6;}
             doc.setFontSize(8);doc.setFont('helvetica','italic');doc.setTextColor(100,100,100);doc.text('This is a computer generated payslip and does not require any signature.',105,282,{align:'center'});doc.setFont('helvetica','normal');doc.setFontSize(7);doc.setTextColor(150,150,150);doc.text('Generated by EASY EMS · '+new Date().toLocaleDateString('en-IN'),105,289,{align:'center'});
             doc.save('PaySlip_'+st.name.replace(/\s+/g,'_')+'_'+mL.replace(/\s+/g,'_')+'.pdf');
+            // Record loan deductions to loan.deductionLog
+            if (Array.isArray(st.loans) && st.loans.length > 0 && (c.loanDeductions||[]).length > 0) {
+                const payslipRef = `OFFICE-${op.periodYear}-${String(op.periodMonth).padStart(2,'0')}-${st.staffID}`;
+                const res = recordLoanDeductions(st, c.loanDeductions, op.periodMonth, op.periodYear, payslipRef);
+                if (res.recorded > 0 || res.autoClosed.length > 0) {
+                    saveData('staff', staff).then(() => {
+                        if (res.autoClosed.length > 0) {
+                            alert(`✅ Payslip generated. ${res.recorded} loan EMI(s) recorded.\n\n🏁 Loan${res.autoClosed.length>1?'s':''} fully repaid: ${res.autoClosed.join(', ')}`);
+                        }
+                    }).catch(e => console.error('Failed to save loan deduction log:', e));
+                }
+            }
         }
 
         // ── WAGE REVISION ─────────────────────────────────────────────────────
