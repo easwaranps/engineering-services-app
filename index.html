@@ -396,14 +396,47 @@
                     -->
                     <div class="bg-orange-50 border border-orange-200 rounded-lg p-3 mb-4">
                         <label class="flex items-center cursor-pointer">
-                            <input type="checkbox" id="expRCMApplicable" class="w-4 h-4 accent-orange-600" onchange="toggleRCMHelpText(); calcExpAmounts();"/>
+                            <input type="checkbox" id="expRCMApplicable" class="w-4 h-4 accent-orange-600" onchange="toggleRCMHelpText(); _rcmRecompute();"/>
                             <span class="ml-2 text-sm font-semibold text-orange-900">🔄 Reverse Charge (RCM) Applicable</span>
                         </label>
                         <p id="expRCMHelpText" class="text-[11px] text-orange-700 mt-1 ml-6 hidden">
                             ✓ Vendor does NOT collect GST · You pay GST to govt directly via GSTR-3B · Same amount becomes claimable as ITC.<br/>
                             <strong>Total Bill Amount above EXCLUDES the RCM GST</strong> — you pay vendor the Taxable Amount only.
-                            The GST amounts you enter (CGST/SGST/IGST) will appear as RCM Liability in Tax tab AND become ITC.
                         </p>
+                        <!-- ── RCM rate picker (visible only when RCM is checked) ──
+                             Picking rate + supply-type auto-fills the CGST/SGST/IGST amounts
+                             based on the current Taxable amount. User can still tweak the
+                             amounts manually after auto-fill if needed (uncommon).  -->
+                        <div id="expRCMRateRow" class="hidden mt-3 ml-6 flex flex-wrap items-center gap-3">
+                            <div>
+                                <label class="block text-[10px] font-semibold text-orange-800 mb-1">GST Rate</label>
+                                <select id="expRCMRate" onchange="_rcmRecompute()"
+                                    class="px-2 py-1.5 border border-orange-300 rounded text-sm bg-white">
+                                    <option value="">— select rate —</option>
+                                    <option value="0">0% (Exempt / Nil-rated)</option>
+                                    <option value="5">5%</option>
+                                    <option value="12">12%</option>
+                                    <option value="18" selected>18% (most common — rent, professional)</option>
+                                    <option value="28">28%</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-semibold text-orange-800 mb-1">Place of Supply</label>
+                                <div class="flex gap-3 text-xs items-center">
+                                    <label class="flex items-center gap-1 cursor-pointer">
+                                        <input type="radio" name="expRCMSupplyType" value="intra" checked
+                                            onchange="_rcmRecompute()" class="accent-orange-600"/>
+                                        <span>Intrastate <span class="text-orange-600">(CGST + SGST)</span></span>
+                                    </label>
+                                    <label class="flex items-center gap-1 cursor-pointer">
+                                        <input type="radio" name="expRCMSupplyType" value="inter"
+                                            onchange="_rcmRecompute()" class="accent-orange-600"/>
+                                        <span>Interstate <span class="text-orange-600">(IGST)</span></span>
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="text-[10px] text-orange-700 italic">↑ Rate × Taxable Amount auto-fills the GST fields above</div>
+                        </div>
                     </div>
                 </div>
 
@@ -9159,6 +9192,15 @@
                 // Restore RCM toggle + sync help text + recalc total (RCM excludes GST from total)
                 const rcmEl = document.getElementById('expRCMApplicable');
                 if (rcmEl) rcmEl.checked = !!exp.rcmApplicable;
+                // Restore RCM rate + supply type if record carries them. Defaults to 18%/intra
+                // for older RCM records that pre-date these fields.
+                if (exp.rcmApplicable) {
+                    const rateEl = document.getElementById('expRCMRate');
+                    if (rateEl) rateEl.value = (exp.rcmRate != null) ? String(exp.rcmRate) : '18';
+                    const supplyType = exp.rcmSupplyType || 'intra';
+                    const supplyRadio = document.querySelector(`input[name="expRCMSupplyType"][value="${supplyType}"]`);
+                    if (supplyRadio) supplyRadio.checked = true;
+                }
                 toggleRCMHelpText();
                 document.getElementById('expTDSApplicable').checked   = exp.tdsApplicable||false;
                 if (exp.tdsApplicable) {
@@ -9298,10 +9340,54 @@
         function toggleRCMHelpText() {
             const on = !!document.getElementById('expRCMApplicable')?.checked;
             const help = document.getElementById('expRCMHelpText');
+            const row  = document.getElementById('expRCMRateRow');
             if (help) help.classList.toggle('hidden', !on);
+            if (row)  row.classList.toggle('hidden', !on);
+        }
+
+        // ── Auto-calculate RCM GST amounts (pure setter — no recursion) ──
+        // When RCM is checked AND a rate is picked AND intrastate/interstate chosen,
+        // writes CGST/SGST (intra) or IGST (inter) into the respective fields from
+        // the current taxable amount. Does NOT call calcExpAmounts — its callers do.
+        function _rcmAutoCalc() {
+            const isRCM = !!document.getElementById('expRCMApplicable')?.checked;
+            if (!isRCM) return;
+            const rateStr = document.getElementById('expRCMRate')?.value;
+            if (rateStr === '' || rateStr == null) return;   // no rate picked yet
+            const rate = parseFloat(rateStr);
+            if (isNaN(rate)) return;
+            const bill = parseFloat(document.getElementById('expBillAmount')?.value) || 0;
+            const fx   = parseFloat(document.getElementById('expExchRate')?.value) || 1;
+            const taxable = bill * fx;
+            const supplyType = document.querySelector('input[name="expRCMSupplyType"]:checked')?.value || 'intra';
+            const cgstEl = document.getElementById('expCGST');
+            const sgstEl = document.getElementById('expSGST');
+            const igstEl = document.getElementById('expIGST');
+            if (supplyType === 'intra') {
+                const half = +(taxable * rate / 200).toFixed(2);
+                if (cgstEl) cgstEl.value = half.toFixed(2);
+                if (sgstEl) sgstEl.value = half.toFixed(2);
+                if (igstEl) igstEl.value = '0';
+            } else {
+                const full = +(taxable * rate / 100).toFixed(2);
+                if (cgstEl) cgstEl.value = '0';
+                if (sgstEl) sgstEl.value = '0';
+                if (igstEl) igstEl.value = full.toFixed(2);
+            }
+        }
+
+        // Public wrapper used from radio/select onchange: writes RCM fields, then
+        // refreshes downstream totals.
+        function _rcmRecompute() {
+            _rcmAutoCalc();
+            calcExpAmounts();
         }
 
         function calcExpAmounts() {
+            // If RCM mode is active with a rate picked, update CGST/SGST/IGST first
+            // so the rest of this function reads fresh values. Safe — _rcmAutoCalc
+            // is a pure setter that doesn't call back into calcExpAmounts.
+            _rcmAutoCalc();
             const bill    = parseFloat(document.getElementById('expBillAmount')?.value)||0;
             const rate    = parseFloat(document.getElementById('expExchRate')?.value)||1;
             const cgst    = parseFloat(document.getElementById('expCGST')?.value)||0;
@@ -9990,6 +10076,14 @@
                 // they are the buyer's direct liability to govt AND become ITC.
                 // Tax tab surfaces these as separate "RCM Liability" and "RCM ITC" rows.
                 rcmApplicable:     billType === 'SUPPLIER' ? !!document.getElementById('expRCMApplicable')?.checked : false,
+                // RCM rate + supply type — used to restore the picker on edit, and
+                // for audit reference. Only meaningful when rcmApplicable is true.
+                rcmRate:           billType === 'SUPPLIER' && document.getElementById('expRCMApplicable')?.checked
+                                   ? (parseFloat(document.getElementById('expRCMRate')?.value) || 0)
+                                   : null,
+                rcmSupplyType:     billType === 'SUPPLIER' && document.getElementById('expRCMApplicable')?.checked
+                                   ? (document.querySelector('input[name="expRCMSupplyType"]:checked')?.value || 'intra')
+                                   : null,
                 creditNote:        cn,
                 creditNoteDetails: document.getElementById('expCreditNoteDetails').value,
                 tdsApplicable:     tdsOn,
@@ -10232,11 +10326,20 @@
             const now = new Date();
             const defMonth = now.getMonth() + 1;
             const defYear  = now.getFullYear();
+            // ── Persist user's month/year selection across renderView() calls ──
+            // Without this, saving any record triggers renderView → re-render →
+            // dropdown reverts to today, losing the user's pick. Stash in
+            // window-scope so it survives.
+            if (!window._taxSelectedPeriod) {
+                window._taxSelectedPeriod = { month: defMonth, year: defYear };
+            }
+            const selMonth = window._taxSelectedPeriod.month;
+            const selYear  = window._taxSelectedPeriod.year;
             const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
             const yearOpts = [defYear-1, defYear, defYear+1].map(y =>
-                `<option value="${y}" ${y===defYear?'selected':''}>${y}</option>`).join('');
+                `<option value="${y}" ${y===selYear?'selected':''}>${y}</option>`).join('');
             const monthOpts = months.map((m,i) =>
-                `<option value="${i+1}" ${i+1===defMonth?'selected':''}>${m}</option>`).join('');
+                `<option value="${i+1}" ${i+1===selMonth?'selected':''}>${m}</option>`).join('');
 
             content.innerHTML = `
             <div class="flex items-center justify-between mb-6 flex-wrap gap-3">
@@ -10245,8 +10348,8 @@
                     <p class="text-gray-500 text-sm mt-1">TDS liability, GST input/output reconciliation and filing alerts</p>
                 </div>
                 <div class="flex gap-2 items-center">
-                    <select id="taxMonth" onchange="refreshTax()" class="px-3 py-2 border border-gray-200 rounded-lg text-sm font-medium">${monthOpts}</select>
-                    <select id="taxYear"  onchange="refreshTax()" class="px-3 py-2 border border-gray-200 rounded-lg text-sm font-medium">${yearOpts}</select>
+                    <select id="taxMonth" onchange="_taxOnPeriodChange()" class="px-3 py-2 border border-gray-200 rounded-lg text-sm font-medium">${monthOpts}</select>
+                    <select id="taxYear"  onchange="_taxOnPeriodChange()" class="px-3 py-2 border border-gray-200 rounded-lg text-sm font-medium">${yearOpts}</select>
                     <button onclick="exportTaxPDF()" class="px-4 py-2 bg-red-600 text-white rounded-xl text-sm font-medium hover:bg-red-700">📄 Export PDF</button>
                 </div>
             </div>
@@ -10255,9 +10358,19 @@
             refreshTax();
         }
 
+        // When user picks a different month/year, update the persistent state then refresh
+        function _taxOnPeriodChange() {
+            const m = parseInt(document.getElementById('taxMonth')?.value) || (new Date().getMonth()+1);
+            const y = parseInt(document.getElementById('taxYear')?.value)  || new Date().getFullYear();
+            window._taxSelectedPeriod = { month: m, year: y };
+            refreshTax();
+        }
+
         function refreshTax() {
-            const month = parseInt(document.getElementById('taxMonth')?.value || new Date().getMonth()+1);
-            const year  = parseInt(document.getElementById('taxYear')?.value  || new Date().getFullYear());
+            // Prefer persisted state; fall back to DOM value; final fallback today
+            const sel   = window._taxSelectedPeriod || {};
+            const month = sel.month || parseInt(document.getElementById('taxMonth')?.value || new Date().getMonth()+1);
+            const year  = sel.year  || parseInt(document.getElementById('taxYear')?.value  || new Date().getFullYear());
             const body  = document.getElementById('taxDashboardBody');
             if (body) body.innerHTML = buildTaxDashboard(month, year);
         }
@@ -11486,8 +11599,10 @@
 
         // ── TAX COMPLIANCE PDF EXPORT ─────────────────────────────────────
         async function exportTaxPDF() {
-            const month = parseInt(document.getElementById('taxMonth')?.value || new Date().getMonth()+1);
-            const year  = parseInt(document.getElementById('taxYear')?.value  || new Date().getFullYear());
+            // Honour the persisted period selection (same as refreshTax)
+            const sel   = window._taxSelectedPeriod || {};
+            const month = sel.month || parseInt(document.getElementById('taxMonth')?.value || new Date().getMonth()+1);
+            const year  = sel.year  || parseInt(document.getElementById('taxYear')?.value  || new Date().getFullYear());
             const d     = getTaxPeriodData(month, year);
 
             if (!window.jspdf) {
