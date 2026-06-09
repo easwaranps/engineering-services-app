@@ -1444,7 +1444,16 @@
             const g=basic+fixedAllowance, r=(parseFloat(pfPct)||12)/100;
             return{pfGross:+g.toFixed(2),pfAmt:+(g*r).toFixed(2),pfCapped:false};
         }
-        function _calcESIC(basis,esicPct){return basis<=21000?+(basis*(parseFloat(esicPct)||0.75)/100).toFixed(2):0;} // basis includes variable; exempt if >₹21,000
+        // ESIC contribution helper (employee side, used in payslip computation).
+        // Per ESIC Act Reg 31:
+        //   - Wages basis: rounded to nearest rupee (0.50+ up, <0.50 down)
+        //   - Contribution amount: rounded UP to the next rupee
+        // Threshold (wages ≤ ₹21,000) applies to the rounded basis.
+        function _calcESIC(basis, esicPct) {
+            const roundedBasis = Math.round(basis);
+            if (roundedBasis > 21000) return 0;
+            return Math.ceil(roundedBasis * (parseFloat(esicPct) || 0.75) / 100);
+        }
 
         // ── Statutory contribution rates (employer side + admin charges) ──
         // Defaults match current India statutory rates. Can be overridden per-establishment
@@ -1456,7 +1465,8 @@
                 edliPct:         (settings?.edliPct        != null) ? +settings.edliPct         : 0.5,   // EDLI insurance
                 employerESICPct: (settings?.employerESICPct!= null) ? +settings.employerESICPct : 3.25,  // ER ESIC
                 epfAdminMin:     500,    // statutory minimum per month for an establishment
-                pfWageCap:       15000   // monthly wage cap for PF — matches _calcOfficePF
+                pfWageCap:       15000,  // monthly wage cap for PF — matches _calcOfficePF
+                edliWageCap:     15000   // EDLI ceiling per employee per month (EPF & MP Act)
             };
         }
 
@@ -1526,16 +1536,21 @@
                     continue;
                 }
                 if (pfGross <= 0 && employeePF <= 0) continue;   // skip zero-contribution staff
-                // Employer/admin rates apply on the SAME basis as employee PF
-                // (capped at ₹15k if the employee was capped)
+                // Per EPF & MP Act: employer PF + admin use the same capped basis as
+                // employee PF. EDLI has its own explicit ₹15,000 ceiling per employee
+                // per month — kept separate so a future PF cap change doesn't break EDLI.
                 const effectiveBasis = capped ? rates.pfWageCap : pfGross;
-                const employerPF = +(effectiveBasis * rates.employerPFPct / 100).toFixed(2);
-                const admin      = +(effectiveBasis * rates.epfAdminPct / 100).toFixed(2);
-                const edli       = +(effectiveBasis * rates.edliPct / 100).toFixed(2);
-                const total      = +(employeePF + employerPF + admin + edli).toFixed(2);
+                const edliBasis      = Math.min(pfGross, rates.edliWageCap || 15000);
+                // All EPF contributions are rounded to the nearest rupee to match
+                // the EPFO portal challan figures (which display whole-rupee amounts).
+                const employerPF = Math.round(effectiveBasis * rates.employerPFPct / 100);
+                const admin      = Math.round(effectiveBasis * rates.epfAdminPct / 100);
+                const edli       = Math.round(edliBasis      * rates.edliPct / 100);
+                const total      = Math.round(employeePF + employerPF + admin + edli);
                 rows.push({
                     staffID: s.staffID, name: s.name, staffType: s.staffType,
-                    pfGross, employeePF, employerPF, admin, edli, total, capped
+                    pfGross, employeePF, employerPF, admin, edli, total, capped,
+                    edliBasis   // expose so the UI can show capping when pfGross > 15k
                 });
             }
             // Totals + apply minimum admin/EDLI charges (₹500 each per establishment)
@@ -1551,19 +1566,19 @@
             // Min admin/EDLI applies once per establishment, only if at least one PF-eligible staff exists
             if (rows.length > 0) {
                 if (totals.admin < rates.epfAdminMin) {
-                    totals.adminShortfall = +(rates.epfAdminMin - totals.admin).toFixed(2);
+                    totals.adminShortfall = rates.epfAdminMin - totals.admin;
                     totals.admin = rates.epfAdminMin;
                     totals.total += totals.adminShortfall;
                 }
                 if (totals.edli < rates.epfAdminMin) {
-                    totals.edliShortfall = +(rates.epfAdminMin - totals.edli).toFixed(2);
+                    totals.edliShortfall = rates.epfAdminMin - totals.edli;
                     totals.edli = rates.epfAdminMin;
                     totals.total += totals.edliShortfall;
                 }
             }
-            // Round totals
+            // Round totals to whole rupees (matches EPFO challan)
             ['pfGross','employeePF','employerPF','admin','edli','total'].forEach(k =>
-                totals[k] = +totals[k].toFixed(2)
+                totals[k] = Math.round(totals[k])
             );
             return { rows, totals, rates };
         }
@@ -1631,14 +1646,20 @@
                 }
                 if (waived || (esicBasis <= 0 && employeeESIC <= 0)) {
                     if (waived) rows.push({ staffID: s.staffID, name: s.name, staffType: s.staffType,
-                        esicBasis, employeeESIC: 0, employerESIC: 0, total: 0, waived: true });
+                        esicBasis: Math.round(esicBasis), employeeESIC: 0, employerESIC: 0, total: 0, waived: true });
                     continue;
                 }
-                const employerESIC = +(esicBasis * rates.employerESICPct / 100).toFixed(2);
-                const total = +(employeeESIC + employerESIC).toFixed(2);
+                // Per ESIC Reg 31:
+                //   - wages basis rounded to nearest rupee (already done in _calcESIC for the
+                //     waiver threshold; we apply it again here for the displayed basis)
+                //   - employer contribution (3.25%) rounded UP to next rupee
+                //   - employee contribution (0.75%) already rounded UP in _calcESIC
+                const roundedBasis = Math.round(esicBasis);
+                const employerESIC = Math.ceil(roundedBasis * rates.employerESICPct / 100);
+                const total = employeeESIC + employerESIC;
                 rows.push({
                     staffID: s.staffID, name: s.name, staffType: s.staffType,
-                    esicBasis, employeeESIC, employerESIC, total, waived: false
+                    esicBasis: roundedBasis, employeeESIC, employerESIC, total, waived: false
                 });
             }
             const totals = rows.reduce((acc, r) => {
@@ -1650,8 +1671,9 @@
                 acc.contributingCount++;
                 return acc;
             }, { esicBasis:0, employeeESIC:0, employerESIC:0, total:0, waivedCount:0, contributingCount:0 });
+            // Totals are sums of already-rounded amounts → keep as integers
             ['esicBasis','employeeESIC','employerESIC','total'].forEach(k =>
-                totals[k] = +totals[k].toFixed(2)
+                totals[k] = Math.round(totals[k])
             );
             return { rows, totals, rates };
         }
@@ -10013,7 +10035,16 @@
             }
 
             const totalTax = cgst + sgst + igst;
-            const grossTotal = billINR + totalTax;          // Total Bill Amount
+            // ── RCM-aware Total Bill Amount ──
+            // Under RCM (Section 9(3) / unregistered vendor), the vendor does NOT
+            // collect GST — buyer deposits GST to govt directly via GSTR-3B. So
+            // the actual amount paid TO THE VENDOR is just the taxable amount,
+            // GST is separate. netPayable must reflect what we actually transfer
+            // to the vendor, not include the RCM GST.
+            // Matches the live calculation in calcExpAmounts(), where this same
+            // logic feeds the display tile.
+            const isRCMSave = billType === 'SUPPLIER' && !!document.getElementById('expRCMApplicable')?.checked;
+            const grossTotal = isRCMSave ? billINR : (billINR + totalTax);
             const netPayable = +(grossTotal - tdsAmt - cn - adv).toFixed(2);
 
             // Calculate deductions
@@ -10398,19 +10429,40 @@
             });
 
             // ── Outgoing Invoices for the period ────────────────────────────
-            // GST liability arises when invoice is issued — include all statuses
-            // except Draft (not yet sent to client)
+            // GST liability arises when the invoice is issued, BUT for client-side
+            // claim purposes (GSTR-2B input, Form 26AS TDS) the realisation date
+            // matters. If the invoice has been marked Paid AND has a payment-received
+            // entry, the "realised period" = date of latest payment receipt.
+            // Otherwise fall back to invoice issue date (txnDate).
+            //
+            // This means: an invoice issued 28-Mar but paid 7-Apr will appear in
+            // April's GST/TDS panels (matching when the client's portal recorded it),
+            // not March's. Unpaid invoices stay in the issue-date period as before.
+            const _invoiceRealisedPeriod = (t) => {
+                if (t.status === 'Paid' && Array.isArray(t.paymentsReceived) && t.paymentsReceived.length > 0) {
+                    // Latest payment-received date (sorted ascending then take last)
+                    const dates = t.paymentsReceived
+                        .map(p => p.date || '')
+                        .filter(d => d)
+                        .sort();
+                    if (dates.length) return dates[dates.length - 1];
+                }
+                return t.txnDate || '';
+            };
+
             const outInvoices = transactions.filter(t => {
                 if (t.txnCategory !== 'INVOICE' || t.txnDirection !== 'Outgoing') return false;
                 if (t.status === 'Draft') return false;   // Draft not yet issued
-                return (t.txnDate||'').startsWith(pfx);
+                return _invoiceRealisedPeriod(t).startsWith(pfx);
             });
 
             // ── TDS Receivable from Invoices (client deducts TDS from us) ───
-            // Look for tdsFromClient field on transactions or estimate from invoice
+            // Period match uses the same realised-date logic: TDS is reflected
+            // in our Form 26AS for the month the client actually paid us, not the
+            // month we issued the invoice.
             const tdsReceivable = transactions.filter(t => {
                 if (t.txnCategory !== 'INVOICE' || t.txnDirection !== 'Outgoing') return false;
-                if (!(t.txnDate||'').startsWith(pfx)) return false;
+                if (!_invoiceRealisedPeriod(t).startsWith(pfx)) return false;
                 return t.tdsFromClient > 0 || t.tdsFromClientPct > 0;
             });
 
@@ -10423,6 +10475,11 @@
             const gstInputCGST  = gstInputExps.reduce((s,e) => s+(parseFloat(e.cgst)||0), 0);
             const gstInputSGST  = gstInputExps.reduce((s,e) => s+(parseFloat(e.sgst)||0), 0);
             const gstInputIGST  = gstInputExps.reduce((s,e) => s+(parseFloat(e.igst)||0), 0);
+            // Track raw expense-bills components separately (used in some places
+            // where we only want supplier-bill totals, e.g. the breakdown table headers).
+            const gstInputBillsCGST = gstInputCGST;
+            const gstInputBillsSGST = gstInputSGST;
+            const gstInputBillsIGST = gstInputIGST;
 
             // ── Director Expenses ITC for the period ─────────────────────
             const dirGSTExps = (directorExpenses||[]).filter(d => {
@@ -10435,6 +10492,14 @@
             const dirITCTotal   = dirITCEligible.reduce((s,d) => s+(parseFloat(d.itcAmt)||0), 0);
             const dirGSTTotal   = dirGSTExps.reduce((s,d) => s+(parseFloat(d.gstAmt)||0), 0);
             const dirBlockedITC = dirGSTExps.filter(d=>d.itcEligible==='blocked').reduce((s,d)=>s+(parseFloat(d.gstAmt)||0),0);
+
+            // Director ITC component breakdown (CGST/SGST/IGST) so the GST Input
+            // card can show real component totals matching the combined ITC.
+            // Director records use `cgstAmt`/`sgstAmt`/`igstAmt` (preferred) with
+            // fallback to bare `cgst`/`sgst`/`igst`.
+            const dirITCCGST = dirITCEligible.reduce((s,d) => s+(parseFloat(d.cgstAmt)||parseFloat(d.cgst)||0), 0);
+            const dirITCSGST = dirITCEligible.reduce((s,d) => s+(parseFloat(d.sgstAmt)||parseFloat(d.sgst)||0), 0);
+            const dirITCIGST = dirITCEligible.reduce((s,d) => s+(parseFloat(d.igstAmt)||parseFloat(d.igst)||0), 0);
 
             // Combined ITC (expenses + director expenses)
             const combinedITCTotal = gstInputTotal + dirITCTotal;
@@ -10474,6 +10539,12 @@
             const gstOutputSGSTWithRCM = gstOutputSGST + rcmSGST;
             const gstOutputIGSTWithRCM = gstOutputIGST + rcmIGST;
             const combinedITCWithRCM   = combinedITCTotal + rcmTotal;
+            // Combined ITC component breakdown — bills + director + RCM — so the
+            // GST Input card's CGST/SGST/IGST rows actually sum to the displayed total.
+            // Without this, the card showed ₹0/₹0/₹0 even when the total was ₹11k+.
+            const gstInputCGSTAll = gstInputBillsCGST + dirITCCGST + rcmCGST;
+            const gstInputSGSTAll = gstInputBillsSGST + dirITCSGST + rcmSGST;
+            const gstInputIGSTAll = gstInputBillsIGST + dirITCIGST + rcmIGST;
 
             const netGST    = gstOutputWithRCM - combinedITCWithRCM;
             const months    = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -10532,8 +10603,16 @@
                 month, year, monthName, pfx, fmt, pad,
                 tdsExpenses, tdsReceivable, outInvoices, gstInputExps,
                 totalTDSDeducted, totalTDSReceivable,
-                gstInputTotal, gstInputCGST, gstInputSGST, gstInputIGST,
+                gstInputTotal,
+                // Component breakdown of Input ITC includes director + RCM contributions
+                // so the displayed components actually sum to combinedITCTotal.
+                gstInputCGST:   gstInputCGSTAll,
+                gstInputSGST:   gstInputSGSTAll,
+                gstInputIGST:   gstInputIGSTAll,
+                // Bills-only breakdown (kept for any view that wants raw supplier-bill totals)
+                gstInputBillsCGST, gstInputBillsSGST, gstInputBillsIGST,
                 dirGSTExps, dirITCEligible, dirITCTotal, dirGSTTotal, dirBlockedITC,
+                dirITCCGST, dirITCSGST, dirITCIGST,
                 combinedITCTotal: combinedITCWithRCM,    // RCM-inclusive for display
                 rcmExps, rcmCGST, rcmSGST, rcmIGST, rcmTotal,
                 gstOutput:       gstOutputWithRCM,
@@ -10549,6 +10628,88 @@
                 // PF + ESIC liability and payment status for this period
                 pfLiability, pfPaymentBills, pfPaidBills, pfPaidTotal, pfPaymentStatus,
                 esicLiability, esicPaymentBills, esicPaidBills, esicPaidTotal, esicPaymentStatus
+            };
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        // FY GST SUMMARY (Indian FY: 1 April → 31 March)
+        // ────────────────────────────────────────────────────────────────
+        // Iterates 12 months of the FY, aggregates Output, Input/ITC, payments,
+        // and computes the carry-forward ITC at FY-end. Uses the Opening ITC
+        // Balance from settings (if its "as of" date falls before FY start).
+        // ════════════════════════════════════════════════════════════════
+        function _getFYGSTSummary(fyStartYear) {
+            // fyStartYear = the year that 1 April starts. So FY 2026-27 → fyStartYear = 2026.
+            // Months 1-3 of FY = April, May, June (year = fyStartYear)
+            // Months 10-12 of FY = January, February, March (year = fyStartYear + 1)
+            const monthsList = [];
+            for (let i = 0; i < 12; i++) {
+                const m = ((4 - 1 + i) % 12) + 1;          // 4,5,6,7,8,9,10,11,12,1,2,3
+                const y = (m >= 4) ? fyStartYear : fyStartYear + 1;
+                monthsList.push({ month: m, year: y });
+            }
+
+            // Opening ITC — apply only if "as of" date is on or before FY start (1 April)
+            const fyStartDate = `${fyStartYear}-04-01`;
+            const openingITC = (settings.openingITCBalance && settings.openingITCAsOfDate
+                                && settings.openingITCAsOfDate < fyStartDate)
+                ? +(parseFloat(settings.openingITCBalance) || 0).toFixed(2)
+                : 0;
+
+            // Per-month accumulation with carry-forward
+            const monthly = [];
+            let carryForward = openingITC;
+            let totalOutput = 0, totalInput = 0, totalPaid = 0;
+            const monthAbbrev = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            for (const mm of monthsList) {
+                const d = getTaxPeriodData(mm.month, mm.year);
+                const inputThis  = +(d.combinedITCTotal || 0).toFixed(2);   // RCM-inclusive
+                const outputThis = +(d.gstOutput        || 0).toFixed(2);   // RCM-inclusive
+                const availableITC = +(carryForward + inputThis).toFixed(2);
+                let utilisedITC, payable, newCarry;
+                if (outputThis >= availableITC) {
+                    utilisedITC = availableITC;
+                    payable     = +(outputThis - availableITC).toFixed(2);
+                    newCarry    = 0;
+                } else {
+                    utilisedITC = outputThis;
+                    payable     = 0;
+                    newCarry    = +(availableITC - outputThis).toFixed(2);
+                }
+                // Actual GST paid via recorded bills in this period
+                const paidThis = +(d.gstPaidTotal || 0).toFixed(2);
+
+                monthly.push({
+                    label:     `${monthAbbrev[mm.month-1]} ${mm.year}`,
+                    month:     mm.month,
+                    year:      mm.year,
+                    openingITC: carryForward,
+                    input:     inputThis,
+                    output:    outputThis,
+                    available: availableITC,
+                    utilisedITC,
+                    payable,
+                    paid:      paidThis,
+                    closingITC: newCarry
+                });
+                totalOutput += outputThis;
+                totalInput  += inputThis;
+                totalPaid   += paidThis;
+                carryForward = newCarry;
+            }
+
+            return {
+                fyStartYear,
+                fyEndYear:        fyStartYear + 1,
+                fyLabel:          `${fyStartYear}-${String((fyStartYear+1)%100).padStart(2,'0')}`,
+                openingITC,
+                openingITCAsOf:   settings.openingITCAsOfDate || '',
+                monthly,
+                totalOutput:      +totalOutput.toFixed(2),
+                totalInput:       +totalInput.toFixed(2),
+                totalPaid:        +totalPaid.toFixed(2),
+                closingITC:       carryForward,    // carry forward to next FY
+                netLiability:     +Math.max(0, totalOutput - totalInput - openingITC).toFixed(2)
             };
         }
 
@@ -10774,9 +10935,20 @@
             // ── TDS RECEIVABLE PANEL ──────────────────────────────────────
             const tdsRecRows = d.tdsReceivable.map((t,i) => {
                 const tot = calculateTotals(t.items||[]);
+                // Highlight when TDS is attributed to a month different from invoice issue.
+                // Realised date = latest payment date (if invoice is Paid); else invoice date.
+                let realisedDate = t.txnDate;
+                if (t.status === 'Paid' && Array.isArray(t.paymentsReceived) && t.paymentsReceived.length > 0) {
+                    const dates = t.paymentsReceived.map(p => p.date||'').filter(Boolean).sort();
+                    if (dates.length) realisedDate = dates[dates.length - 1];
+                }
+                const showRealised = realisedDate && realisedDate !== t.txnDate;
                 return `<tr class="border-t hover:bg-blue-50">
                     <td class="px-3 py-2 text-xs">${t.txnID||'—'}</td>
-                    <td class="px-3 py-2 text-xs">${t.txnDate||'—'}</td>
+                    <td class="px-3 py-2 text-xs">
+                        ${t.txnDate||'—'}
+                        ${showRealised ? `<div class="text-[10px] text-green-700 font-semibold">→ Paid ${realisedDate}</div>` : ''}
+                    </td>
                     <td class="px-3 py-2 text-xs font-medium">${t.partyName||'—'}</td>
                     <td class="px-3 py-2 text-xs text-right">${fmt(tot.subtotal||0)}</td>
                     <td class="px-3 py-2 text-xs text-center">${t.tdsFromClientPct||'—'}%</td>
@@ -10874,14 +11046,15 @@
                 <!-- GST Summary boxes -->
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-0 border-b">
                     <div class="p-5 border-r">
-                        <p class="text-xs font-bold text-amber-600 uppercase mb-2">📥 GST Input (Expenses)</p>
+                        <p class="text-xs font-bold text-amber-600 uppercase mb-2">📥 GST Input (Expenses${d.rcmExps.length?' + RCM':''})</p>
                         <p class="text-2xl font-bold text-amber-700">${fmt(d.combinedITCTotal)}</p>
                         <div class="mt-2 space-y-1 text-xs text-gray-500">
                             <div class="flex justify-between"><span>CGST</span><span class="font-medium">${fmt(d.gstInputCGST)}</span></div>
                             <div class="flex justify-between"><span>SGST</span><span class="font-medium">${fmt(d.gstInputSGST)}</span></div>
                             <div class="flex justify-between"><span>IGST</span><span class="font-medium">${fmt(d.gstInputIGST)}</span></div>
+                            ${d.rcmTotal > 0 ? `<div class="flex justify-between text-orange-600 pt-1 border-t border-orange-100"><span>incl. RCM</span><span class="font-bold">${fmt(d.rcmTotal)}</span></div>` : ''}
                         </div>
-                        <p class="text-xs text-amber-600 mt-2">${d.gstInputExps.length} expense bill${d.gstInputExps.length!==1?'s':''} + ${d.dirITCEligible.length} director expense${d.dirITCEligible.length!==1?'s':''}</p>
+                        <p class="text-xs text-amber-600 mt-2">${d.gstInputExps.length} expense bill${d.gstInputExps.length!==1?'s':''} + ${d.dirITCEligible.length} director expense${d.dirITCEligible.length!==1?'s':''}${d.rcmExps.length?' + '+d.rcmExps.length+' RCM bill(s)':''}</p>
                     </div>
                     <div class="p-5 border-r">
                         <p class="text-xs font-bold text-purple-600 uppercase mb-2">📤 GST Output (Invoices${d.rcmExps.length?' + RCM':''})</p>
@@ -11224,13 +11397,13 @@
                         <tbody>
                             ${lib.rows.map(r => `
                             <tr class="border-t hover:bg-blue-50/40">
-                                <td class="px-3 py-2 text-xs font-medium">${r.name}${r.capped?' <span class="text-[10px] text-blue-500">(capped)</span>':''}</td>
+                                <td class="px-3 py-2 text-xs font-medium">${r.name}${r.capped?' <span class="text-[10px] text-blue-500">(PF capped)</span>':''}</td>
                                 <td class="px-3 py-2 text-xs text-center text-gray-500">${r.staffType}</td>
                                 <td class="px-3 py-2 text-xs text-right">${fmt(r.pfGross)}</td>
                                 <td class="px-3 py-2 text-xs text-right">${fmt(r.employeePF)}</td>
                                 <td class="px-3 py-2 text-xs text-right">${fmt(r.employerPF)}</td>
                                 <td class="px-3 py-2 text-xs text-right text-gray-500">${fmt(r.admin)}</td>
-                                <td class="px-3 py-2 text-xs text-right text-gray-500">${fmt(r.edli)}</td>
+                                <td class="px-3 py-2 text-xs text-right text-gray-500">${fmt(r.edli)}${r.edliBasis && r.edliBasis < r.pfGross?` <span class="text-[9px] text-blue-400">(on ₹15k cap)</span>`:''}</td>
                                 <td class="px-3 py-2 text-xs text-right font-bold text-blue-700">${fmt(r.total)}</td>
                             </tr>`).join('')}
                         </tbody>
@@ -11406,7 +11579,204 @@
                 </div>`;
             })();
 
-            return cards + tdsSectionBreakdown + tdsPanel + tdsRecPanel + gstPanel + gstStatusPanel + pfStatusPanel + esicStatusPanel + checklist;
+            // ── FY GST Summary panel (1 April → 31 March) ──
+            // Aggregates the full FY for year-end reconciliation / GSTR-9 filing.
+            // Default FY = the one containing the currently-selected month.
+            // User can switch FY via the dropdown.
+            const fyPanel = (() => {
+                // Determine default FY from selected month:
+                // months 4-12 belong to FY <year>; months 1-3 belong to FY <year-1>
+                const defaultFYStart = (month >= 4) ? year : (year - 1);
+                // Persist FY selection in window state, parallel to month/year persistence
+                if (!window._taxFYStart) window._taxFYStart = defaultFYStart;
+                // But if user just changed month/year, sync FY to match the selected period
+                // (Comment this out if you want FY to be sticky independently of month selection)
+                const fyStart = window._taxFYStart || defaultFYStart;
+
+                const fy = _getFYGSTSummary(fyStart);
+
+                // Available FY options — 3 years back, 1 year forward
+                const currentFYStart = (new Date().getMonth() + 1 >= 4)
+                    ? new Date().getFullYear()
+                    : new Date().getFullYear() - 1;
+                const fyOptions = [];
+                for (let y = currentFYStart - 3; y <= currentFYStart + 1; y++) {
+                    const label = `${y}-${String((y+1)%100).padStart(2,'0')}`;
+                    fyOptions.push(`<option value="${y}" ${y===fyStart?'selected':''}>FY ${label}</option>`);
+                }
+
+                // Monthly breakdown rows
+                const monthRows = fy.monthly.map(m => `
+                    <tr class="border-t hover:bg-cyan-50/30">
+                        <td class="px-3 py-2 text-xs font-medium">${m.label}</td>
+                        <td class="px-3 py-2 text-xs text-right text-gray-500">${fmt(m.openingITC)}</td>
+                        <td class="px-3 py-2 text-xs text-right text-amber-700">${fmt(m.input)}</td>
+                        <td class="px-3 py-2 text-xs text-right">${fmt(m.available)}</td>
+                        <td class="px-3 py-2 text-xs text-right text-purple-700">${fmt(m.output)}</td>
+                        <td class="px-3 py-2 text-xs text-right ${m.payable>0?'font-bold text-red-700':'text-gray-300'}">${m.payable>0?fmt(m.payable):'—'}</td>
+                        <td class="px-3 py-2 text-xs text-right ${m.paid>0?'text-green-700':'text-gray-300'}">${m.paid>0?fmt(m.paid):'—'}</td>
+                        <td class="px-3 py-2 text-xs text-right ${m.closingITC>0?'font-bold text-cyan-700':'text-gray-300'}">${m.closingITC>0?fmt(m.closingITC):'—'}</td>
+                    </tr>
+                `).join('');
+
+                return `
+                <div class="bg-white rounded-2xl shadow-sm mb-6 overflow-hidden border-2 border-cyan-200">
+                    <div class="flex items-center justify-between px-5 py-4 bg-gradient-to-r from-cyan-600 to-teal-600 flex-wrap gap-2">
+                        <div>
+                            <h3 class="text-white font-bold text-base">📅 GST FY Reconciliation Summary</h3>
+                            <p class="text-white text-opacity-80 text-xs mt-0.5">Annual reconciliation 1 Apr ${fy.fyStartYear} → 31 Mar ${fy.fyEndYear} (for GSTR-9 / year-end audit)</p>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <select onchange="_taxOnFYChange(this.value)" class="px-3 py-2 border border-cyan-300 rounded-lg text-sm font-medium bg-white">
+                                ${fyOptions.join('')}
+                            </select>
+                            <button onclick="exportFYGSTSummaryCSV(${fy.fyStartYear})" class="px-3 py-2 bg-white text-cyan-700 rounded-lg text-xs font-semibold hover:bg-cyan-50">📥 CSV</button>
+                        </div>
+                    </div>
+
+                    <!-- FY Summary tiles -->
+                    <div class="grid grid-cols-2 md:grid-cols-5 gap-0 border-b">
+                        <div class="p-4 border-r">
+                            <p class="text-[10px] font-bold text-amber-600 uppercase mb-1">Opening ITC</p>
+                            <p class="text-lg font-bold text-amber-700">${fmt(fy.openingITC)}</p>
+                            <p class="text-[10px] text-gray-400 mt-1">${fy.openingITCAsOf ? 'As of '+fy.openingITCAsOf : 'No opening balance set'}</p>
+                        </div>
+                        <div class="p-4 border-r">
+                            <p class="text-[10px] font-bold text-amber-600 uppercase mb-1">Total Input ITC</p>
+                            <p class="text-lg font-bold text-amber-700">${fmt(fy.totalInput)}</p>
+                            <p class="text-[10px] text-gray-400 mt-1">Across all 12 months</p>
+                        </div>
+                        <div class="p-4 border-r">
+                            <p class="text-[10px] font-bold text-purple-600 uppercase mb-1">Total Output Tax</p>
+                            <p class="text-lg font-bold text-purple-700">${fmt(fy.totalOutput)}</p>
+                            <p class="text-[10px] text-gray-400 mt-1">Across all 12 months</p>
+                        </div>
+                        <div class="p-4 border-r">
+                            <p class="text-[10px] font-bold text-green-600 uppercase mb-1">GST Paid (Bills)</p>
+                            <p class="text-lg font-bold text-green-700">${fmt(fy.totalPaid)}</p>
+                            <p class="text-[10px] text-gray-400 mt-1">From recorded GST bills</p>
+                        </div>
+                        <div class="p-4">
+                            <p class="text-[10px] font-bold text-cyan-700 uppercase mb-1">Closing ITC (31 Mar)</p>
+                            <p class="text-lg font-bold text-cyan-700">${fmt(fy.closingITC)}</p>
+                            <p class="text-[10px] text-gray-400 mt-1">Carry-forward to next FY</p>
+                        </div>
+                    </div>
+
+                    <!-- Month-by-month breakdown -->
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead class="bg-cyan-50 text-xs text-cyan-900 uppercase">
+                                <tr>
+                                    <th class="px-3 py-2 text-left">Month</th>
+                                    <th class="px-3 py-2 text-right">Opening ITC</th>
+                                    <th class="px-3 py-2 text-right">+ Input</th>
+                                    <th class="px-3 py-2 text-right">Available</th>
+                                    <th class="px-3 py-2 text-right">− Output</th>
+                                    <th class="px-3 py-2 text-right">Payable</th>
+                                    <th class="px-3 py-2 text-right">Paid</th>
+                                    <th class="px-3 py-2 text-right">Closing ITC</th>
+                                </tr>
+                            </thead>
+                            <tbody>${monthRows}</tbody>
+                            <tfoot class="bg-cyan-50 font-bold">
+                                <tr>
+                                    <td class="px-3 py-2 text-xs">FY TOTAL</td>
+                                    <td class="px-3 py-2 text-xs text-right text-amber-700">${fmt(fy.openingITC)}</td>
+                                    <td class="px-3 py-2 text-xs text-right text-amber-700">${fmt(fy.totalInput)}</td>
+                                    <td class="px-3 py-2 text-xs text-right">${fmt(fy.openingITC + fy.totalInput)}</td>
+                                    <td class="px-3 py-2 text-xs text-right text-purple-700">${fmt(fy.totalOutput)}</td>
+                                    <td class="px-3 py-2 text-xs text-right text-red-700">${fmt(fy.netLiability)}</td>
+                                    <td class="px-3 py-2 text-xs text-right text-green-700">${fmt(fy.totalPaid)}</td>
+                                    <td class="px-3 py-2 text-xs text-right text-cyan-700">${fmt(fy.closingITC)}</td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+
+                    <!-- Reconciliation note -->
+                    <div class="px-5 py-3 bg-cyan-50/50 border-t border-cyan-100">
+                        <p class="text-xs text-cyan-800">
+                            <strong>Reconciliation:</strong>
+                            Opening ITC ${fmt(fy.openingITC)} + Total Input ${fmt(fy.totalInput)} − Total Output ${fmt(fy.totalOutput)} =
+                            <strong class="${fy.closingITC>0?'text-cyan-700':'text-red-700'}">${fmt(fy.openingITC + fy.totalInput - fy.totalOutput)}</strong>
+                            ${fy.closingITC>0
+                                ? '· Net unused ITC carries forward to next FY'
+                                : '· Net GST payable for the FY (after using all ITC)'}
+                        </p>
+                        ${fy.totalPaid > 0 ? `
+                        <p class="text-xs text-cyan-800 mt-1">
+                            Of ${fmt(fy.netLiability)} net GST payable, ${fmt(fy.totalPaid)} has been recorded as paid (${((fy.totalPaid / Math.max(fy.netLiability, 0.01)) * 100).toFixed(1)}%).
+                        </p>` : ''}
+                    </div>
+                </div>`;
+            })();
+
+            return cards + tdsSectionBreakdown + tdsPanel + tdsRecPanel + gstPanel + gstStatusPanel + pfStatusPanel + esicStatusPanel + fyPanel + checklist;
+        }
+
+        // ── Switch FY in the FY summary panel ──
+        function _taxOnFYChange(fyStart) {
+            window._taxFYStart = parseInt(fyStart) || (new Date().getFullYear());
+            refreshTax();
+        }
+
+        // ── Export FY GST summary as CSV ──
+        function exportFYGSTSummaryCSV(fyStartYear) {
+            const fy = _getFYGSTSummary(fyStartYear);
+            const esc = (v) => {
+                const s = v === null || v === undefined ? '' : String(v);
+                return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+            };
+            const lines = [];
+            lines.push(`GST FY Reconciliation,FY ${fy.fyLabel}`);
+            lines.push(`Period,1 Apr ${fy.fyStartYear} to 31 Mar ${fy.fyEndYear}`);
+            lines.push(`Generated,${new Date().toISOString().split('T')[0]}`);
+            lines.push(`Company,${esc(settings.companyName || '')}`);
+            lines.push(`GST Number,${esc(settings.gstNumber || '')}`);
+            lines.push('');
+            lines.push(`Opening ITC Balance,${fy.openingITC.toFixed(2)}`);
+            lines.push(`Opening ITC As Of,${fy.openingITCAsOf || '—'}`);
+            lines.push(`Total Input ITC (FY),${fy.totalInput.toFixed(2)}`);
+            lines.push(`Total Output Tax (FY),${fy.totalOutput.toFixed(2)}`);
+            lines.push(`Total GST Paid (Bills),${fy.totalPaid.toFixed(2)}`);
+            lines.push(`Net GST Liability (FY),${fy.netLiability.toFixed(2)}`);
+            lines.push(`Closing ITC (Carry-Forward),${fy.closingITC.toFixed(2)}`);
+            lines.push('');
+            lines.push(['Month','Opening ITC','Input','Available','Output','Payable','Paid','Closing ITC'].map(esc).join(','));
+            fy.monthly.forEach(m => {
+                lines.push([
+                    m.label,
+                    m.openingITC.toFixed(2),
+                    m.input.toFixed(2),
+                    m.available.toFixed(2),
+                    m.output.toFixed(2),
+                    m.payable.toFixed(2),
+                    m.paid.toFixed(2),
+                    m.closingITC.toFixed(2)
+                ].map(esc).join(','));
+            });
+            // FY totals row
+            lines.push([
+                'FY TOTAL',
+                fy.openingITC.toFixed(2),
+                fy.totalInput.toFixed(2),
+                (fy.openingITC + fy.totalInput).toFixed(2),
+                fy.totalOutput.toFixed(2),
+                fy.netLiability.toFixed(2),
+                fy.totalPaid.toFixed(2),
+                fy.closingITC.toFixed(2)
+            ].map(esc).join(','));
+
+            const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `GST_FY_${fy.fyLabel}_Summary.csv`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
         }
 
         // ── Create a GST payment bill (single source of truth — per user spec) ──
@@ -12630,6 +13000,31 @@
                     </div>
                 </div>
 
+                <!-- Opening ITC Balance — for FY-cumulative GST reconciliation -->
+                <div class="bg-white rounded-2xl shadow-lg p-6 mt-6">
+                    <h3 class="text-xl font-bold text-amber-700 mb-2">🏛 Opening ITC Balance (Carry-Forward)</h3>
+                    <p class="text-xs text-gray-500 mb-4">ITC available before the system started tracking — used by the FY Reconciliation panel in the Tax tab to compute carry-forward correctly across financial years. Enter the credit balance from your last filed GSTR-3B / GSTR-9 prior to the start date below.</p>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Opening Balance (₹)</label>
+                            <input type="number" id="settingsOpeningITC" min="0" step="0.01"
+                                value="${parseFloat(settings.openingITCBalance) || 0}"
+                                class="w-full px-3 py-2 border rounded-lg text-sm" />
+                            <p class="text-[10px] text-gray-400 mt-1">Carry-forward ITC from your last filing</p>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">As of Date</label>
+                            <input type="date" id="settingsOpeningITCDate"
+                                value="${settings.openingITCAsOfDate || ''}"
+                                class="w-full px-3 py-2 border rounded-lg text-sm" />
+                            <p class="text-[10px] text-gray-400 mt-1">Typically 31 March (FY end) of the prior year</p>
+                        </div>
+                        <div class="flex items-end">
+                            <button onclick="saveOpeningITC()" class="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm hover:bg-amber-700 font-semibold">💾 Save Opening ITC</button>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Staff Edit Control -->
                 <div class="bg-white rounded-2xl shadow-lg p-6 mt-6">
                     <div class="flex justify-between items-center">
@@ -13640,6 +14035,40 @@
                         remarks: (tr.querySelector('.pay-remarks')?.value || '').trim()
                     })).filter(p => p.amount > 0 || p.date)  // drop completely-empty rows
                 };
+
+                // ── Capture realisation date when invoice status flips to Paid ──
+                // The Tax tab uses payment-received date (not invoice date) to attribute
+                // GST output + TDS to the correct month. Without a payment-received entry,
+                // the system has no realisation date — fall back to txnDate is silent.
+                // Prompt the user once so they can capture the right date.
+                if (txnData.txnCategory === 'INVOICE' && txnData.txnDirection === 'Outgoing'
+                    && txnData.status === 'Paid' && txnData.paymentsReceived.length === 0) {
+                    const today = new Date().toISOString().split('T')[0];
+                    const tot = calculateTotals(items);
+                    const grossInvoice = +(tot.subtotal + tot.totalCGST + tot.totalSGST + tot.totalIGST).toFixed(2);
+                    const tdsDeducted = parseFloat(txnData.tdsFromClient) || 0;
+                    const netReceived = +(grossInvoice - tdsDeducted).toFixed(2);
+                    const dateInput = prompt(
+                        `📥 Invoice marked PAID — please confirm payment received date.\n\n` +
+                        `This date is used by the Tax tab to attribute GST output and TDS to the correct month ` +
+                        `(matches when the client's GSTR-2B / Form 26AS records it).\n\n` +
+                        `Invoice gross:    ₹${grossInvoice.toLocaleString('en-IN', {minimumFractionDigits: 2})}\n` +
+                        `TDS deducted:     ₹${tdsDeducted.toLocaleString('en-IN', {minimumFractionDigits: 2})}\n` +
+                        `Net received:     ₹${netReceived.toLocaleString('en-IN', {minimumFractionDigits: 2})}\n\n` +
+                        `Payment date (YYYY-MM-DD):`,
+                        today
+                    );
+                    // If user cancels, leave as-is (status still Paid but no realisation date)
+                    if (dateInput && /^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
+                        txnData.paymentsReceived.push({
+                            date:    dateInput,
+                            amount:  netReceived,
+                            mode:    '',
+                            refNo:   '',
+                            remarks: 'Auto-recorded on status change to Paid (TDS-deducted)'
+                        });
+                    }
+                }
                 _stampRecord(txnData);
                 
                 // Hoisted up so the cancellation branch below can re-enable the button.
@@ -18275,6 +18704,29 @@ Automated WFH alert — ${company} Attendance System.`;
         // Toggle for finalised transactions (Quotation/PI/PO/Invoice/Credit Note in Completed/Paid).
         // When ON, locked rows show Edit/Del/status-dropdown; Delete still routes through Admin PIN.
         async function toggleFinalisedTxnLock(){settings.allowFinalisedTxnDelete=!settings.allowFinalisedTxnDelete;await saveData('settings',settings);renderView();}
+
+        // ── Save Opening ITC Balance ──
+        // Captures carry-forward credit from prior to system tracking. Used by
+        // _getFYGSTSummary() to seed the FY's opening balance when the FY start
+        // date falls on or after the "as of" date.
+        async function saveOpeningITC() {
+            const amt = parseFloat(document.getElementById('settingsOpeningITC')?.value) || 0;
+            const date = document.getElementById('settingsOpeningITCDate')?.value || '';
+            if (amt < 0) { alert('Opening ITC must be 0 or positive.'); return; }
+            if (amt > 0 && !date) {
+                alert('Please specify the "As of Date" for the opening ITC balance — usually 31 March of the prior FY.');
+                return;
+            }
+            settings.openingITCBalance  = amt;
+            settings.openingITCAsOfDate = date;
+            try {
+                await saveData('settings', settings);
+                alert(`✓ Opening ITC saved: ₹${amt.toLocaleString('en-IN',{minimumFractionDigits:2})} as of ${date||'—'}`);
+                renderView();
+            } catch (e) {
+                alert('Could not save: ' + e.message);
+            }
+        }
 
         function generatePaySlipPDF(){const techV=!document.getElementById('twSection')?.classList.contains('hidden'),offV=!document.getElementById('opSection')?.classList.contains('hidden');if(techV)_pdfTech();else if(offV)_pdfOffice();else alert('Please select a staff member first.');}
         function _pdfHdr(doc,l1,l2,l3){doc.setFillColor(224,242,254);doc.rect(0,0,210,40,'F');doc.setFillColor(186,230,253);doc.rect(0,36,210,4,'F');doc.setFontSize(17);doc.setFont('helvetica','bold');doc.setTextColor(15,23,72);doc.text(l1,105,13,{align:'center'});doc.setFontSize(11);doc.setFont('helvetica','normal');doc.setTextColor(30,64,175);doc.text(l2,105,23,{align:'center'});doc.setFontSize(8.5);doc.setTextColor(71,85,105);doc.text(l3,105,31,{align:'center'});doc.setTextColor(0,0,0);}
