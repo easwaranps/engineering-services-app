@@ -1399,6 +1399,38 @@
         // approval and a single HDFC → SBI fund transfer authorisation.
         // Status flow: Draft → Approved → Disbursed → Closed (or Cancelled).
         let paymentRequests = [];
+        // ── Petty Cash Module ──
+        // Two offices (Chennai Camp, Mumbai) each with a custodian who holds an
+        // imprest cash float. Custodian records day-to-day expenses with mandatory
+        // bill attachments. At month-end, admin verifies and posts to Tally. The
+        // monthly Payment Request auto-includes a "replenish to imprest limit"
+        // line item per office that has spent against its float.
+        let pettyCashOffices      = [];   // {officeID, officeName, custodianStaffID, imprestLimit, ...}
+        let pettyCashTransactions = [];   // {txnID, officeID, txnType, txnDate, amount, attachments, ...}
+        let pettyCashStatements   = [];   // Month-end verification + Tally-posting records
+
+        // Preset categories — covers ~95% of petty cash uses. "OTHER" lets the user
+        // free-text a category for the rest.
+        const PETTY_CASH_CATEGORIES = [
+            { code: 'TEA_COFFEE',   label: '☕ Tea / Coffee / Snacks' },
+            { code: 'STATIONERY',   label: '📎 Stationery / Printing' },
+            { code: 'COURIER',      label: '📮 Courier / Postage' },
+            { code: 'FUEL',         label: '⛽ Fuel / Petrol' },
+            { code: 'CONVEYANCE',   label: '🚖 Conveyance / Taxi / Auto' },
+            { code: 'REPAIRS',      label: '🔧 Repairs / Maintenance' },
+            { code: 'CLEANING',     label: '🧹 Cleaning Supplies' },
+            { code: 'WATER',        label: '💧 Drinking Water / Cans' },
+            { code: 'STAFF_WELFARE',label: '🍱 Staff Welfare / Lunch' },
+            { code: 'CLIENT_HOSP',  label: '🤝 Client Hospitality' },
+            { code: 'OTHER',        label: '📌 Other (specify)' }
+        ];
+
+        const PETTY_CASH_TXN_TYPES = {
+            EXPENSE:        'Expense',
+            REPLENISHMENT:  'Replenishment',
+            OPENING_BALANCE:'Opening Balance',
+            ADJUSTMENT:     'Adjustment'
+        };
         let currentView = 'dashboard';
         let currentTransaction = null;
         let settingsUnlocked = false;  // Password protection for Settings
@@ -3335,6 +3367,9 @@
                 { type: 'fundRequests',    getMem: () => fundRequests,    setMem: (d) => { fundRequests = d; } },
                 { type: 'fundPools',       getMem: () => fundPools,       setMem: (d) => { fundPools = d; } },
                 { type: 'paymentRequests', getMem: () => paymentRequests, setMem: (d) => { paymentRequests = d; } },
+                { type: 'pettyCashOffices',      getMem: () => pettyCashOffices,      setMem: (d) => { pettyCashOffices = d; } },
+                { type: 'pettyCashTransactions', getMem: () => pettyCashTransactions, setMem: (d) => { pettyCashTransactions = d; } },
+                { type: 'pettyCashStatements',   getMem: () => pettyCashStatements,   setMem: (d) => { pettyCashStatements = d; } },
                 { type: 'parties',         getMem: () => parties,         setMem: (d) => { parties = d; } },
                 { type: 'bankAccounts',    getMem: () => bankAccounts,    setMem: (d) => { bankAccounts = d; } },
                 { type: 'settings',        getMem: () => settings,        setMem: (d) => { settings = d; } }
@@ -4491,6 +4526,28 @@
                     catch(e) { console.warn('Could not auto-create paymentRequests.json:', e.message); }
                 }
                 paymentRequests = Array.isArray(payReqData) ? payReqData : [];
+
+                // Petty Cash module (Chennai + Mumbai office cash floats)
+                let pcOfficesData = await loadFileFromDrive('pettyCashOffices.json');
+                if (!pcOfficesData) {
+                    try { await saveFileToDrive('pettyCashOffices.json', []); pcOfficesData = []; }
+                    catch(e) { console.warn('Could not auto-create pettyCashOffices.json:', e.message); }
+                }
+                pettyCashOffices = Array.isArray(pcOfficesData) ? pcOfficesData : [];
+
+                let pcTxnData = await loadFileFromDrive('pettyCashTransactions.json');
+                if (!pcTxnData) {
+                    try { await saveFileToDrive('pettyCashTransactions.json', []); pcTxnData = []; }
+                    catch(e) { console.warn('Could not auto-create pettyCashTransactions.json:', e.message); }
+                }
+                pettyCashTransactions = Array.isArray(pcTxnData) ? pcTxnData : [];
+
+                let pcStmtData = await loadFileFromDrive('pettyCashStatements.json');
+                if (!pcStmtData) {
+                    try { await saveFileToDrive('pettyCashStatements.json', []); pcStmtData = []; }
+                    catch(e) { console.warn('Could not auto-create pettyCashStatements.json:', e.message); }
+                }
+                pettyCashStatements = Array.isArray(pcStmtData) ? pcStmtData : [];
 
                 console.log('✅ Data loaded — transactions:', transactions.length,
                     '| parties:', parties.length,
@@ -6313,6 +6370,7 @@
                             <button onclick="switchView('funds')" class="px-4 py-2 rounded-lg ${currentView === 'funds' ? 'bg-emerald-100 text-emerald-700' : 'text-gray-600 hover:bg-gray-100'}">💰 Funds${(()=>{const p=fundRequests.filter(r=>r.status==='Pending').length;return p>0?` <span class="ml-1 px-1.5 py-0.5 bg-rose-500 text-white rounded-full text-xs font-bold">${p}</span>`:'';})()}</button>
                             <button onclick="switchView('payreq')" class="px-4 py-2 rounded-lg ${currentView === 'payreq' ? 'bg-cyan-100 text-cyan-700' : 'text-gray-600 hover:bg-gray-100'}">💼 Pay Requests${(()=>{const p=(paymentRequests||[]).filter(r=>r.status==='Draft').length;return p>0?` <span class="ml-1 px-1.5 py-0.5 bg-amber-500 text-white rounded-full text-xs font-bold">${p}</span>`:'';})()}</button>
                             <button onclick="switchView('direxp')" class="px-4 py-2 rounded-lg ${currentView === 'direxp' ? 'bg-rose-100 text-rose-700' : 'text-gray-600 hover:bg-gray-100'}">👔 Directors</button>
+                            <button onclick="switchView('pettycash')" class="px-4 py-2 rounded-lg ${currentView === 'pettycash' ? 'bg-amber-100 text-amber-800' : 'text-gray-600 hover:bg-gray-100'}" title="Office petty cash (Chennai / Mumbai)">💵 Petty Cash${(()=>{const u=(pettyCashTransactions||[]).filter(t=>t.txnType==='EXPENSE'&&!t.verified).length;return u>0?` <span class="ml-1 px-1.5 py-0.5 bg-amber-500 text-white rounded-full text-xs font-bold">${u}</span>`:'';})()}</button>
                             <button onclick="switchView('tax')" class="px-4 py-2 rounded-lg ${currentView === 'tax' ? 'bg-red-100 text-red-700' : 'text-gray-600 hover:bg-gray-100'}">🧾 Tax</button>
                             <button onclick="switchView('mis')" class="px-4 py-2 rounded-lg ${currentView === 'mis' ? 'bg-green-100 text-green-700' : 'text-gray-600 hover:bg-gray-100'}">📊 MIS Report</button>
                             <button onclick="switchView('parties')" class="px-4 py-2 rounded-lg ${currentView === 'parties' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Parties</button>
@@ -6356,6 +6414,7 @@
             else if (currentView === 'funds')   renderFunds(content);
             else if (currentView === 'payreq')  renderPaymentRequests(content);
             else if (currentView === 'direxp')  renderDirectorExpenses(content);
+            else if (currentView === 'pettycash') renderPettyCash(content);
             else if (currentView === 'worklogs') renderWorkLogs(content);
             else if (currentView === 'tax')      renderTaxCompliance(content);
             else if (currentView === 'mis')      renderMIS(content);
@@ -13024,6 +13083,8 @@
                         </div>
                     </div>
                 </div>
+
+                ${renderPCOfficesSettings()}
 
                 <!-- Staff Edit Control -->
                 <div class="bg-white rounded-2xl shadow-lg p-6 mt-6">
@@ -23161,19 +23222,66 @@ Automated WFH alert — ${company} Attendance System.`;
                 });
         }
 
-        // ── Main: assemble the request from the two sources ──
+        // ── Aggregator 3: Petty Cash Replenishments ──
+        // For each active office whose float is below its sanctioned imprest limit,
+        // add a REPLENISH_PETTY_CASH line item to bring it back to the limit.
+        // The PR fan-out (Mark Paid) will create a REPLENISHMENT transaction in the
+        // petty cash module, automatically restoring the float.
+        function _prCollectPettyCashReplenishments() {
+            const offices = (pettyCashOffices || []).filter(o => o.active !== false && o.imprestLimit > 0);
+            const items = [];
+            for (const o of offices) {
+                const balance = _pcOfficeBalance(o.officeID);
+                const limit = parseFloat(o.imprestLimit) || 0;
+                const deficit = +(limit - balance).toFixed(2);
+                if (deficit <= 0) continue;   // float already at or above limit — skip
+                const custodian = (staff || []).find(s => s.staffID === o.custodianStaffID);
+                const payeeName = custodian?.name || o.custodianStaffName || o.officeName;
+                items.push({
+                    itemID:        'PC-REPLENISH-' + o.officeID,
+                    category:      'PETTY_CASH',
+                    billType:      'REPLENISH_PETTY_CASH',
+                    sourceID:      o.officeID,
+                    sourceType:    'pettyCashOffice',
+                    description:   `Replenish ${o.officeName} petty cash — current float ₹${balance.toFixed(2)} → restore to ₹${limit.toFixed(2)}`,
+                    payee:         payeeName,
+                    amount:        deficit,
+                    dueDate:       new Date().toISOString().split('T')[0],
+                    decision:      'Pending',
+                    decisionRemark:'',
+                    paid:          false,
+                    paidDate:      '',
+                    paidRef:       '',
+                    sourceSnapshot:{
+                        officeID:      o.officeID,
+                        officeName:    o.officeName,
+                        custodianStaffID:  o.custodianStaffID,
+                        custodianStaffName: payeeName,
+                        currentFloat:  balance,
+                        imprestLimit:  limit,
+                        deficit:       deficit
+                    }
+                });
+            }
+            return items;
+        }
+
+        // ── Main: assemble the request from the three sources ──
         // Per the simplified single-source-of-truth model:
         //  - All payables (Salary, Wages, Rent, Electricity, Water, PF, ESIC,
         //    TDS, GST, vendor bills, etc.) live in `expenses[]` with payStatus='Pending'.
         //  - Director out-of-pocket reimbursements live separately in `directorExpenses[]`
         //    because they have specialised fields (director1/dir2, GST ITC, etc.).
+        //  - Petty cash replenishments are computed live from office float deficits
+        //    (no separate "pending" record — the deficit IS the request).
         // The salary gap detector runs alongside to surface missing salary bills
         // as a warning on the request (stored on `pr.salaryGaps`).
         function _prAggregateAll(month, year) {
             const periodEnd = `${year}-${String(month).padStart(2,'0')}-30`;
             const items = [
                 ..._prCollectPendingBills(periodEnd),
-                ..._prCollectUnsettledDirectorExpenses(periodEnd)
+                ..._prCollectUnsettledDirectorExpenses(periodEnd),
+                ..._prCollectPettyCashReplenishments()
             ];
             const totalGenerated = items.reduce((s, it) => s + (parseFloat(it.amount) || 0), 0);
             const salaryGaps = _prCollectStaffSalaryGaps(month, year);
@@ -23550,6 +23658,1175 @@ Automated WFH alert — ${company} Attendance System.`;
                 paymentRequests.pop();
             }
         }
+
+        // ════════════════════════════════════════════════════════════════
+        // PETTY CASH MODULE
+        // ────────────────────────────────────────────────────────────────
+        // Office cash floats (Chennai Camp + Mumbai) with classic imprest workflow.
+        // Custodian records expenses with mandatory bill attachments. At month-end,
+        // admin verifies and posts to Tally. The monthly Payment Request auto-adds
+        // a replenishment line item per office with float deficit.
+        // ════════════════════════════════════════════════════════════════
+
+        function generatePettyCashID(prefix, date = new Date()) {
+            const fyCode = (typeof getFinancialYearCode === 'function') ? getFinancialYearCode(date) : '2627';
+            const fullPrefix = prefix + '-' + fyCode + '-';
+            const existing = [];
+            (pettyCashTransactions || []).forEach(t => {
+                if ((t.txnID || '').startsWith(fullPrefix)) {
+                    const n = parseInt(t.txnID.substring(fullPrefix.length)) || 0;
+                    existing.push(n);
+                }
+            });
+            (pettyCashStatements || []).forEach(s => {
+                if ((s.statementID || '').startsWith(fullPrefix)) {
+                    const n = parseInt(s.statementID.substring(fullPrefix.length)) || 0;
+                    existing.push(n);
+                }
+            });
+            (pettyCashOffices || []).forEach(o => {
+                if ((o.officeID || '').startsWith(fullPrefix)) {
+                    const n = parseInt(o.officeID.substring(fullPrefix.length)) || 0;
+                    existing.push(n);
+                }
+            });
+            const next = (existing.length ? Math.max(...existing) : 0) + 1;
+            return fullPrefix + String(next).padStart(3, '0');
+        }
+
+        function _pcOfficeBalance(officeID, asOfDate = null) {
+            let bal = 0;
+            (pettyCashTransactions || []).forEach(t => {
+                if (t.officeID !== officeID) return;
+                if (asOfDate && (t.txnDate || '') > asOfDate) return;
+                const amt = parseFloat(t.amount) || 0;
+                if (t.txnType === 'EXPENSE')             bal -= amt;
+                else if (t.txnType === 'REPLENISHMENT')  bal += amt;
+                else if (t.txnType === 'OPENING_BALANCE')bal += amt;
+                else if (t.txnType === 'ADJUSTMENT')     bal += amt;
+            });
+            return +bal.toFixed(2);
+        }
+
+        function _pcOfficeMTDSpend(officeID, month, year) {
+            const pfx = `${year}-${String(month).padStart(2,'0')}-`;
+            return (pettyCashTransactions || [])
+                .filter(t => t.officeID === officeID && t.txnType === 'EXPENSE' && (t.txnDate || '').startsWith(pfx))
+                .reduce((s, t) => s + (parseFloat(t.amount) || 0), 0);
+        }
+
+        function _pcCategoryLabel(code) {
+            const cat = PETTY_CASH_CATEGORIES.find(c => c.code === code);
+            return cat ? cat.label : (code || '—');
+        }
+
+        function _pcSetFilter(key, val) { window._pcFilter[key] = val; renderView(); }
+        function _pcClearFilters() { window._pcFilter = { officeID: '', month: '', year: new Date().getFullYear(), type: '', verified: '' }; renderView(); }
+        function renderPettyCash(content) {
+            const fmt = n => '₹' + (+n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            const offices = (pettyCashOffices || []).filter(o => o.active !== false);
+
+            if (!window._pcFilter) window._pcFilter = { officeID: '', month: '', year: new Date().getFullYear(), type: '', verified: '' };
+            const F = window._pcFilter;
+
+            if (offices.length === 0) {
+                content.innerHTML = `
+                <div class="mb-6"><h2 class="text-2xl font-bold text-gray-800">💵 Petty Cash</h2>
+                <p class="text-sm text-gray-500">Office cash float tracking with month-end verification</p></div>
+                <div class="bg-amber-50 border border-amber-300 rounded-2xl p-8 text-center">
+                    <div class="text-5xl mb-3">🏢</div>
+                    <h3 class="text-lg font-bold text-amber-900 mb-2">No petty cash offices configured</h3>
+                    <p class="text-sm text-amber-700 mb-4">To start tracking petty cash, go to Settings tab and add at least one office with its custodian and imprest limit.</p>
+                    <button onclick="switchView('settings')" class="px-5 py-2 bg-amber-600 text-white rounded-lg font-semibold hover:bg-amber-700">⚙ Open Settings</button>
+                </div>`;
+                return;
+            }
+
+            const officeCards = offices.map(o => {
+                const balance = _pcOfficeBalance(o.officeID);
+                const mtdSpend = _pcOfficeMTDSpend(o.officeID, new Date().getMonth() + 1, new Date().getFullYear());
+                const deficit  = Math.max(0, (parseFloat(o.imprestLimit) || 0) - balance);
+                const utilPct  = o.imprestLimit > 0 ? Math.min(100, (mtdSpend / o.imprestLimit) * 100) : 0;
+                const custodian = (staff || []).find(s => s.staffID === o.custodianStaffID);
+                return `
+                <div class="bg-white rounded-2xl shadow-sm border border-amber-200 p-5">
+                    <div class="flex justify-between items-start mb-3">
+                        <div>
+                            <h3 class="font-bold text-amber-800 text-base">🏢 ${o.officeName}</h3>
+                            <p class="text-xs text-gray-500 mt-1">${o.location || '—'} · Custodian: <strong>${custodian?.name || o.custodianStaffName || '—'}</strong></p>
+                        </div>
+                        <button onclick="openPCExpenseModal('${o.officeID}')" class="px-3 py-1.5 bg-amber-600 text-white rounded-lg text-xs font-semibold hover:bg-amber-700">+ Expense</button>
+                    </div>
+                    <div class="grid grid-cols-3 gap-2 mb-2">
+                        <div class="bg-amber-50 rounded p-2"><p class="text-[10px] text-amber-700 font-semibold uppercase">Float</p>
+                            <p class="text-sm font-bold text-amber-900">${fmt(balance)}</p>
+                            <p class="text-[10px] text-gray-400">of ${fmt(o.imprestLimit||0)}</p></div>
+                        <div class="bg-red-50 rounded p-2"><p class="text-[10px] text-red-600 font-semibold uppercase">MTD Spend</p>
+                            <p class="text-sm font-bold text-red-700">${fmt(mtdSpend)}</p>
+                            <p class="text-[10px] text-gray-400">this month</p></div>
+                        <div class="bg-cyan-50 rounded p-2"><p class="text-[10px] text-cyan-700 font-semibold uppercase">Top-up Due</p>
+                            <p class="text-sm font-bold ${deficit>0?'text-cyan-700':'text-gray-400'}">${fmt(deficit)}</p>
+                            <p class="text-[10px] text-gray-400">${deficit>0?'next PR':'—'}</p></div>
+                    </div>
+                    <div class="h-1.5 bg-gray-100 rounded overflow-hidden">
+                        <div class="h-full ${utilPct>80?'bg-red-500':utilPct>50?'bg-amber-500':'bg-green-500'}" style="width:${utilPct}%"></div>
+                    </div>
+                </div>`;
+            }).join('');
+
+            const pfxMonth = (F.month && F.year) ? `${F.year}-${String(F.month).padStart(2,'0')}-` : '';
+            const pfxYear  = F.year ? `${F.year}-` : '';
+            const txns = (pettyCashTransactions || []).filter(t => {
+                if (F.officeID && t.officeID !== F.officeID) return false;
+                if (F.type && t.txnType !== F.type) return false;
+                if (F.verified === 'yes' && !t.verified) return false;
+                if (F.verified === 'no'  && t.verified)  return false;
+                if (pfxMonth && !(t.txnDate||'').startsWith(pfxMonth)) return false;
+                else if (!pfxMonth && pfxYear && !(t.txnDate||'').startsWith(pfxYear)) return false;
+                return true;
+            }).sort((a, b) => (b.txnDate||'').localeCompare(a.txnDate||'') || (b.enteredAt||'').localeCompare(a.enteredAt||''));
+
+            const recentStatements = (pettyCashStatements || []).slice().sort((a,b) =>
+                (b.year-a.year) || (b.month-a.month)).slice(0, 12);
+
+            const months = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+            content.innerHTML = `
+            <div class="mb-6 flex justify-between items-center flex-wrap gap-3">
+                <div>
+                    <h2 class="text-2xl font-bold text-gray-800">💵 Petty Cash</h2>
+                    <p class="text-sm text-gray-500">${offices.length} office${offices.length===1?'':'s'} · ${(pettyCashTransactions||[]).filter(t=>t.txnType==='EXPENSE'&&!t.verified).length} unverified expense(s)</p>
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="openPCStatementGenerator()" class="px-4 py-2 bg-cyan-600 text-white rounded-lg text-sm font-semibold hover:bg-cyan-700">📋 Month-End Statement</button>
+                    <button onclick="openPCReplenishmentModal()" class="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-semibold hover:bg-amber-700">💰 Manual Replenish</button>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-${Math.min(offices.length, 2)} gap-4 mb-6">${officeCards}</div>
+
+            <div class="bg-white rounded-xl shadow-sm p-3 mb-3 flex flex-wrap gap-2 items-center">
+                <select onchange="_pcSetFilter('officeID', this.value)" class="px-3 py-1.5 border rounded text-sm">
+                    <option value="">All Offices</option>
+                    ${offices.map(o => `<option value="${o.officeID}" ${F.officeID===o.officeID?'selected':''}>${o.officeName}</option>`).join('')}
+                </select>
+                <select onchange="_pcSetFilter('month', this.value)" class="px-3 py-1.5 border rounded text-sm">
+                    <option value="">All Months</option>
+                    ${months.slice(1).map((m,i) => `<option value="${i+1}" ${F.month==String(i+1)?'selected':''}>${m}</option>`).join('')}
+                </select>
+                <select onchange="_pcSetFilter('year', this.value)" class="px-3 py-1.5 border rounded text-sm">
+                    ${[new Date().getFullYear()-1, new Date().getFullYear(), new Date().getFullYear()+1].map(y => `<option value="${y}" ${F.year==y?'selected':''}>${y}</option>`).join('')}
+                </select>
+                <select onchange="_pcSetFilter('type', this.value)" class="px-3 py-1.5 border rounded text-sm">
+                    <option value="">All Types</option>
+                    <option value="EXPENSE" ${F.type==='EXPENSE'?'selected':''}>💸 Expense</option>
+                    <option value="REPLENISHMENT" ${F.type==='REPLENISHMENT'?'selected':''}>💰 Replenishment</option>
+                    <option value="OPENING_BALANCE" ${F.type==='OPENING_BALANCE'?'selected':''}>🏁 Opening Balance</option>
+                    <option value="ADJUSTMENT" ${F.type==='ADJUSTMENT'?'selected':''}>⚙ Adjustment</option>
+                </select>
+                <select onchange="_pcSetFilter('verified', this.value)" class="px-3 py-1.5 border rounded text-sm">
+                    <option value="">All Verification</option>
+                    <option value="yes" ${F.verified==='yes'?'selected':''}>✓ Verified</option>
+                    <option value="no" ${F.verified==='no'?'selected':''}>⏳ Pending</option>
+                </select>
+                <button onclick="_pcClearFilters()" class="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800 underline">Clear</button>
+                <span class="text-xs text-gray-500 ml-auto">${txns.length} transaction${txns.length===1?'':'s'}</span>
+            </div>
+
+            <div class="bg-white rounded-2xl shadow-sm overflow-hidden mb-6">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead class="bg-amber-50 text-xs text-amber-800 uppercase">
+                            <tr>
+                                <th class="px-3 py-2 text-left">Date</th>
+                                <th class="px-3 py-2 text-left">Office</th>
+                                <th class="px-3 py-2 text-left">Type</th>
+                                <th class="px-3 py-2 text-left">Category / Description</th>
+                                <th class="px-3 py-2 text-left">Vendor</th>
+                                <th class="px-3 py-2 text-right">Amount</th>
+                                <th class="px-3 py-2 text-center">Bills</th>
+                                <th class="px-3 py-2 text-center">Verified</th>
+                                <th class="px-3 py-2 text-center">Tally</th>
+                                <th class="px-3 py-2 text-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${txns.length === 0 ? `
+                            <tr><td colspan="10" class="px-3 py-8 text-center text-gray-400 italic">No transactions match the current filters</td></tr>` : txns.map(t => {
+                                const office = offices.find(o => o.officeID === t.officeID) || {officeName: t.officeID};
+                                const isExp = t.txnType === 'EXPENSE';
+                                const typeLabel = ({EXPENSE:'💸 Expense', REPLENISHMENT:'💰 Replenish', OPENING_BALANCE:'🏁 Opening', ADJUSTMENT:'⚙ Adjust'})[t.txnType] || t.txnType;
+                                const typeColor = ({EXPENSE:'text-red-600', REPLENISHMENT:'text-green-600', OPENING_BALANCE:'text-blue-600', ADJUSTMENT:'text-gray-600'})[t.txnType] || '';
+                                return `
+                                <tr class="border-t hover:bg-amber-50/30">
+                                    <td class="px-3 py-2 text-xs whitespace-nowrap">${t.txnDate || '—'}</td>
+                                    <td class="px-3 py-2 text-xs">${office.officeName}</td>
+                                    <td class="px-3 py-2 text-xs font-medium ${typeColor}">${typeLabel}</td>
+                                    <td class="px-3 py-2 text-xs">
+                                        ${isExp ? `<span class="font-medium">${_pcCategoryLabel(t.category)}</span>` : ''}
+                                        ${t.description ? `<div class="text-[11px] text-gray-500">${(t.description||'').substring(0,80).replace(/</g,'&lt;')}${(t.description||'').length>80?'…':''}</div>` : ''}
+                                        ${t.voucherNo ? `<div class="text-[10px] text-gray-400">V# ${t.voucherNo}</div>` : ''}
+                                    </td>
+                                    <td class="px-3 py-2 text-xs text-gray-600">${(t.vendor||'').replace(/</g,'&lt;') || '—'}</td>
+                                    <td class="px-3 py-2 text-xs text-right font-semibold ${isExp?'text-red-700':'text-green-700'}">${isExp?'−':'+'}${fmt(t.amount)}</td>
+                                    <td class="px-3 py-2 text-xs text-center">
+                                        ${(t.attachments||[]).length > 0
+                                            ? `<button onclick="viewPCAttachments('${t.txnID}')" class="text-blue-600 hover:text-blue-800 font-medium" title="View ${t.attachments.length} attachment(s)">📎 ${t.attachments.length}</button>`
+                                            : (isExp ? '<span class="text-red-500 text-[10px]">⚠ none</span>' : '—')}
+                                    </td>
+                                    <td class="px-3 py-2 text-xs text-center">
+                                        ${t.verified
+                                            ? `<span class="px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-bold text-[10px]" title="Verified by ${t.verifiedBy||'—'} on ${(t.verifiedAt||'').substring(0,10)}">✓</span>`
+                                            : (isExp ? `<button onclick="verifyPCTxn('${t.txnID}')" class="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-bold text-[10px] hover:bg-amber-200" title="Mark verified">⏳</button>` : '—')}
+                                    </td>
+                                    <td class="px-3 py-2 text-xs text-center">
+                                        ${t.tallyPosted
+                                            ? `<span class="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-bold text-[10px]" title="${t.tallyVoucherNo||''}">📒 ${t.tallyVoucherNo||'Posted'}</span>`
+                                            : '<span class="text-gray-300">—</span>'}
+                                    </td>
+                                    <td class="px-3 py-2 text-xs text-right whitespace-nowrap">
+                                        <button onclick="editPCTxn('${t.txnID}')" class="text-indigo-600 hover:text-indigo-800 text-xs font-medium mr-1">Edit</button>
+                                        <button onclick="deletePCTxn('${t.txnID}')" class="text-red-600 hover:text-red-800 text-xs font-medium">Del</button>
+                                    </td>
+                                </tr>`;
+                            }).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            ${recentStatements.length > 0 ? `
+            <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+                <div class="px-5 py-3 bg-cyan-50 border-b border-cyan-100">
+                    <h3 class="font-bold text-cyan-800">📋 Recent Monthly Statements</h3>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead class="bg-gray-50 text-xs text-gray-600 uppercase">
+                            <tr>
+                                <th class="px-3 py-2 text-left">Statement ID</th>
+                                <th class="px-3 py-2 text-left">Office</th>
+                                <th class="px-3 py-2 text-left">Period</th>
+                                <th class="px-3 py-2 text-right">Opening</th>
+                                <th class="px-3 py-2 text-right">Expenses</th>
+                                <th class="px-3 py-2 text-right">Replenish</th>
+                                <th class="px-3 py-2 text-right">Closing</th>
+                                <th class="px-3 py-2 text-center">Status</th>
+                                <th class="px-3 py-2 text-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${recentStatements.map(s => {
+                                const office = offices.find(o => o.officeID === s.officeID) || {officeName: s.officeID};
+                                const statusColor = ({Draft:'bg-gray-100 text-gray-600', Submitted:'bg-amber-100 text-amber-700', Verified:'bg-green-100 text-green-700', TallyPosted:'bg-blue-100 text-blue-700'})[s.status] || '';
+                                return `
+                                <tr class="border-t hover:bg-gray-50">
+                                    <td class="px-3 py-2 text-xs font-mono text-cyan-700">${s.statementID}</td>
+                                    <td class="px-3 py-2 text-xs">${office.officeName}</td>
+                                    <td class="px-3 py-2 text-xs">${s.periodLabel || (months[s.month]+' '+s.year)}</td>
+                                    <td class="px-3 py-2 text-xs text-right">${fmt(s.openingBalance)}</td>
+                                    <td class="px-3 py-2 text-xs text-right text-red-700">−${fmt(s.totalExpenses)}</td>
+                                    <td class="px-3 py-2 text-xs text-right text-green-700">+${fmt(s.totalReplenishments)}</td>
+                                    <td class="px-3 py-2 text-xs text-right font-bold">${fmt(s.closingBalance)}</td>
+                                    <td class="px-3 py-2 text-xs text-center"><span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${statusColor}">${s.status}</span></td>
+                                    <td class="px-3 py-2 text-xs text-right whitespace-nowrap">
+                                        <button onclick="openPCStatementDetail('${s.statementID}')" class="text-indigo-600 hover:text-indigo-800 text-xs font-medium mr-1">Open</button>
+                                        <button onclick="exportPCStatementPDF('${s.statementID}')" class="text-red-600 hover:text-red-800 text-xs font-medium" title="PDF">📄</button>
+                                    </td>
+                                </tr>`;
+                            }).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>` : ''}`;
+        }
+        // ════════════════════════════════════════════════════════════════
+        // EXPENSE MODAL — Petty Cash Expense Entry (attachment mandatory)
+        // ════════════════════════════════════════════════════════════════
+        window._pcCurrentTxn = null;
+        window._pcStagedAttachments = [];
+
+        function openPCExpenseModal(officeID, existingTxn = null) {
+            window._pcCurrentTxn = existingTxn;
+            window._pcStagedAttachments = existingTxn ? (existingTxn.attachments || []).slice() : [];
+            const today = new Date().toISOString().split('T')[0];
+            const t = existingTxn || {
+                txnDate: today, category: '', amount: '', vendor: '', voucherNo: '',
+                description: '', officeID: officeID || ''
+            };
+            const offices = (pettyCashOffices || []).filter(o => o.active !== false);
+            const office  = offices.find(o => o.officeID === t.officeID) || (officeID && offices.find(o=>o.officeID===officeID));
+
+            const modal = document.createElement('div');
+            modal.id = 'pcExpenseModal';
+            modal.className = 'modal show';
+            modal.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto m-4">
+                <div class="bg-gradient-to-r from-amber-500 to-amber-600 p-5 text-white flex justify-between items-center sticky top-0 z-10">
+                    <div>
+                        <h3 class="text-lg font-bold">💸 ${existingTxn?'Edit':'Add'} Petty Cash Expense</h3>
+                        <p class="text-amber-100 text-xs mt-1">Bill attachment is mandatory — modal will not save without one</p>
+                    </div>
+                    <button onclick="closePCExpenseModal()" class="text-white text-2xl hover:bg-white hover:bg-opacity-20 rounded-full w-9 h-9 flex items-center justify-center">×</button>
+                </div>
+                <div class="p-5 space-y-3">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Office *</label>
+                            <select id="pcOfficeID" required class="w-full px-3 py-2 border rounded-lg text-sm" onchange="_pcUpdateBalanceDisplay()">
+                                <option value="">— select —</option>
+                                ${offices.map(o => `<option value="${o.officeID}" ${t.officeID===o.officeID?'selected':''}>${o.officeName}</option>`).join('')}
+                            </select>
+                            <p class="text-[10px] text-amber-700 mt-1" id="pcBalanceHint">${office ? 'Current float: ₹'+_pcOfficeBalance(office.officeID).toLocaleString('en-IN',{minimumFractionDigits:2}) : ''}</p>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Date *</label>
+                            <input type="date" id="pcTxnDate" required value="${t.txnDate}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Category *</label>
+                            <select id="pcCategory" required onchange="_pcToggleOtherCategory()" class="w-full px-3 py-2 border rounded-lg text-sm">
+                                <option value="">— select —</option>
+                                ${PETTY_CASH_CATEGORIES.map(c => `<option value="${c.code}" ${t.category===c.code?'selected':''}>${c.label}</option>`).join('')}
+                            </select>
+                            <input type="text" id="pcOtherCategoryText" placeholder="Specify other category..." value="${t.otherCategoryText||''}"
+                                class="w-full px-3 py-2 border rounded-lg text-sm mt-1 ${t.category==='OTHER'?'':'hidden'}"/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Amount (₹) *</label>
+                            <input type="number" id="pcAmount" required min="0.01" step="0.01" value="${t.amount||''}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Vendor / Payee</label>
+                            <input type="text" id="pcVendor" value="${(t.vendor||'').replace(/"/g,'&quot;')}" placeholder="e.g. Krishna Stationers" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Voucher / Bill No</label>
+                            <input type="text" id="pcVoucherNo" value="${(t.voucherNo||'').replace(/"/g,'&quot;')}" placeholder="Handwritten voucher #" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1">Description / Notes</label>
+                        <textarea id="pcDescription" rows="2" class="w-full px-3 py-2 border rounded-lg text-sm">${(t.description||'').replace(/</g,'&lt;')}</textarea>
+                    </div>
+                    <div class="border-2 border-dashed border-amber-300 rounded-xl p-4 bg-amber-50/30">
+                        <label class="block text-xs font-bold text-amber-800 mb-2">📎 Bill / Receipt Attachment <span class="text-red-500">(required)</span></label>
+                        <input type="file" id="pcAttachInput" accept="image/*,application/pdf" multiple onchange="_pcStageAttachment(event)" class="text-xs"/>
+                        <p class="text-[10px] text-gray-500 mt-1">Upload photo of the bill / receipt. Multiple files OK. Save button unlocks once at least one file is attached.</p>
+                        <div id="pcStagedList" class="mt-2 space-y-1"></div>
+                    </div>
+                    <div class="flex justify-end gap-3 pt-2">
+                        <button onclick="closePCExpenseModal()" class="px-5 py-2 border border-gray-300 text-gray-600 rounded-xl hover:bg-gray-50">Cancel</button>
+                        <button id="pcSaveBtn" onclick="savePCExpense()" disabled class="px-6 py-2 bg-amber-600 text-white rounded-xl hover:bg-amber-700 font-semibold disabled:opacity-40 disabled:cursor-not-allowed">💾 Save Expense</button>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+            _pcRenderStagedList();
+        }
+
+        function closePCExpenseModal() {
+            const m = document.getElementById('pcExpenseModal');
+            if (m) m.remove();
+            window._pcCurrentTxn = null;
+            window._pcStagedAttachments = [];
+        }
+
+        function _pcToggleOtherCategory() {
+            const sel = document.getElementById('pcCategory');
+            const inp = document.getElementById('pcOtherCategoryText');
+            if (!sel || !inp) return;
+            inp.classList.toggle('hidden', sel.value !== 'OTHER');
+        }
+
+        function _pcUpdateBalanceDisplay() {
+            const officeID = document.getElementById('pcOfficeID')?.value;
+            const hint = document.getElementById('pcBalanceHint');
+            if (!hint) return;
+            if (!officeID) { hint.textContent = ''; return; }
+            const bal = _pcOfficeBalance(officeID);
+            hint.textContent = 'Current float: ₹' + bal.toLocaleString('en-IN', {minimumFractionDigits:2});
+            hint.className = 'text-[10px] mt-1 ' + (bal < 500 ? 'text-red-600 font-bold' : 'text-amber-700');
+        }
+
+        async function _pcStageAttachment(event) {
+            const files = Array.from(event.target.files);
+            for (const file of files) {
+                try {
+                    // Reuse the existing Drive helpers — same pattern as transaction
+                    // attachments and field-expense uploads. A subfolder keeps petty
+                    // cash bills organised in Drive.
+                    const folderId = await getOrCreateSubFolder('PettyCash_Bills');
+                    const fileId   = await uploadFileToDriveFolder(file, folderId);
+                    window._pcStagedAttachments.push({
+                        driveFileId: fileId,
+                        name: file.name,
+                        type: file.type,
+                        size: file.size
+                    });
+                    _pcRenderStagedList();
+                } catch (e) {
+                    console.error('Upload failed:', e);
+                    alert('Could not upload ' + file.name + ': ' + e.message);
+                }
+            }
+            event.target.value = '';
+        }
+
+        function _pcRenderStagedList() {
+            const list = document.getElementById('pcStagedList');
+            const btn  = document.getElementById('pcSaveBtn');
+            if (!list) return;
+            const atts = window._pcStagedAttachments || [];
+            if (atts.length === 0) {
+                list.innerHTML = '<p class="text-[11px] text-red-500 italic">⚠ No attachments yet — save is disabled</p>';
+                if (btn) btn.disabled = true;
+                return;
+            }
+            list.innerHTML = atts.map((a, i) => `
+                <div class="flex items-center justify-between bg-white border border-amber-200 rounded px-2 py-1 text-xs">
+                    <span class="truncate">📎 ${(a.name||'attachment').substring(0,40)}</span>
+                    <button onclick="_pcRemoveStaged(${i})" class="text-red-500 hover:text-red-700 ml-2">✕</button>
+                </div>`).join('');
+            if (btn) btn.disabled = false;
+        }
+
+        function _pcRemoveStaged(idx) {
+            window._pcStagedAttachments.splice(idx, 1);
+            _pcRenderStagedList();
+        }
+
+        async function savePCExpense() {
+            const officeID = document.getElementById('pcOfficeID').value;
+            const txnDate  = document.getElementById('pcTxnDate').value;
+            const category = document.getElementById('pcCategory').value;
+            const otherText= document.getElementById('pcOtherCategoryText').value.trim();
+            const amount   = parseFloat(document.getElementById('pcAmount').value) || 0;
+            const vendor   = document.getElementById('pcVendor').value.trim();
+            const voucherNo= document.getElementById('pcVoucherNo').value.trim();
+            const description = document.getElementById('pcDescription').value.trim();
+            const atts     = window._pcStagedAttachments || [];
+
+            if (!officeID) { alert('Please select an office.'); return; }
+            if (!txnDate)  { alert('Please pick a date.'); return; }
+            if (!category) { alert('Please pick a category.'); return; }
+            if (category === 'OTHER' && !otherText) { alert('Please specify the "Other" category text.'); return; }
+            if (amount <= 0) { alert('Amount must be greater than zero.'); return; }
+            if (atts.length === 0) { alert('At least one bill attachment is required.'); return; }
+
+            const balance = _pcOfficeBalance(officeID);
+            const orig = window._pcCurrentTxn;
+            const origAmt = (orig && orig.txnType === 'EXPENSE') ? (parseFloat(orig.amount) || 0) : 0;
+            const effectiveBalance = balance + origAmt;
+            if (amount > effectiveBalance) {
+                if (!confirm(`⚠ This expense (₹${amount}) exceeds the office's current float (₹${effectiveBalance.toFixed(2)}). Save anyway?\n\nThe float will go negative, indicating the custodian advanced personal funds. They'll be reimbursed via the next replenishment.`)) return;
+            }
+
+            const isEdit = !!orig;
+            const txnID = isEdit ? orig.txnID : generatePettyCashID('PC');
+            const txn = {
+                txnID, officeID,
+                txnType: 'EXPENSE',
+                txnDate,
+                amount: +amount.toFixed(2),
+                category, otherCategoryText: category === 'OTHER' ? otherText : '',
+                vendor, voucherNo, description,
+                attachments: atts,
+                verified: isEdit ? (orig.verified||false) : false,
+                verifiedBy: isEdit ? (orig.verifiedBy||'') : '',
+                verifiedAt: isEdit ? (orig.verifiedAt||'') : '',
+                tallyPosted: isEdit ? (orig.tallyPosted||false) : false,
+                tallyVoucherNo: isEdit ? (orig.tallyVoucherNo||'') : '',
+                enteredBy: (typeof currentUser !== 'undefined' && currentUser?.name) || (isEdit ? orig.enteredBy : 'User'),
+                enteredAt: isEdit ? (orig.enteredAt || new Date().toISOString()) : new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            };
+
+            if (isEdit) {
+                const idx = pettyCashTransactions.findIndex(x => x.txnID === txnID);
+                if (idx >= 0) pettyCashTransactions[idx] = txn;
+                else pettyCashTransactions.push(txn);
+            } else {
+                pettyCashTransactions.push(txn);
+            }
+            try {
+                await saveData('pettyCashTransactions', pettyCashTransactions);
+                closePCExpenseModal();
+                renderView();
+            } catch (e) {
+                alert('Could not save: ' + e.message);
+                if (!isEdit) pettyCashTransactions.pop();
+            }
+        }
+
+        function editPCTxn(txnID) {
+            const t = (pettyCashTransactions || []).find(x => x.txnID === txnID);
+            if (!t) return;
+            if (t.txnType === 'EXPENSE') {
+                openPCExpenseModal(t.officeID, t);
+            } else if (t.txnType === 'REPLENISHMENT') {
+                openPCReplenishmentModal(t);
+            } else {
+                alert('This transaction type cannot be edited directly. Use the Statement workflow for adjustments.');
+            }
+        }
+
+        async function deletePCTxn(txnID) {
+            const t = (pettyCashTransactions || []).find(x => x.txnID === txnID);
+            if (!t) return;
+            if (t.tallyPosted) {
+                alert('Cannot delete a Tally-posted transaction. Reverse it via an Adjustment entry instead.');
+                return;
+            }
+            if (t.verified && !confirm('This transaction has been Verified by an admin. Are you sure you want to delete it? The audit trail will be lost.')) return;
+            if (!confirm(`Delete ${t.txnID} (${t.txnType} ₹${t.amount})?`)) return;
+            pettyCashTransactions = pettyCashTransactions.filter(x => x.txnID !== txnID);
+            try {
+                await saveData('pettyCashTransactions', pettyCashTransactions);
+                renderView();
+            } catch (e) { alert('Could not save: ' + e.message); }
+        }
+
+        async function verifyPCTxn(txnID) {
+            const idx = pettyCashTransactions.findIndex(x => x.txnID === txnID);
+            if (idx < 0) return;
+            if (!confirm(`Mark ${txnID} as Verified?\n\nThis confirms the bill matches the entry and the expense is genuine. Once verified, it counts toward the month-end statement.`)) return;
+            pettyCashTransactions[idx].verified = true;
+            pettyCashTransactions[idx].verifiedBy = (typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin';
+            pettyCashTransactions[idx].verifiedAt = new Date().toISOString();
+            try {
+                await saveData('pettyCashTransactions', pettyCashTransactions);
+                renderView();
+            } catch (e) { alert('Could not save: ' + e.message); }
+        }
+
+        function viewPCAttachments(txnID) {
+            const t = (pettyCashTransactions || []).find(x => x.txnID === txnID);
+            if (!t || !t.attachments || t.attachments.length === 0) return;
+            const renderOne = (a) => {
+                if (a.driveFileId) {
+                    const url = `https://drive.google.com/file/d/${a.driveFileId}/view`;
+                    const thumb = `https://drive.google.com/thumbnail?id=${a.driveFileId}&sz=w1000`;
+                    const isPdf = (a.type||'').includes('pdf') || (a.name||'').toLowerCase().endsWith('.pdf');
+                    if (isPdf) {
+                        const previewURL = `https://drive.google.com/file/d/${a.driveFileId}/preview`;
+                        return `<iframe src="${previewURL}" style="width:100%;height:70vh;border:none;border-radius:6px;background:#fff"></iframe>
+                                <a href="${url}" target="_blank" rel="noopener" style="color:#60a5fa;font-size:13px;text-decoration:underline;display:block;text-align:center;margin-top:6px">Open in Drive →</a>`;
+                    }
+                    return `<a href="${url}" target="_blank" rel="noopener">
+                        <img src="${thumb}" alt="${a.name||'bill'}" style="max-width:100%;max-height:70vh;border-radius:6px;background:#222;display:block;margin:auto"/>
+                    </a>
+                    <a href="${url}" target="_blank" rel="noopener" style="color:#60a5fa;font-size:13px;text-decoration:underline;display:block;text-align:center;margin-top:6px">Open in Drive →</a>`;
+                }
+                return `<div style="padding:20px;background:#1f2937;color:#fff;border-radius:6px;text-align:center">${(a.name||'attachment')}</div>`;
+            };
+            const w = window.open();
+            if (!w) { alert('Pop-up blocked — please allow pop-ups for this site to view attachments.'); return; }
+            w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${t.txnID} — Bills</title></head>
+                <body style="margin:0;padding:12px;background:#111;color:#fff;font-family:system-ui,sans-serif">
+                    <h3 style="margin:0 0 12px 0;color:#fcd34d">${t.txnID} — ${_pcCategoryLabel(t.category)} — ₹${(t.amount||0).toFixed(2)}</h3>
+                    <p style="margin:0 0 12px 0;color:#9ca3af;font-size:13px">${(t.description||'').replace(/</g,'&lt;')} ${t.vendor?'· '+t.vendor.replace(/</g,'&lt;'):''}</p>
+                    <div style="display:flex;flex-wrap:wrap;gap:12px">
+                        ${t.attachments.map((a,i) => `
+                        <div style="background:#1f2937;border-radius:8px;padding:10px;flex:1 1 calc(50% - 6px);min-width:300px">
+                            <div style="font-size:11px;color:#9ca3af;margin-bottom:6px">${i+1}/${t.attachments.length} · ${(a.name||'').replace(/</g,'&lt;')}</div>
+                            ${renderOne(a)}
+                        </div>`).join('')}
+                    </div>
+                </body></html>`);
+        }
+        // ════════════════════════════════════════════════════════════════
+        // REPLENISHMENT MODAL
+        // ────────────────────────────────────────────────────────────────
+        // Manual top-up entry. PR-driven replenishments come through the PR
+        // fan-out (see PR Mark Paid integration) — this modal is only for
+        // ad-hoc / one-off top-ups outside the monthly PR cycle.
+        // ════════════════════════════════════════════════════════════════
+        function openPCReplenishmentModal(existing = null) {
+            window._pcCurrentTxn = existing;
+            const offices = (pettyCashOffices || []).filter(o => o.active !== false);
+            const today = new Date().toISOString().split('T')[0];
+            const t = existing || { txnDate: today, officeID: '', amount: '', transferRef: '', fromBankAccountID: '' };
+            const modal = document.createElement('div');
+            modal.id = 'pcReplenishModal';
+            modal.className = 'modal show';
+            modal.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-xl m-4">
+                <div class="bg-gradient-to-r from-green-500 to-green-600 p-5 text-white flex justify-between items-center">
+                    <div>
+                        <h3 class="text-lg font-bold">💰 Manual Replenishment</h3>
+                        <p class="text-green-100 text-xs mt-1">Use for ad-hoc top-ups outside the Monthly PR cycle</p>
+                    </div>
+                    <button onclick="closePCReplenishmentModal()" class="text-white text-2xl hover:bg-white hover:bg-opacity-20 rounded-full w-9 h-9 flex items-center justify-center">×</button>
+                </div>
+                <div class="p-5 space-y-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1">Office *</label>
+                        <select id="pcrOfficeID" required class="w-full px-3 py-2 border rounded-lg text-sm">
+                            <option value="">— select —</option>
+                            ${offices.map(o => `<option value="${o.officeID}" ${t.officeID===o.officeID?'selected':''}>${o.officeName} · float ₹${_pcOfficeBalance(o.officeID).toFixed(2)} of ${(o.imprestLimit||0).toFixed(2)}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Date *</label>
+                            <input type="date" id="pcrDate" required value="${t.txnDate}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Amount (₹) *</label>
+                            <input type="number" id="pcrAmount" required min="0.01" step="0.01" value="${t.amount||''}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1">Transfer Reference</label>
+                        <input type="text" id="pcrTransferRef" value="${(t.transferRef||'').replace(/"/g,'&quot;')}" placeholder="NEFT / UPI / Cheque #" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1">From Bank Account</label>
+                        <select id="pcrFromBank" class="w-full px-3 py-2 border rounded-lg text-sm">
+                            <option value="">— select —</option>
+                            ${(bankAccounts||[]).map(b => `<option value="${b.accountID||b.id}" ${t.fromBankAccountID===(b.accountID||b.id)?'selected':''}>${b.bankName} ${b.accountNumber?'····'+String(b.accountNumber).slice(-4):''}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1">Remarks</label>
+                        <textarea id="pcrRemarks" rows="2" class="w-full px-3 py-2 border rounded-lg text-sm">${(t.remarks||'').replace(/</g,'&lt;')}</textarea>
+                    </div>
+                    <div class="flex justify-end gap-3 pt-2">
+                        <button onclick="closePCReplenishmentModal()" class="px-5 py-2 border border-gray-300 text-gray-600 rounded-xl hover:bg-gray-50">Cancel</button>
+                        <button onclick="savePCReplenishment()" class="px-6 py-2 bg-green-600 text-white rounded-xl hover:bg-green-700 font-semibold">💾 Save</button>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+        }
+
+        function closePCReplenishmentModal() {
+            const m = document.getElementById('pcReplenishModal');
+            if (m) m.remove();
+            window._pcCurrentTxn = null;
+        }
+
+        async function savePCReplenishment() {
+            const officeID = document.getElementById('pcrOfficeID').value;
+            const txnDate  = document.getElementById('pcrDate').value;
+            const amount   = parseFloat(document.getElementById('pcrAmount').value) || 0;
+            const transferRef = document.getElementById('pcrTransferRef').value.trim();
+            const fromBank = document.getElementById('pcrFromBank').value;
+            const remarks  = document.getElementById('pcrRemarks').value.trim();
+
+            if (!officeID || !txnDate || amount <= 0) { alert('Office, date and amount are required.'); return; }
+
+            const orig = window._pcCurrentTxn;
+            const isEdit = !!orig;
+            const txnID = isEdit ? orig.txnID : generatePettyCashID('PC');
+            const txn = {
+                txnID, officeID,
+                txnType: 'REPLENISHMENT',
+                txnDate,
+                amount: +amount.toFixed(2),
+                transferRef, fromBankAccountID: fromBank, remarks,
+                verified: isEdit ? (orig.verified||true) : true,
+                verifiedBy: isEdit ? (orig.verifiedBy||'Admin') : ((typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin'),
+                verifiedAt: isEdit ? (orig.verifiedAt || new Date().toISOString()) : new Date().toISOString(),
+                tallyPosted: isEdit ? (orig.tallyPosted||false) : false,
+                tallyVoucherNo: isEdit ? (orig.tallyVoucherNo||'') : '',
+                enteredBy: isEdit ? orig.enteredBy : ((typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin'),
+                enteredAt: isEdit ? (orig.enteredAt || new Date().toISOString()) : new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            };
+            if (isEdit) {
+                const idx = pettyCashTransactions.findIndex(x => x.txnID === txnID);
+                if (idx >= 0) pettyCashTransactions[idx] = txn;
+                else pettyCashTransactions.push(txn);
+            } else {
+                pettyCashTransactions.push(txn);
+            }
+            try {
+                await saveData('pettyCashTransactions', pettyCashTransactions);
+                closePCReplenishmentModal();
+                renderView();
+            } catch (e) {
+                alert('Could not save: ' + e.message);
+                if (!isEdit) pettyCashTransactions.pop();
+            }
+        }
+        // ════════════════════════════════════════════════════════════════
+        // MONTH-END STATEMENT WORKFLOW
+        // ────────────────────────────────────────────────────────────────
+        // Generate → Verify (admin) → Post to Tally. Stamps all included
+        // transactions with the Tally voucher # at the end so the trail is
+        // preserved on every individual record.
+        // ════════════════════════════════════════════════════════════════
+        function openPCStatementGenerator() {
+            const offices = (pettyCashOffices || []).filter(o => o.active !== false);
+            if (offices.length === 0) { alert('No offices configured.'); return; }
+            const today = new Date();
+            const defMonth = today.getMonth() + 1;
+            const defYear  = today.getFullYear();
+            const months = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+            const modal = document.createElement('div');
+            modal.id = 'pcStmtGenModal';
+            modal.className = 'modal show';
+            modal.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md m-4">
+                <div class="bg-gradient-to-r from-cyan-500 to-cyan-600 p-5 text-white flex justify-between items-center">
+                    <h3 class="text-lg font-bold">📋 Generate Monthly Statement</h3>
+                    <button onclick="document.getElementById('pcStmtGenModal').remove()" class="text-white text-2xl">×</button>
+                </div>
+                <div class="p-5 space-y-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1">Office *</label>
+                        <select id="pcsgOffice" class="w-full px-3 py-2 border rounded-lg text-sm">
+                            ${offices.map(o => `<option value="${o.officeID}">${o.officeName}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Month *</label>
+                            <select id="pcsgMonth" class="w-full px-3 py-2 border rounded-lg text-sm">
+                                ${months.slice(1).map((m,i) => `<option value="${i+1}" ${i+1===defMonth?'selected':''}>${m}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Year *</label>
+                            <input type="number" id="pcsgYear" min="2020" max="2100" value="${defYear}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                    </div>
+                    <div class="bg-cyan-50 border border-cyan-200 rounded-lg p-3 text-xs text-cyan-800">
+                        ℹ Generates a draft statement listing all expenses + replenishments in the period. Admin verifies → posts to Tally.
+                    </div>
+                    <div class="flex justify-end gap-3 pt-2">
+                        <button onclick="document.getElementById('pcStmtGenModal').remove()" class="px-5 py-2 border border-gray-300 text-gray-600 rounded-xl">Cancel</button>
+                        <button onclick="generatePCStatement()" class="px-6 py-2 bg-cyan-600 text-white rounded-xl hover:bg-cyan-700 font-semibold">Generate</button>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+        }
+
+        async function generatePCStatement() {
+            const officeID = document.getElementById('pcsgOffice').value;
+            const month    = parseInt(document.getElementById('pcsgMonth').value);
+            const year     = parseInt(document.getElementById('pcsgYear').value);
+            if (!officeID || !month || !year) { alert('Please fill all fields.'); return; }
+
+            const dup = (pettyCashStatements||[]).find(s => s.officeID===officeID && s.month===month && s.year===year);
+            if (dup) {
+                if (!confirm(`A statement already exists for this office and period (${dup.statementID}, status: ${dup.status}).\n\nOpen the existing one instead?`)) return;
+                document.getElementById('pcStmtGenModal').remove();
+                openPCStatementDetail(dup.statementID);
+                return;
+            }
+
+            const pfx = `${year}-${String(month).padStart(2,'0')}-`;
+            const periodTxns = (pettyCashTransactions||[]).filter(t => t.officeID===officeID && (t.txnDate||'').startsWith(pfx));
+            const expenses = periodTxns.filter(t => t.txnType === 'EXPENSE');
+            const replenishments = periodTxns.filter(t => t.txnType === 'REPLENISHMENT');
+
+            const lastDayPriorMonth = new Date(year, month - 1, 0).toISOString().split('T')[0];
+            const openingBalance = _pcOfficeBalance(officeID, lastDayPriorMonth);
+            const totalExpenses = expenses.reduce((s,t) => s + (parseFloat(t.amount)||0), 0);
+            const totalReplenishments = replenishments.reduce((s,t) => s + (parseFloat(t.amount)||0), 0);
+            const closingBalance = openingBalance + totalReplenishments - totalExpenses;
+
+            const months = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            const stmt = {
+                statementID: generatePettyCashID('PCS'),
+                officeID, month, year,
+                periodLabel: `${months[month]} ${year}`,
+                openingBalance: +openingBalance.toFixed(2),
+                totalExpenses: +totalExpenses.toFixed(2),
+                totalReplenishments: +totalReplenishments.toFixed(2),
+                closingBalance: +closingBalance.toFixed(2),
+                expenseTxnIDs: expenses.map(t => t.txnID),
+                replenishmentTxnIDs: replenishments.map(t => t.txnID),
+                status: 'Draft',
+                submittedBy: '', submittedAt: '',
+                verifiedBy: '', verifiedAt: '', verifierRemarks: '',
+                tallyVoucherNo: '', tallyPostedAt: '',
+                createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+            };
+            pettyCashStatements.push(stmt);
+            try {
+                await saveData('pettyCashStatements', pettyCashStatements);
+                document.getElementById('pcStmtGenModal').remove();
+                openPCStatementDetail(stmt.statementID);
+            } catch (e) {
+                alert('Could not save: ' + e.message);
+                pettyCashStatements.pop();
+            }
+        }
+
+        function openPCStatementDetail(statementID) {
+            const s = (pettyCashStatements||[]).find(x => x.statementID === statementID);
+            if (!s) return;
+            const office = (pettyCashOffices||[]).find(o => o.officeID === s.officeID) || {officeName: s.officeID};
+            const fmt = n => '₹' + (+n || 0).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
+            const txns = (pettyCashTransactions||[]).filter(t =>
+                (s.expenseTxnIDs||[]).includes(t.txnID) || (s.replenishmentTxnIDs||[]).includes(t.txnID)
+            ).sort((a,b) => (a.txnDate||'').localeCompare(b.txnDate||''));
+
+            const unverifiedExpenses = txns.filter(t => t.txnType==='EXPENSE' && !t.verified);
+            const allVerified = unverifiedExpenses.length === 0;
+            const canVerify = s.status === 'Draft' || s.status === 'Submitted';
+            const canPost = s.status === 'Verified' && !s.tallyPosted;
+
+            const modal = document.createElement('div');
+            modal.id = 'pcStmtDetailModal';
+            modal.className = 'modal show';
+            modal.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[92vh] overflow-y-auto m-4">
+                <div class="bg-gradient-to-r from-cyan-500 to-cyan-600 p-5 text-white flex justify-between items-center sticky top-0 z-10">
+                    <div>
+                        <h3 class="text-lg font-bold">📋 ${s.statementID} — ${office.officeName} — ${s.periodLabel}</h3>
+                        <p class="text-cyan-100 text-xs mt-1">Status: <strong>${s.status}</strong>${s.verifiedAt?' · Verified '+s.verifiedAt.substring(0,10)+' by '+s.verifiedBy:''}${s.tallyVoucherNo?' · Tally V# '+s.tallyVoucherNo:''}</p>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="exportPCStatementPDF('${s.statementID}')" class="px-3 py-1.5 bg-white bg-opacity-20 text-white rounded-lg text-xs hover:bg-opacity-30">📄 PDF</button>
+                        <button onclick="document.getElementById('pcStmtDetailModal').remove()" class="text-white text-2xl">×</button>
+                    </div>
+                </div>
+                <div class="p-5 space-y-4">
+                    <div class="grid grid-cols-4 gap-3">
+                        <div class="bg-gray-50 rounded-lg p-3"><p class="text-[10px] uppercase font-bold text-gray-600">Opening</p><p class="text-lg font-bold text-gray-800">${fmt(s.openingBalance)}</p></div>
+                        <div class="bg-red-50 rounded-lg p-3"><p class="text-[10px] uppercase font-bold text-red-600">Expenses</p><p class="text-lg font-bold text-red-700">−${fmt(s.totalExpenses)}</p></div>
+                        <div class="bg-green-50 rounded-lg p-3"><p class="text-[10px] uppercase font-bold text-green-600">Replenish</p><p class="text-lg font-bold text-green-700">+${fmt(s.totalReplenishments)}</p></div>
+                        <div class="bg-cyan-50 rounded-lg p-3"><p class="text-[10px] uppercase font-bold text-cyan-700">Closing</p><p class="text-lg font-bold text-cyan-800">${fmt(s.closingBalance)}</p></div>
+                    </div>
+                    ${!allVerified ? `
+                    <div class="bg-amber-50 border border-amber-300 rounded-lg p-3 text-xs text-amber-800">
+                        ⚠ ${unverifiedExpenses.length} expense(s) in this statement are not yet verified. Verify them individually from the main Petty Cash list, then return here.
+                    </div>` : ''}
+                    <div class="overflow-x-auto rounded-lg border border-gray-200">
+                        <table class="w-full text-sm">
+                            <thead class="bg-gray-50 text-xs uppercase text-gray-600">
+                                <tr>
+                                    <th class="px-3 py-2 text-left">Date</th>
+                                    <th class="px-3 py-2 text-left">Type / Category</th>
+                                    <th class="px-3 py-2 text-left">Vendor / Description</th>
+                                    <th class="px-3 py-2 text-right">Amount</th>
+                                    <th class="px-3 py-2 text-center">Bill</th>
+                                    <th class="px-3 py-2 text-center">✓</th>
+                                </tr>
+                            </thead>
+                            <tbody>${txns.map(t => `
+                                <tr class="border-t">
+                                    <td class="px-3 py-2 text-xs">${t.txnDate}</td>
+                                    <td class="px-3 py-2 text-xs">${t.txnType==='EXPENSE'?_pcCategoryLabel(t.category):'💰 Replenishment'}</td>
+                                    <td class="px-3 py-2 text-xs">${(t.vendor||t.transferRef||'').replace(/</g,'&lt;')}<br/><span class="text-[10px] text-gray-500">${(t.description||t.remarks||'').substring(0,60).replace(/</g,'&lt;')}</span></td>
+                                    <td class="px-3 py-2 text-xs text-right font-semibold ${t.txnType==='EXPENSE'?'text-red-700':'text-green-700'}">${t.txnType==='EXPENSE'?'−':'+'}${fmt(t.amount)}</td>
+                                    <td class="px-3 py-2 text-xs text-center">${(t.attachments||[]).length?`<button onclick="viewPCAttachments('${t.txnID}')" class="text-blue-600 hover:text-blue-800">📎 ${t.attachments.length}</button>`:'—'}</td>
+                                    <td class="px-3 py-2 text-xs text-center">${t.verified?'<span class="text-green-600">✓</span>':'<span class="text-amber-500">⏳</span>'}</td>
+                                </tr>`).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1">Verifier Remarks</label>
+                        <textarea id="pcsdRemarks" rows="2" class="w-full px-3 py-2 border rounded-lg text-sm" ${s.status==='TallyPosted'?'disabled':''}>${(s.verifierRemarks||'').replace(/</g,'&lt;')}</textarea>
+                    </div>
+                    ${s.status === 'Verified' || s.tallyPosted ? `
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1">Tally Voucher No${!s.tallyPosted?' *':''}</label>
+                        <input type="text" id="pcsdTallyVoucher" value="${s.tallyVoucherNo||''}" placeholder="e.g. PV/2026/0023" ${s.tallyPosted?'disabled':''} class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                    </div>` : ''}
+                    <div class="flex justify-end gap-2 pt-2">
+                        ${canVerify && allVerified ? `<button onclick="verifyPCStatement('${s.statementID}')" class="px-5 py-2 bg-green-600 text-white rounded-xl hover:bg-green-700 font-semibold">✓ Verify Statement</button>` : ''}
+                        ${canPost ? `<button onclick="postPCStatementToTally('${s.statementID}')" class="px-5 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-semibold">📒 Post to Tally</button>` : ''}
+                        ${s.status === 'Draft' ? `<button onclick="deletePCStatement('${s.statementID}')" class="px-5 py-2 bg-red-100 text-red-700 rounded-xl hover:bg-red-200">🗑 Delete Draft</button>` : ''}
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+        }
+
+        async function verifyPCStatement(statementID) {
+            const idx = pettyCashStatements.findIndex(s => s.statementID === statementID);
+            if (idx < 0) return;
+            const s = pettyCashStatements[idx];
+            if (!confirm(`Verify ${s.statementID}?\n\nOnce verified, the statement is locked from edits and ready for Tally posting.`)) return;
+            const remarks = document.getElementById('pcsdRemarks')?.value || '';
+            s.status = 'Verified';
+            s.verifiedBy = (typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin';
+            s.verifiedAt = new Date().toISOString();
+            s.verifierRemarks = remarks;
+            s.updatedAt = new Date().toISOString();
+            try {
+                await saveData('pettyCashStatements', pettyCashStatements);
+                document.getElementById('pcStmtDetailModal')?.remove();
+                openPCStatementDetail(statementID);
+                renderView();
+            } catch (e) { alert('Could not save: ' + e.message); }
+        }
+
+        async function postPCStatementToTally(statementID) {
+            const idx = pettyCashStatements.findIndex(s => s.statementID === statementID);
+            if (idx < 0) return;
+            const voucherNo = document.getElementById('pcsdTallyVoucher')?.value?.trim();
+            if (!voucherNo) { alert('Please enter the Tally Voucher No.'); return; }
+            const s = pettyCashStatements[idx];
+            if (!confirm(`Post ${s.statementID} to Tally with voucher # ${voucherNo}?\n\nThis stamps all included transactions as Tally-posted and locks the statement.`)) return;
+            s.status = 'TallyPosted';
+            s.tallyVoucherNo = voucherNo;
+            s.tallyPostedAt  = new Date().toISOString();
+            s.updatedAt = new Date().toISOString();
+            (s.expenseTxnIDs||[]).concat(s.replenishmentTxnIDs||[]).forEach(tID => {
+                const tIdx = pettyCashTransactions.findIndex(t => t.txnID === tID);
+                if (tIdx >= 0) {
+                    pettyCashTransactions[tIdx].tallyPosted = true;
+                    pettyCashTransactions[tIdx].tallyVoucherNo = voucherNo;
+                    pettyCashTransactions[tIdx].tallyPostedAt = s.tallyPostedAt;
+                }
+            });
+            try {
+                await Promise.all([
+                    saveData('pettyCashStatements', pettyCashStatements),
+                    saveData('pettyCashTransactions', pettyCashTransactions)
+                ]);
+                document.getElementById('pcStmtDetailModal')?.remove();
+                renderView();
+                alert(`✓ Posted to Tally as ${voucherNo}\n\n${(s.expenseTxnIDs||[]).length + (s.replenishmentTxnIDs||[]).length} transactions stamped.`);
+            } catch (e) { alert('Could not save: ' + e.message); }
+        }
+
+        async function deletePCStatement(statementID) {
+            const s = (pettyCashStatements||[]).find(x => x.statementID === statementID);
+            if (!s) return;
+            if (s.status !== 'Draft') { alert('Only Draft statements can be deleted. For others, the audit trail is preserved.'); return; }
+            if (!confirm(`Delete draft statement ${statementID}?\n\nUnderlying transactions are preserved — only the statement summary is removed.`)) return;
+            pettyCashStatements = pettyCashStatements.filter(x => x.statementID !== statementID);
+            try {
+                await saveData('pettyCashStatements', pettyCashStatements);
+                document.getElementById('pcStmtDetailModal')?.remove();
+                renderView();
+            } catch (e) { alert('Could not save: ' + e.message); }
+        }
+
+        function exportPCStatementPDF(statementID) {
+            const s = (pettyCashStatements||[]).find(x => x.statementID === statementID);
+            if (!s) return;
+            const office = (pettyCashOffices||[]).find(o => o.officeID === s.officeID) || {officeName: s.officeID};
+            const txns = (pettyCashTransactions||[]).filter(t =>
+                (s.expenseTxnIDs||[]).includes(t.txnID) || (s.replenishmentTxnIDs||[]).includes(t.txnID)
+            ).sort((a,b) => (a.txnDate||'').localeCompare(b.txnDate||''));
+            const INR = n => '\u20B9' + (+n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF({ unit:'mm', format:'a4' });
+            doc.setFontSize(16); doc.setTextColor(14, 116, 144); doc.setFont('helvetica','bold');
+            doc.text('PETTY CASH MONTHLY STATEMENT', 105, 18, {align:'center'});
+            doc.setFontSize(10); doc.setTextColor(0,0,0); doc.setFont('helvetica','normal');
+            doc.text(`${s.statementID} · ${office.officeName} · ${s.periodLabel}`, 105, 25, {align:'center'});
+            doc.setDrawColor(14, 116, 144); doc.setLineWidth(0.4); doc.line(14, 28, 196, 28);
+
+            let y = 34;
+            doc.setFontSize(9);
+            doc.text(`Custodian: ${office.custodianStaffName || ((staff||[]).find(x=>x.staffID===office.custodianStaffID)?.name) || '\u2014'}`, 14, y);
+            doc.text(`Imprest Limit: ${INR(office.imprestLimit||0)}`, 130, y); y += 5;
+            doc.text(`Status: ${s.status}`, 14, y);
+            if (s.tallyVoucherNo) doc.text(`Tally V#: ${s.tallyVoucherNo}`, 130, y);
+            y += 8;
+
+            doc.autoTable({
+                startY: y, theme: 'grid', styles: {fontSize: 9},
+                headStyles: {fillColor: [14, 116, 144], textColor: 255, fontStyle:'bold'},
+                head: [['', 'Amount (INR)']],
+                body: [
+                    ['Opening Balance', INR(s.openingBalance)],
+                    ['+ Replenishments', INR(s.totalReplenishments)],
+                    ['\u2212 Total Expenses', INR(s.totalExpenses)],
+                    [{content:'= Closing Balance', styles:{fontStyle:'bold', fillColor:[224,242,254]}}, {content: INR(s.closingBalance), styles:{fontStyle:'bold', halign:'right', fillColor:[224,242,254]}}]
+                ],
+                columnStyles: {0:{cellWidth:130}, 1:{cellWidth:50, halign:'right'}}
+            });
+            y = doc.lastAutoTable.finalY + 6;
+
+            doc.setFontSize(11); doc.setFont('helvetica','bold');
+            doc.text('Itemised Transactions', 14, y); y += 2;
+            doc.autoTable({
+                startY: y, theme: 'striped', styles: {fontSize: 8},
+                headStyles: {fillColor: [251, 191, 36], textColor: [120,53,15], fontStyle:'bold'},
+                head: [['Date','Type / Category','Vendor / Description','Voucher','Amount','\u2713']],
+                body: txns.map(t => [
+                    t.txnDate || '\u2014',
+                    t.txnType === 'EXPENSE' ? _pcCategoryLabel(t.category).replace(/^[^\w]+/,'').trim() : 'Replenishment',
+                    (t.vendor || t.transferRef || '') + (t.description||t.remarks ? '\n'+(t.description||t.remarks).substring(0,60) : ''),
+                    t.voucherNo || '\u2014',
+                    (t.txnType === 'EXPENSE' ? '-' : '+') + INR(t.amount),
+                    t.verified ? '\u2713' : ''
+                ]),
+                columnStyles: {
+                    0:{cellWidth:20}, 1:{cellWidth:32}, 2:{cellWidth:80}, 3:{cellWidth:22},
+                    4:{cellWidth:24, halign:'right'}, 5:{cellWidth:8, halign:'center'}
+                }
+            });
+            y = doc.lastAutoTable.finalY + 8;
+
+            if (s.verifiedBy) {
+                doc.setFontSize(9); doc.setFont('helvetica','normal');
+                doc.text(`Verified by: ${s.verifiedBy} on ${(s.verifiedAt||'').substring(0,10)}`, 14, y); y += 4;
+                if (s.verifierRemarks) {
+                    const wrapped = doc.splitTextToSize('Remarks: ' + s.verifierRemarks, 180);
+                    doc.text(wrapped, 14, y); y += wrapped.length * 4;
+                }
+            }
+            y += 16;
+            doc.setLineWidth(0.2); doc.setDrawColor(150);
+            doc.line(20, y, 80, y); doc.line(120, y, 180, y);
+            y += 4; doc.setFontSize(8); doc.setTextColor(80);
+            doc.text('Custodian Signature', 50, y, {align:'center'});
+            doc.text('Admin / Accountant', 150, y, {align:'center'});
+
+            doc.setFontSize(7); doc.setTextColor(150);
+            doc.text(`Generated ${new Date().toLocaleString('en-IN')} \u00b7 IMSE EASY BMS`, 105, 290, {align:'center'});
+
+            doc.save(`PettyCash_${s.statementID}_${office.officeName.replace(/\s+/g,'_')}_${s.periodLabel.replace(/\s+/g,'_')}.pdf`);
+        }
+        // ════════════════════════════════════════════════════════════════
+        // SETTINGS UI — Office Configuration
+        // ────────────────────────────────────────────────────────────────
+        // Renders a card in Settings tab. Auto-saves on field change.
+        // Office cannot be deleted once it has transactions — mark Inactive instead.
+        // ════════════════════════════════════════════════════════════════
+        function renderPCOfficesSettings() {
+            const offices = pettyCashOffices || [];
+            const officeStaff = (staff||[]).filter(s => s.staffType === 'Office' && s.status !== 'Resigned');
+            return `
+            <div class="bg-white rounded-2xl shadow-lg p-6 mt-6">
+                <div class="flex justify-between items-center mb-4">
+                    <div>
+                        <h3 class="text-xl font-bold text-amber-700">💵 Petty Cash Offices</h3>
+                        <p class="text-xs text-gray-500 mt-1">Configure offices that maintain a cash float (Chennai Camp, Mumbai, etc.). Each needs a custodian (an office staff member) and an imprest limit.</p>
+                    </div>
+                    <button onclick="addPCOffice()" class="px-3 py-1.5 bg-amber-600 text-white rounded-lg text-sm font-semibold hover:bg-amber-700">+ Add Office</button>
+                </div>
+                ${offices.length === 0 ? '<p class="text-sm text-gray-400 italic">No offices configured yet. Click "+ Add Office" to start.</p>' : `
+                <div class="space-y-2">
+                    ${offices.map((o, idx) => {
+                        const custodian = officeStaff.find(s => s.staffID === o.custodianStaffID);
+                        const balance = _pcOfficeBalance(o.officeID);
+                        return `
+                        <div class="border border-amber-200 rounded-lg p-3 ${o.active!==false?'bg-amber-50/40':'bg-gray-100 opacity-60'}">
+                            <div class="grid grid-cols-1 md:grid-cols-5 gap-2 items-center">
+                                <div class="md:col-span-2">
+                                    <input type="text" value="${(o.officeName||'').replace(/"/g,'&quot;')}" onchange="updatePCOfficeField(${idx},'officeName',this.value)" placeholder="Office name" class="w-full px-2 py-1 border rounded text-sm font-semibold"/>
+                                    <input type="text" value="${(o.location||'').replace(/"/g,'&quot;')}" onchange="updatePCOfficeField(${idx},'location',this.value)" placeholder="Location" class="w-full px-2 py-1 border rounded text-xs mt-1"/>
+                                </div>
+                                <select onchange="updatePCOfficeField(${idx},'custodianStaffID',this.value);updatePCOfficeField(${idx},'custodianStaffName',this.options[this.selectedIndex].text)" class="px-2 py-1 border rounded text-xs">
+                                    <option value="">— custodian —</option>
+                                    ${officeStaff.map(s => `<option value="${s.staffID}" ${o.custodianStaffID===s.staffID?'selected':''}>${s.name}</option>`).join('')}
+                                </select>
+                                <div>
+                                    <label class="text-[10px] text-gray-500">Limit (₹)</label>
+                                    <input type="number" min="0" step="100" value="${o.imprestLimit||0}" onchange="updatePCOfficeField(${idx},'imprestLimit',parseFloat(this.value)||0)" class="w-full px-2 py-1 border rounded text-xs"/>
+                                </div>
+                                <div class="flex items-center gap-2 justify-end">
+                                    <span class="text-[10px] text-gray-500">Float: ₹${balance.toFixed(2)}</span>
+                                    <button onclick="togglePCOfficeActive(${idx})" class="text-xs px-2 py-1 rounded ${o.active!==false?'bg-green-100 text-green-700':'bg-gray-200 text-gray-600'}">${o.active!==false?'Active':'Inactive'}</button>
+                                    <button onclick="deletePCOffice(${idx})" class="text-red-500 hover:text-red-700 text-xs" title="Delete">🗑</button>
+                                </div>
+                            </div>
+                            ${!o.openingRecorded && o.imprestLimit > 0 ? `
+                            <div class="mt-2 bg-amber-100 border border-amber-300 rounded p-2 text-xs text-amber-800 flex justify-between items-center">
+                                <span>⚠ No opening balance recorded yet. Record the initial cash float to start tracking.</span>
+                                <button onclick="recordPCOpeningBalance('${o.officeID}')" class="px-3 py-1 bg-amber-600 text-white rounded text-xs font-semibold">Record Opening</button>
+                            </div>` : ''}
+                        </div>`;
+                    }).join('')}
+                </div>`}
+                <p class="text-[10px] text-gray-400 mt-3">💡 Changes save automatically when you change focus. Add Office creates a new row that must have a name + limit > 0 to start tracking.</p>
+            </div>`;
+        }
+
+        function addPCOffice() {
+            const newOffice = {
+                officeID: generatePettyCashID('PCO'),
+                officeName: 'New Office',
+                location: '',
+                custodianStaffID: '',
+                custodianStaffName: '',
+                imprestLimit: 0,
+                active: true,
+                openingRecorded: false,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            };
+            pettyCashOffices.push(newOffice);
+            saveData('pettyCashOffices', pettyCashOffices).then(() => renderView()).catch(e => alert(e.message));
+        }
+
+        function updatePCOfficeField(idx, field, value) {
+            if (!pettyCashOffices[idx]) return;
+            pettyCashOffices[idx][field] = value;
+            pettyCashOffices[idx].updatedAt = new Date().toISOString();
+            saveData('pettyCashOffices', pettyCashOffices).catch(e => console.warn('Save failed:', e));
+        }
+
+        function togglePCOfficeActive(idx) {
+            if (!pettyCashOffices[idx]) return;
+            pettyCashOffices[idx].active = !(pettyCashOffices[idx].active !== false);
+            saveData('pettyCashOffices', pettyCashOffices).then(() => renderView()).catch(e => alert(e.message));
+        }
+
+        async function deletePCOffice(idx) {
+            const o = pettyCashOffices[idx];
+            if (!o) return;
+            const txnCount = (pettyCashTransactions||[]).filter(t => t.officeID === o.officeID).length;
+            if (txnCount > 0) {
+                alert(`Cannot delete "${o.officeName}" — it has ${txnCount} transaction(s). Mark it Inactive instead.`);
+                return;
+            }
+            if (!confirm(`Delete office "${o.officeName}"? This cannot be undone.`)) return;
+            pettyCashOffices.splice(idx, 1);
+            await saveData('pettyCashOffices', pettyCashOffices);
+            renderView();
+        }
+
+        async function recordPCOpeningBalance(officeID) {
+            const o = (pettyCashOffices||[]).find(x => x.officeID === officeID);
+            if (!o) return;
+            const amt = prompt(`Record opening cash balance for ${o.officeName}.\n\nThis is the cash already on hand with the custodian before tracking started.\n\nAmount (₹):`, String(o.imprestLimit || 0));
+            if (amt === null) return;
+            const amount = parseFloat(amt) || 0;
+            if (amount < 0) { alert('Amount must be 0 or positive.'); return; }
+            const dateInput = prompt('Opening balance date (YYYY-MM-DD):', new Date().toISOString().split('T')[0]);
+            if (!dateInput || !/^\d{4}-\d{2}-\d{2}$/.test(dateInput)) { alert('Invalid date.'); return; }
+            const txn = {
+                txnID: generatePettyCashID('PC'),
+                officeID,
+                txnType: 'OPENING_BALANCE',
+                txnDate: dateInput,
+                amount: +amount.toFixed(2),
+                remarks: 'Opening balance recorded at system start',
+                verified: true,
+                verifiedBy: (typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin',
+                verifiedAt: new Date().toISOString(),
+                tallyPosted: false,
+                enteredBy: (typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin',
+                enteredAt: new Date().toISOString()
+            };
+            pettyCashTransactions.push(txn);
+            const oIdx = pettyCashOffices.findIndex(x => x.officeID === officeID);
+            if (oIdx >= 0) {
+                pettyCashOffices[oIdx].openingRecorded = true;
+                pettyCashOffices[oIdx].updatedAt = new Date().toISOString();
+            }
+            try {
+                await Promise.all([
+                    saveData('pettyCashTransactions', pettyCashTransactions),
+                    saveData('pettyCashOffices', pettyCashOffices)
+                ]);
+                renderView();
+            } catch (e) { alert('Could not save: ' + e.message); }
+        }
+
+
+
+
+
+
 
         // ── Render Payment Requests list view ──
         // Persistent filter state across re-renders
@@ -24816,6 +26093,37 @@ Automated WFH alert — ${company} Attendance System.`;
                     try { await saveData('directorExpenses', directorExpenses); }
                     catch(e) { errs.push('directorExpenses: ' + e.message); }
                 } else { errs.push('Source director expense not found: ' + item.sourceID); }
+            }
+            // ── Petty Cash Replenishment — create REPLENISHMENT transaction ──
+            // When a "Replenish Petty Cash" PR item is paid, automatically create
+            // a REPLENISHMENT entry in the petty cash module. The transferRef = paidRef,
+            // amount = item.amount, date = item.paidDate. This restores the office float.
+            else if (item.sourceType === 'pettyCashOffice') {
+                const officeID = item.sourceID;
+                const office   = (pettyCashOffices || []).find(o => o.officeID === officeID);
+                if (office) {
+                    const txn = {
+                        txnID:         generatePettyCashID('PC'),
+                        officeID,
+                        txnType:       'REPLENISHMENT',
+                        txnDate:       item.paidDate,
+                        amount:        +(parseFloat(item.amount) || 0).toFixed(2),
+                        transferRef:   item.paidRef || '',
+                        fromBankAccountID: '',
+                        remarks:       `Auto-replenishment via Payment Request fan-out`,
+                        verified:      true,    // PR-driven replenishments are already approved
+                        verifiedBy:    (typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin',
+                        verifiedAt:    new Date().toISOString(),
+                        tallyPosted:   false,
+                        tallyVoucherNo:'',
+                        enteredBy:     'System (PR Fan-out)',
+                        enteredAt:     new Date().toISOString(),
+                        updatedAt:     new Date().toISOString()
+                    };
+                    pettyCashTransactions.push(txn);
+                    try { await saveData('pettyCashTransactions', pettyCashTransactions); }
+                    catch(e) { errs.push('pettyCashTransactions: ' + e.message); }
+                } else { errs.push('Petty cash office not found: ' + officeID); }
             }
             // ── Consolidated director reimbursement — mark ALL constituent records ──
             else if (item.sourceType === 'directorExpenseConsolidated') {
