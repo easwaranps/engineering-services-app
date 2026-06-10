@@ -1409,6 +1409,14 @@
         let pettyCashTransactions = [];   // {txnID, officeID, txnType, txnDate, amount, attachments, ...}
         let pettyCashStatements   = [];   // Month-end verification + Tally-posting records
 
+        // ── GST Cash Ledger Snapshots ──
+        // Each upload of the Electronic Cash Ledger CSV (downloaded from GST portal,
+        // typically on 19th of each month before the 20th filing deadline) is parsed
+        // and stored here. The LATEST snapshot's closing balance is used by the
+        // Pay-by-20th reconciliation panel to compute net cash to deposit.
+        // History is preserved for audit.
+        let gstCashLedgerSnapshots = [];
+
         // Preset categories — covers ~95% of petty cash uses. "OTHER" lets the user
         // free-text a category for the rest.
         const PETTY_CASH_CATEGORIES = [
@@ -3370,6 +3378,7 @@
                 { type: 'pettyCashOffices',      getMem: () => pettyCashOffices,      setMem: (d) => { pettyCashOffices = d; } },
                 { type: 'pettyCashTransactions', getMem: () => pettyCashTransactions, setMem: (d) => { pettyCashTransactions = d; } },
                 { type: 'pettyCashStatements',   getMem: () => pettyCashStatements,   setMem: (d) => { pettyCashStatements = d; } },
+                { type: 'gstCashLedgerSnapshots', getMem: () => gstCashLedgerSnapshots, setMem: (d) => { gstCashLedgerSnapshots = d; } },
                 { type: 'parties',         getMem: () => parties,         setMem: (d) => { parties = d; } },
                 { type: 'bankAccounts',    getMem: () => bankAccounts,    setMem: (d) => { bankAccounts = d; } },
                 { type: 'settings',        getMem: () => settings,        setMem: (d) => { settings = d; } }
@@ -4548,6 +4557,13 @@
                     catch(e) { console.warn('Could not auto-create pettyCashStatements.json:', e.message); }
                 }
                 pettyCashStatements = Array.isArray(pcStmtData) ? pcStmtData : [];
+
+                let gstClData = await loadFileFromDrive('gstCashLedgerSnapshots.json');
+                if (!gstClData) {
+                    try { await saveFileToDrive('gstCashLedgerSnapshots.json', []); gstClData = []; }
+                    catch(e) { console.warn('Could not auto-create gstCashLedgerSnapshots.json:', e.message); }
+                }
+                gstCashLedgerSnapshots = Array.isArray(gstClData) ? gstClData : [];
 
                 console.log('✅ Data loaded — transactions:', transactions.length,
                     '| parties:', parties.length,
@@ -11091,14 +11107,17 @@
 
             const gstPanel = `
             <div class="bg-white rounded-2xl shadow-sm mb-6 overflow-hidden">
-                <div class="flex items-center justify-between px-5 py-3 bg-gradient-to-r from-amber-500 to-purple-600">
+                <div class="flex items-center justify-between px-5 py-3 bg-gradient-to-r from-amber-500 to-purple-600 flex-wrap gap-2">
                     <div>
                         <h3 class="text-white font-bold text-base">🔄 GST RECONCILIATION — ${d.monthName} ${year}</h3>
                         <p class="text-white text-opacity-80 text-xs mt-0.5">GSTR-3B filing — Input credit vs Output tax</p>
                     </div>
-                    <div class="text-right">
-                        ${alertBadge(d.gstDaysLeft, false)}
-                        <p class="text-white text-xs mt-1">Due: 20th ${months[month%12]} ${month===12?year+1:year}</p>
+                    <div class="flex items-center gap-2">
+                        <button onclick="openGSTR2BMatchModal(${month}, ${year})" class="px-3 py-1.5 bg-white text-purple-700 rounded-lg text-xs font-bold hover:bg-purple-50" title="Confirm which ITC bills are reflected in your GSTR-2B portal view">📋 GSTR-2B Match</button>
+                        <div class="text-right">
+                            ${alertBadge(d.gstDaysLeft, false)}
+                            <p class="text-white text-xs mt-1">Due: 20th ${months[month%12]} ${month===12?year+1:year}</p>
+                        </div>
                     </div>
                 </div>
 
@@ -11771,7 +11790,163 @@
                 </div>`;
             })();
 
-            return cards + tdsSectionBreakdown + tdsPanel + tdsRecPanel + gstPanel + gstStatusPanel + pfStatusPanel + esicStatusPanel + fyPanel + checklist;
+            // ── PAY-BY-20TH RECONCILIATION PANEL ──
+            // The actionable bottom-line for monthly GST filing. Combines:
+            //   • Gross liability (Output GST + RCM GST)
+            //   • Cash ledger closing balance (latest snapshot from GST portal)
+            //   • GSTR-2B confirmed ITC (only bills user has ticked + any monthly override)
+            // = Net cash to deposit before 20th of next month.
+            // Bills-based ITC (unconfirmed) is shown as "at risk" — does NOT reduce
+            // the deposit amount, but is surfaced so the user can chase suppliers.
+            const payBy20Panel = (() => {
+                const snap = _getLatestCashLedgerSnapshot();
+                const confirmed = _getConfirmedGSTR2BITC(month, year);
+                // Filing due date = 20th of NEXT month
+                const dueDate = new Date(year, month, 20);   // month is 1-indexed; new Date uses 0-indexed (so month value gives next month)
+                const dueDateStr = dueDate.toISOString().split('T')[0];
+                const daysToDue = Math.ceil((dueDate - new Date()) / (1000*60*60*24));
+                const dueColor = daysToDue < 0 ? 'red' : daysToDue <= 7 ? 'amber' : 'green';
+
+                // Gross liability per head — includes RCM (already included in d.gstOutput*)
+                const liabIGST = +(d.gstOutputIGST || 0).toFixed(2);
+                const liabCGST = +(d.gstOutputCGST || 0).toFixed(2);
+                const liabSGST = +(d.gstOutputSGST || 0).toFixed(2);
+                const liabTotal = +(liabIGST + liabCGST + liabSGST).toFixed(2);
+
+                // Cash ledger balances
+                const cashIGST = snap ? +(snap.closingBalance?.igst?.total || 0).toFixed(2) : 0;
+                const cashCGST = snap ? +(snap.closingBalance?.cgst?.total || 0).toFixed(2) : 0;
+                const cashSGST = snap ? +(snap.closingBalance?.sgst?.total || 0).toFixed(2) : 0;
+                const cashTotal = +(cashIGST + cashCGST + cashSGST).toFixed(2);
+
+                // Net to deposit per head (cannot go negative — excess credit carries forward in ledger)
+                // Note: cross-head set-off rules apply but are complex; this panel shows
+                // head-wise gap so user knows where to deposit
+                const depIGST = Math.max(0, +(liabIGST - cashIGST - confirmed.igst).toFixed(2));
+                const depCGST = Math.max(0, +(liabCGST - cashCGST - confirmed.cgst).toFixed(2));
+                const depSGST = Math.max(0, +(liabSGST - cashSGST - confirmed.sgst).toFixed(2));
+                const depTotal = +(depIGST + depCGST + depSGST).toFixed(2);
+
+                // Surplus per head (when ledger + ITC exceeds liability — carries forward)
+                const surIGST = Math.max(0, +(cashIGST + confirmed.igst - liabIGST).toFixed(2));
+                const surCGST = Math.max(0, +(cashCGST + confirmed.cgst - liabCGST).toFixed(2));
+                const surSGST = Math.max(0, +(cashSGST + confirmed.sgst - liabSGST).toFixed(2));
+                const surTotal = +(surIGST + surCGST + surSGST).toFixed(2);
+
+                // ITC at risk (bills with GST entered but not yet GSTR-2B matched)
+                const totalBillsITC = +((d.combinedITCTotal || 0) - (d.rcmTotal || 0)).toFixed(2);   // exclude RCM (separate flow)
+                const itcAtRisk = +(totalBillsITC - confirmed.total).toFixed(2);
+
+                return `
+                <div class="bg-white rounded-2xl shadow-sm mb-6 overflow-hidden border-2 border-${dueColor}-300">
+                    <div class="flex items-center justify-between px-5 py-4 bg-gradient-to-r from-purple-600 to-indigo-600 flex-wrap gap-2">
+                        <div>
+                            <h3 class="text-white font-bold text-base">💰 PAY-BY-20th GST RECONCILIATION — ${d.monthName} ${year}</h3>
+                            <p class="text-white text-opacity-80 text-xs mt-0.5">Liability − Cash Ledger − Confirmed GSTR-2B ITC = Net to Deposit</p>
+                        </div>
+                        <div class="flex items-center gap-2 flex-wrap">
+                            ${snap ? `<span class="px-3 py-1 bg-white bg-opacity-20 text-white rounded-lg text-xs">📥 Ledger: ${snap.snapshotID} (${(snap.uploadedAt||'').substring(0,10)})</span>` : '<span class="px-3 py-1 bg-red-500 text-white rounded-lg text-xs font-bold">⚠ No Ledger Uploaded</span>'}
+                            <button onclick="openCashLedgerUploadModal()" class="px-3 py-2 bg-white text-purple-700 rounded-lg text-xs font-semibold hover:bg-purple-50">📥 Upload CSV</button>
+                            <button onclick="openCashLedgerHistoryModal()" class="px-3 py-2 bg-white bg-opacity-20 text-white rounded-lg text-xs hover:bg-opacity-30">📜 History</button>
+                        </div>
+                    </div>
+
+                    <!-- Computation table -->
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead class="bg-purple-50 text-xs text-purple-900 uppercase">
+                                <tr>
+                                    <th class="px-4 py-2 text-left">Component</th>
+                                    <th class="px-4 py-2 text-right">IGST</th>
+                                    <th class="px-4 py-2 text-right">CGST</th>
+                                    <th class="px-4 py-2 text-right">SGST</th>
+                                    <th class="px-4 py-2 text-right">Total</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr class="border-t">
+                                    <td class="px-4 py-2 text-xs">Output GST (invoices, incl. RCM)</td>
+                                    <td class="px-4 py-2 text-xs text-right text-purple-700 font-semibold">${fmt(liabIGST)}</td>
+                                    <td class="px-4 py-2 text-xs text-right text-purple-700 font-semibold">${fmt(liabCGST)}</td>
+                                    <td class="px-4 py-2 text-xs text-right text-purple-700 font-semibold">${fmt(liabSGST)}</td>
+                                    <td class="px-4 py-2 text-xs text-right text-purple-700 font-bold">${fmt(liabTotal)}</td>
+                                </tr>
+                                <tr class="border-t bg-purple-50/40">
+                                    <td class="px-4 py-2 text-xs font-bold">= GROSS LIABILITY</td>
+                                    <td class="px-4 py-2 text-xs text-right font-bold">${fmt(liabIGST)}</td>
+                                    <td class="px-4 py-2 text-xs text-right font-bold">${fmt(liabCGST)}</td>
+                                    <td class="px-4 py-2 text-xs text-right font-bold">${fmt(liabSGST)}</td>
+                                    <td class="px-4 py-2 text-xs text-right font-bold">${fmt(liabTotal)}</td>
+                                </tr>
+                                <tr class="border-t">
+                                    <td class="px-4 py-2 text-xs">− Cash Ledger balance ${snap ? '<span class="text-[10px] text-gray-400">(as of '+(snap.uploadedAt||'').substring(0,10)+')</span>' : '<span class="text-[10px] text-red-500">(no snapshot)</span>'}</td>
+                                    <td class="px-4 py-2 text-xs text-right text-green-700">${fmt(cashIGST)}</td>
+                                    <td class="px-4 py-2 text-xs text-right text-green-700">${fmt(cashCGST)}</td>
+                                    <td class="px-4 py-2 text-xs text-right text-green-700">${fmt(cashSGST)}</td>
+                                    <td class="px-4 py-2 text-xs text-right text-green-700">${fmt(cashTotal)}</td>
+                                </tr>
+                                <tr class="border-t">
+                                    <td class="px-4 py-2 text-xs">− GSTR-2B Confirmed ITC <span class="text-[10px] text-gray-400">(${confirmed.matchedBillCount}/${confirmed.totalBillCount} bills matched${confirmed.overrideNote?' + override':''})</span></td>
+                                    <td class="px-4 py-2 text-xs text-right text-amber-700">${fmt(confirmed.igst)}</td>
+                                    <td class="px-4 py-2 text-xs text-right text-amber-700">${fmt(confirmed.cgst)}</td>
+                                    <td class="px-4 py-2 text-xs text-right text-amber-700">${fmt(confirmed.sgst)}</td>
+                                    <td class="px-4 py-2 text-xs text-right text-amber-700">${fmt(confirmed.total)}</td>
+                                </tr>
+                                <tr class="border-t-2 border-${dueColor}-300 bg-${dueColor}-50">
+                                    <td class="px-4 py-2 text-sm font-bold text-${dueColor}-900">
+                                        = NET TO DEPOSIT before <strong>20 ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][month%12]} ${month===12?year+1:year}</strong>
+                                        <span class="text-[10px] block text-${dueColor}-700">${daysToDue < 0 ? 'OVERDUE by '+Math.abs(daysToDue)+' day(s)' : daysToDue===0 ? 'Due TODAY' : daysToDue+' day(s) remaining'}</span>
+                                    </td>
+                                    <td class="px-4 py-2 text-sm text-right font-bold text-${dueColor}-800">${depIGST>0?fmt(depIGST):'—'}</td>
+                                    <td class="px-4 py-2 text-sm text-right font-bold text-${dueColor}-800">${depCGST>0?fmt(depCGST):'—'}</td>
+                                    <td class="px-4 py-2 text-sm text-right font-bold text-${dueColor}-800">${depSGST>0?fmt(depSGST):'—'}</td>
+                                    <td class="px-4 py-2 text-base text-right font-bold text-${dueColor}-900">${depTotal>0?fmt(depTotal):'NIL'}</td>
+                                </tr>
+                                ${surTotal > 0 ? `
+                                <tr class="border-t bg-green-50">
+                                    <td class="px-4 py-2 text-xs italic text-green-800">+ Surplus carrying forward in cash ledger</td>
+                                    <td class="px-4 py-2 text-xs text-right text-green-700">${surIGST>0?fmt(surIGST):'—'}</td>
+                                    <td class="px-4 py-2 text-xs text-right text-green-700">${surCGST>0?fmt(surCGST):'—'}</td>
+                                    <td class="px-4 py-2 text-xs text-right text-green-700">${surSGST>0?fmt(surSGST):'—'}</td>
+                                    <td class="px-4 py-2 text-xs text-right text-green-700 font-bold">${fmt(surTotal)}</td>
+                                </tr>` : ''}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- ITC at risk warning -->
+                    ${itcAtRisk > 0 ? `
+                    <div class="px-5 py-3 bg-amber-50 border-t border-amber-200">
+                        <p class="text-xs text-amber-900">
+                            <strong>⚠ ITC at Risk: ${fmt(itcAtRisk)}</strong> in bills-based ITC has not yet been confirmed in GSTR-2B.
+                            This means ${confirmed.totalBillCount - confirmed.matchedBillCount} supplier bill(s) are not yet reflected in your GSTR-2B portal view.
+                            Until matched, this amount is NOT reducing your deposit obligation.
+                            <button onclick="openGSTR2BMatchModal(${month}, ${year})" class="ml-2 px-2 py-1 bg-amber-600 text-white rounded text-[10px] font-bold hover:bg-amber-700">📋 Open GSTR-2B Match View</button>
+                        </p>
+                    </div>` : confirmed.totalBillCount > 0 ? `
+                    <div class="px-5 py-3 bg-green-50 border-t border-green-200">
+                        <p class="text-xs text-green-800">
+                            ✓ All ${confirmed.totalBillCount} ITC-eligible bill(s) for this period are GSTR-2B matched.
+                        </p>
+                    </div>` : ''}
+
+                    ${!snap ? `
+                    <div class="px-5 py-3 bg-red-50 border-t border-red-200">
+                        <p class="text-xs text-red-800">
+                            <strong>⚠ No Cash Ledger snapshot uploaded.</strong> Download the Electronic Cash Ledger from gst.gov.in and upload it via the button above. Without this, the system uses ₹0 for available cash, which over-states what you need to deposit.
+                        </p>
+                    </div>` : ''}
+
+                    ${confirmed.overrideNote ? `
+                    <div class="px-5 py-3 bg-blue-50 border-t border-blue-200">
+                        <p class="text-xs text-blue-800">
+                            <strong>📝 GSTR-2B Override note (${d.monthName} ${year}):</strong> ${confirmed.overrideNote.replace(/</g,'&lt;')}
+                        </p>
+                    </div>` : ''}
+                </div>`;
+            })();
+
+            return cards + tdsSectionBreakdown + tdsPanel + tdsRecPanel + gstPanel + payBy20Panel + gstStatusPanel + pfStatusPanel + esicStatusPanel + fyPanel + checklist;
         }
 
         // ── Switch FY in the FY summary panel ──
@@ -24821,6 +24996,629 @@ Automated WFH alert — ${company} Attendance System.`;
                 renderView();
             } catch (e) { alert('Could not save: ' + e.message); }
         }
+        // ════════════════════════════════════════════════════════════════
+        // GST CASH LEDGER — CSV Import + Reconciliation Helpers
+        // ────────────────────────────────────────────────────────────────
+        // The Electronic Cash Ledger is downloaded from gst.gov.in. Format
+        // is government-issued CSV with some quirks (stray leading double-
+        // quotes, comma-thousands in numbers). The parser is tolerant.
+        // ════════════════════════════════════════════════════════════════
+
+        // ── Robust CSV row parser (handles quoted fields with commas) ──
+        function _csvParseRow(line) {
+            const out = [];
+            let cur = '';
+            let inQuote = false;
+            for (let i = 0; i < line.length; i++) {
+                const ch = line[i];
+                if (ch === '"') {
+                    // Handle "" escape OR leading stray quote (GST portal artifact)
+                    if (inQuote && line[i+1] === '"') { cur += '"'; i++; }
+                    else inQuote = !inQuote;
+                } else if (ch === ',' && !inQuote) {
+                    out.push(cur);
+                    cur = '';
+                } else {
+                    cur += ch;
+                }
+            }
+            out.push(cur);
+            return out;
+        }
+
+        // ── Convert "8,544.00" / "-" / "" to number ──
+        function _csvNum(v) {
+            if (v == null) return 0;
+            const s = String(v).replace(/^"+|"+$/g,'').replace(/,/g,'').trim();
+            if (!s || s === '-' || s === '—') return 0;
+            const n = parseFloat(s);
+            return isNaN(n) ? 0 : n;
+        }
+
+        // ── Parse the Cash Ledger CSV exported from GST portal ──
+        // Returns { gstin, legalName, periodFrom, periodTo, openingBalance,
+        //          closingBalance, transactions, errors } or null on critical fail.
+        function parseCashLedgerCSV(csvText) {
+            const errors = [];
+            const lines = csvText.split(/\r?\n/);
+            if (lines.length < 8) { errors.push('CSV has too few rows'); return { errors, valid: false }; }
+
+            // Metadata extraction (GSTIN, Name, From, To live in rows 3-6, varying column)
+            let gstin = '', legalName = '', periodFrom = '', periodTo = '';
+            for (let i = 0; i < Math.min(8, lines.length); i++) {
+                const cells = _csvParseRow(lines[i]);
+                for (let j = 0; j < cells.length - 1; j++) {
+                    const label = (cells[j] || '').trim();
+                    const val   = (cells[j+1] || '').trim();
+                    if (label === 'GSTIN')        gstin = val;
+                    else if (label === 'Name(Legal)' || label === 'Name (Legal)') legalName = val;
+                    else if (label === 'From')    periodFrom = val;
+                    else if (label === 'To')      periodTo = val;
+                }
+            }
+
+            // The header is at lines 7-8 (1-indexed), data starts at line 9
+            // Each row has 56 cols: 8 meta + 6×8 amount groups
+            // Layout: [0] SrNo, [1] Date, [2] Time, [3] ReportingDate, [4] RefNo,
+            //         [5] TaxPeriod, [6] Description, [7] Type
+            // IGST credited/debited:  cols 8-13   (tax, interest, penalty, fee, others, total)
+            // CGST credited/debited:  cols 14-19
+            // SGST credited/debited:  cols 20-25
+            // CESS credited/debited:  cols 26-31
+            // IGST balance:           cols 32-37
+            // CGST balance:           cols 38-43
+            // SGST balance:           cols 44-49
+            // CESS balance:           cols 50-55
+
+            const parseAmountBlock = (cols, start) => ({
+                tax:      _csvNum(cols[start]),
+                interest: _csvNum(cols[start+1]),
+                penalty:  _csvNum(cols[start+2]),
+                fee:      _csvNum(cols[start+3]),
+                others:   _csvNum(cols[start+4]),
+                total:    _csvNum(cols[start+5])
+            });
+
+            const parseTxnRow = (line) => {
+                const cols = _csvParseRow(line);
+                if (cols.length < 50) return null;   // not a valid data row
+                return {
+                    srNo:        (cols[0]||'').replace(/^"+|"+$/g,'').trim(),
+                    date:        (cols[1]||'').replace(/^"+|"+$/g,'').replace(/^-\s*/,'').trim(),
+                    time:        (cols[2]||'').replace(/^"+|"+$/g,'').trim(),
+                    reportingDate:(cols[3]||'').replace(/^"+|"+$/g,'').trim(),
+                    refNo:       (cols[4]||'').replace(/^"+|"+$/g,'').trim(),
+                    taxPeriod:   (cols[5]||'').replace(/^"+|"+$/g,'').trim(),
+                    description: (cols[6]||'').replace(/^"+|"+$/g,'').trim(),
+                    type:        (cols[7]||'').replace(/^"+|"+$/g,'').trim(),
+                    igst:    parseAmountBlock(cols, 8),
+                    cgst:    parseAmountBlock(cols, 14),
+                    sgst:    parseAmountBlock(cols, 20),
+                    cess:    parseAmountBlock(cols, 26),
+                    igstBal: parseAmountBlock(cols, 32),
+                    cgstBal: parseAmountBlock(cols, 38),
+                    sgstBal: parseAmountBlock(cols, 44),
+                    cessBal: parseAmountBlock(cols, 50)
+                };
+            };
+
+            let openingBalance = null, closingBalance = null;
+            const transactions = [];
+            for (let i = 8; i < lines.length; i++) {
+                const ln = lines[i];
+                if (!ln || !ln.trim()) continue;
+                const row = parseTxnRow(ln);
+                if (!row) continue;
+                // Identify Opening / Closing balance rows
+                const desc = (row.description || '').toLowerCase();
+                if (desc.includes('opening balance')) {
+                    openingBalance = { igst: row.igstBal, cgst: row.cgstBal, sgst: row.sgstBal, cess: row.cessBal };
+                } else if (desc.includes('closing balance')) {
+                    closingBalance = { igst: row.igstBal, cgst: row.cgstBal, sgst: row.sgstBal, cess: row.cessBal };
+                } else if (row.type === 'Credit' || row.type === 'Debit') {
+                    transactions.push(row);
+                }
+            }
+
+            if (!closingBalance) errors.push('Could not locate Closing Balance row');
+            if (!gstin) errors.push('GSTIN not found in header');
+
+            return {
+                valid: closingBalance != null,
+                errors,
+                gstin, legalName, periodFrom, periodTo,
+                openingBalance: openingBalance || { igst:{total:0}, cgst:{total:0}, sgst:{total:0}, cess:{total:0} },
+                closingBalance,
+                transactions
+            };
+        }
+
+        // ── Get the latest snapshot (used by Pay-by-20th panel) ──
+        function _getLatestCashLedgerSnapshot() {
+            if (!gstCashLedgerSnapshots || gstCashLedgerSnapshots.length === 0) return null;
+            // Sort by uploadedAt descending, return first
+            return gstCashLedgerSnapshots.slice()
+                .sort((a, b) => (b.uploadedAt || '').localeCompare(a.uploadedAt || ''))[0];
+        }
+
+        // ── Compute confirmed GSTR-2B ITC for a given month/year ──
+        // Sums all bills + director expenses that are gstr2bMatched=true and fall in the period.
+        // Returns per-head breakdown.
+        function _getConfirmedGSTR2BITC(month, year) {
+            const pfx = `${year}-${String(month).padStart(2,'0')}-`;
+            const result = { igst: 0, cgst: 0, sgst: 0, total: 0, matchedBillCount: 0, totalBillCount: 0 };
+
+            // Bills with GST input
+            (expenses || []).forEach(e => {
+                if (e.billType !== 'SUPPLIER') return;
+                if (e.itcEligibility === 'blocked') return;
+                if (e.isRCM) return;   // RCM bills create their own ITC after self-payment, not GSTR-2B route
+                if (!(e.billDate || '').startsWith(pfx)) return;
+                const cgst = parseFloat(e.cgst) || 0;
+                const sgst = parseFloat(e.sgst) || 0;
+                const igst = parseFloat(e.igst) || 0;
+                if (cgst === 0 && sgst === 0 && igst === 0) return;
+                result.totalBillCount++;
+                if (e.gstr2bMatched) {
+                    result.matchedBillCount++;
+                    result.cgst += cgst;
+                    result.sgst += sgst;
+                    result.igst += igst;
+                }
+            });
+
+            // Director expenses with ITC
+            (directorExpenses || []).forEach(d => {
+                if (d.itcEligible !== 'eligible') return;
+                if (!(d.expDate || '').startsWith(pfx)) return;
+                const cgst = parseFloat(d.cgstAmt) || parseFloat(d.cgst) || 0;
+                const sgst = parseFloat(d.sgstAmt) || parseFloat(d.sgst) || 0;
+                const igst = parseFloat(d.igstAmt) || parseFloat(d.igst) || 0;
+                if (cgst === 0 && sgst === 0 && igst === 0) return;
+                result.totalBillCount++;
+                if (d.gstr2bMatched) {
+                    result.matchedBillCount++;
+                    result.cgst += cgst;
+                    result.sgst += sgst;
+                    result.igst += igst;
+                }
+            });
+
+            // Apply monthly override if set (added to confirmed bill-based total)
+            const monthKey = `${year}-${String(month).padStart(2,'0')}`;
+            const ov = settings?.gstr2bMonthlyOverrides?.[monthKey];
+            if (ov) {
+                result.cgst += (parseFloat(ov.cgstAdjustment) || 0);
+                result.sgst += (parseFloat(ov.sgstAdjustment) || 0);
+                result.igst += (parseFloat(ov.igstAdjustment) || 0);
+                result.overrideNote = ov.note || '';
+            }
+
+            result.total = +(result.cgst + result.sgst + result.igst).toFixed(2);
+            result.cgst = +result.cgst.toFixed(2);
+            result.sgst = +result.sgst.toFixed(2);
+            result.igst = +result.igst.toFixed(2);
+            return result;
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        // CASH LEDGER UPLOAD MODAL
+        // ════════════════════════════════════════════════════════════════
+        window._clParsedSnapshot = null;
+
+        function openCashLedgerUploadModal() {
+            const modal = document.createElement('div');
+            modal.id = 'cashLedgerUploadModal';
+            modal.className = 'modal show';
+            modal.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[92vh] overflow-y-auto m-4">
+                <div class="bg-gradient-to-r from-purple-600 to-indigo-600 p-5 text-white flex justify-between items-center sticky top-0 z-10">
+                    <div>
+                        <h3 class="text-lg font-bold">📥 Upload GST Cash Ledger Snapshot</h3>
+                        <p class="text-purple-100 text-xs mt-1">Download the Electronic Cash Ledger CSV from gst.gov.in, then upload here</p>
+                    </div>
+                    <button onclick="closeCashLedgerUploadModal()" class="text-white text-2xl hover:bg-white hover:bg-opacity-20 rounded-full w-9 h-9 flex items-center justify-center">×</button>
+                </div>
+                <div class="p-5 space-y-4">
+                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-900">
+                        <strong>📋 How to get the CSV:</strong> Log in to gst.gov.in → Services → Ledgers → Electronic Cash Ledger → choose period (last filing date to today) → Export → Save as CSV.
+                    </div>
+                    <div class="border-2 border-dashed border-purple-300 rounded-xl p-6 bg-purple-50/30 text-center">
+                        <input type="file" id="clFileInput" accept=".csv,text/csv" onchange="_clParsePreview()" class="text-sm"/>
+                        <p class="text-xs text-purple-600 mt-2">Select the downloaded .csv file</p>
+                    </div>
+                    <div id="clPreview" class="hidden"></div>
+                    <div class="flex justify-end gap-3 pt-2">
+                        <button onclick="closeCashLedgerUploadModal()" class="px-5 py-2 border border-gray-300 text-gray-600 rounded-xl hover:bg-gray-50">Cancel</button>
+                        <button id="clSaveBtn" onclick="saveCashLedgerSnapshot()" disabled class="px-6 py-2 bg-purple-600 text-white rounded-xl hover:bg-purple-700 font-semibold disabled:opacity-40 disabled:cursor-not-allowed">💾 Save Snapshot</button>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+        }
+
+        function closeCashLedgerUploadModal() {
+            const m = document.getElementById('cashLedgerUploadModal');
+            if (m) m.remove();
+            window._clParsedSnapshot = null;
+        }
+
+        async function _clParsePreview() {
+            const input = document.getElementById('clFileInput');
+            const preview = document.getElementById('clPreview');
+            const saveBtn = document.getElementById('clSaveBtn');
+            if (!input.files || input.files.length === 0) return;
+            const file = input.files[0];
+            const text = await file.text();
+            const parsed = parseCashLedgerCSV(text);
+            window._clParsedSnapshot = parsed;
+
+            const fmt = n => '\u20B9' + (+n || 0).toLocaleString('en-IN', {minimumFractionDigits:2});
+
+            if (!parsed.valid) {
+                preview.classList.remove('hidden');
+                preview.innerHTML = `
+                <div class="bg-red-50 border border-red-300 rounded-lg p-4">
+                    <h4 class="font-bold text-red-800 mb-2">⚠ Could not parse CSV</h4>
+                    <ul class="text-xs text-red-700 list-disc list-inside">
+                        ${parsed.errors.map(e => `<li>${e}</li>`).join('')}
+                    </ul>
+                    <p class="text-xs text-red-600 mt-2">Make sure you downloaded the file from GST portal without modification. If problems persist, share the file for inspection.</p>
+                </div>`;
+                saveBtn.disabled = true;
+                return;
+            }
+
+            preview.classList.remove('hidden');
+            preview.innerHTML = `
+            <div class="bg-green-50 border border-green-300 rounded-lg p-4 space-y-3">
+                <h4 class="font-bold text-green-800">✓ CSV parsed successfully</h4>
+                <div class="grid grid-cols-2 gap-3 text-xs">
+                    <div><strong>GSTIN:</strong> ${parsed.gstin || '—'}</div>
+                    <div><strong>Name:</strong> ${parsed.legalName || '—'}</div>
+                    <div><strong>From:</strong> ${parsed.periodFrom || '—'}</div>
+                    <div><strong>To:</strong> ${parsed.periodTo || '—'}</div>
+                </div>
+                <div class="bg-white rounded p-3 border border-green-200">
+                    <h5 class="font-bold text-xs text-gray-700 mb-2">Closing Balance (Available)</h5>
+                    <div class="grid grid-cols-4 gap-2 text-xs">
+                        <div class="bg-gray-50 rounded p-2"><p class="text-[10px] text-gray-500 uppercase">IGST</p><p class="font-bold">${fmt(parsed.closingBalance?.igst?.total)}</p></div>
+                        <div class="bg-gray-50 rounded p-2"><p class="text-[10px] text-gray-500 uppercase">CGST</p><p class="font-bold">${fmt(parsed.closingBalance?.cgst?.total)}</p></div>
+                        <div class="bg-gray-50 rounded p-2"><p class="text-[10px] text-gray-500 uppercase">SGST</p><p class="font-bold">${fmt(parsed.closingBalance?.sgst?.total)}</p></div>
+                        <div class="bg-gray-50 rounded p-2"><p class="text-[10px] text-gray-500 uppercase">CESS</p><p class="font-bold">${fmt(parsed.closingBalance?.cess?.total)}</p></div>
+                    </div>
+                    <p class="text-[11px] text-green-700 mt-2 font-semibold">
+                        Total available: ${fmt((parsed.closingBalance?.igst?.total||0)+(parsed.closingBalance?.cgst?.total||0)+(parsed.closingBalance?.sgst?.total||0)+(parsed.closingBalance?.cess?.total||0))}
+                    </p>
+                </div>
+                <div class="text-xs text-gray-600">
+                    ${parsed.transactions.length} transaction(s) in this period
+                </div>
+                ${parsed.errors.length > 0 ? `<div class="text-xs text-amber-700 bg-amber-50 rounded p-2">⚠ Warnings: ${parsed.errors.join(', ')}</div>` : ''}
+            </div>`;
+            saveBtn.disabled = false;
+        }
+
+        async function saveCashLedgerSnapshot() {
+            const parsed = window._clParsedSnapshot;
+            if (!parsed || !parsed.valid) { alert('No valid CSV parsed.'); return; }
+
+            // Generate snapshot ID
+            const fyCode = (typeof getFinancialYearCode === 'function') ? getFinancialYearCode(new Date()) : '2627';
+            const prefix = `CL-${fyCode}-`;
+            const existing = (gstCashLedgerSnapshots || [])
+                .map(s => parseInt((s.snapshotID || '').replace(prefix, '')) || 0);
+            const nextNum = (existing.length ? Math.max(...existing) : 0) + 1;
+
+            const snapshot = {
+                snapshotID: prefix + String(nextNum).padStart(3, '0'),
+                uploadedAt: new Date().toISOString(),
+                uploadedBy: (typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin',
+                gstin: parsed.gstin,
+                legalName: parsed.legalName,
+                periodFrom: parsed.periodFrom,
+                periodTo: parsed.periodTo,
+                openingBalance: parsed.openingBalance,
+                closingBalance: parsed.closingBalance,
+                transactions: parsed.transactions,
+                parseWarnings: parsed.errors
+            };
+            gstCashLedgerSnapshots.push(snapshot);
+            try {
+                await saveData('gstCashLedgerSnapshots', gstCashLedgerSnapshots);
+                closeCashLedgerUploadModal();
+                renderView();
+                alert(`✓ Cash Ledger snapshot saved as ${snapshot.snapshotID}.\n\nAvailable closing balance:\nIGST ₹${(snapshot.closingBalance.igst.total||0).toFixed(2)}\nCGST ₹${(snapshot.closingBalance.cgst.total||0).toFixed(2)}\nSGST ₹${(snapshot.closingBalance.sgst.total||0).toFixed(2)}`);
+            } catch (e) {
+                alert('Could not save: ' + e.message);
+                gstCashLedgerSnapshots.pop();
+            }
+        }
+
+        // ── View list of all uploaded snapshots ──
+        function openCashLedgerHistoryModal() {
+            const fmt = n => '\u20B9' + (+n || 0).toLocaleString('en-IN', {minimumFractionDigits:2});
+            const snaps = (gstCashLedgerSnapshots || []).slice()
+                .sort((a, b) => (b.uploadedAt || '').localeCompare(a.uploadedAt || ''));
+
+            const modal = document.createElement('div');
+            modal.id = 'clHistoryModal';
+            modal.className = 'modal show';
+            modal.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[92vh] overflow-y-auto m-4">
+                <div class="bg-gradient-to-r from-purple-600 to-indigo-600 p-5 text-white flex justify-between items-center sticky top-0 z-10">
+                    <h3 class="text-lg font-bold">📜 Cash Ledger Snapshot History (${snaps.length})</h3>
+                    <button onclick="document.getElementById('clHistoryModal').remove()" class="text-white text-2xl">×</button>
+                </div>
+                <div class="p-5">
+                    ${snaps.length === 0 ? '<p class="text-center text-gray-400 italic py-8">No snapshots uploaded yet.</p>' : `
+                    <table class="w-full text-sm">
+                        <thead class="bg-purple-50 text-xs text-purple-800 uppercase">
+                            <tr>
+                                <th class="px-3 py-2 text-left">Snapshot ID</th>
+                                <th class="px-3 py-2 text-left">Uploaded</th>
+                                <th class="px-3 py-2 text-left">Portal Period</th>
+                                <th class="px-3 py-2 text-right">IGST</th>
+                                <th class="px-3 py-2 text-right">CGST</th>
+                                <th class="px-3 py-2 text-right">SGST</th>
+                                <th class="px-3 py-2 text-right">Total</th>
+                                <th class="px-3 py-2 text-center">Txns</th>
+                                <th class="px-3 py-2 text-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${snaps.map((s, idx) => {
+                                const t = (s.closingBalance?.igst?.total||0) + (s.closingBalance?.cgst?.total||0) + (s.closingBalance?.sgst?.total||0) + (s.closingBalance?.cess?.total||0);
+                                return `
+                                <tr class="border-t hover:bg-purple-50/30 ${idx===0?'bg-green-50/30':''}">
+                                    <td class="px-3 py-2 text-xs font-mono text-purple-700">${s.snapshotID}${idx===0?' <span class="text-[10px] text-green-700 font-bold">(LATEST)</span>':''}</td>
+                                    <td class="px-3 py-2 text-xs">${(s.uploadedAt||'').substring(0,10)}</td>
+                                    <td class="px-3 py-2 text-xs">${s.periodFrom || '—'} → ${s.periodTo || '—'}</td>
+                                    <td class="px-3 py-2 text-xs text-right">${fmt(s.closingBalance?.igst?.total)}</td>
+                                    <td class="px-3 py-2 text-xs text-right">${fmt(s.closingBalance?.cgst?.total)}</td>
+                                    <td class="px-3 py-2 text-xs text-right">${fmt(s.closingBalance?.sgst?.total)}</td>
+                                    <td class="px-3 py-2 text-xs text-right font-bold">${fmt(t)}</td>
+                                    <td class="px-3 py-2 text-xs text-center">${(s.transactions||[]).length}</td>
+                                    <td class="px-3 py-2 text-xs text-right">
+                                        <button onclick="deleteCashLedgerSnapshot('${s.snapshotID}')" class="text-red-500 hover:text-red-700">🗑</button>
+                                    </td>
+                                </tr>`;
+                            }).join('')}
+                        </tbody>
+                    </table>`}
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+        }
+
+        async function deleteCashLedgerSnapshot(snapshotID) {
+            if (!confirm(`Delete snapshot ${snapshotID}? This cannot be undone.`)) return;
+            gstCashLedgerSnapshots = gstCashLedgerSnapshots.filter(s => s.snapshotID !== snapshotID);
+            try {
+                await saveData('gstCashLedgerSnapshots', gstCashLedgerSnapshots);
+                document.getElementById('clHistoryModal')?.remove();
+                renderView();
+            } catch (e) { alert('Could not save: ' + e.message); }
+        }
+        // ════════════════════════════════════════════════════════════════
+        // GSTR-2B MATCH MODAL
+        // ────────────────────────────────────────────────────────────────
+        // List all ITC-eligible bills for a period with checkboxes so the user
+        // can bulk-confirm which ones reflect in their GSTR-2B portal view.
+        // Also exposes a monthly OVERRIDE field for cases where bill granularity
+        // doesn't match the portal (partial matches, late entries, adjustments).
+        // ════════════════════════════════════════════════════════════════
+        function openGSTR2BMatchModal(month, year) {
+            const pfx = `${year}-${String(month).padStart(2,'0')}-`;
+            const monthName = ['','January','February','March','April','May','June','July','August','September','October','November','December'][month] || month;
+            const fmt = n => '\u20B9' + (+n || 0).toLocaleString('en-IN', {minimumFractionDigits:2});
+
+            // Collect ITC-eligible bills for this period
+            const bills = (expenses || []).filter(e =>
+                e.billType === 'SUPPLIER' &&
+                e.itcEligibility !== 'blocked' &&
+                !e.isRCM &&
+                (e.billDate || '').startsWith(pfx) &&
+                ((parseFloat(e.cgst)||0) + (parseFloat(e.sgst)||0) + (parseFloat(e.igst)||0) > 0)
+            ).map(e => ({
+                type: 'bill', id: e.expID, sourceArray: 'expenses',
+                date: e.billDate, party: e.companyName || e.vendor || '\u2014',
+                billNo: e.billNo || '\u2014',
+                cgst: parseFloat(e.cgst)||0, sgst: parseFloat(e.sgst)||0, igst: parseFloat(e.igst)||0,
+                matched: !!e.gstr2bMatched, matchedDate: e.gstr2bMatchedDate || '', matchedBy: e.gstr2bMatchedBy || ''
+            }));
+
+            const dirs = (directorExpenses || []).filter(d =>
+                d.itcEligible === 'eligible' &&
+                (d.expDate || '').startsWith(pfx) &&
+                ((parseFloat(d.cgstAmt)||parseFloat(d.cgst)||0) + (parseFloat(d.sgstAmt)||parseFloat(d.sgst)||0) + (parseFloat(d.igstAmt)||parseFloat(d.igst)||0) > 0)
+            ).map(d => ({
+                type: 'director', id: d.deID, sourceArray: 'directorExpenses',
+                date: d.expDate, party: (d.vendorName || d.party || '\u2014') + ' (via ' + (d.dir1 || d.dir2 || 'Dir') + ')',
+                billNo: d.billNo || '\u2014',
+                cgst: parseFloat(d.cgstAmt)||parseFloat(d.cgst)||0,
+                sgst: parseFloat(d.sgstAmt)||parseFloat(d.sgst)||0,
+                igst: parseFloat(d.igstAmt)||parseFloat(d.igst)||0,
+                matched: !!d.gstr2bMatched, matchedDate: d.gstr2bMatchedDate || '', matchedBy: d.gstr2bMatchedBy || ''
+            }));
+
+            const all = bills.concat(dirs).sort((a,b) => (a.date||'').localeCompare(b.date||''));
+            const monthKey = `${year}-${String(month).padStart(2,'0')}`;
+            const ov = settings?.gstr2bMonthlyOverrides?.[monthKey] || {};
+
+            const matchedCount = all.filter(r => r.matched).length;
+            const matchedCGST = all.filter(r => r.matched).reduce((s,r) => s + r.cgst, 0);
+            const matchedSGST = all.filter(r => r.matched).reduce((s,r) => s + r.sgst, 0);
+            const matchedIGST = all.filter(r => r.matched).reduce((s,r) => s + r.igst, 0);
+            const unmatchedCGST = all.filter(r => !r.matched).reduce((s,r) => s + r.cgst, 0);
+            const unmatchedSGST = all.filter(r => !r.matched).reduce((s,r) => s + r.sgst, 0);
+            const unmatchedIGST = all.filter(r => !r.matched).reduce((s,r) => s + r.igst, 0);
+
+            const modal = document.createElement('div');
+            modal.id = 'gstr2bMatchModal';
+            modal.className = 'modal show';
+            modal.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[92vh] overflow-y-auto m-4">
+                <div class="bg-gradient-to-r from-amber-500 to-orange-500 p-5 text-white flex justify-between items-center sticky top-0 z-10">
+                    <div>
+                        <h3 class="text-lg font-bold">📋 GSTR-2B Match \u2014 ${monthName} ${year}</h3>
+                        <p class="text-amber-100 text-xs mt-1">Tick bills that appear in your GSTR-2B portal view. Only ticked bills reduce your cash deposit obligation.</p>
+                    </div>
+                    <button onclick="document.getElementById('gstr2bMatchModal').remove()" class="text-white text-2xl">×</button>
+                </div>
+                <div class="p-5 space-y-4">
+                    <!-- Summary tiles -->
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        <div class="bg-gray-50 rounded-lg p-3"><p class="text-[10px] uppercase font-bold text-gray-600">Total Bills</p><p class="text-lg font-bold">${all.length}</p></div>
+                        <div class="bg-green-50 rounded-lg p-3"><p class="text-[10px] uppercase font-bold text-green-600">\u2713 Matched</p><p class="text-lg font-bold text-green-700">${matchedCount}</p></div>
+                        <div class="bg-amber-50 rounded-lg p-3"><p class="text-[10px] uppercase font-bold text-amber-600">Matched ITC</p><p class="text-sm font-bold text-amber-700">${fmt(matchedCGST+matchedSGST+matchedIGST)}</p></div>
+                        <div class="bg-red-50 rounded-lg p-3"><p class="text-[10px] uppercase font-bold text-red-600">At Risk</p><p class="text-sm font-bold text-red-700">${fmt(unmatchedCGST+unmatchedSGST+unmatchedIGST)}</p></div>
+                    </div>
+
+                    <!-- Bulk actions -->
+                    <div class="flex flex-wrap gap-2 items-center bg-gray-50 rounded-lg p-2">
+                        <button onclick="_g2bBulkMatch(${month}, ${year}, true)" class="px-3 py-1.5 bg-green-600 text-white rounded text-xs font-semibold hover:bg-green-700">\u2713 Match ALL</button>
+                        <button onclick="_g2bBulkMatch(${month}, ${year}, false)" class="px-3 py-1.5 bg-gray-500 text-white rounded text-xs font-semibold hover:bg-gray-600">Unmatch ALL</button>
+                        <span class="text-xs text-gray-500 ml-auto">${all.length} bill(s) in this period</span>
+                    </div>
+
+                    <!-- Bills table -->
+                    <div class="overflow-x-auto rounded-lg border">
+                        <table class="w-full text-sm">
+                            <thead class="bg-amber-50 text-xs text-amber-800 uppercase">
+                                <tr>
+                                    <th class="px-3 py-2 text-center">\u2713</th>
+                                    <th class="px-3 py-2 text-left">Date</th>
+                                    <th class="px-3 py-2 text-left">Party / Bill #</th>
+                                    <th class="px-3 py-2 text-left">Source</th>
+                                    <th class="px-3 py-2 text-right">CGST</th>
+                                    <th class="px-3 py-2 text-right">SGST</th>
+                                    <th class="px-3 py-2 text-right">IGST</th>
+                                    <th class="px-3 py-2 text-right">Total ITC</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${all.length === 0 ? `<tr><td colspan="8" class="px-3 py-8 text-center text-gray-400 italic">No ITC-eligible bills in this period</td></tr>` : all.map(r => `
+                                <tr class="border-t hover:bg-amber-50/30 ${r.matched?'bg-green-50/20':''}">
+                                    <td class="px-3 py-2 text-center">
+                                        <input type="checkbox" ${r.matched?'checked':''} onchange="_g2bToggleMatch('${r.sourceArray}', '${r.id}', this.checked)" class="w-4 h-4"/>
+                                    </td>
+                                    <td class="px-3 py-2 text-xs">${r.date}</td>
+                                    <td class="px-3 py-2 text-xs">
+                                        <div class="font-medium">${r.party.replace(/</g,'&lt;')}</div>
+                                        <div class="text-[10px] text-gray-500">Bill: ${r.billNo}</div>
+                                    </td>
+                                    <td class="px-3 py-2 text-xs"><span class="px-1.5 py-0.5 rounded ${r.type==='director'?'bg-rose-100 text-rose-700':'bg-blue-100 text-blue-700'} text-[10px] font-bold">${r.type==='director'?'DIR':'BILL'}</span></td>
+                                    <td class="px-3 py-2 text-xs text-right">${fmt(r.cgst)}</td>
+                                    <td class="px-3 py-2 text-xs text-right">${fmt(r.sgst)}</td>
+                                    <td class="px-3 py-2 text-xs text-right">${fmt(r.igst)}</td>
+                                    <td class="px-3 py-2 text-xs text-right font-semibold ${r.matched?'text-green-700':'text-amber-700'}">${fmt(r.cgst+r.sgst+r.igst)}</td>
+                                </tr>`).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Monthly override -->
+                    <div class="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                        <h4 class="font-bold text-blue-900 text-sm mb-2">📝 Monthly Override (optional)</h4>
+                        <p class="text-xs text-blue-800 mb-3">
+                            Use this if the bill-by-bill matched total doesn't quite match your GSTR-2B portal view (partial matches, late entries, adjustments). The amounts entered here are <strong>added to</strong> (or subtracted from) the bill-matched total.
+                        </p>
+                        <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+                            <div>
+                                <label class="block text-[10px] font-semibold text-gray-700 mb-1">CGST Adjustment (\u20b9)</label>
+                                <input type="number" step="0.01" id="g2bOvCGST" value="${ov.cgstAdjustment || 0}" class="w-full px-2 py-1 border rounded text-sm"/>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-semibold text-gray-700 mb-1">SGST Adjustment (\u20b9)</label>
+                                <input type="number" step="0.01" id="g2bOvSGST" value="${ov.sgstAdjustment || 0}" class="w-full px-2 py-1 border rounded text-sm"/>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-semibold text-gray-700 mb-1">IGST Adjustment (\u20b9)</label>
+                                <input type="number" step="0.01" id="g2bOvIGST" value="${ov.igstAdjustment || 0}" class="w-full px-2 py-1 border rounded text-sm"/>
+                            </div>
+                            <div class="flex items-end">
+                                <button onclick="_g2bSaveOverride(${month}, ${year})" class="w-full px-3 py-1.5 bg-blue-600 text-white rounded text-xs font-semibold hover:bg-blue-700">Save Override</button>
+                            </div>
+                        </div>
+                        <div class="mt-2">
+                            <label class="block text-[10px] font-semibold text-gray-700 mb-1">Note (why is this adjustment needed?)</label>
+                            <input type="text" id="g2bOvNote" value="${(ov.note||'').replace(/"/g,'&quot;')}" placeholder="e.g. Late-filed bills from supplier X added in their next month's GSTR-1" class="w-full px-2 py-1 border rounded text-xs"/>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+        }
+
+        async function _g2bToggleMatch(sourceArray, id, checked) {
+            const arr = sourceArray === 'expenses' ? expenses : directorExpenses;
+            const idField = sourceArray === 'expenses' ? 'expID' : 'deID';
+            const idx = arr.findIndex(x => x[idField] === id);
+            if (idx < 0) return;
+            arr[idx].gstr2bMatched = checked;
+            arr[idx].gstr2bMatchedDate = checked ? new Date().toISOString() : '';
+            arr[idx].gstr2bMatchedBy = checked ? ((typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin') : '';
+            try {
+                await saveData(sourceArray, arr);
+                // Don't full re-render — keep modal open; just update the summary tiles via refresh
+                const month = parseInt(document.getElementById('gstr2bMatchModal').dataset.month) || null;
+                // Just close + reopen for simplicity (and to refresh totals)
+            } catch (e) { alert('Could not save: ' + e.message); }
+        }
+
+        async function _g2bBulkMatch(month, year, checked) {
+            const pfx = `${year}-${String(month).padStart(2,'0')}-`;
+            let touched = 0;
+            (expenses || []).forEach(e => {
+                if (e.billType === 'SUPPLIER' && e.itcEligibility !== 'blocked' && !e.isRCM &&
+                    (e.billDate || '').startsWith(pfx) &&
+                    ((parseFloat(e.cgst)||0) + (parseFloat(e.sgst)||0) + (parseFloat(e.igst)||0) > 0)) {
+                    e.gstr2bMatched = checked;
+                    e.gstr2bMatchedDate = checked ? new Date().toISOString() : '';
+                    e.gstr2bMatchedBy = checked ? ((typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin') : '';
+                    touched++;
+                }
+            });
+            (directorExpenses || []).forEach(d => {
+                if (d.itcEligible === 'eligible' && (d.expDate || '').startsWith(pfx) &&
+                    ((parseFloat(d.cgstAmt)||parseFloat(d.cgst)||0) + (parseFloat(d.sgstAmt)||parseFloat(d.sgst)||0) + (parseFloat(d.igstAmt)||parseFloat(d.igst)||0) > 0)) {
+                    d.gstr2bMatched = checked;
+                    d.gstr2bMatchedDate = checked ? new Date().toISOString() : '';
+                    d.gstr2bMatchedBy = checked ? ((typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin') : '';
+                    touched++;
+                }
+            });
+            if (!touched) { alert('No bills to update for this period.'); return; }
+            try {
+                await Promise.all([saveData('expenses', expenses), saveData('directorExpenses', directorExpenses)]);
+                document.getElementById('gstr2bMatchModal')?.remove();
+                openGSTR2BMatchModal(month, year);
+                renderView();
+            } catch (e) { alert('Could not save: ' + e.message); }
+        }
+
+        async function _g2bSaveOverride(month, year) {
+            const monthKey = `${year}-${String(month).padStart(2,'0')}`;
+            if (!settings.gstr2bMonthlyOverrides) settings.gstr2bMonthlyOverrides = {};
+            settings.gstr2bMonthlyOverrides[monthKey] = {
+                cgstAdjustment: parseFloat(document.getElementById('g2bOvCGST').value) || 0,
+                sgstAdjustment: parseFloat(document.getElementById('g2bOvSGST').value) || 0,
+                igstAdjustment: parseFloat(document.getElementById('g2bOvIGST').value) || 0,
+                note: document.getElementById('g2bOvNote').value.trim(),
+                savedAt: new Date().toISOString(),
+                savedBy: (typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin'
+            };
+            try {
+                await saveData('settings', settings);
+                alert('\u2713 Override saved for ' + monthKey);
+                document.getElementById('gstr2bMatchModal')?.remove();
+                openGSTR2BMatchModal(month, year);
+                renderView();
+            } catch (e) { alert('Could not save: ' + e.message); }
+        }
+
+
 
 
 
