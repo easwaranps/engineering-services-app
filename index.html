@@ -13297,6 +13297,24 @@
 
                 ${renderPCOfficesSettings()}
 
+                <!-- Data Corrections — admin utilities for fixing historical data issues -->
+                <div class="bg-white rounded-2xl shadow-lg p-6 mt-6">
+                    <h3 class="text-xl font-bold text-orange-700 mb-2">🔧 Data Corrections</h3>
+                    <p class="text-xs text-gray-500 mb-4">One-click utilities for fixing historical data issues. Each utility shows a preview before applying changes.</p>
+
+                    <!-- RCM Net Payable Recompute -->
+                    <div class="border border-orange-200 rounded-lg p-4 bg-orange-50/30">
+                        <div class="flex justify-between items-start gap-3">
+                            <div class="flex-1">
+                                <h4 class="font-bold text-orange-800 text-sm">Recompute Net Payable for RCM Bills</h4>
+                                <p class="text-xs text-gray-600 mt-1">Earlier the save logic added GST to the bill amount even for RCM (Section 9(3)) bills — so RCM bills got <strong>netPayable = billAmount + GST</strong> instead of <strong>netPayable = billAmount</strong>. RCM GST goes to govt directly, not to the vendor, so the displayed Net Payable should equal the bill amount.</p>
+                                <p class="text-xs text-orange-700 mt-1">Click to scan all RCM bills and fix any with an inflated netPayable. Bills with correctly-computed netPayable are skipped (no double-correction).</p>
+                            </div>
+                            <button onclick="recomputeRCMNetPayable()" class="whitespace-nowrap px-4 py-2 bg-orange-600 text-white rounded-lg text-sm font-semibold hover:bg-orange-700">🔧 Recompute Now</button>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Staff Edit Control -->
                 <div class="bg-white rounded-2xl shadow-lg p-6 mt-6">
                     <div class="flex justify-between items-center">
@@ -19006,6 +19024,202 @@ Automated WFH alert — ${company} Attendance System.`;
             }
         }
 
+        // ════════════════════════════════════════════════════════════════
+        // DATA CORRECTION — Recompute Net Payable for RCM Bills
+        // ────────────────────────────────────────────────────────────────
+        // Historical bug: saveExpense used `grossTotal = billINR + totalTax`
+        // unconditionally — even for RCM bills. Since RCM GST is paid to govt
+        // directly (not to the vendor), the netPayable on RCM bills was
+        // inflated by the GST amount. Stored values like ₹1,988.30 for a
+        // ₹1,685 + 18% GST rent bill should have been ₹1,685.
+        //
+        // This corrector scans all bills where rcmApplicable === true,
+        // recomputes netPayable using the corrected formula, and saves any
+        // that need fixing. Bills already at the correct value are skipped.
+        // ════════════════════════════════════════════════════════════════
+        async function recomputeRCMNetPayable() {
+            const candidates = (expenses || []).filter(e => e.rcmApplicable === true);
+            if (candidates.length === 0) {
+                alert('No RCM bills found in the system. Nothing to recompute.');
+                return;
+            }
+
+            // Compute the corrected values for each candidate.
+            // Correct formula for RCM:
+            //   grossTotal = billAmtINR              (excluded GST — paid to govt directly)
+            //   netAmt     = grossTotal − tdsAmt
+            //   netPayable = grossTotal − tdsAmt − creditNote − advanceAmt
+            const changes = [];
+            for (const e of candidates) {
+                const billINR    = parseFloat(e.billAmtINR) || 0;
+                const tdsAmt     = parseFloat(e.tdsAmt) || 0;
+                const creditNote = parseFloat(e.creditNote) || 0;
+                const advAmt     = parseFloat(e.advanceAmt) || 0;
+
+                const correctGross  = billINR;
+                const correctNetAmt = +(correctGross - tdsAmt).toFixed(2);
+                const correctNetPay = +(correctGross - tdsAmt - creditNote - advAmt).toFixed(2);
+
+                const currentGross  = parseFloat(e.totalBillAmt) || 0;
+                const currentNetAmt = parseFloat(e.netAmt) || 0;
+                const currentNetPay = parseFloat(e.netPayable) || 0;
+                const currentBal    = parseFloat(e.balanceAmt) || 0;
+
+                // Bill is "wrong" if any of these differ by more than 1 paisa
+                const grossWrong  = Math.abs(currentGross  - correctGross)  > 0.01;
+                const netAmtWrong = Math.abs(currentNetAmt - correctNetAmt) > 0.01;
+                const netPayWrong = Math.abs(currentNetPay - correctNetPay) > 0.01;
+
+                if (!grossWrong && !netAmtWrong && !netPayWrong) continue;   // already correct
+
+                // For paid bills: balanceAmt is netPayable - (amount already paid).
+                // Recompute balance if it was previously inflated.
+                // If the bill was marked Paid with the OLD inflated amount, the recorded
+                // payment amount probably matches the old netPayable. So the new balance
+                // would be (new netPayable) - (old netPayable) = a negative number.
+                // We treat this as "overpaid by GST amount" — but in practice the user paid
+                // only the vendor amount, so we adjust balance to 0 if the bill is marked Paid.
+                let correctBalance;
+                if (e.payStatus === 'Paid') {
+                    correctBalance = 0;
+                } else {
+                    correctBalance = correctNetPay;
+                }
+
+                changes.push({
+                    expID: e.expID,
+                    vendor: e.companyName || e.vendor || '—',
+                    billNo: e.billNo,
+                    billDate: e.billDate,
+                    billINR,
+                    oldGross: currentGross, newGross: correctGross,
+                    oldNetAmt: currentNetAmt, newNetAmt: correctNetAmt,
+                    oldNetPay: currentNetPay, newNetPay: correctNetPay,
+                    oldBal: currentBal, newBal: correctBalance,
+                    payStatus: e.payStatus,
+                    // ref to the actual record (so we can mutate after preview confirm)
+                    _ref: e
+                });
+            }
+
+            if (changes.length === 0) {
+                alert(`Scanned ${candidates.length} RCM bill(s). All netPayable values are already correct — no changes needed.`);
+                return;
+            }
+
+            // Show preview modal with the proposed changes
+            const fmt = n => '₹' + (+n || 0).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            const modal = document.createElement('div');
+            modal.id = 'rcmRecomputeModal';
+            modal.className = 'modal show';
+            modal.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[92vh] overflow-y-auto m-4">
+                <div class="bg-gradient-to-r from-orange-500 to-orange-600 p-5 text-white flex justify-between items-center sticky top-0 z-10">
+                    <div>
+                        <h3 class="text-lg font-bold">🔧 RCM Net Payable Recompute — Preview</h3>
+                        <p class="text-orange-100 text-xs mt-1">${changes.length} RCM bill(s) have stale netPayable. Review the proposed changes below, then click Apply.</p>
+                    </div>
+                    <button onclick="document.getElementById('rcmRecomputeModal').remove()" class="text-white text-2xl">×</button>
+                </div>
+                <div class="p-5">
+                    <div class="overflow-x-auto rounded-lg border border-orange-200">
+                        <table class="w-full text-sm">
+                            <thead class="bg-orange-50 text-xs text-orange-800 uppercase">
+                                <tr>
+                                    <th class="px-3 py-2 text-left">Bill ID</th>
+                                    <th class="px-3 py-2 text-left">Vendor</th>
+                                    <th class="px-3 py-2 text-left">Date</th>
+                                    <th class="px-3 py-2 text-right">Bill (INR)</th>
+                                    <th class="px-3 py-2 text-right">Old Net Pay</th>
+                                    <th class="px-3 py-2 text-right">New Net Pay</th>
+                                    <th class="px-3 py-2 text-right">Diff</th>
+                                    <th class="px-3 py-2 text-center">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${changes.map(c => `
+                                <tr class="border-t">
+                                    <td class="px-3 py-2 text-xs font-mono">${c.expID}</td>
+                                    <td class="px-3 py-2 text-xs">${(c.vendor||'').replace(/</g,'&lt;')}</td>
+                                    <td class="px-3 py-2 text-xs">${c.billDate||''}</td>
+                                    <td class="px-3 py-2 text-xs text-right">${fmt(c.billINR)}</td>
+                                    <td class="px-3 py-2 text-xs text-right text-red-700 line-through">${fmt(c.oldNetPay)}</td>
+                                    <td class="px-3 py-2 text-xs text-right text-green-700 font-bold">${fmt(c.newNetPay)}</td>
+                                    <td class="px-3 py-2 text-xs text-right text-orange-700">−${fmt(c.oldNetPay - c.newNetPay)}</td>
+                                    <td class="px-3 py-2 text-xs text-center">${c.payStatus||'—'}</td>
+                                </tr>`).join('')}
+                            </tbody>
+                            <tfoot class="bg-orange-50 font-bold">
+                                <tr>
+                                    <td colspan="4" class="px-3 py-2 text-xs">TOTALS (${changes.length} bill${changes.length===1?'':'s'})</td>
+                                    <td class="px-3 py-2 text-xs text-right text-red-700">${fmt(changes.reduce((s,c) => s + c.oldNetPay, 0))}</td>
+                                    <td class="px-3 py-2 text-xs text-right text-green-700">${fmt(changes.reduce((s,c) => s + c.newNetPay, 0))}</td>
+                                    <td class="px-3 py-2 text-xs text-right text-orange-700">−${fmt(changes.reduce((s,c) => s + (c.oldNetPay - c.newNetPay), 0))}</td>
+                                    <td></td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mt-4 text-xs text-blue-900">
+                        <strong>What this does:</strong>
+                        <ul class="list-disc list-inside mt-1 space-y-0.5">
+                            <li><code>totalBillAmt</code>, <code>netAmt</code>, <code>netPayable</code> recomputed using the RCM-aware formula</li>
+                            <li>For bills marked <strong>Paid</strong>, balance is set to ₹0 (you only paid the vendor amount — GST was deposited separately)</li>
+                            <li>Other fields (CGST, SGST, IGST, billAmtINR, payStatus, payDate, payRef, etc.) are NOT touched</li>
+                            <li>Linked Payment Request items remain unchanged — the audit trail is preserved</li>
+                        </ul>
+                    </div>
+                    <div class="flex justify-end gap-3 pt-4">
+                        <button onclick="document.getElementById('rcmRecomputeModal').remove()" class="px-5 py-2 border border-gray-300 text-gray-600 rounded-xl hover:bg-gray-50">Cancel</button>
+                        <button onclick="_applyRCMRecompute()" class="px-6 py-2 bg-orange-600 text-white rounded-xl hover:bg-orange-700 font-bold">🔧 Apply ${changes.length} Correction${changes.length===1?'':'s'}</button>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+            // Stash the change set on window so _applyRCMRecompute can pick it up
+            window._rcmPendingChanges = changes;
+        }
+
+        async function _applyRCMRecompute() {
+            const changes = window._rcmPendingChanges || [];
+            if (changes.length === 0) { alert('No pending changes.'); return; }
+
+            // Mutate the actual expense records via the stashed _ref
+            for (const c of changes) {
+                const e = c._ref;
+                if (!e) continue;
+                e.totalBillAmt = c.newGross;
+                e.netAmt       = c.newNetAmt;
+                e.netPayable   = c.newNetPay;
+                e.balanceAmt   = c.newBal;
+                // Audit trail of the correction
+                e.updatedAt    = new Date().toISOString();
+                e.rcmRecomputedAt = new Date().toISOString();
+                e.rcmRecomputedBy = (typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin';
+            }
+
+            try {
+                await saveData('expenses', expenses);
+                document.getElementById('rcmRecomputeModal')?.remove();
+                renderView();
+                alert(`✓ Recomputed netPayable for ${changes.length} RCM bill${changes.length===1?'':'s'}.\n\nTotal reduction in stored netPayable: ₹${changes.reduce((s,c)=>s+(c.oldNetPay-c.newNetPay),0).toFixed(2)}\n\nThe Expenses & Bills list, Tax tab, and Payment Request views will now show the corrected amounts.`);
+                window._rcmPendingChanges = null;
+            } catch (e) {
+                alert('⚠ Could not save: ' + (e.message || e) + '\n\nNo changes have been persisted. Try again or check Drive permissions.');
+                // Roll back in-memory changes
+                for (const c of changes) {
+                    const exp = c._ref;
+                    if (!exp) continue;
+                    exp.totalBillAmt = c.oldGross;
+                    exp.netAmt       = c.oldNetAmt;
+                    exp.netPayable   = c.oldNetPay;
+                    exp.balanceAmt   = c.oldBal;
+                    delete exp.rcmRecomputedAt;
+                    delete exp.rcmRecomputedBy;
+                }
+            }
+        }
+
         function generatePaySlipPDF(){const techV=!document.getElementById('twSection')?.classList.contains('hidden'),offV=!document.getElementById('opSection')?.classList.contains('hidden');if(techV)_pdfTech();else if(offV)_pdfOffice();else alert('Please select a staff member first.');}
         function _pdfHdr(doc,l1,l2,l3){doc.setFillColor(224,242,254);doc.rect(0,0,210,40,'F');doc.setFillColor(186,230,253);doc.rect(0,36,210,4,'F');doc.setFontSize(17);doc.setFont('helvetica','bold');doc.setTextColor(15,23,72);doc.text(l1,105,13,{align:'center'});doc.setFontSize(11);doc.setFont('helvetica','normal');doc.setTextColor(30,64,175);doc.text(l2,105,23,{align:'center'});doc.setFontSize(8.5);doc.setTextColor(71,85,105);doc.text(l3,105,31,{align:'center'});doc.setTextColor(0,0,0);}
         function _pdfTech(){
@@ -24153,7 +24367,10 @@ Automated WFH alert — ${company} Attendance System.`;
                                     <td class="px-3 py-2 text-xs text-right text-red-700">−${fmt(s.totalExpenses)}</td>
                                     <td class="px-3 py-2 text-xs text-right text-green-700">+${fmt(s.totalReplenishments)}</td>
                                     <td class="px-3 py-2 text-xs text-right font-bold">${fmt(s.closingBalance)}</td>
-                                    <td class="px-3 py-2 text-xs text-center"><span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${statusColor}">${s.status}</span></td>
+                                    <td class="px-3 py-2 text-xs text-center">
+                                        <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${statusColor}">${s.status}</span>
+                                        ${s.tallyVoucherNo ? `<div class="text-[10px] text-blue-600 mt-0.5">📒 ${s.tallyVoucherNo}${s.tallyVoucherAttachment?' <button onclick="viewPCTallyVoucher(\''+s.statementID+'\')" class="text-purple-600 hover:text-purple-800" title="View Tally voucher PDF">📎</button>':''}</div>` : ''}
+                                    </td>
                                     <td class="px-3 py-2 text-xs text-right whitespace-nowrap">
                                         <button onclick="openPCStatementDetail('${s.statementID}')" class="text-indigo-600 hover:text-indigo-800 text-xs font-medium mr-1">Open</button>
                                         <button onclick="exportPCStatementPDF('${s.statementID}')" class="text-red-600 hover:text-red-800 text-xs font-medium" title="PDF">📄</button>
@@ -24753,9 +24970,25 @@ Automated WFH alert — ${company} Attendance System.`;
                         <textarea id="pcsdRemarks" rows="2" class="w-full px-3 py-2 border rounded-lg text-sm" ${s.status==='TallyPosted'?'disabled':''}>${(s.verifierRemarks||'').replace(/</g,'&lt;')}</textarea>
                     </div>
                     ${s.status === 'Verified' || s.tallyPosted ? `
-                    <div>
-                        <label class="block text-xs font-semibold text-gray-700 mb-1">Tally Voucher No${!s.tallyPosted?' *':''}</label>
-                        <input type="text" id="pcsdTallyVoucher" value="${s.tallyVoucherNo||''}" placeholder="e.g. PV/2026/0023" ${s.tallyPosted?'disabled':''} class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Tally Voucher No${!s.tallyPosted?' *':''}</label>
+                            <input type="text" id="pcsdTallyVoucher" value="${s.tallyVoucherNo||''}" placeholder="e.g. PV/2026/0023" ${s.tallyPosted?'disabled':''} class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Tally Voucher PDF (optional)</label>
+                            ${s.tallyVoucherAttachment ? `
+                            <div class="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded px-3 py-1.5">
+                                <span class="text-xs flex-1 truncate" title="${(s.tallyVoucherAttachment.name||'voucher').replace(/"/g,'&quot;')}">📎 ${(s.tallyVoucherAttachment.name||'Voucher PDF').substring(0,30)}</span>
+                                <button onclick="viewPCTallyVoucher('${s.statementID}')" class="text-blue-600 hover:text-blue-800 text-xs font-medium">View</button>
+                                ${!s.tallyPosted ? `<button onclick="removePCTallyVoucher('${s.statementID}')" class="text-red-500 hover:text-red-700 text-xs" title="Remove">✕</button>` : `<button onclick="replacePCTallyVoucher('${s.statementID}')" class="text-amber-600 hover:text-amber-800 text-xs font-medium" title="Replace attachment (audit log preserved)">Replace</button>`}
+                            </div>` : `
+                            <div class="flex items-center gap-2">
+                                <input type="file" id="pcsdTallyVoucherFile" accept="application/pdf,image/*" class="text-xs flex-1"/>
+                                <button onclick="uploadPCTallyVoucher('${s.statementID}')" class="px-3 py-1.5 bg-purple-600 text-white rounded text-xs font-semibold hover:bg-purple-700">Upload</button>
+                            </div>
+                            <p class="text-[10px] text-gray-400 mt-1">PDF of the voucher you created in Tally — keeps the audit trail self-contained</p>`}
+                        </div>
                     </div>` : ''}
                     <div class="flex justify-end gap-2 pt-2">
                         ${canVerify && allVerified ? `<button onclick="verifyPCStatement('${s.statementID}')" class="px-5 py-2 bg-green-600 text-white rounded-xl hover:bg-green-700 font-semibold">✓ Verify Statement</button>` : ''}
@@ -24814,6 +25047,124 @@ Automated WFH alert — ${company} Attendance System.`;
                 renderView();
                 alert(`✓ Posted to Tally as ${voucherNo}\n\n${(s.expenseTxnIDs||[]).length + (s.replenishmentTxnIDs||[]).length} transactions stamped.`);
             } catch (e) { alert('Could not save: ' + e.message); }
+        }
+
+        // ── Tally Voucher PDF Attachment (statement-level) ──
+        // Optional PDF/image upload representing the voucher entry made in Tally.
+        // Kept on the statement record (not on individual txns). Stored in same
+        // Drive subfolder as petty cash bills for organisational consistency.
+        async function uploadPCTallyVoucher(statementID) {
+            const idx = pettyCashStatements.findIndex(s => s.statementID === statementID);
+            if (idx < 0) return;
+            const input = document.getElementById('pcsdTallyVoucherFile');
+            if (!input || !input.files || input.files.length === 0) {
+                alert('Please choose a file first.'); return;
+            }
+            const file = input.files[0];
+            if (file.size > 15 * 1024 * 1024) {
+                alert('File too large (max 15 MB). Please compress the PDF or upload only the relevant pages.');
+                return;
+            }
+            try {
+                const folderId = await getOrCreateSubFolder('PettyCash_Bills');
+                const fileId   = await uploadFileToDriveFolder(file, folderId);
+                pettyCashStatements[idx].tallyVoucherAttachment = {
+                    driveFileId: fileId,
+                    name:        file.name,
+                    type:        file.type,
+                    size:        file.size,
+                    uploadedAt:  new Date().toISOString(),
+                    uploadedBy:  (typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin'
+                };
+                pettyCashStatements[idx].updatedAt = new Date().toISOString();
+                await saveData('pettyCashStatements', pettyCashStatements);
+                document.getElementById('pcStmtDetailModal')?.remove();
+                openPCStatementDetail(statementID);
+                renderView();
+            } catch (e) {
+                console.error('Tally voucher upload failed:', e);
+                alert('Upload failed: ' + (e.message || e));
+            }
+        }
+
+        async function removePCTallyVoucher(statementID) {
+            const idx = pettyCashStatements.findIndex(s => s.statementID === statementID);
+            if (idx < 0) return;
+            const s = pettyCashStatements[idx];
+            // Block removal once the statement is Tally-posted (audit integrity).
+            // Use Replace instead, which keeps the previous attachment in history.
+            if (s.tallyPosted) {
+                alert('Cannot remove a Tally voucher attachment after the statement is posted. Use "Replace" to upload a corrected version (the old one is preserved in the history).');
+                return;
+            }
+            if (!confirm('Remove the attached Tally voucher PDF?')) return;
+            delete pettyCashStatements[idx].tallyVoucherAttachment;
+            pettyCashStatements[idx].updatedAt = new Date().toISOString();
+            try {
+                await saveData('pettyCashStatements', pettyCashStatements);
+                document.getElementById('pcStmtDetailModal')?.remove();
+                openPCStatementDetail(statementID);
+            } catch (e) { alert('Could not save: ' + e.message); }
+        }
+
+        // Replace allows correcting the attachment AFTER posting (e.g. uploaded wrong file).
+        // Old attachment is moved to tallyVoucherAttachmentHistory[] so the audit trail is preserved.
+        async function replacePCTallyVoucher(statementID) {
+            const idx = pettyCashStatements.findIndex(s => s.statementID === statementID);
+            if (idx < 0) return;
+            const s = pettyCashStatements[idx];
+            // File picker via a temporary input
+            const tmp = document.createElement('input');
+            tmp.type = 'file';
+            tmp.accept = 'application/pdf,image/*';
+            tmp.onchange = async () => {
+                if (!tmp.files || tmp.files.length === 0) return;
+                const file = tmp.files[0];
+                if (file.size > 15 * 1024 * 1024) { alert('File too large (max 15 MB).'); return; }
+                if (!confirm(`Replace the existing Tally voucher attachment?\n\nCurrent: ${s.tallyVoucherAttachment?.name||'?'}\nNew: ${file.name}\n\nThe previous attachment will be preserved in the statement's history (not deleted from Drive).`)) return;
+                try {
+                    const folderId = await getOrCreateSubFolder('PettyCash_Bills');
+                    const fileId   = await uploadFileToDriveFolder(file, folderId);
+                    // Push current attachment into history before overwriting
+                    if (!Array.isArray(pettyCashStatements[idx].tallyVoucherAttachmentHistory)) {
+                        pettyCashStatements[idx].tallyVoucherAttachmentHistory = [];
+                    }
+                    if (pettyCashStatements[idx].tallyVoucherAttachment) {
+                        pettyCashStatements[idx].tallyVoucherAttachmentHistory.push({
+                            ...pettyCashStatements[idx].tallyVoucherAttachment,
+                            replacedAt: new Date().toISOString(),
+                            replacedBy: (typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin'
+                        });
+                    }
+                    pettyCashStatements[idx].tallyVoucherAttachment = {
+                        driveFileId: fileId,
+                        name:        file.name,
+                        type:        file.type,
+                        size:        file.size,
+                        uploadedAt:  new Date().toISOString(),
+                        uploadedBy:  (typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin'
+                    };
+                    pettyCashStatements[idx].updatedAt = new Date().toISOString();
+                    await saveData('pettyCashStatements', pettyCashStatements);
+                    document.getElementById('pcStmtDetailModal')?.remove();
+                    openPCStatementDetail(statementID);
+                    renderView();
+                } catch (e) {
+                    console.error('Tally voucher replace failed:', e);
+                    alert('Replace failed: ' + (e.message || e));
+                }
+            };
+            tmp.click();
+        }
+
+        function viewPCTallyVoucher(statementID) {
+            const s = (pettyCashStatements||[]).find(x => x.statementID === statementID);
+            if (!s || !s.tallyVoucherAttachment) return;
+            const a = s.tallyVoucherAttachment;
+            if (!a.driveFileId) { alert('Attachment metadata is incomplete — cannot open.'); return; }
+            const url = `https://drive.google.com/file/d/${a.driveFileId}/view`;
+            const w = window.open(url, '_blank');
+            if (!w) alert('Pop-up blocked — please allow pop-ups for this site to view attachments.');
         }
 
         async function deletePCStatement(statementID) {
