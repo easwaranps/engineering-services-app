@@ -24320,7 +24320,7 @@ Automated WFH alert — ${company} Attendance System.`;
                                     </td>
                                     <td class="px-3 py-2 text-xs text-center">
                                         ${t.tallyPosted
-                                            ? `<button onclick="openPCTxnTallyModal('${t.txnID}')" class="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-bold text-[10px] hover:bg-blue-200" title="Voucher: ${t.tallyVoucherNo||'?'} · click to view/edit/reverse">📒 ${t.tallyVoucherNo||'Posted'}</button>`
+                                            ? `<button onclick="openPCTxnTallyModal('${t.txnID}')" class="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-bold text-[10px] hover:bg-blue-200" title="Voucher: ${t.tallyVoucherNo||'?'}${(t.tallyVoucherAttachments||[]).length?' · '+(t.tallyVoucherAttachments||[]).length+' attachment(s)':''} · click to view/edit/reverse">📒 ${t.tallyVoucherNo||'Posted'}${(t.tallyVoucherAttachments||[]).length?' 📎':''}</button>`
                                             : (t.verified
                                                 ? `<button onclick="openPCTxnTallyModal('${t.txnID}')" class="px-2 py-0.5 rounded-full bg-amber-50 border border-amber-300 text-amber-700 font-semibold text-[10px] hover:bg-amber-100" title="Post this transaction to Tally with its own voucher #">📒 Post</button>`
                                                 : '<span class="text-gray-300" title="Verify the transaction first">—</span>')}
@@ -24651,13 +24651,17 @@ Automated WFH alert — ${company} Attendance System.`;
         // ────────────────────────────────────────────────────────────────
         // Each petty cash transaction can be posted to Tally with its own
         // voucher #. Provides a clean per-txn audit trail. The bill attachment
-        // serves as supporting document for the Tally voucher.
-        // The earlier bulk-per-statement posting still works for those who
-        // prefer one consolidated entry — both modes coexist.
+        // serves as the source document; an optional Tally voucher attachment
+        // (uploaded from this modal) is the accounting evidence.
+        // The earlier bulk-per-statement posting still works — both coexist.
         // ════════════════════════════════════════════════════════════════
+        window._pcVoucherStaged = [];
+
         function openPCTxnTallyModal(txnID) {
             const t = (pettyCashTransactions || []).find(x => x.txnID === txnID);
             if (!t) { alert('Transaction not found.'); return; }
+            // Initialise voucher staging with existing attachments (if any)
+            window._pcVoucherStaged = (t.tallyVoucherAttachments || []).slice();
             const office = (pettyCashOffices||[]).find(o => o.officeID === t.officeID);
             const fmt = n => '₹' + (+n||0).toLocaleString('en-IN', {minimumFractionDigits:2});
             const today = new Date().toISOString().split('T')[0];
@@ -24668,13 +24672,13 @@ Automated WFH alert — ${company} Attendance System.`;
             modal.id = 'pcTxnTallyModal';
             modal.className = 'modal show';
             modal.innerHTML = `
-            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg m-4">
-                <div class="bg-gradient-to-r from-blue-600 to-indigo-600 p-5 text-white flex justify-between items-center">
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto m-4">
+                <div class="bg-gradient-to-r from-blue-600 to-indigo-600 p-5 text-white flex justify-between items-center sticky top-0 z-10">
                     <div>
                         <h3 class="text-lg font-bold">📒 ${isPosted?'Tally Posting':'Post to Tally'} — ${t.txnID}</h3>
                         <p class="text-blue-100 text-xs mt-1">${office?.officeName||t.officeID} · ${typeLabel} · ${fmt(t.amount)}</p>
                     </div>
-                    <button onclick="document.getElementById('pcTxnTallyModal').remove()" class="text-white text-2xl">×</button>
+                    <button onclick="closePCTallyModal()" class="text-white text-2xl">×</button>
                 </div>
                 <div class="p-5 space-y-3">
                     <div class="bg-gray-50 rounded-lg p-3 text-xs space-y-1">
@@ -24699,15 +24703,74 @@ Automated WFH alert — ${company} Attendance System.`;
                         <label class="block text-xs font-semibold text-gray-700 mb-1">Posting Date</label>
                         <input type="date" id="pcTallyDate" value="${(t.tallyPostedAt||'').substring(0,10) || today}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
                     </div>
+                    <!-- Tally voucher document attachment (optional, separate from bill attachment) -->
+                    <div class="border-2 border-dashed border-blue-300 rounded-xl p-3 bg-blue-50/30">
+                        <label class="block text-xs font-bold text-blue-800 mb-2">📎 Tally Voucher Document <span class="text-gray-500 font-normal">(optional)</span></label>
+                        <p class="text-[10px] text-gray-500 mb-2">Upload a PDF / image of the voucher generated by Tally (for audit). Distinct from the bill attachment — both can coexist.</p>
+                        <input type="file" id="pcVoucherFileInput" accept="image/*,application/pdf" multiple onchange="_pcStageVoucherAttachment(event)" class="text-xs"/>
+                        <div id="pcVoucherStagedList" class="mt-2 space-y-1"></div>
+                    </div>
                     <div class="flex justify-end gap-3 pt-2">
                         ${isPosted ? `<button onclick="unpostPCTxnFromTally('${t.txnID}')" class="px-4 py-2 bg-red-100 text-red-700 rounded-xl hover:bg-red-200 text-sm">⏪ Reverse Posting</button>` : ''}
-                        <button onclick="document.getElementById('pcTxnTallyModal').remove()" class="px-4 py-2 border border-gray-300 text-gray-600 rounded-xl hover:bg-gray-50">Cancel</button>
+                        <button onclick="closePCTallyModal()" class="px-4 py-2 border border-gray-300 text-gray-600 rounded-xl hover:bg-gray-50">Cancel</button>
                         <button onclick="savePCTxnTally('${t.txnID}')" class="px-5 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-semibold">💾 ${isPosted?'Update':'Post'}</button>
                     </div>
                 </div>
             </div>`;
             document.body.appendChild(modal);
+            _pcRenderVoucherStagedList();
             setTimeout(() => document.getElementById('pcTallyVoucher')?.focus(), 50);
+        }
+
+        function closePCTallyModal() {
+            const m = document.getElementById('pcTxnTallyModal');
+            if (m) m.remove();
+            window._pcVoucherStaged = [];
+        }
+
+        async function _pcStageVoucherAttachment(event) {
+            const files = Array.from(event.target.files);
+            for (const file of files) {
+                try {
+                    const folderId = await getOrCreateSubFolder('PettyCash_TallyVouchers');
+                    const fileId   = await uploadFileToDriveFolder(file, folderId);
+                    window._pcVoucherStaged.push({
+                        driveFileId: fileId,
+                        name: file.name,
+                        type: file.type,
+                        size: file.size,
+                        uploadedAt: new Date().toISOString()
+                    });
+                    _pcRenderVoucherStagedList();
+                } catch (e) {
+                    console.error('Voucher upload failed:', e);
+                    alert('Could not upload ' + file.name + ': ' + (e.message || e));
+                }
+            }
+            event.target.value = '';
+        }
+
+        function _pcRenderVoucherStagedList() {
+            const list = document.getElementById('pcVoucherStagedList');
+            if (!list) return;
+            const atts = window._pcVoucherStaged || [];
+            if (atts.length === 0) {
+                list.innerHTML = '<p class="text-[10px] text-gray-400 italic">No voucher document attached yet</p>';
+                return;
+            }
+            list.innerHTML = atts.map((a, i) => `
+                <div class="flex items-center justify-between bg-white border border-blue-200 rounded px-2 py-1 text-xs">
+                    <span class="truncate">📎 ${(a.name||'voucher').substring(0,45)}</span>
+                    <div class="flex gap-1">
+                        ${a.driveFileId ? `<a href="https://drive.google.com/file/d/${a.driveFileId}/view" target="_blank" class="text-blue-600 hover:text-blue-800 px-1">View</a>` : ''}
+                        <button onclick="_pcRemoveVoucherStaged(${i})" class="text-red-500 hover:text-red-700 px-1">✕</button>
+                    </div>
+                </div>`).join('');
+        }
+
+        function _pcRemoveVoucherStaged(idx) {
+            window._pcVoucherStaged.splice(idx, 1);
+            _pcRenderVoucherStagedList();
         }
 
         async function savePCTxnTally(txnID) {
@@ -24717,22 +24780,26 @@ Automated WFH alert — ${company} Attendance System.`;
             const idx = pettyCashTransactions.findIndex(x => x.txnID === txnID);
             if (idx < 0) return;
             const t = pettyCashTransactions[idx];
+            // Snapshot for rollback
+            const snapshot = {
+                tallyPosted: t.tallyPosted, tallyVoucherNo: t.tallyVoucherNo,
+                tallyPostedAt: t.tallyPostedAt, tallyPostedBy: t.tallyPostedBy,
+                tallyVoucherAttachments: (t.tallyVoucherAttachments||[]).slice()
+            };
             t.tallyPosted = true;
             t.tallyVoucherNo = voucherNo;
             t.tallyPostedAt = postedDate ? new Date(postedDate).toISOString() : new Date().toISOString();
             t.tallyPostedBy = (typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin';
+            t.tallyVoucherAttachments = (window._pcVoucherStaged || []).slice();
             t.updatedAt = new Date().toISOString();
             try {
                 await saveData('pettyCashTransactions', pettyCashTransactions);
-                document.getElementById('pcTxnTallyModal')?.remove();
+                closePCTallyModal();
                 renderView();
-                alert(`✓ ${txnID} posted to Tally as ${voucherNo}`);
+                const attCount = t.tallyVoucherAttachments.length;
+                alert(`✓ ${txnID} posted to Tally as ${voucherNo}${attCount?'\nVoucher attachment(s): '+attCount:''}`);
             } catch (e) {
-                // Roll back
-                t.tallyPosted = false;
-                t.tallyVoucherNo = '';
-                t.tallyPostedAt = '';
-                t.tallyPostedBy = '';
+                Object.assign(t, snapshot);
                 alert('Could not save: ' + (e.message || e));
             }
         }
@@ -24741,16 +24808,21 @@ Automated WFH alert — ${company} Attendance System.`;
             const idx = pettyCashTransactions.findIndex(x => x.txnID === txnID);
             if (idx < 0) return;
             const t = pettyCashTransactions[idx];
-            if (!confirm(`Reverse the Tally posting for ${txnID}?\n\nVoucher # ${t.tallyVoucherNo||'?'} will be cleared from this transaction. This does NOT delete the voucher in Tally — you must delete it manually there.`)) return;
-            const snapshot = { tallyPosted: t.tallyPosted, tallyVoucherNo: t.tallyVoucherNo, tallyPostedAt: t.tallyPostedAt, tallyPostedBy: t.tallyPostedBy };
+            if (!confirm(`Reverse the Tally posting for ${txnID}?\n\nVoucher # ${t.tallyVoucherNo||'?'} and ${(t.tallyVoucherAttachments||[]).length} voucher attachment(s) will be cleared from this transaction. This does NOT delete the voucher in Tally — you must delete it manually there.`)) return;
+            const snapshot = {
+                tallyPosted: t.tallyPosted, tallyVoucherNo: t.tallyVoucherNo,
+                tallyPostedAt: t.tallyPostedAt, tallyPostedBy: t.tallyPostedBy,
+                tallyVoucherAttachments: (t.tallyVoucherAttachments||[]).slice()
+            };
             t.tallyPosted = false;
             t.tallyVoucherNo = '';
             t.tallyPostedAt = '';
             t.tallyPostedBy = '';
+            t.tallyVoucherAttachments = [];
             t.updatedAt = new Date().toISOString();
             try {
                 await saveData('pettyCashTransactions', pettyCashTransactions);
-                document.getElementById('pcTxnTallyModal')?.remove();
+                closePCTallyModal();
                 renderView();
             } catch (e) {
                 Object.assign(t, snapshot);
