@@ -11881,7 +11881,7 @@
                             <p class="text-white text-opacity-80 text-xs mt-0.5">Liability − Cash Ledger − Confirmed GSTR-2B ITC = Net to Deposit</p>
                         </div>
                         <div class="flex items-center gap-2 flex-wrap">
-                            ${snap ? `<span class="px-3 py-1 bg-white bg-opacity-20 text-white rounded-lg text-xs">📥 Ledger: ${snap.snapshotID} (${(snap.uploadedAt||'').substring(0,10)})</span>` : '<span class="px-3 py-1 bg-red-500 text-white rounded-lg text-xs font-bold">⚠ No Ledger Uploaded</span>'}
+                            ${snap ? `<span class="px-3 py-1 bg-white bg-opacity-20 text-white rounded-lg text-xs">📥 Ledger: ${snap.snapshotID} (${(snap.uploadedAt||'').substring(0,10)}) · ${(gstCashLedgerSnapshots||[]).length} total</span>` : `<span class="px-3 py-1 bg-red-500 text-white rounded-lg text-xs font-bold">⚠ No Ledger Uploaded (${(gstCashLedgerSnapshots||[]).length} snapshots in storage)</span>`}
                             <button onclick="openCashLedgerUploadModal()" class="px-3 py-2 bg-white text-purple-700 rounded-lg text-xs font-semibold hover:bg-purple-50">📥 Upload CSV</button>
                             <button onclick="openCashLedgerHistoryModal()" class="px-3 py-2 bg-white bg-opacity-20 text-white rounded-lg text-xs hover:bg-opacity-30">📜 History</button>
                         </div>
@@ -23965,6 +23965,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 const deficit  = Math.max(0, (parseFloat(o.imprestLimit) || 0) - balance);
                 const utilPct  = o.imprestLimit > 0 ? Math.min(100, (mtdSpend / o.imprestLimit) * 100) : 0;
                 const custodian = (staff || []).find(s => s.staffID === o.custodianStaffID);
+                const hasOpening = _pcOfficeHasOpening(o.officeID);
                 return `
                 <div class="bg-white rounded-2xl shadow-sm border border-amber-200 p-5">
                     <div class="flex justify-between items-start mb-3">
@@ -23972,11 +23973,18 @@ Automated WFH alert — ${company} Attendance System.`;
                             <h3 class="font-bold text-amber-800 text-base">🏢 ${o.officeName}</h3>
                             <p class="text-xs text-gray-500 mt-1">${o.location || '—'} · Custodian: <strong>${custodian?.name || o.custodianStaffName || '—'}</strong></p>
                         </div>
-                        <button onclick="openPCExpenseModal('${o.officeID}')" class="px-3 py-1.5 bg-amber-600 text-white rounded-lg text-xs font-semibold hover:bg-amber-700">+ Expense</button>
+                        <div class="flex gap-2">
+                            ${!hasOpening ? `<button onclick="openPCOpeningModal('${o.officeID}')" class="px-3 py-1.5 bg-orange-500 text-white rounded-lg text-xs font-semibold hover:bg-orange-600">🏁 Set Opening</button>` : ''}
+                            <button onclick="openPCExpenseModal('${o.officeID}')" class="px-3 py-1.5 bg-amber-600 text-white rounded-lg text-xs font-semibold hover:bg-amber-700">+ Expense</button>
+                        </div>
                     </div>
+                    ${!hasOpening ? `
+                    <div class="mb-3 bg-orange-50 border border-orange-300 rounded p-2 text-xs text-orange-800">
+                        ⚠ No opening balance recorded for this office. Click <strong>🏁 Set Opening</strong> above to enter the initial cash float. Until then, expenses make the float go negative.
+                    </div>` : ''}
                     <div class="grid grid-cols-3 gap-2 mb-2">
                         <div class="bg-amber-50 rounded p-2"><p class="text-[10px] text-amber-700 font-semibold uppercase">Float</p>
-                            <p class="text-sm font-bold text-amber-900">${fmt(balance)}</p>
+                            <p class="text-sm font-bold ${balance < 0 ? 'text-red-700' : 'text-amber-900'}">${fmt(balance)}</p>
                             <p class="text-[10px] text-gray-400">of ${fmt(o.imprestLimit||0)}</p></div>
                         <div class="bg-red-50 rounded p-2"><p class="text-[10px] text-red-600 font-semibold uppercase">MTD Spend</p>
                             <p class="text-sm font-bold text-red-700">${fmt(mtdSpend)}</p>
@@ -24945,11 +24953,15 @@ Automated WFH alert — ${company} Attendance System.`;
                                     <button onclick="deletePCOffice(${idx})" class="text-red-500 hover:text-red-700 text-xs" title="Delete">🗑</button>
                                 </div>
                             </div>
-                            ${!o.openingRecorded && o.imprestLimit > 0 ? `
+                            ${!_pcOfficeHasOpening(o.officeID) && o.imprestLimit > 0 ? `
                             <div class="mt-2 bg-amber-100 border border-amber-300 rounded p-2 text-xs text-amber-800 flex justify-between items-center">
                                 <span>⚠ No opening balance recorded yet. Record the initial cash float to start tracking.</span>
-                                <button onclick="recordPCOpeningBalance('${o.officeID}')" class="px-3 py-1 bg-amber-600 text-white rounded text-xs font-semibold">Record Opening</button>
-                            </div>` : ''}
+                                <button onclick="openPCOpeningModal('${o.officeID}')" class="px-3 py-1 bg-amber-600 text-white rounded text-xs font-semibold">Record Opening</button>
+                            </div>` : `
+                            <div class="mt-2 bg-green-50 border border-green-200 rounded p-2 text-xs text-green-800 flex justify-between items-center">
+                                <span>✓ Opening balance recorded</span>
+                                <button onclick="openPCOpeningModal('${o.officeID}')" class="px-3 py-1 border border-green-600 text-green-700 rounded text-xs font-semibold hover:bg-green-100">Edit Opening</button>
+                            </div>`}
                         </div>`;
                     }).join('')}
                 </div>`}
@@ -25001,43 +25013,144 @@ Automated WFH alert — ${company} Attendance System.`;
             renderView();
         }
 
-        async function recordPCOpeningBalance(officeID) {
+        // ── Does this office have an OPENING_BALANCE transaction recorded? ──
+        // Derived from data, not from a flag — robust against partial saves where
+        // pettyCashOffices.openingRecorded was set true but the transaction never
+        // got created. This is the single source of truth for "opening done".
+        function _pcOfficeHasOpening(officeID) {
+            return (pettyCashTransactions || []).some(t =>
+                t.officeID === officeID && t.txnType === 'OPENING_BALANCE'
+            );
+        }
+
+        // ── Find existing opening transaction for an office (or null) ──
+        function _pcGetOpeningTxn(officeID) {
+            return (pettyCashTransactions || []).find(t =>
+                t.officeID === officeID && t.txnType === 'OPENING_BALANCE'
+            ) || null;
+        }
+
+        // ── Proper modal for opening balance entry / edit (replaces prompt()) ──
+        // Older flow used browser prompt() which Chrome silently blocks after
+        // a few uses ("Prevent this site from creating additional dialogs"
+        // checkbox). This modal is reliable.
+        function openPCOpeningModal(officeID) {
             const o = (pettyCashOffices||[]).find(x => x.officeID === officeID);
-            if (!o) return;
-            const amt = prompt(`Record opening cash balance for ${o.officeName}.\n\nThis is the cash already on hand with the custodian before tracking started.\n\nAmount (₹):`, String(o.imprestLimit || 0));
-            if (amt === null) return;
-            const amount = parseFloat(amt) || 0;
-            if (amount < 0) { alert('Amount must be 0 or positive.'); return; }
-            const dateInput = prompt('Opening balance date (YYYY-MM-DD):', new Date().toISOString().split('T')[0]);
-            if (!dateInput || !/^\d{4}-\d{2}-\d{2}$/.test(dateInput)) { alert('Invalid date.'); return; }
-            const txn = {
-                txnID: generatePettyCashID('PC'),
-                officeID,
-                txnType: 'OPENING_BALANCE',
-                txnDate: dateInput,
-                amount: +amount.toFixed(2),
-                remarks: 'Opening balance recorded at system start',
-                verified: true,
-                verifiedBy: (typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin',
-                verifiedAt: new Date().toISOString(),
-                tallyPosted: false,
-                enteredBy: (typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin',
-                enteredAt: new Date().toISOString()
-            };
-            pettyCashTransactions.push(txn);
+            if (!o) { alert('Office not found.'); return; }
+            const existing = _pcGetOpeningTxn(officeID);
+            const today = new Date().toISOString().split('T')[0];
+            const defaultAmt  = existing ? existing.amount  : (parseFloat(o.imprestLimit) || 0);
+            const defaultDate = existing ? existing.txnDate : today;
+
+            // If existing is Tally-posted, don't allow editing — it would corrupt the audit trail
+            if (existing && existing.tallyPosted) {
+                alert(`Opening balance for ${o.officeName} is already posted to Tally (V# ${existing.tallyVoucherNo||'?'}). To correct it, post a separate Adjustment transaction instead.`);
+                return;
+            }
+
+            const modal = document.createElement('div');
+            modal.id = 'pcOpeningModal';
+            modal.className = 'modal show';
+            modal.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md m-4">
+                <div class="bg-gradient-to-r from-amber-500 to-amber-600 p-5 text-white flex justify-between items-center">
+                    <div>
+                        <h3 class="text-lg font-bold">🏁 ${existing?'Edit':'Record'} Opening Balance</h3>
+                        <p class="text-amber-100 text-xs mt-1">${o.officeName} · Custodian: ${o.custodianStaffName || '—'}</p>
+                    </div>
+                    <button onclick="document.getElementById('pcOpeningModal').remove()" class="text-white text-2xl">×</button>
+                </div>
+                <div class="p-5 space-y-3">
+                    <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900">
+                        Cash already on hand with the custodian at the start. This becomes the office's opening float — all subsequent expenses subtract from it, replenishments add to it.
+                        ${existing ? `<br/><strong class="text-orange-700">⚠ An opening was already recorded — saving will update the existing entry, not create a duplicate.</strong>` : ''}
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1">Opening Amount (₹) *</label>
+                        <input type="number" id="pcOpAmount" required min="0" step="0.01" value="${defaultAmt}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        <p class="text-[10px] text-gray-400 mt-1">Default suggestion is the office's imprest limit (₹${(parseFloat(o.imprestLimit)||0).toFixed(2)})</p>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1">Date *</label>
+                        <input type="date" id="pcOpDate" required value="${defaultDate}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        <p class="text-[10px] text-gray-400 mt-1">Use the date the custodian first received the cash</p>
+                    </div>
+                    <div class="flex justify-end gap-3 pt-2">
+                        <button onclick="document.getElementById('pcOpeningModal').remove()" class="px-5 py-2 border border-gray-300 text-gray-600 rounded-xl hover:bg-gray-50">Cancel</button>
+                        <button onclick="savePCOpening('${officeID}')" class="px-6 py-2 bg-amber-600 text-white rounded-xl hover:bg-amber-700 font-semibold">💾 Save Opening</button>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+            // Focus the amount field for fast entry
+            setTimeout(() => document.getElementById('pcOpAmount')?.focus(), 50);
+        }
+
+        async function savePCOpening(officeID) {
+            const amount = parseFloat(document.getElementById('pcOpAmount')?.value);
+            const date   = document.getElementById('pcOpDate')?.value;
+            if (!isFinite(amount) || amount < 0) { alert('Amount must be 0 or positive.'); return; }
+            if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) { alert('Date is required (YYYY-MM-DD).'); return; }
+
+            const o = (pettyCashOffices||[]).find(x => x.officeID === officeID);
+            if (!o) { alert('Office not found.'); return; }
+
+            const existing = _pcGetOpeningTxn(officeID);
+            const stamp = new Date().toISOString();
+            const userName = (typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin';
+
+            if (existing) {
+                // Update existing — preserve txnID and other audit fields
+                existing.amount    = +amount.toFixed(2);
+                existing.txnDate   = date;
+                existing.updatedAt = stamp;
+                existing.remarks   = `Opening balance (last edited by ${userName})`;
+            } else {
+                // Create new opening transaction
+                const txn = {
+                    txnID:    generatePettyCashID('PC'),
+                    officeID,
+                    txnType:  'OPENING_BALANCE',
+                    txnDate:  date,
+                    amount:   +amount.toFixed(2),
+                    remarks:  'Opening balance recorded at system start',
+                    verified: true,
+                    verifiedBy: userName,
+                    verifiedAt: stamp,
+                    tallyPosted: false,
+                    enteredBy: userName,
+                    enteredAt: stamp,
+                    updatedAt: stamp
+                };
+                pettyCashTransactions.push(txn);
+            }
+
+            // Best-effort: update the office's openingRecorded flag too (for any
+            // legacy code that still reads it). The _pcOfficeHasOpening helper
+            // doesn't depend on this flag, so it's just a courtesy.
             const oIdx = pettyCashOffices.findIndex(x => x.officeID === officeID);
             if (oIdx >= 0) {
                 pettyCashOffices[oIdx].openingRecorded = true;
-                pettyCashOffices[oIdx].updatedAt = new Date().toISOString();
+                pettyCashOffices[oIdx].updatedAt = stamp;
             }
+
             try {
-                await Promise.all([
-                    saveData('pettyCashTransactions', pettyCashTransactions),
-                    saveData('pettyCashOffices', pettyCashOffices)
-                ]);
+                await saveData('pettyCashTransactions', pettyCashTransactions);
+                try { await saveData('pettyCashOffices', pettyCashOffices); }
+                catch (e) { console.warn('Office flag save failed (non-critical):', e); }
+                document.getElementById('pcOpeningModal')?.remove();
                 renderView();
-            } catch (e) { alert('Could not save: ' + e.message); }
+                alert(`✓ Opening balance saved: ₹${amount.toLocaleString('en-IN',{minimumFractionDigits:2})} as of ${date}`);
+            } catch (e) {
+                alert('Could not save opening balance: ' + e.message);
+                // Roll back the in-memory push on failure to avoid duplicate on retry
+                if (!existing) pettyCashTransactions.pop();
+            }
         }
+
+        // Keep the legacy function name working in case anything still calls it,
+        // but route to the new modal.
+        function recordPCOpeningBalance(officeID) { openPCOpeningModal(officeID); }
         // ════════════════════════════════════════════════════════════════
         // GST CASH LEDGER — CSV Import + Reconciliation Helpers
         // ────────────────────────────────────────────────────────────────
@@ -25259,7 +25372,7 @@ Automated WFH alert — ${company} Attendance System.`;
                         <h3 class="text-lg font-bold">📥 Upload GST Cash Ledger Snapshot</h3>
                         <p class="text-purple-100 text-xs mt-1">Download the Electronic Cash Ledger CSV from gst.gov.in, then upload here</p>
                     </div>
-                    <button onclick="closeCashLedgerUploadModal()" class="text-white text-2xl hover:bg-white hover:bg-opacity-20 rounded-full w-9 h-9 flex items-center justify-center">×</button>
+                    <button onclick="closeCashLedgerUploadModal(true)" class="text-white text-2xl hover:bg-white hover:bg-opacity-20 rounded-full w-9 h-9 flex items-center justify-center" title="Close (will warn if unsaved)">×</button>
                 </div>
                 <div class="p-5 space-y-4">
                     <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-900">
@@ -25270,16 +25383,19 @@ Automated WFH alert — ${company} Attendance System.`;
                         <p class="text-xs text-purple-600 mt-2">Select the downloaded .csv file</p>
                     </div>
                     <div id="clPreview" class="hidden"></div>
-                    <div class="flex justify-end gap-3 pt-2">
-                        <button onclick="closeCashLedgerUploadModal()" class="px-5 py-2 border border-gray-300 text-gray-600 rounded-xl hover:bg-gray-50">Cancel</button>
-                        <button id="clSaveBtn" onclick="saveCashLedgerSnapshot()" disabled class="px-6 py-2 bg-purple-600 text-white rounded-xl hover:bg-purple-700 font-semibold disabled:opacity-40 disabled:cursor-not-allowed">💾 Save Snapshot</button>
+                    <div class="flex justify-end gap-3 pt-2 sticky bottom-0 bg-white border-t pt-3">
+                        <button onclick="closeCashLedgerUploadModal(true)" class="px-5 py-2 border border-gray-300 text-gray-600 rounded-xl hover:bg-gray-50">Cancel (discard)</button>
+                        <button id="clSaveBtn" onclick="saveCashLedgerSnapshot()" disabled class="px-6 py-3 bg-purple-600 text-white rounded-xl hover:bg-purple-700 font-bold text-base disabled:opacity-40 disabled:cursor-not-allowed">💾 Save Snapshot</button>
                     </div>
                 </div>
             </div>`;
             document.body.appendChild(modal);
         }
 
-        function closeCashLedgerUploadModal() {
+        function closeCashLedgerUploadModal(confirmIfUnsaved = false) {
+            if (confirmIfUnsaved && window._clParsedSnapshot && window._clParsedSnapshot.valid) {
+                if (!confirm('⚠ You parsed a CSV but did not click "Save Snapshot".\n\nClose without saving?')) return;
+            }
             const m = document.getElementById('cashLedgerUploadModal');
             if (m) m.remove();
             window._clParsedSnapshot = null;
@@ -25313,15 +25429,21 @@ Automated WFH alert — ${company} Attendance System.`;
 
             preview.classList.remove('hidden');
             preview.innerHTML = `
-            <div class="bg-green-50 border border-green-300 rounded-lg p-4 space-y-3">
-                <h4 class="font-bold text-green-800">✓ CSV parsed successfully</h4>
-                <div class="grid grid-cols-2 gap-3 text-xs">
+            <div class="bg-amber-50 border-2 border-amber-400 rounded-lg p-4 space-y-3">
+                <div class="flex items-start gap-3">
+                    <div class="text-3xl">📄</div>
+                    <div class="flex-1">
+                        <h4 class="font-bold text-amber-900 text-base">PREVIEW — Not Yet Saved</h4>
+                        <p class="text-xs text-amber-800 mt-1">CSV parsed OK. Review the numbers below, then click <strong>💾 Save Snapshot</strong> at the bottom to commit. Closing this dialog without saving will discard the upload.</p>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-3 text-xs bg-white rounded p-3 border border-amber-200">
                     <div><strong>GSTIN:</strong> ${parsed.gstin || '—'}</div>
                     <div><strong>Name:</strong> ${parsed.legalName || '—'}</div>
                     <div><strong>From:</strong> ${parsed.periodFrom || '—'}</div>
                     <div><strong>To:</strong> ${parsed.periodTo || '—'}</div>
                 </div>
-                <div class="bg-white rounded p-3 border border-green-200">
+                <div class="bg-white rounded p-3 border border-amber-200">
                     <h5 class="font-bold text-xs text-gray-700 mb-2">Closing Balance (Available)</h5>
                     <div class="grid grid-cols-4 gap-2 text-xs">
                         <div class="bg-gray-50 rounded p-2"><p class="text-[10px] text-gray-500 uppercase">IGST</p><p class="font-bold">${fmt(parsed.closingBalance?.igst?.total)}</p></div>
@@ -25337,8 +25459,14 @@ Automated WFH alert — ${company} Attendance System.`;
                     ${parsed.transactions.length} transaction(s) in this period
                 </div>
                 ${parsed.errors.length > 0 ? `<div class="text-xs text-amber-700 bg-amber-50 rounded p-2">⚠ Warnings: ${parsed.errors.join(', ')}</div>` : ''}
+                <div class="bg-amber-100 border border-amber-300 rounded p-2 text-center text-xs font-bold text-amber-900">
+                    ↓ Scroll down and click <span class="bg-purple-600 text-white px-2 py-0.5 rounded">💾 Save Snapshot</span> to commit this data ↓
+                </div>
             </div>`;
             saveBtn.disabled = false;
+            // Pulse animation on Save button to draw attention
+            saveBtn.classList.add('animate-pulse');
+            saveBtn.textContent = '💾 Save Snapshot — Click to Commit';
         }
 
         async function saveCashLedgerSnapshot() {
@@ -25368,12 +25496,17 @@ Automated WFH alert — ${company} Attendance System.`;
             gstCashLedgerSnapshots.push(snapshot);
             try {
                 await saveData('gstCashLedgerSnapshots', gstCashLedgerSnapshots);
-                closeCashLedgerUploadModal();
+                // Save succeeded → show success FIRST, then close modal, then re-render.
+                // (Earlier order closed modal before alert which made it feel abrupt.)
+                alert(`✓ Cash Ledger snapshot saved as ${snapshot.snapshotID}.\n\nAvailable closing balance:\nIGST ₹${(snapshot.closingBalance.igst.total||0).toFixed(2)}\nCGST ₹${(snapshot.closingBalance.cgst.total||0).toFixed(2)}\nSGST ₹${(snapshot.closingBalance.sgst.total||0).toFixed(2)}\n\nTotal snapshots stored: ${gstCashLedgerSnapshots.length}`);
+                window._clParsedSnapshot = null;   // mark as saved so close doesn't warn
+                const m = document.getElementById('cashLedgerUploadModal');
+                if (m) m.remove();
                 renderView();
-                alert(`✓ Cash Ledger snapshot saved as ${snapshot.snapshotID}.\n\nAvailable closing balance:\nIGST ₹${(snapshot.closingBalance.igst.total||0).toFixed(2)}\nCGST ₹${(snapshot.closingBalance.cgst.total||0).toFixed(2)}\nSGST ₹${(snapshot.closingBalance.sgst.total||0).toFixed(2)}`);
             } catch (e) {
-                alert('Could not save: ' + e.message);
-                gstCashLedgerSnapshots.pop();
+                gstCashLedgerSnapshots.pop();   // rollback
+                console.error('Cash Ledger save error:', e);
+                alert('⚠ Could not save snapshot.\n\nError: ' + (e.message || e) + '\n\nThe data has NOT been saved. Common causes:\n• Drive permission lost (re-login)\n• Network issue\n• Drive quota exceeded\n\nTry again, or share the error message for help.');
             }
         }
 
