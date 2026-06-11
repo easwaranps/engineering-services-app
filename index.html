@@ -5164,7 +5164,23 @@
                 doc.setFont(undefined, 'normal');
                 doc.text(docTitle + ' No: ' + txn.txnID,   14, startY);
                 doc.text('Date: '   + txn.txnDate,          14, startY + 6);
-                if (txn.reference) doc.text('Ref: ' + txn.reference, 14, startY + 12);
+
+                // ── Reference (multi-line wrap so long subjects don't overflow) ──
+                // The Ref field is a freeform textarea; users often put Date, Subject,
+                // Vessel, Engine details etc. on one line separated by ";". Without
+                // wrapping, the text runs off the right edge of the PDF.
+                // We wrap to 180mm (full usable width minus margins) and push subsequent
+                // header lines (PO No, PO Date, Due Date, Party block) down accordingly.
+                let refExtraHeight = 0;
+                if (txn.reference) {
+                    const refLines = doc.splitTextToSize('Ref: ' + txn.reference, 180);
+                    doc.text(refLines, 14, startY + 12);
+                    if (refLines.length > 1) {
+                        refExtraHeight = (refLines.length - 1) * 5;   // 5mm per extra wrapped line
+                    }
+                }
+                // Everything below shifts down by refExtraHeight so nothing overlaps
+                startY += refExtraHeight;
                 
                 // Show PO Number and PO Date for Invoice/Proforma
                 let extraLines = 0;
