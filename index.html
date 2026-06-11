@@ -925,6 +925,11 @@
                         <textarea id="txnReference" placeholder="Enter reference details (e.g. PO No, Project No, Vessel Name...)" class="w-full px-4 py-2 border border-gray-300 rounded-lg text-sm" rows="3" style="resize:vertical"></textarea>
                     </div>
                     <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-2">Subject</label>
+                        <textarea id="txnSubject" placeholder="What this document is about — e.g. 'Desh Bhakt / Complete Major overhauling of Aux Engine 1'" class="w-full px-4 py-2 border border-gray-300 rounded-lg text-sm" rows="2" style="resize:vertical" maxlength="500"></textarea>
+                        <p class="text-xs text-gray-400 mt-1">Renders as a separate "Subject:" line on the PDF, below the Reference</p>
+                    </div>
+                    <div>
                         <label class="block text-sm font-semibold text-gray-700 mb-2">Vendor Code</label>
                         <input type="text" id="txnVendorCode" placeholder="Vendor/Customer code (optional)" class="w-full px-4 py-2 border border-gray-300 rounded-lg" maxlength="50" />
                         <p class="text-xs text-gray-400 mt-1">Internal reference code for this party</p>
@@ -5165,21 +5170,36 @@
                 doc.text(docTitle + ' No: ' + txn.txnID,   14, startY);
                 doc.text('Date: '   + txn.txnDate,          14, startY + 6);
 
-                // ── Reference (multi-line wrap so long subjects don't overflow) ──
-                // The Ref field is a freeform textarea; users often put Date, Subject,
-                // Vessel, Engine details etc. on one line separated by ";". Without
-                // wrapping, the text runs off the right edge of the PDF.
-                // We wrap to 180mm (full usable width minus margins) and push subsequent
-                // header lines (PO No, PO Date, Due Date, Party block) down accordingly.
+                // ── Reference + Subject (multi-line wrap, separate labeled lines) ──
+                // Both fields are freeform. Without wrapping, long content runs off the
+                // right edge of the PDF and gets truncated. We wrap at 180mm (full
+                // usable width) and push subsequent header content down to make room.
+                //   • Ref      = "Ref: <txn.reference>"        (multi-line if long)
+                //   • Subject  = "Subject: <txn.subject>"       (multi-line if long)
+                // Backward-compat: legacy transactions without a `subject` field render
+                // exactly as before — only the Ref line appears.
                 let refExtraHeight = 0;
+                let yCursor = startY + 12;   // line position for first wrapped block
                 if (txn.reference) {
                     const refLines = doc.splitTextToSize('Ref: ' + txn.reference, 180);
-                    doc.text(refLines, 14, startY + 12);
-                    if (refLines.length > 1) {
-                        refExtraHeight = (refLines.length - 1) * 5;   // 5mm per extra wrapped line
-                    }
+                    doc.text(refLines, 14, yCursor);
+                    const blockHeight = refLines.length * 5;
+                    yCursor += blockHeight;
+                    refExtraHeight += blockHeight - 5;   // one line is the baseline; extras shift content down
                 }
-                // Everything below shifts down by refExtraHeight so nothing overlaps
+                if (txn.subject) {
+                    const subjLines = doc.splitTextToSize('Subject: ' + txn.subject, 180);
+                    // Make the Subject label bold for emphasis — common business-doc convention
+                    doc.setFont(undefined, 'bold');
+                    doc.text(subjLines, 14, yCursor);
+                    doc.setFont(undefined, 'normal');
+                    const blockHeight = subjLines.length * 5;
+                    yCursor += blockHeight;
+                    // If Ref was absent the Subject takes Ref's baseline slot; otherwise
+                    // we just count all of Subject's height as pushing content down.
+                    refExtraHeight += txn.reference ? blockHeight : (blockHeight - 5);
+                }
+                // Everything below shifts down by the extra height accumulated
                 startY += refExtraHeight;
                 
                 // Show PO Number and PO Date for Invoice/Proforma
@@ -13825,6 +13845,11 @@
                 // Also show freeform reference type if no match (manual entry)
                 if (!match && txn.referenceType) sel.value = txn.referenceType;
             }
+            // Restore Subject (separate field, added later — defaults to empty for legacy txns).
+            // Always set explicitly so a stale value from a previous edit doesn't carry over
+            // when the modal is re-opened for a new transaction.
+            const subjEl = document.getElementById('txnSubject');
+            if (subjEl) subjEl.value = (txn && txn.subject) ? txn.subject : '';
 
             // Load vendor code if exists
             if (txn && txn.vendorCode) {
@@ -14252,6 +14277,7 @@
                     partyName: document.getElementById('txnParty').value,
                     reference: document.getElementById('txnReference').value,
                     referenceType: document.getElementById('txnReferenceType')?.value || '',
+                    subject: document.getElementById('txnSubject')?.value || '',
                     vendorCode: document.getElementById('txnVendorCode')?.value || '',
                     poNumber: document.getElementById('txnPoNumber')?.value || '',
                     poDate: document.getElementById('txnPoDate')?.value || '',
