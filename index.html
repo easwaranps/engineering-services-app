@@ -874,8 +874,15 @@
     </div>
     <div id="transactionModal" class="modal">
         <div class="bg-white rounded-2xl shadow-2xl w-full max-w-7xl max-h-[90vh] overflow-y-auto m-4">
-            <div class="bg-gradient-to-r from-indigo-600 to-purple-600 p-6 text-white">
-                <h2 class="text-2xl font-bold" id="modalTitle">New Transaction</h2>
+            <div class="bg-gradient-to-r from-indigo-600 to-purple-600 p-6 text-white flex justify-between items-start gap-3 flex-wrap">
+                <div>
+                    <h2 class="text-2xl font-bold" id="modalTitle">New Transaction</h2>
+                    <p id="modalRevBadge" class="text-indigo-100 text-xs mt-1 hidden"></p>
+                </div>
+                <div id="modalRevActions" class="flex gap-2 hidden">
+                    <button type="button" onclick="if(currentTransaction?.txnID)openReviseTxnModal(currentTransaction.txnID)" class="px-3 py-1.5 bg-white text-amber-700 rounded-lg text-xs font-bold hover:bg-amber-50" title="Create a new revision of this document">🔄 Revise</button>
+                    <button type="button" onclick="if(currentTransaction?.txnID)openTxnRevisionHistory(currentTransaction.txnID)" class="px-3 py-1.5 bg-white bg-opacity-20 text-white rounded-lg text-xs hover:bg-opacity-30" title="View all past revisions of this document">🕓 History</button>
+                </div>
             </div>
             <form id="transactionForm" class="p-6">
                 <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
@@ -5167,7 +5174,9 @@
                 startY += 10;
                 doc.setFontSize(10);
                 doc.setFont(undefined, 'normal');
-                doc.text(docTitle + ' No: ' + txn.txnID,   14, startY);
+                // Document number — include Rev-N marker if this is a revision
+                const revLabel = (txn.revisionNo || 0) > 0 ? ' Rev-' + txn.revisionNo : '';
+                doc.text(docTitle + ' No: ' + txn.txnID + revLabel,   14, startY);
                 doc.text('Date: '   + txn.txnDate,          14, startY + 6);
 
                 // ── Reference + Subject (multi-line wrap, separate labeled lines) ──
@@ -8015,7 +8024,7 @@
                         transactions.slice(-5).reverse().map(t => `
                             <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg mb-2">
                                 <div>
-                                    <div class="font-semibold">${t.txnID}</div>
+                                    <div class="font-semibold">${t.txnID}${(t.revisionNo||0)>0 ? ` <span class="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px] font-bold">Rev-${t.revisionNo}</span>` : ''}</div>
                                     <div class="text-sm text-gray-600">${t.partyName}</div>
                                 </div>
                                 <span class="text-xs px-3 py-1 rounded-full ${
@@ -8134,7 +8143,7 @@
                 balanceCell = `<td class="px-3 py-2 text-right whitespace-nowrap">${chip}</td>`;
             }
             return `<tr class="border-b hover:bg-gray-50 text-sm">
-                <td class="px-3 py-2 font-medium text-indigo-700 whitespace-nowrap">${t.txnID}</td>
+                <td class="px-3 py-2 font-medium text-indigo-700 whitespace-nowrap">${t.txnID}${(t.revisionNo||0)>0 ? ` <span class="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px] font-bold align-middle" title="Revised ${t.revisionDate||''} — ${(t.revisionReason||'').replace(/"/g,'&quot;')}">Rev-${t.revisionNo}</span>` : ''}</td>
                 <td class="px-3 py-2 max-w-xs truncate" title="${t.partyName}">${t.partyName}</td>
                 <td class="px-3 py-2 text-gray-500 whitespace-nowrap">${t.txnDate}</td>
                 <td class="px-3 py-2 text-gray-500">${t.reference || '—'}</td>
@@ -13858,10 +13867,205 @@
             }
         }
 
+        // ════════════════════════════════════════════════════════════════
+        // TRANSACTION REVISION SYSTEM
+        // ────────────────────────────────────────────────────────────────
+        // Once a Quotation / Invoice / Credit Note has been sent to the client,
+        // any subsequent change should be recorded as a formal revision so the
+        // audit trail and client-facing document both reflect "Rev-1, Rev-2…"
+        // with the corresponding revision date.
+        //
+        // Flow:
+        //   1. User clicks 🔄 Revise on a transaction
+        //   2. Modal captures reason + revision date (defaults today)
+        //   3. Current full state of the txn is snapshotted into revisionHistory[]
+        //   4. revisionNo is incremented, revisionDate updated, txnDate = new date
+        //   5. Transaction modal opens in edit mode — user makes the actual changes
+        //   6. Save → new version is stored; old version remains in revisionHistory
+        //
+        // The PDF reads revisionNo and renders "QTE2627014 Rev-1" automatically.
+        // ════════════════════════════════════════════════════════════════
+        function openReviseTxnModal(txnID) {
+            const txn = (transactions || []).find(t => t.txnID === txnID);
+            if (!txn) { alert('Transaction not found.'); return; }
+            const currentRev = txn.revisionNo || 0;
+            const newRev = currentRev + 1;
+            const today = new Date().toISOString().split('T')[0];
+
+            const modal = document.createElement('div');
+            modal.id = 'reviseTxnModal';
+            modal.className = 'modal show';
+            modal.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg m-4">
+                <div class="bg-gradient-to-r from-amber-500 to-orange-500 p-5 text-white flex justify-between items-center">
+                    <div>
+                        <h3 class="text-lg font-bold">🔄 Create Revision — ${txn.txnID}</h3>
+                        <p class="text-amber-100 text-xs mt-1">${txn.txnCategory} · ${txn.partyName||'—'} · Current: ${currentRev>0?'Rev-'+currentRev:'Original'} (dated ${txn.txnDate||'—'})</p>
+                    </div>
+                    <button onclick="document.getElementById('reviseTxnModal').remove()" class="text-white text-2xl">×</button>
+                </div>
+                <div class="p-5 space-y-3">
+                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-900">
+                        Clicking <strong>Create Revision</strong> will snapshot the current state of this transaction (as ${currentRev>0?'Rev-'+currentRev:'Original'}) into the revision history, then open the transaction for editing as <strong>Rev-${newRev}</strong>. The document number stays the same; only the revision marker changes.
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1">Revision Date *</label>
+                        <input type="date" id="reviseTxnDate" value="${today}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        <p class="text-[10px] text-gray-400 mt-1">This becomes the new "Date" shown on the PDF for Rev-${newRev}. Original date is preserved in history.</p>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1">Reason for Revision *</label>
+                        <textarea id="reviseTxnReason" rows="3" placeholder="e.g. Client requested addition of overtime estimate / scope expanded / price corrected / line item added per email dated 12 Jun" class="w-full px-3 py-2 border rounded-lg text-sm" maxlength="500"></textarea>
+                        <p class="text-[10px] text-gray-400 mt-1">Required. Stored permanently in the audit trail.</p>
+                    </div>
+                    <div class="flex justify-end gap-3 pt-2">
+                        <button onclick="document.getElementById('reviseTxnModal').remove()" class="px-5 py-2 border border-gray-300 text-gray-600 rounded-xl hover:bg-gray-50">Cancel</button>
+                        <button onclick="confirmTxnRevision('${txnID}')" class="px-6 py-2 bg-amber-600 text-white rounded-xl hover:bg-amber-700 font-bold">🔄 Create Rev-${newRev} & Edit</button>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+            setTimeout(() => document.getElementById('reviseTxnReason')?.focus(), 50);
+        }
+
+        async function confirmTxnRevision(txnID) {
+            const date   = document.getElementById('reviseTxnDate')?.value;
+            const reason = document.getElementById('reviseTxnReason')?.value?.trim();
+            if (!date) { alert('Revision date is required.'); return; }
+            if (!reason) { alert('Revision reason is required.'); return; }
+
+            const idx = transactions.findIndex(t => t.txnID === txnID);
+            if (idx < 0) return;
+            const txn = transactions[idx];
+
+            // Snapshot the current state (whatever rev that was)
+            const snapshot = JSON.parse(JSON.stringify(txn));
+            // Don't include the history-of-history (would cause exponential blow-up across revs)
+            delete snapshot.revisionHistory;
+            snapshot._snapshotAt = new Date().toISOString();
+            snapshot._snapshotBy = (typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin';
+
+            const currentRev = txn.revisionNo || 0;
+            const newRev = currentRev + 1;
+
+            // Push snapshot to history, update revision fields
+            if (!Array.isArray(txn.revisionHistory)) txn.revisionHistory = [];
+            txn.revisionHistory.push(snapshot);
+            txn.revisionNo     = newRev;
+            txn.revisionDate   = date;
+            txn.revisionReason = reason;
+            // Update the visible document date to the revision date so the new PDF
+            // displays Rev-N with the correct date. Original txnDate is preserved
+            // inside the snapshot above.
+            txn.txnDate = date;
+            txn.updatedAt = new Date().toISOString();
+
+            try {
+                await saveData('transactions', transactions);
+                document.getElementById('reviseTxnModal')?.remove();
+                // Now open the transaction in edit mode so user can make the actual changes
+                openTransactionModal(txn);
+            } catch (e) {
+                // Roll back the history push if save failed
+                txn.revisionHistory.pop();
+                txn.revisionNo = currentRev;
+                alert('Could not save revision: ' + (e.message || e));
+            }
+        }
+
+        // View all past revisions of a transaction
+        function openTxnRevisionHistory(txnID) {
+            const txn = (transactions || []).find(t => t.txnID === txnID);
+            if (!txn) return;
+            const history = (txn.revisionHistory || []).slice();
+            if (history.length === 0 && (txn.revisionNo || 0) === 0) {
+                alert(`${txn.txnID} has no revisions — this is the original (only) version.`);
+                return;
+            }
+
+            const fmt = n => '₹' + (+n||0).toLocaleString('en-IN', {minimumFractionDigits:2});
+            const computeTxnTotal = (t) => {
+                if (!Array.isArray(t.items)) return 0;
+                return t.items.reduce((s, it) => {
+                    const qty = parseFloat(it.qty)||0, rate = parseFloat(it.rate)||0;
+                    const disc = parseFloat(it.discountPct)||0;
+                    const taxable = qty * rate * (1 - disc/100);
+                    const taxPct = (parseFloat(it.sgstPct)||0) + (parseFloat(it.cgstPct)||0) + (parseFloat(it.igstPct)||0);
+                    return s + taxable * (1 + taxPct/100);
+                }, 0);
+            };
+
+            const modal = document.createElement('div');
+            modal.id = 'txnRevHistoryModal';
+            modal.className = 'modal show';
+            modal.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] overflow-y-auto m-4">
+                <div class="bg-gradient-to-r from-amber-500 to-orange-500 p-5 text-white flex justify-between items-center sticky top-0 z-10">
+                    <div>
+                        <h3 class="text-lg font-bold">🕓 Revision History — ${txn.txnID}</h3>
+                        <p class="text-amber-100 text-xs mt-1">${txn.txnCategory} · ${txn.partyName||'—'} · ${history.length} previous version(s) on record</p>
+                    </div>
+                    <button onclick="document.getElementById('txnRevHistoryModal').remove()" class="text-white text-2xl">×</button>
+                </div>
+                <div class="p-5 space-y-3">
+                    <div class="bg-green-50 border border-green-200 rounded-lg p-3">
+                        <h4 class="font-bold text-green-800 text-sm">📌 Current — ${(txn.revisionNo||0)>0 ? 'Rev-'+txn.revisionNo : 'Original'}</h4>
+                        <div class="grid grid-cols-2 gap-2 text-xs mt-2">
+                            <div><strong>Date:</strong> ${txn.txnDate||'—'}</div>
+                            <div><strong>Status:</strong> ${txn.status||'—'}</div>
+                            <div class="col-span-2"><strong>Total:</strong> ${fmt(computeTxnTotal(txn))}</div>
+                            ${txn.revisionReason ? `<div class="col-span-2"><strong>Reason:</strong> ${(txn.revisionReason||'').replace(/</g,'&lt;')}</div>` : ''}
+                        </div>
+                    </div>
+                    ${history.slice().reverse().map((snap, i) => {
+                        const labelRev = snap.revisionNo || 0;
+                        const label = labelRev > 0 ? 'Rev-'+labelRev : 'Original';
+                        return `
+                        <div class="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                            <div class="flex justify-between items-start">
+                                <h4 class="font-bold text-gray-700 text-sm">📄 ${label}</h4>
+                                <span class="text-[10px] text-gray-500">snapshotted ${(snap._snapshotAt||'').substring(0,10)} by ${snap._snapshotBy||'—'}</span>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2 text-xs mt-2">
+                                <div><strong>Date:</strong> ${snap.txnDate||'—'}</div>
+                                <div><strong>Status:</strong> ${snap.status||'—'}</div>
+                                <div class="col-span-2"><strong>Total:</strong> ${fmt(computeTxnTotal(snap))}</div>
+                                ${snap.revisionReason ? `<div class="col-span-2"><strong>Reason recorded:</strong> ${(snap.revisionReason||'').replace(/</g,'&lt;')}</div>` : ''}
+                                <div class="col-span-2"><strong>Line items:</strong> ${(snap.items||[]).length}</div>
+                            </div>
+                            <details class="mt-2 text-xs">
+                                <summary class="cursor-pointer text-blue-600 hover:underline">Show full snapshot JSON (for audit)</summary>
+                                <pre class="bg-white border rounded p-2 mt-1 text-[10px] overflow-auto max-h-64">${JSON.stringify(snap, null, 2).replace(/</g,'&lt;')}</pre>
+                            </details>
+                        </div>`;
+                    }).join('')}
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+        }
+
         function openTransactionModal(txn = null) {
             currentTransaction = txn ? JSON.parse(JSON.stringify(txn)) : null;
             lineItemCounter = 0;
             document.getElementById('modalTitle').textContent = txn ? 'Edit Transaction' : 'New Transaction';
+
+            // Revision badge + Revise/History buttons — only meaningful for an existing txn
+            const revBadge   = document.getElementById('modalRevBadge');
+            const revActions = document.getElementById('modalRevActions');
+            if (txn && txn.txnID) {
+                const rev = txn.revisionNo || 0;
+                if (rev > 0) {
+                    revBadge.textContent = `${txn.txnID} · Rev-${rev} (revised ${txn.revisionDate || '?'})${(txn.revisionHistory||[]).length ? ' · ' + txn.revisionHistory.length + ' prior version(s) in history' : ''}`;
+                } else {
+                    revBadge.textContent = `${txn.txnID} · Original (no revisions yet)`;
+                }
+                revBadge.classList.remove('hidden');
+                revActions.classList.remove('hidden');
+            } else {
+                revBadge.classList.add('hidden');
+                revActions.classList.add('hidden');
+            }
+
             document.getElementById('lineItems').innerHTML = '';
             document.getElementById('totalSection').classList.add('hidden');
             document.getElementById('supportingDocsSection').classList.add('hidden');
@@ -14384,7 +14588,15 @@
                         mode:    tr.querySelector('.pay-mode')?.value || '',
                         refNo:   (tr.querySelector('.pay-ref')?.value || '').trim(),
                         remarks: (tr.querySelector('.pay-remarks')?.value || '').trim()
-                    })).filter(p => p.amount > 0 || p.date)  // drop completely-empty rows
+                    })).filter(p => p.amount > 0 || p.date),  // drop completely-empty rows
+                    // ── Revision tracking (added 2026-06) ──
+                    // Each transaction can be revised after submission. Old version is
+                    // snapshotted into revisionHistory[] before edits. Preserve these
+                    // fields on every save so they survive normal edits.
+                    revisionNo:      currentTransaction?.revisionNo || 0,
+                    revisionDate:    currentTransaction?.revisionDate || '',
+                    revisionReason:  currentTransaction?.revisionReason || '',
+                    revisionHistory: currentTransaction?.revisionHistory || []
                 };
 
                 // ── Capture realisation date when invoice status flips to Paid ──
