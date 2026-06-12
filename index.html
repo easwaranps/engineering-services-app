@@ -8414,24 +8414,23 @@
                     <div class="flex-1 min-w-48 relative">
                         <svg class="absolute left-3 top-2.5 text-gray-400" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
                         <input type="text" id="expSearchInput" placeholder="Search by vendor, bill no, description, tally voucher..."
+                               value="${(window._expFilterState?.q || '').replace(/"/g,'&quot;')}"
                                class="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-300"
                                oninput="filterExpenses()"/>
                     </div>
                     <select id="expFilterStatus" onchange="filterExpenses()" class="px-3 py-2 border border-gray-200 rounded-lg text-sm">
                         <option value="">All Statuses</option>
-                        <option>Pending</option><option>Partial</option><option>Paid</option>
+                        ${['Pending','Partial','Paid'].map(s => `<option value="${s}"${(window._expFilterState?.st||'')===s?' selected':''}>${s}</option>`).join('')}
                     </select>
                     <select id="expFilterMonth" onchange="filterExpenses()" class="px-3 py-2 border border-gray-200 rounded-lg text-sm">
                         <option value="">All Months</option>
                         ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
-                            .map((m,i) => `<option value="${String(i+1).padStart(2,'0')}">${m}</option>`).join('')}
+                            .map((m,i) => { const v = String(i+1).padStart(2,'0'); return `<option value="${v}"${(window._expFilterState?.mo||'')===v?' selected':''}>${m}</option>`; }).join('')}
                     </select>
                     <select id="expFilterTally" onchange="filterExpenses()" class="px-3 py-2 border border-gray-200 rounded-lg text-sm">
                         <option value="">All Tally</option>
-                        <option value="updated">✓ Tally Updated</option>
-                        <option value="not_updated">⚠ Not in Tally</option>
-                        <option value="has_voucher">📋 Has Voucher No.</option>
-                        <option value="missing_voucher">❌ Missing Voucher</option>
+                        ${[['updated','✓ Tally Updated'],['not_updated','⚠ Not in Tally'],['has_voucher','📋 Has Voucher No.'],['missing_voucher','❌ Missing Voucher']]
+                            .map(([v,l]) => `<option value="${v}"${(window._expFilterState?.tally||'')===v?' selected':''}>${l}</option>`).join('')}
                     </select>
                 </div>
 
@@ -8442,7 +8441,7 @@
 
                 <!-- Table -->
                 <div class="bg-white rounded-2xl shadow-sm overflow-hidden" id="expTableContainer">
-                    ${renderExpenseTable(expenses)}
+                    ${renderExpenseTable(_filteredExpensesForTable())}
                 </div>
             `;
         }
@@ -8600,11 +8599,41 @@
             if (arrow) arrow.style.transform = hidden ? '' : 'rotate(90deg)';
         }
 
+        // Module-level state for Expenses & Bills filters. Persists across re-renders
+        // so that selecting (say) "Apr" doesn't snap back to "All Months" after saving
+        // a new expense or doing any other action that triggers renderView().
+        window._expFilterState = window._expFilterState || { q: '', st: '', mo: '', tally: '' };
+
+        // Returns the filtered expense list using the persisted filter state.
+        // Used by both the initial render and post-action re-renders so filters
+        // don't get lost.
+        function _filteredExpensesForTable() {
+            const s = window._expFilterState || { q: '', st: '', mo: '', tally: '' };
+            const q = (s.q || '').toLowerCase();
+            return (expenses || []).filter(e => {
+                const mq = !q || (e.billNo||'').toLowerCase().includes(q) ||
+                           (e.companyName||'').toLowerCase().includes(q) ||
+                           (e.description||'').toLowerCase().includes(q) ||
+                           (e.voucherNo||'').toLowerCase().includes(q) ||
+                           (e.tallyVoucherNo||'').toLowerCase().includes(q);
+                const ms = !s.st || e.payStatus === s.st;
+                const mm = !s.mo || (e.billDate||'').substring(5,7) === s.mo;
+                let mt = true;
+                if (s.tally === 'updated')        mt = !!e.tallyUpdated;
+                else if (s.tally === 'not_updated') mt = !e.tallyUpdated;
+                else if (s.tally === 'has_voucher') mt = !!(e.tallyVoucherNo);
+                else if (s.tally === 'missing_voucher') mt = !!e.tallyUpdated && !e.tallyVoucherNo;
+                return mq && ms && mm && mt;
+            });
+        }
+
         function filterExpenses() {
             const q   = (document.getElementById('expSearchInput')?.value||'').toLowerCase();
             const st  = document.getElementById('expFilterStatus')?.value||'';
             const mo  = document.getElementById('expFilterMonth')?.value||'';
             const tally = document.getElementById('expFilterTally')?.value||'';
+            // Persist for next render
+            window._expFilterState = { q, st, mo, tally };
             const filtered = expenses.filter(e => {
                 // Search: include tally voucher number in search
                 const mq = !q || (e.billNo||'').toLowerCase().includes(q) ||
@@ -8750,10 +8779,35 @@
             renderExpStagedFiles();
         }
 
+        // Track blob URLs created for staged-file previews so we can revoke
+        // them when no longer needed (avoid memory leaks).
+        window._stagedExpBlobURLs = window._stagedExpBlobURLs || {};
+
+        function _previewStagedExpFile(idx) {
+            const f = _stagedExpFiles[idx];
+            if (!f) return;
+            // Reuse URL if one was already created for this file; otherwise mint one.
+            // Browser memory is freed when the modal closes (we revoke in renderExpStagedFiles
+            // when the slot disappears).
+            const key = f.name + '|' + f.size + '|' + (f.lastModified||0);
+            let url = window._stagedExpBlobURLs[key];
+            if (!url) {
+                url = URL.createObjectURL(f);
+                window._stagedExpBlobURLs[key] = url;
+            }
+            window.open(url, '_blank', 'noopener,noreferrer');
+        }
+
         function renderExpStagedFiles() {
             const el = document.getElementById('expStagedFiles');
             if (!el) return;
-            if (!_stagedExpFiles.length) { el.innerHTML = ''; return; }
+            if (!_stagedExpFiles.length) {
+                // Revoke any cached blob URLs since no staged files remain
+                Object.values(window._stagedExpBlobURLs || {}).forEach(u => { try { URL.revokeObjectURL(u); } catch(e){} });
+                window._stagedExpBlobURLs = {};
+                el.innerHTML = '';
+                return;
+            }
             el.innerHTML = _stagedExpFiles.map((f, i) => {
                 const icon = f.type === 'application/pdf' ? '📄' : '🖼️';
                 const size = f.size > 1024*1024 ? (f.size/1024/1024).toFixed(1)+'MB' : (f.size/1024).toFixed(0)+'KB';
@@ -8762,6 +8816,7 @@
                     <span class="flex-1 truncate text-blue-800" title="${f.name}">${f.name}</span>
                     <span class="text-gray-400 whitespace-nowrap">${size}</span>
                     <span class="text-xs text-blue-500 whitespace-nowrap">⏳ pending</span>
+                    <button type="button" onclick="_previewStagedExpFile(${i})" class="text-green-600 hover:text-green-800 font-medium px-2 py-0.5 bg-green-50 rounded border border-green-200" title="Open this file in a new tab to verify before saving">👁 View</button>
                     <button type="button" onclick="removeStagedExpFile(${i})" class="text-red-500 hover:text-red-700 font-medium px-1" title="Remove">✕</button>
                 </div>`;
             }).join('');
