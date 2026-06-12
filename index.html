@@ -1429,6 +1429,12 @@
         // History is preserved for audit.
         let gstCashLedgerSnapshots = [];
 
+        // ── Company Documents (registrations, licences, certificates, insurance) ──
+        // Each record tracks a single document with validity, attachments, and a
+        // renewal-reminder flag. The Apps Script daily report flags any with
+        // expiryDate within 30 days (or already expired) for renewal action.
+        let companyDocuments = [];
+
         // Preset categories — covers ~95% of petty cash uses. "OTHER" lets the user
         // free-text a category for the rest.
         const PETTY_CASH_CATEGORIES = [
@@ -3391,6 +3397,7 @@
                 { type: 'pettyCashTransactions', getMem: () => pettyCashTransactions, setMem: (d) => { pettyCashTransactions = d; } },
                 { type: 'pettyCashStatements',   getMem: () => pettyCashStatements,   setMem: (d) => { pettyCashStatements = d; } },
                 { type: 'gstCashLedgerSnapshots', getMem: () => gstCashLedgerSnapshots, setMem: (d) => { gstCashLedgerSnapshots = d; } },
+                { type: 'companyDocuments',       getMem: () => companyDocuments,       setMem: (d) => { companyDocuments = d; } },
                 { type: 'parties',         getMem: () => parties,         setMem: (d) => { parties = d; } },
                 { type: 'bankAccounts',    getMem: () => bankAccounts,    setMem: (d) => { bankAccounts = d; } },
                 { type: 'settings',        getMem: () => settings,        setMem: (d) => { settings = d; } }
@@ -4576,6 +4583,13 @@
                     catch(e) { console.warn('Could not auto-create gstCashLedgerSnapshots.json:', e.message); }
                 }
                 gstCashLedgerSnapshots = Array.isArray(gstClData) ? gstClData : [];
+
+                let cdocData = await loadFileFromDrive('companyDocuments.json');
+                if (!cdocData) {
+                    try { await saveFileToDrive('companyDocuments.json', []); cdocData = []; }
+                    catch(e) { console.warn('Could not auto-create companyDocuments.json:', e.message); }
+                }
+                companyDocuments = Array.isArray(cdocData) ? cdocData : [];
 
                 console.log('✅ Data loaded — transactions:', transactions.length,
                     '| parties:', parties.length,
@@ -6435,6 +6449,7 @@
                             <button onclick="switchView('tax')" class="px-4 py-2 rounded-lg ${currentView === 'tax' ? 'bg-red-100 text-red-700' : 'text-gray-600 hover:bg-gray-100'}">🧾 Tax</button>
                             <button onclick="switchView('mis')" class="px-4 py-2 rounded-lg ${currentView === 'mis' ? 'bg-green-100 text-green-700' : 'text-gray-600 hover:bg-gray-100'}">📊 MIS Report</button>
                             <button onclick="switchView('parties')" class="px-4 py-2 rounded-lg ${currentView === 'parties' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Parties</button>
+                            <button onclick="switchView('docs')" class="px-4 py-2 rounded-lg ${currentView === 'docs' ? 'bg-purple-100 text-purple-700' : 'text-gray-600 hover:bg-gray-100'}" title="Company documents, certificates, insurance policies">📄 Documents${(()=>{const c=_countDocsExpiringOrExpired();return c>0?` <span class="ml-1 px-1.5 py-0.5 bg-red-500 text-white rounded-full text-xs font-bold" title="${c} document(s) need attention">${c}</span>`:'';})()}</button>
                             <button onclick="switchView('settings')" class="px-4 py-2 rounded-lg ${currentView === 'settings' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Settings</button>
                         </div>
                     </div>
@@ -6480,6 +6495,7 @@
             else if (currentView === 'tax')      renderTaxCompliance(content);
             else if (currentView === 'mis')      renderMIS(content);
             else if (currentView === 'parties') renderParties(content);
+            else if (currentView === 'docs')    renderCompanyDocuments(content);
             else if (currentView === 'settings') renderSettings(content);
         }
 
@@ -23926,7 +23942,11 @@ Automated WFH alert — ${company} Attendance System.`;
         // The PR fan-out (Mark Paid) will create a REPLENISHMENT transaction in the
         // petty cash module, automatically restoring the float.
         function _prCollectPettyCashReplenishments() {
-            const offices = (pettyCashOffices || []).filter(o => o.active !== false && o.imprestLimit > 0);
+            const offices = (pettyCashOffices || []).filter(o =>
+                o.active !== false &&
+                o.imprestLimit > 0 &&
+                o.autoReplenishInPR !== false   // defaults to true; user can opt-out per office
+            );
             const items = [];
             for (const o of offices) {
                 const balance = _pcOfficeBalance(o.officeID);
@@ -25098,6 +25118,566 @@ Automated WFH alert — ${company} Attendance System.`;
             }
         }
 
+        // ════════════════════════════════════════════════════════════════
+        // COMPANY DOCUMENTS — Registrations, Licences, Certificates, Insurance
+        // ────────────────────────────────────────────────────────────────
+        // Each record tracks one document with validity period and attachments.
+        // The daily report flags any expiring within 30 days for renewal.
+        // ════════════════════════════════════════════════════════════════
+
+        const DOC_CATEGORIES = ['Registration', 'Licence', 'Certificate', 'Insurance', 'Other'];
+        const INSURANCE_TYPES = ['WCC (Workmen Comp)', 'Group Medical', 'Personal & Accidental', 'Overseas Medical', 'Other'];
+
+        // ── Status logic ──
+        function _docStatus(doc) {
+            if (doc.isLifetime || !doc.expiryDate) return 'Lifetime';
+            const today = new Date(); today.setHours(0,0,0,0);
+            const exp = new Date(doc.expiryDate); exp.setHours(0,0,0,0);
+            const daysLeft = Math.ceil((exp - today) / (24*60*60*1000));
+            if (daysLeft < 0) return 'Expired';
+            if (daysLeft <= 30) return 'Expiring';
+            return 'Valid';
+        }
+
+        function _docDaysToExpiry(doc) {
+            if (doc.isLifetime || !doc.expiryDate) return null;
+            const today = new Date(); today.setHours(0,0,0,0);
+            const exp = new Date(doc.expiryDate); exp.setHours(0,0,0,0);
+            return Math.ceil((exp - today) / (24*60*60*1000));
+        }
+
+        // Counts docs that need attention (expiring soon OR expired, not acknowledged).
+        // Used to badge the nav tab.
+        function _countDocsExpiringOrExpired() {
+            return (companyDocuments || []).filter(d => {
+                if (d.renewalReminderAcknowledged) return false;
+                const s = _docStatus(d);
+                return s === 'Expiring' || s === 'Expired';
+            }).length;
+        }
+
+        // Persisted filter state for the docs tab
+        window._docFilterState = window._docFilterState || { q: '', category: '', insType: '', status: '' };
+
+        function _filteredCompanyDocs() {
+            const s = window._docFilterState;
+            const q = (s.q || '').toLowerCase();
+            return (companyDocuments || []).filter(d => {
+                if (!d) return false;
+                const mq = !q
+                    || (d.docName || '').toLowerCase().includes(q)
+                    || (d.certNo || '').toLowerCase().includes(q)
+                    || (d.issuer || '').toLowerCase().includes(q)
+                    || (d.holderName || '').toLowerCase().includes(q);
+                const mc = !s.category || d.docCategory === s.category;
+                const mi = !s.insType  || d.insuranceType === s.insType;
+                const ms = !s.status   || _docStatus(d) === s.status;
+                return mq && mc && mi && ms;
+            }).sort((a, b) => {
+                // Sort: Expired first, then Expiring, then Valid by expiry asc, Lifetime last
+                const order = { 'Expired': 0, 'Expiring': 1, 'Valid': 2, 'Lifetime': 3 };
+                const oa = order[_docStatus(a)], ob = order[_docStatus(b)];
+                if (oa !== ob) return oa - ob;
+                return (a.expiryDate || '9999').localeCompare(b.expiryDate || '9999');
+            });
+        }
+
+        function renderCompanyDocuments(content) {
+            const fmt = n => '₹' + (+n||0).toLocaleString('en-IN', {minimumFractionDigits:2});
+            const docs = companyDocuments || [];
+
+            const counts = {
+                Valid:    docs.filter(d => _docStatus(d) === 'Valid').length,
+                Expiring: docs.filter(d => _docStatus(d) === 'Expiring').length,
+                Expired:  docs.filter(d => _docStatus(d) === 'Expired').length,
+                Lifetime: docs.filter(d => _docStatus(d) === 'Lifetime').length
+            };
+
+            const filtered = _filteredCompanyDocs();
+            const fs = window._docFilterState;
+
+            content.innerHTML = `
+            <div class="mb-6 flex justify-between items-start flex-wrap gap-3">
+                <div>
+                    <h2 class="text-2xl font-bold text-gray-800">📄 Company Documents</h2>
+                    <p class="text-sm text-gray-500 mt-1">Registrations · Licences · Certificates · Insurance — with renewal reminders 30 days before expiry</p>
+                </div>
+                <button onclick="openCompanyDocModal()" class="px-4 py-2 bg-purple-600 text-white rounded-xl hover:bg-purple-700 text-sm font-semibold">+ Add Document</button>
+            </div>
+
+            <!-- Summary tiles -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+                <div class="bg-green-50 border-l-4 border-green-500 rounded-lg p-3"><p class="text-[10px] uppercase font-bold text-green-700">Valid</p><p class="text-2xl font-bold text-green-800">${counts.Valid}</p></div>
+                <div class="bg-amber-50 border-l-4 border-amber-500 rounded-lg p-3"><p class="text-[10px] uppercase font-bold text-amber-700">Expiring (≤30d)</p><p class="text-2xl font-bold text-amber-800">${counts.Expiring}</p></div>
+                <div class="bg-red-50 border-l-4 border-red-500 rounded-lg p-3"><p class="text-[10px] uppercase font-bold text-red-700">Expired</p><p class="text-2xl font-bold text-red-800">${counts.Expired}</p></div>
+                <div class="bg-gray-50 border-l-4 border-gray-400 rounded-lg p-3"><p class="text-[10px] uppercase font-bold text-gray-600">Lifetime / N/A</p><p class="text-2xl font-bold text-gray-700">${counts.Lifetime}</p></div>
+            </div>
+
+            <!-- Filters -->
+            <div class="bg-white rounded-2xl shadow-sm p-3 mb-4 flex flex-wrap gap-2 items-center">
+                <input type="text" placeholder="Search by name, cert#, issuer, holder..." value="${(fs.q||'').replace(/"/g,'&quot;')}" oninput="_docOnFilterChange('q', this.value)" class="flex-1 min-w-[200px] px-3 py-2 border rounded-lg text-sm"/>
+                <select onchange="_docOnFilterChange('category', this.value)" class="px-3 py-2 border rounded-lg text-sm">
+                    <option value="">All Categories</option>
+                    ${DOC_CATEGORIES.map(c => `<option value="${c}"${fs.category===c?' selected':''}>${c}</option>`).join('')}
+                </select>
+                <select onchange="_docOnFilterChange('insType', this.value)" class="px-3 py-2 border rounded-lg text-sm">
+                    <option value="">All Insurance Types</option>
+                    ${INSURANCE_TYPES.map(t => `<option value="${t}"${fs.insType===t?' selected':''}>${t}</option>`).join('')}
+                </select>
+                <select onchange="_docOnFilterChange('status', this.value)" class="px-3 py-2 border rounded-lg text-sm">
+                    <option value="">All Statuses</option>
+                    ${['Valid','Expiring','Expired','Lifetime'].map(s => `<option value="${s}"${fs.status===s?' selected':''}>${s}</option>`).join('')}
+                </select>
+                <button onclick="_docClearFilters()" class="px-3 py-2 text-xs text-gray-500 hover:text-gray-800 underline">Clear</button>
+                <span class="text-xs text-gray-500 ml-auto">${filtered.length} of ${docs.length} document(s)</span>
+            </div>
+
+            <!-- List -->
+            ${filtered.length === 0 ? `
+            <div class="bg-white rounded-2xl shadow-sm p-12 text-center text-gray-400 italic">
+                ${docs.length === 0 ? 'No documents added yet. Click <strong>+ Add Document</strong> to register your first one.' : 'No documents match the current filters.'}
+            </div>` : `
+            <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+                <table class="w-full text-sm">
+                    <thead class="bg-purple-50 text-xs text-purple-800 uppercase">
+                        <tr>
+                            <th class="px-3 py-2 text-left">Document</th>
+                            <th class="px-3 py-2 text-left">Category</th>
+                            <th class="px-3 py-2 text-left">Cert / Policy #</th>
+                            <th class="px-3 py-2 text-left">Holder</th>
+                            <th class="px-3 py-2 text-left">Expiry</th>
+                            <th class="px-3 py-2 text-center">Status</th>
+                            <th class="px-3 py-2 text-center">📎</th>
+                            <th class="px-3 py-2 text-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${filtered.map(d => {
+                            const status = _docStatus(d);
+                            const daysLeft = _docDaysToExpiry(d);
+                            const statusColors = {
+                                'Valid':    'bg-green-100 text-green-700',
+                                'Expiring': 'bg-amber-100 text-amber-700',
+                                'Expired':  'bg-red-100 text-red-700',
+                                'Lifetime': 'bg-gray-100 text-gray-600'
+                            };
+                            const daysLabel = daysLeft === null ? '' :
+                                              daysLeft < 0 ? `expired ${-daysLeft}d ago` :
+                                              daysLeft === 0 ? 'expires today' :
+                                              daysLeft <= 30 ? `${daysLeft}d left` :
+                                              `${daysLeft}d`;
+                            const ackBadge = d.renewalReminderAcknowledged
+                                ? '<span class="ml-1 px-1.5 py-0.5 rounded text-[9px] bg-blue-100 text-blue-700" title="Renewal acknowledged — hidden from daily reminders">ack</span>'
+                                : '';
+                            return `
+                            <tr class="border-t hover:bg-purple-50/30">
+                                <td class="px-3 py-2">
+                                    <div class="font-medium text-gray-800">${(d.docName||'—').replace(/</g,'&lt;')}</div>
+                                    ${d.insuranceType ? `<div class="text-[10px] text-gray-500">${d.insuranceType}</div>` : ''}
+                                </td>
+                                <td class="px-3 py-2 text-xs">${d.docCategory || '—'}</td>
+                                <td class="px-3 py-2 text-xs font-mono">${(d.certNo||'—').replace(/</g,'&lt;')}</td>
+                                <td class="px-3 py-2 text-xs">
+                                    <div>${(d.holderName||'—').replace(/</g,'&lt;')}</div>
+                                    <div class="text-[10px] text-gray-400">${d.holderType === 'Staff' ? '👤 Staff' : '🏢 Company'}</div>
+                                </td>
+                                <td class="px-3 py-2 text-xs">
+                                    ${d.isLifetime ? '<em class="text-gray-400">Lifetime</em>' : (d.expiryDate || '—')}
+                                    ${daysLabel ? `<div class="text-[10px] ${daysLeft<0?'text-red-600 font-bold':daysLeft<=30?'text-amber-600 font-semibold':'text-gray-400'}">${daysLabel}</div>` : ''}
+                                </td>
+                                <td class="px-3 py-2 text-center">
+                                    <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${statusColors[status]||'bg-gray-100'}">${status}</span>
+                                    ${ackBadge}
+                                </td>
+                                <td class="px-3 py-2 text-center text-xs">${(d.attachments||[]).length > 0 ? `<span class="text-blue-600 font-bold">${d.attachments.length}</span>` : '—'}</td>
+                                <td class="px-3 py-2 text-right whitespace-nowrap">
+                                    <button onclick="openCompanyDocModal('${d.docID}')" class="text-indigo-600 hover:text-indigo-800 text-xs font-medium mr-1">Edit</button>
+                                    ${(status === 'Expiring' || status === 'Expired') && !d.renewalReminderAcknowledged ? `<button onclick="acknowledgeDocReminder('${d.docID}')" class="text-blue-600 hover:text-blue-800 text-xs font-medium mr-1" title="Mark renewal as acknowledged — hide from daily reminder emails">✓ Ack</button>` : ''}
+                                    ${d.renewalReminderAcknowledged ? `<button onclick="unacknowledgeDocReminder('${d.docID}')" class="text-blue-600 hover:text-blue-800 text-xs font-medium mr-1" title="Re-enable reminders">↺ Unack</button>` : ''}
+                                    <button onclick="deleteCompanyDoc('${d.docID}')" class="text-red-600 hover:text-red-800 text-xs font-medium">Del</button>
+                                </td>
+                            </tr>`;
+                        }).join('')}
+                    </tbody>
+                </table>
+            </div>`}`;
+        }
+
+        function _docOnFilterChange(key, val) {
+            window._docFilterState[key] = val;
+            renderView();
+        }
+
+        function _docClearFilters() {
+            window._docFilterState = { q: '', category: '', insType: '', status: '' };
+            renderView();
+        }
+
+        // ── Add / Edit modal ──
+        window._docStagedAttachments = [];
+
+        function openCompanyDocModal(docID) {
+            const isEdit = !!docID;
+            const d = isEdit ? (companyDocuments||[]).find(x => x.docID === docID) : null;
+            if (isEdit && !d) { alert('Document not found.'); return; }
+            window._docStagedAttachments = isEdit ? (d.attachments || []).slice() : [];
+
+            const today = new Date().toISOString().split('T')[0];
+            const m = document.createElement('div');
+            m.id = 'companyDocModal';
+            m.className = 'modal show';
+            m.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[92vh] overflow-y-auto m-4">
+                <div class="bg-gradient-to-r from-purple-600 to-indigo-600 p-5 text-white flex justify-between items-center sticky top-0 z-10">
+                    <h3 class="text-lg font-bold">📄 ${isEdit?'Edit':'Add'} Document${isEdit?' — '+d.docID:''}</h3>
+                    <button onclick="closeCompanyDocModal()" class="text-white text-2xl">×</button>
+                </div>
+                <div class="p-5 space-y-4">
+                    <!-- Basics -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div class="md:col-span-2">
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Document Name *</label>
+                            <input type="text" id="docName" value="${(d?.docName||'').replace(/"/g,'&quot;')}" placeholder="e.g. GST Registration Certificate / WCC Insurance Policy / Marine Engineer Certificate" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Category *</label>
+                            <select id="docCategory" onchange="_docOnCatChange()" class="w-full px-3 py-2 border rounded-lg text-sm">
+                                ${DOC_CATEGORIES.map(c => `<option value="${c}"${(d?.docCategory||'Registration')===c?' selected':''}>${c}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div id="docInsTypeRow" class="${(d?.docCategory)==='Insurance'?'':'hidden'}">
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Insurance Type</label>
+                            <select id="docInsType" class="w-full px-3 py-2 border rounded-lg text-sm">
+                                <option value="">— Select —</option>
+                                ${INSURANCE_TYPES.map(t => `<option value="${t}"${d?.insuranceType===t?' selected':''}>${t}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Certificate / Policy # *</label>
+                            <input type="text" id="docCertNo" value="${(d?.certNo||'').replace(/"/g,'&quot;')}" placeholder="e.g. 27AADCI2387J1ZA / WCC/2026/001234" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Issuer / Insurer</label>
+                            <input type="text" id="docIssuer" value="${(d?.issuer||'').replace(/"/g,'&quot;')}" placeholder="e.g. GST Dept / National Insurance / Bajaj Allianz" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                    </div>
+
+                    <!-- Holder -->
+                    <div class="bg-gray-50 rounded-lg p-3">
+                        <label class="block text-xs font-semibold text-gray-700 mb-2">Holder</label>
+                        <div class="flex gap-3 mb-2">
+                            <label class="flex items-center gap-1 text-sm cursor-pointer">
+                                <input type="radio" name="docHolderType" value="Company" ${(d?.holderType||'Company')==='Company'?'checked':''} onchange="_docOnHolderTypeChange()"/> 🏢 Company-wide
+                            </label>
+                            <label class="flex items-center gap-1 text-sm cursor-pointer">
+                                <input type="radio" name="docHolderType" value="Staff" ${d?.holderType==='Staff'?'checked':''} onchange="_docOnHolderTypeChange()"/> 👤 Specific Staff Member
+                            </label>
+                        </div>
+                        <div id="docHolderStaffRow" class="${d?.holderType==='Staff'?'':'hidden'}">
+                            <select id="docHolderStaffID" onchange="_docOnHolderStaffChange()" class="w-full px-3 py-2 border rounded-lg text-sm">
+                                <option value="">— Select Staff —</option>
+                                ${(staff||[]).filter(s => s.status !== 'Inactive').map(s => `<option value="${s.staffID}"${d?.holderStaffID===s.staffID?' selected':''}>${s.name} (${s.staffID})</option>`).join('')}
+                            </select>
+                        </div>
+                        <div id="docHolderNameRow" class="${(d?.holderType||'Company')==='Company'?'':'hidden'} mt-2">
+                            <input type="text" id="docHolderName" value="${(d?.holderName||'IMSE Tech-Services Pvt Ltd').replace(/"/g,'&quot;')}" placeholder="Holder name" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                    </div>
+
+                    <!-- Validity -->
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Issue Date</label>
+                            <input type="date" id="docIssueDate" value="${d?.issueDate||''}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Expiry Date</label>
+                            <input type="date" id="docExpiryDate" value="${d?.expiryDate||''}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                        <div class="flex items-end">
+                            <label class="flex items-center gap-2 text-sm cursor-pointer">
+                                <input type="checkbox" id="docIsLifetime" ${d?.isLifetime?'checked':''} onchange="_docOnLifetimeChange()"/> Lifetime / No expiry
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Insurance-specific -->
+                    <div id="docInsuranceFields" class="${(d?.docCategory)==='Insurance'?'':'hidden'} grid grid-cols-1 md:grid-cols-2 gap-3 bg-blue-50/40 border border-blue-200 rounded-lg p-3">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Premium Amount (₹)</label>
+                            <input type="number" id="docPremium" step="0.01" value="${d?.premiumAmount||''}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Sum Insured (₹)</label>
+                            <input type="number" id="docSumInsured" step="0.01" value="${d?.sumInsured||''}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1">Coverage Details</label>
+                        <textarea id="docCoverage" rows="2" placeholder="What does this policy cover? E.g. all workmen as per Workmen's Compensation Act 1923 / Group floater for 25 employees and dependents" class="w-full px-3 py-2 border rounded-lg text-sm">${(d?.coverageDetails||'').replace(/</g,'&lt;')}</textarea>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1">Notes</label>
+                        <textarea id="docNotes" rows="2" placeholder="Any additional notes (renewal contact, claim history, etc.)" class="w-full px-3 py-2 border rounded-lg text-sm">${(d?.notes||'').replace(/</g,'&lt;')}</textarea>
+                    </div>
+
+                    <!-- Attachments -->
+                    <div class="border-2 border-dashed border-purple-300 rounded-xl p-3 bg-purple-50/30">
+                        <label class="block text-xs font-bold text-purple-800 mb-2">📎 Document Files</label>
+                        <p class="text-[10px] text-gray-500 mb-2">Upload the actual certificate / policy PDF or scanned image. Multiple files supported.</p>
+                        <input type="file" id="docFileInput" accept="image/*,application/pdf" multiple onchange="_docStageAttachment(event)" class="text-xs"/>
+                        <div id="docStagedList" class="mt-2 space-y-1"></div>
+                    </div>
+
+                    <div class="flex justify-end gap-3 pt-2 border-t pt-3">
+                        ${isEdit ? `<button onclick="deleteCompanyDoc('${d.docID}')" class="px-4 py-2 bg-red-100 text-red-700 rounded-xl hover:bg-red-200 text-sm mr-auto">🗑 Delete</button>` : ''}
+                        <button onclick="closeCompanyDocModal()" class="px-5 py-2 border border-gray-300 text-gray-600 rounded-xl hover:bg-gray-50">Cancel</button>
+                        <button onclick="saveCompanyDoc('${d?.docID||''}')" class="px-6 py-2 bg-purple-600 text-white rounded-xl hover:bg-purple-700 font-semibold">💾 Save</button>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(m);
+            _docRenderStagedList();
+            setTimeout(() => document.getElementById('docName')?.focus(), 50);
+        }
+
+        function closeCompanyDocModal() {
+            document.getElementById('companyDocModal')?.remove();
+            window._docStagedAttachments = [];
+        }
+
+        function _docOnCatChange() {
+            const cat = document.getElementById('docCategory')?.value;
+            const insRow = document.getElementById('docInsTypeRow');
+            const insFields = document.getElementById('docInsuranceFields');
+            if (cat === 'Insurance') {
+                insRow.classList.remove('hidden');
+                insFields.classList.remove('hidden');
+            } else {
+                insRow.classList.add('hidden');
+                insFields.classList.add('hidden');
+            }
+        }
+
+        function _docOnHolderTypeChange() {
+            const type = document.querySelector('input[name="docHolderType"]:checked')?.value;
+            const staffRow = document.getElementById('docHolderStaffRow');
+            const nameRow  = document.getElementById('docHolderNameRow');
+            if (type === 'Staff') {
+                staffRow.classList.remove('hidden');
+                nameRow.classList.add('hidden');
+            } else {
+                staffRow.classList.add('hidden');
+                nameRow.classList.remove('hidden');
+            }
+        }
+
+        function _docOnHolderStaffChange() {
+            const sid = document.getElementById('docHolderStaffID')?.value;
+            const s = (staff||[]).find(x => x.staffID === sid);
+            if (s) {
+                // Sync the holderName field even though it's hidden, so save reads correct value
+                const nameEl = document.getElementById('docHolderName');
+                if (nameEl) nameEl.value = s.name;
+            }
+        }
+
+        function _docOnLifetimeChange() {
+            const checked = document.getElementById('docIsLifetime')?.checked;
+            const exp = document.getElementById('docExpiryDate');
+            if (checked) {
+                exp.value = '';
+                exp.disabled = true;
+            } else {
+                exp.disabled = false;
+            }
+        }
+
+        async function _docStageAttachment(event) {
+            const files = Array.from(event.target.files);
+            for (const file of files) {
+                try {
+                    const folderId = await getOrCreateSubFolder('CompanyDocuments');
+                    const fileId   = await uploadFileToDriveFolder(file, folderId);
+                    window._docStagedAttachments.push({
+                        driveFileId: fileId,
+                        name: file.name,
+                        type: file.type,
+                        size: file.size,
+                        uploadedAt: new Date().toISOString()
+                    });
+                    _docRenderStagedList();
+                } catch (e) {
+                    console.error('Upload failed:', e);
+                    alert('Could not upload ' + file.name + ': ' + (e.message || e));
+                }
+            }
+            event.target.value = '';
+        }
+
+        function _docRenderStagedList() {
+            const list = document.getElementById('docStagedList');
+            if (!list) return;
+            const atts = window._docStagedAttachments || [];
+            if (atts.length === 0) {
+                list.innerHTML = '<p class="text-[10px] text-gray-400 italic">No documents attached yet</p>';
+                return;
+            }
+            list.innerHTML = atts.map((a, i) => `
+                <div class="flex items-center justify-between bg-white border border-purple-200 rounded px-2 py-1 text-xs">
+                    <span class="truncate">📎 ${(a.name||'document').substring(0,50)}</span>
+                    <div class="flex gap-1">
+                        ${a.driveFileId ? `<a href="https://drive.google.com/file/d/${a.driveFileId}/view" target="_blank" class="text-blue-600 hover:text-blue-800 px-1">View</a>` : ''}
+                        <button onclick="_docRemoveStaged(${i})" class="text-red-500 hover:text-red-700 px-1">✕</button>
+                    </div>
+                </div>`).join('');
+        }
+
+        function _docRemoveStaged(idx) {
+            window._docStagedAttachments.splice(idx, 1);
+            _docRenderStagedList();
+        }
+
+        async function saveCompanyDoc(existingDocID) {
+            const docName = document.getElementById('docName')?.value?.trim();
+            const certNo  = document.getElementById('docCertNo')?.value?.trim();
+            const category = document.getElementById('docCategory')?.value;
+            if (!docName) { alert('Document name is required.'); return; }
+            if (!certNo)  { alert('Certificate / Policy # is required.'); return; }
+            if (!category) { alert('Category is required.'); return; }
+
+            const isLifetime = !!document.getElementById('docIsLifetime')?.checked;
+            const expiryDate = isLifetime ? '' : (document.getElementById('docExpiryDate')?.value || '');
+            if (!isLifetime && !expiryDate) {
+                if (!confirm('No expiry date entered and "Lifetime" not ticked. Save anyway? (No renewal reminders will fire.)')) return;
+            }
+
+            const holderType = document.querySelector('input[name="docHolderType"]:checked')?.value || 'Company';
+            const holderStaffID = holderType === 'Staff' ? (document.getElementById('docHolderStaffID')?.value || '') : '';
+            let holderName = document.getElementById('docHolderName')?.value?.trim() || 'IMSE Tech-Services Pvt Ltd';
+            if (holderType === 'Staff' && holderStaffID) {
+                const s = (staff||[]).find(x => x.staffID === holderStaffID);
+                if (s) holderName = s.name;
+            }
+            if (holderType === 'Staff' && !holderStaffID) {
+                alert('Please select the staff member.'); return;
+            }
+
+            const stamp = new Date().toISOString();
+            const userName = (typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin';
+
+            let doc;
+            if (existingDocID) {
+                doc = companyDocuments.find(x => x.docID === existingDocID);
+                if (!doc) { alert('Document not found.'); return; }
+            } else {
+                // Generate new docID
+                const fyCode = (typeof getFinancialYearCode === 'function') ? getFinancialYearCode(new Date()) : '2627';
+                const prefix = `CDOC-${fyCode}-`;
+                const existingNums = companyDocuments
+                    .map(d => parseInt((d.docID||'').replace(prefix, '')) || 0)
+                    .filter(n => n > 0);
+                const next = (existingNums.length ? Math.max(...existingNums) : 0) + 1;
+                doc = {
+                    docID: prefix + String(next).padStart(3, '0'),
+                    createdAt: stamp,
+                    createdBy: userName,
+                    renewalReminderAcknowledged: false
+                };
+                companyDocuments.push(doc);
+            }
+
+            // Snapshot for rollback on save fail
+            const snapshot = JSON.parse(JSON.stringify(doc));
+
+            doc.docName        = docName;
+            doc.docCategory    = category;
+            doc.insuranceType  = category === 'Insurance' ? (document.getElementById('docInsType')?.value || '') : '';
+            doc.certNo         = certNo;
+            doc.issuer         = document.getElementById('docIssuer')?.value?.trim() || '';
+            doc.holderType     = holderType;
+            doc.holderStaffID  = holderStaffID;
+            doc.holderName     = holderName;
+            doc.issueDate      = document.getElementById('docIssueDate')?.value || '';
+            doc.expiryDate     = expiryDate;
+            doc.isLifetime     = isLifetime;
+            doc.premiumAmount  = category === 'Insurance' ? (parseFloat(document.getElementById('docPremium')?.value) || 0) : 0;
+            doc.sumInsured     = category === 'Insurance' ? (parseFloat(document.getElementById('docSumInsured')?.value) || 0) : 0;
+            doc.coverageDetails = document.getElementById('docCoverage')?.value || '';
+            doc.notes          = document.getElementById('docNotes')?.value || '';
+            doc.attachments    = (window._docStagedAttachments || []).slice();
+            doc.updatedAt      = stamp;
+            doc.updatedBy      = userName;
+
+            // If expiryDate changed, reset the acknowledged flag (new expiry = new cycle)
+            if (existingDocID && snapshot.expiryDate !== doc.expiryDate) {
+                doc.renewalReminderAcknowledged = false;
+                doc.renewalReminderAcknowledgedAt = '';
+            }
+
+            try {
+                await saveData('companyDocuments', companyDocuments);
+                closeCompanyDocModal();
+                renderView();
+                alert(`✓ Document saved: ${doc.docID}`);
+            } catch (e) {
+                // Roll back
+                if (existingDocID) {
+                    Object.assign(doc, snapshot);
+                } else {
+                    companyDocuments.pop();
+                }
+                alert('Could not save: ' + (e.message || e));
+            }
+        }
+
+        async function deleteCompanyDoc(docID) {
+            const d = (companyDocuments||[]).find(x => x.docID === docID);
+            if (!d) return;
+            if (!confirm(`Delete document ${docID} — "${d.docName}"?\n\nThe attached files in Drive will NOT be deleted (kept for audit). To free that storage, delete them manually from Drive afterwards.\n\nProceed?`)) return;
+            const before = companyDocuments.slice();
+            companyDocuments = companyDocuments.filter(x => x.docID !== docID);
+            try {
+                await saveData('companyDocuments', companyDocuments);
+                document.getElementById('companyDocModal')?.remove();
+                renderView();
+            } catch (e) {
+                companyDocuments = before;
+                alert('Could not save: ' + (e.message || e));
+            }
+        }
+
+        async function acknowledgeDocReminder(docID) {
+            const d = (companyDocuments||[]).find(x => x.docID === docID);
+            if (!d) return;
+            if (!confirm(`Mark renewal reminder for "${d.docName}" as acknowledged?\n\nThis hides it from the daily reminder emails until either:\n• You update the expiry date (new cycle), OR\n• You click "Unack" to re-enable reminders.`)) return;
+            d.renewalReminderAcknowledged = true;
+            d.renewalReminderAcknowledgedAt = new Date().toISOString();
+            d.renewalReminderAcknowledgedBy = (typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin';
+            d.updatedAt = new Date().toISOString();
+            try {
+                await saveData('companyDocuments', companyDocuments);
+                renderView();
+            } catch (e) {
+                d.renewalReminderAcknowledged = false;
+                d.renewalReminderAcknowledgedAt = '';
+                alert('Could not save: ' + (e.message || e));
+            }
+        }
+
+        async function unacknowledgeDocReminder(docID) {
+            const d = (companyDocuments||[]).find(x => x.docID === docID);
+            if (!d) return;
+            d.renewalReminderAcknowledged = false;
+            d.renewalReminderAcknowledgedAt = '';
+            d.updatedAt = new Date().toISOString();
+            try {
+                await saveData('companyDocuments', companyDocuments);
+                renderView();
+            } catch (e) { alert('Could not save: ' + (e.message || e)); }
+        }
+
         function viewPCAttachments(txnID) {
             const t = (pettyCashTransactions || []).find(x => x.txnID === txnID);
             if (!t || !t.attachments || t.attachments.length === 0) return;
@@ -25183,8 +25763,16 @@ Automated WFH alert — ${company} Attendance System.`;
                         <label class="block text-xs font-semibold text-gray-700 mb-1">From Bank Account</label>
                         <select id="pcrFromBank" class="w-full px-3 py-2 border rounded-lg text-sm">
                             <option value="">— select —</option>
-                            ${(bankAccounts||[]).map(b => `<option value="${b.accountID||b.id}" ${t.fromBankAccountID===(b.accountID||b.id)?'selected':''}>${b.bankName} ${b.accountNumber?'····'+String(b.accountNumber).slice(-4):''}</option>`).join('')}
+                            ${(bankAccounts||[]).filter(b => b.isActive !== false).map(b => {
+                                const id = b.accountID || b.id;
+                                const num = b.accountNo || b.accountNumber || '';
+                                const last4 = num ? '····' + String(num).slice(-4) : '';
+                                // Friendly format: "Account Name · Bank Name · ····1234"
+                                const display = [b.accountName, b.bankName, last4].filter(x => x).join(' · ');
+                                return `<option value="${id}" ${t.fromBankAccountID===id?'selected':''}>${display.replace(/</g,'&lt;').replace(/"/g,'&quot;')}</option>`;
+                            }).join('')}
                         </select>
+                        <p class="text-[10px] text-gray-400 mt-1">Configure bank accounts in Settings → Bank Accounts</p>
                     </div>
                     <div>
                         <label class="block text-xs font-semibold text-gray-700 mb-1">Remarks</label>
@@ -25362,9 +25950,42 @@ Automated WFH alert — ${company} Attendance System.`;
             if (!s) return;
             const office = (pettyCashOffices||[]).find(o => o.officeID === s.officeID) || {officeName: s.officeID};
             const fmt = n => '₹' + (+n || 0).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
-            const txns = (pettyCashTransactions||[]).filter(t =>
-                (s.expenseTxnIDs||[]).includes(t.txnID) || (s.replenishmentTxnIDs||[]).includes(t.txnID)
-            ).sort((a,b) => (a.txnDate||'').localeCompare(b.txnDate||''));
+
+            // For Draft statements: always compute LIVE values from current transactions
+            // (so changes like recording an opening balance after generation are reflected).
+            // For Verified/TallyPosted: use the snapshot (audit trail integrity), but warn
+            // if the snapshot now diverges from what the live data would show.
+            const pfx = `${s.year}-${String(s.month).padStart(2,'0')}-`;
+            const livePeriodTxns = (pettyCashTransactions||[]).filter(t =>
+                t.officeID === s.officeID && (t.txnDate||'').startsWith(pfx)
+            );
+            const liveExpenses = livePeriodTxns.filter(t => t.txnType === 'EXPENSE');
+            const liveReplen   = livePeriodTxns.filter(t => t.txnType === 'REPLENISHMENT');
+            const lastDayPriorMonth = new Date(s.year, s.month - 1, 0).toISOString().split('T')[0];
+            const liveOpening  = _pcOfficeBalance(s.officeID, lastDayPriorMonth);
+            const liveExpTotal = liveExpenses.reduce((sum,t) => sum + (parseFloat(t.amount)||0), 0);
+            const liveRepTotal = liveReplen.reduce((sum,t)  => sum + (parseFloat(t.amount)||0), 0);
+            const liveClosing  = liveOpening + liveRepTotal - liveExpTotal;
+
+            const isDraft = s.status === 'Draft';
+            const displayOpening  = isDraft ? liveOpening   : s.openingBalance;
+            const displayExpenses = isDraft ? liveExpTotal  : s.totalExpenses;
+            const displayReplen   = isDraft ? liveRepTotal  : s.totalReplenishments;
+            const displayClosing  = isDraft ? liveClosing   : s.closingBalance;
+
+            // Detect staleness for non-Draft statements
+            const stale = !isDraft && (
+                Math.abs((s.openingBalance||0)      - liveOpening)  > 0.01 ||
+                Math.abs((s.totalExpenses||0)       - liveExpTotal) > 0.01 ||
+                Math.abs((s.totalReplenishments||0) - liveRepTotal) > 0.01
+            );
+
+            // For Draft: use live txn list; for Verified+: use the snapshotted list
+            const txns = isDraft
+                ? livePeriodTxns.slice().sort((a,b) => (a.txnDate||'').localeCompare(b.txnDate||''))
+                : (pettyCashTransactions||[]).filter(t =>
+                    (s.expenseTxnIDs||[]).includes(t.txnID) || (s.replenishmentTxnIDs||[]).includes(t.txnID)
+                  ).sort((a,b) => (a.txnDate||'').localeCompare(b.txnDate||''));
 
             const unverifiedExpenses = txns.filter(t => t.txnType==='EXPENSE' && !t.verified);
             const allVerified = unverifiedExpenses.length === 0;
@@ -25379,7 +26000,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 <div class="bg-gradient-to-r from-cyan-500 to-cyan-600 p-5 text-white flex justify-between items-center sticky top-0 z-10">
                     <div>
                         <h3 class="text-lg font-bold">📋 ${s.statementID} — ${office.officeName} — ${s.periodLabel}</h3>
-                        <p class="text-cyan-100 text-xs mt-1">Status: <strong>${s.status}</strong>${s.verifiedAt?' · Verified '+s.verifiedAt.substring(0,10)+' by '+s.verifiedBy:''}${s.tallyVoucherNo?' · Tally V# '+s.tallyVoucherNo:''}</p>
+                        <p class="text-cyan-100 text-xs mt-1">Status: <strong>${s.status}</strong>${s.verifiedAt?' · Verified '+s.verifiedAt.substring(0,10)+' by '+s.verifiedBy:''}${s.tallyVoucherNo?' · Tally V# '+s.tallyVoucherNo:''}${isDraft?' · 🔄 live values':''}</p>
                     </div>
                     <div class="flex gap-2">
                         <button onclick="exportPCStatementPDF('${s.statementID}')" class="px-3 py-1.5 bg-white bg-opacity-20 text-white rounded-lg text-xs hover:bg-opacity-30">📄 PDF</button>
@@ -25387,11 +26008,16 @@ Automated WFH alert — ${company} Attendance System.`;
                     </div>
                 </div>
                 <div class="p-5 space-y-4">
+                    ${stale ? `
+                    <div class="bg-amber-50 border border-amber-300 rounded-lg p-3 text-xs text-amber-900 flex justify-between items-center gap-3">
+                        <span>⚠ <strong>Snapshot is stale.</strong> This ${s.status} statement was generated when opening was ${fmt(s.openingBalance)}, expenses ${fmt(s.totalExpenses)}, replenish ${fmt(s.totalReplenishments)}. Current live values: opening ${fmt(liveOpening)}, expenses ${fmt(liveExpTotal)}, replenish ${fmt(liveRepTotal)}. The snapshot is what was verified — click ↻ Refresh to update.</span>
+                        <button onclick="regeneratePCStatement('${s.statementID}')" class="whitespace-nowrap px-3 py-1.5 bg-amber-600 text-white rounded text-xs font-semibold hover:bg-amber-700">↻ Refresh</button>
+                    </div>` : ''}
                     <div class="grid grid-cols-4 gap-3">
-                        <div class="bg-gray-50 rounded-lg p-3"><p class="text-[10px] uppercase font-bold text-gray-600">Opening</p><p class="text-lg font-bold text-gray-800">${fmt(s.openingBalance)}</p></div>
-                        <div class="bg-red-50 rounded-lg p-3"><p class="text-[10px] uppercase font-bold text-red-600">Expenses</p><p class="text-lg font-bold text-red-700">−${fmt(s.totalExpenses)}</p></div>
-                        <div class="bg-green-50 rounded-lg p-3"><p class="text-[10px] uppercase font-bold text-green-600">Replenish</p><p class="text-lg font-bold text-green-700">+${fmt(s.totalReplenishments)}</p></div>
-                        <div class="bg-cyan-50 rounded-lg p-3"><p class="text-[10px] uppercase font-bold text-cyan-700">Closing</p><p class="text-lg font-bold text-cyan-800">${fmt(s.closingBalance)}</p></div>
+                        <div class="bg-gray-50 rounded-lg p-3"><p class="text-[10px] uppercase font-bold text-gray-600">Opening</p><p class="text-lg font-bold text-gray-800">${fmt(displayOpening)}</p></div>
+                        <div class="bg-red-50 rounded-lg p-3"><p class="text-[10px] uppercase font-bold text-red-600">Expenses</p><p class="text-lg font-bold text-red-700">−${fmt(displayExpenses)}</p></div>
+                        <div class="bg-green-50 rounded-lg p-3"><p class="text-[10px] uppercase font-bold text-green-600">Replenish</p><p class="text-lg font-bold text-green-700">+${fmt(displayReplen)}</p></div>
+                        <div class="bg-cyan-50 rounded-lg p-3"><p class="text-[10px] uppercase font-bold text-cyan-700">Closing</p><p class="text-lg font-bold ${displayClosing<0?'text-red-700':'text-cyan-800'}">${fmt(displayClosing)}</p></div>
                     </div>
                     ${!allVerified ? `
                     <div class="bg-amber-50 border border-amber-300 rounded-lg p-3 text-xs text-amber-800">
@@ -25830,6 +26456,13 @@ Automated WFH alert — ${company} Attendance System.`;
                                 <span>✓ Opening balance recorded</span>
                                 <button onclick="openPCOpeningModal('${o.officeID}')" class="px-3 py-1 border border-green-600 text-green-700 rounded text-xs font-semibold hover:bg-green-100">Edit Opening</button>
                             </div>`}
+                            <div class="mt-2 bg-white border border-gray-200 rounded p-2 text-xs flex items-center gap-2">
+                                <label class="flex items-center gap-2 cursor-pointer flex-1">
+                                    <input type="checkbox" ${o.autoReplenishInPR !== false ? 'checked' : ''} onchange="updatePCOfficeField(${idx},'autoReplenishInPR',this.checked)"/>
+                                    <span><strong>Auto-include in monthly Payment Request</strong> — a REPLENISH item is added when float &lt; limit</span>
+                                </label>
+                                <span class="text-[10px] text-gray-400" title="When OFF, the monthly PR generator skips this office. Replenish manually via the office card.">${o.autoReplenishInPR !== false ? '✓ ON' : '✗ OFF (manual replenish only)'}</span>
+                            </div>
                         </div>`;
                     }).join('')}
                 </div>`}
