@@ -22080,6 +22080,10 @@ Automated WFH alert — ${company} Attendance System.`;
                                     <div class="text-[10px] text-gray-500 uppercase font-semibold">Total Settled</div>
                                     <div class="text-lg font-bold text-emerald-700">${fmt(e.totalAmount)}</div>
                                 </div>
+                                <div class="flex flex-col gap-1">
+                                    <button onclick="openEditSettlementModal('${dirKey}','${(e.ref||'').replace(/'/g,'&apos;')}','${e.date}')" class="px-3 py-1 bg-amber-500 text-white rounded-md hover:bg-amber-600 text-xs font-semibold" title="Change date, ref, mode, etc. for this settlement">✏️ Edit</button>
+                                    <button onclick="unsettleEvent('${dirKey}','${(e.ref||'').replace(/'/g,'&apos;')}','${e.date}')" class="px-3 py-1 bg-red-100 text-red-700 rounded-md hover:bg-red-200 text-xs font-semibold" title="Reverse this settlement — bills return to unpaid">↶ Unsettle</button>
+                                </div>
                             </div>
                             <table class="w-full text-xs">
                                 <thead class="bg-gray-50">
@@ -22115,6 +22119,259 @@ Automated WFH alert — ${company} Attendance System.`;
                 </div>
             </div>`;
             modalEl.classList.add('show');
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        // EDIT SETTLEMENT MODAL
+        // ────────────────────────────────────────────────────────────────
+        // Lets the user retroactively change settlement fields (Date, Ref,
+        // Payment Mode, etc.) for ALL bills in one settlement event.
+        // Most common use: fix the reimbursedDate so the credit lands in the
+        // right month's ledger.
+        // ════════════════════════════════════════════════════════════════
+        function openEditSettlementModal(dirKey, ref, date) {
+            // Decode any HTML-escaped apostrophes the inline handler passed through
+            ref = String(ref).replace(/&apos;/g, "'");
+            const dirs = getDirNames();
+            const dirName = dirKey === 'dir1' ? dirs[0] : dirs[1];
+            const fmt = n => '₹'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
+
+            // Find all bills in this settlement event
+            const items = (directorExpenses||[]).filter(d =>
+                d.director === dirKey && d.reimbursed &&
+                (d.reimbursedRef||'NO-REF') === (ref||'NO-REF') &&
+                (d.reimbursedDate||'unknown') === (date||'unknown')
+            );
+
+            // Check whether the opening-balance settlement matches this event
+            const openSettled    = !!(dirKey==='dir1' ? settings.director1OpeningSettled : settings.director2OpeningSettled);
+            const openSettledRef = (dirKey==='dir1' ? settings.director1OpeningSettledRef  : settings.director2OpeningSettledRef)  || 'NO-REF';
+            const openSettledDate= (dirKey==='dir1' ? settings.director1OpeningSettledDate : settings.director2OpeningSettledDate) || 'unknown';
+            const openInThisEvent = openSettled && openSettledRef === ref && openSettledDate === date;
+
+            if (items.length === 0 && !openInThisEvent) {
+                alert('No items found for this settlement event.\n\nMaybe data has shifted since the history loaded — close and reopen the history view.');
+                return;
+            }
+
+            // Pull existing field values (consistent across all items by design)
+            const sample = items[0] || {};
+            const curMode    = sample.reimbursedMode      || (openInThisEvent ? (dirKey==='dir1' ? settings.director1OpeningSettledMode : settings.director2OpeningSettledMode) : '');
+            const curIssuer  = sample.reimbursedCardIssuer || '';
+            const curLast4   = sample.reimbursedCardLast4  || '';
+            const curNotes   = sample.reimbursedNotes      || (openInThisEvent ? (dirKey==='dir1' ? settings.director1OpeningSettledNotes : settings.director2OpeningSettledNotes) : '');
+
+            const totalAmt = items.reduce((s,d) => s + (parseFloat(d.reimbursedAmt)||parseFloat(d.amount)||0), 0)
+                           + (openInThisEvent ? (parseFloat(dirKey==='dir1' ? settings.director1OpeningSettledAmt : settings.director2OpeningSettledAmt)||0) : 0);
+
+            // Stash original keys so save can find the right records even if user changes ref/date
+            window._esOriginal = { dirKey, ref, date, openInThisEvent };
+
+            // Ensure modal element exists
+            let modalEl = document.getElementById('editSettlementModal');
+            if (!modalEl) {
+                modalEl = document.createElement('div');
+                modalEl.id = 'editSettlementModal';
+                modalEl.className = 'modal';
+                document.body.appendChild(modalEl);
+            }
+
+            modalEl.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl m-4 max-h-[92vh] overflow-y-auto">
+                <div class="bg-gradient-to-r from-amber-500 to-amber-600 p-5 text-white flex justify-between items-center sticky top-0 z-10">
+                    <div>
+                        <h2 class="text-lg font-bold">✏️ Edit Settlement — ${dirName}</h2>
+                        <p class="text-xs opacity-90 mt-0.5">${ref} · originally dated ${date}</p>
+                    </div>
+                    <button onclick="document.getElementById('editSettlementModal').classList.remove('show')" class="text-white text-2xl font-bold leading-none">✕</button>
+                </div>
+                <div class="p-5 space-y-3">
+                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-900">
+                        Updates ${items.length} bill(s)${openInThisEvent ? ' + the opening balance settlement' : ''} — total ${fmt(totalAmt)}. The credit will move to the ledger month of the new Payment Date.
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Payment Date *</label>
+                            <input type="date" id="esDate" value="${date}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Voucher / Ref *</label>
+                            <input type="text" id="esRef" value="${(ref||'').replace(/"/g,'&quot;')}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-3 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Payment Mode</label>
+                            <select id="esMode" onchange="document.getElementById('esCardRow').classList.toggle('hidden', !['Credit Card','Debit Card'].includes(this.value))" class="w-full px-3 py-2 border rounded-lg text-sm">
+                                ${['Cash','G-Pay / UPI','Bank Transfer (NEFT/RTGS/IMPS)','Credit Card','Debit Card','Cheque'].map(m=>`<option value="${m}" ${curMode===m?'selected':''}>${m}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div id="esCardCol1" class="${['Credit Card','Debit Card'].includes(curMode)?'':'opacity-50'}">
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Bank / Card Issuer</label>
+                            <input type="text" id="esCardIssuer" value="${(curIssuer||'').replace(/"/g,'&quot;')}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                        <div id="esCardCol2" class="${['Credit Card','Debit Card'].includes(curMode)?'':'opacity-50'}">
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Card Last 4</label>
+                            <input type="text" id="esCardLast4" maxlength="4" value="${(curLast4||'').replace(/"/g,'&quot;')}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1">Remarks</label>
+                        <input type="text" id="esNotes" value="${(curNotes||'').replace(/"/g,'&quot;')}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                    </div>
+                    <div class="border border-gray-200 rounded-lg overflow-hidden mt-2">
+                        <div class="bg-gray-50 px-3 py-1.5 text-[10px] font-bold text-gray-600 uppercase">Bills in this settlement (${items.length}${openInThisEvent?' + opening':''})</div>
+                        <table class="w-full text-xs">
+                            <tbody>
+                                ${openInThisEvent ? `
+                                <tr class="bg-amber-50/30 border-t border-gray-100">
+                                    <td class="px-3 py-1.5 font-mono text-gray-700">${(dirKey==='dir1' ? settings.director1OpeningDate : settings.director2OpeningDate) || '—'}</td>
+                                    <td class="px-3 py-1.5">🏁 Opening Balance</td>
+                                    <td class="px-3 py-1.5 text-right font-semibold">${fmt(parseFloat(dirKey==='dir1' ? settings.director1OpeningSettledAmt : settings.director2OpeningSettledAmt)||0)}</td>
+                                </tr>` : ''}
+                                ${items.map(d => `
+                                <tr class="border-t border-gray-100">
+                                    <td class="px-3 py-1.5 font-mono text-gray-700">${d.expDate||'—'}</td>
+                                    <td class="px-3 py-1.5">${(d.description||d.category||'—').substring(0,55)}</td>
+                                    <td class="px-3 py-1.5 text-right font-semibold">${fmt(d.reimbursedAmt||d.amount)}</td>
+                                </tr>`).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="flex justify-end gap-2 pt-2 border-t">
+                        <button onclick="document.getElementById('editSettlementModal').classList.remove('show')" class="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm font-medium">Cancel</button>
+                        <button onclick="saveEditSettlement()" class="px-5 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 text-sm font-bold">💾 Update Settlement</button>
+                    </div>
+                </div>
+            </div>`;
+            modalEl.classList.add('show');
+        }
+
+        async function saveEditSettlement() {
+            const orig = window._esOriginal;
+            if (!orig) return;
+            const newDate  = document.getElementById('esDate').value;
+            const newRef   = (document.getElementById('esRef').value || '').trim();
+            const newMode  = document.getElementById('esMode').value;
+            const isCard   = ['Credit Card','Debit Card'].includes(newMode);
+            const newIssuer= isCard ? (document.getElementById('esCardIssuer').value || '').trim() : '';
+            const newLast4 = isCard ? (document.getElementById('esCardLast4').value || '').trim() : '';
+            const newNotes = (document.getElementById('esNotes').value || '').trim();
+
+            if (!newDate || !/^\d{4}-\d{2}-\d{2}$/.test(newDate)) { alert('Payment Date is required (YYYY-MM-DD).'); return; }
+            if (!newRef) { alert('Voucher / Ref is required.'); return; }
+
+            // Find all bills matching the ORIGINAL key
+            const items = (directorExpenses||[]).filter(d =>
+                d.director === orig.dirKey && d.reimbursed &&
+                (d.reimbursedRef||'NO-REF') === (orig.ref||'NO-REF') &&
+                (d.reimbursedDate||'unknown') === (orig.date||'unknown')
+            );
+
+            if (!confirm(`Update this settlement?\n\n• ${items.length} bill(s)${orig.openInThisEvent ? ' + opening balance' : ''}\n• New Date: ${newDate}\n• New Ref: ${newRef}\n• New Mode: ${newMode}\n\nProceed?`)) return;
+
+            const stamp = new Date().toISOString();
+            directorExpenses = directorExpenses.map(d => {
+                if (d.director === orig.dirKey && d.reimbursed &&
+                    (d.reimbursedRef||'NO-REF') === (orig.ref||'NO-REF') &&
+                    (d.reimbursedDate||'unknown') === (orig.date||'unknown')) {
+                    return { ...d,
+                        reimbursedDate: newDate,
+                        reimbursedRef:  newRef,
+                        reimbursedMode: newMode,
+                        reimbursedCardIssuer: newIssuer,
+                        reimbursedCardLast4:  newLast4,
+                        reimbursedNotes: newNotes,
+                        updatedAt: stamp
+                    };
+                }
+                return d;
+            });
+
+            // Update opening-balance settlement fields too if it's part of this event
+            if (orig.openInThisEvent) {
+                const pfx = orig.dirKey === 'dir1' ? 'director1Opening' : 'director2Opening';
+                settings[pfx+'SettledDate']  = newDate;
+                settings[pfx+'SettledRef']   = newRef;
+                settings[pfx+'SettledMode']  = newMode;
+                settings[pfx+'SettledNotes'] = newNotes;
+                settings[pfx+'SettledAt']    = stamp;
+            }
+
+            try {
+                const saves = [saveData('directorExpenses', directorExpenses)];
+                if (orig.openInThisEvent) saves.push(saveData('settings', settings));
+                await Promise.all(saves);
+                document.getElementById('editSettlementModal').classList.remove('show');
+                openDirSettlementHistory(orig.dirKey);   // refresh history view
+                renderView();                            // refresh card totals
+                if (typeof showToast === 'function') showToast('✓ Settlement updated', 3000);
+                window._esOriginal = null;
+            } catch (e) {
+                alert('Could not save: ' + e.message);
+            }
+        }
+
+        async function unsettleEvent(dirKey, ref, date) {
+            ref = String(ref).replace(/&apos;/g, "'");
+            const items = (directorExpenses||[]).filter(d =>
+                d.director === dirKey && d.reimbursed &&
+                (d.reimbursedRef||'NO-REF') === (ref||'NO-REF') &&
+                (d.reimbursedDate||'unknown') === (date||'unknown')
+            );
+            const openSettled    = !!(dirKey==='dir1' ? settings.director1OpeningSettled : settings.director2OpeningSettled);
+            const openSettledRef = (dirKey==='dir1' ? settings.director1OpeningSettledRef  : settings.director2OpeningSettledRef)  || 'NO-REF';
+            const openSettledDate= (dirKey==='dir1' ? settings.director1OpeningSettledDate : settings.director2OpeningSettledDate) || 'unknown';
+            const openInThisEvent = openSettled && openSettledRef === ref && openSettledDate === date;
+
+            if (items.length === 0 && !openInThisEvent) {
+                alert('No items found for this settlement.');
+                return;
+            }
+
+            if (!confirm(`⚠ REVERSE this settlement?\n\n• ${items.length} bill(s)${openInThisEvent ? ' + opening balance' : ''} will be marked UNPAID again\n• Voucher ${ref} (dated ${date}) will be cleared\n• They will reappear in Settle Month modals\n\nProceed?`)) return;
+
+            const stamp = new Date().toISOString();
+            directorExpenses = directorExpenses.map(d => {
+                if (d.director === dirKey && d.reimbursed &&
+                    (d.reimbursedRef||'NO-REF') === (ref||'NO-REF') &&
+                    (d.reimbursedDate||'unknown') === (date||'unknown')) {
+                    const c = { ...d };
+                    c.reimbursed = false;
+                    delete c.reimbursedDate;
+                    delete c.reimbursedAmt;
+                    delete c.reimbursedRef;
+                    delete c.reimbursedMode;
+                    delete c.reimbursedCardIssuer;
+                    delete c.reimbursedCardLast4;
+                    delete c.reimbursedNotes;
+                    c.updatedAt = stamp;
+                    return c;
+                }
+                return d;
+            });
+
+            if (openInThisEvent) {
+                const pfx = dirKey === 'dir1' ? 'director1Opening' : 'director2Opening';
+                settings[pfx+'Settled']      = false;
+                delete settings[pfx+'SettledDate'];
+                delete settings[pfx+'SettledAmt'];
+                delete settings[pfx+'SettledRef'];
+                delete settings[pfx+'SettledMode'];
+                delete settings[pfx+'SettledNotes'];
+                delete settings[pfx+'SettledAt'];
+            }
+
+            try {
+                const saves = [saveData('directorExpenses', directorExpenses)];
+                if (openInThisEvent) saves.push(saveData('settings', settings));
+                await Promise.all(saves);
+                openDirSettlementHistory(dirKey);
+                renderView();
+                if (typeof showToast === 'function') showToast('✓ Settlement reversed — ' + items.length + ' bill(s) returned to unpaid', 3500);
+            } catch (e) {
+                alert('Could not save: ' + e.message);
+            }
         }
 
         // ════════════════════════════════════════════════════════════════
