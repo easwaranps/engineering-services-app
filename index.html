@@ -13662,7 +13662,7 @@
                         name:       file.name,
                         mimeType:   file.type,
                         size:       file.size,
-                        uploadedAt: new Date().toLocaleDateString('en-IN')
+                        uploadedAt: new Date().toISOString()   // ISO so the daily report script can parse the date
                     });
                 } catch (err) {
                     console.error('Upload failed for', file.name, err);
@@ -24775,7 +24775,8 @@ Automated WFH alert — ${company} Attendance System.`;
                         driveFileId: fileId,
                         name: file.name,
                         type: file.type,
-                        size: file.size
+                        size: file.size,
+                        uploadedAt: new Date().toISOString()   // ISO so the daily report script can parse the date
                     });
                     _pcRenderStagedList();
                 } catch (e) {
