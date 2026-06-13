@@ -459,13 +459,25 @@
                     <p class="field-label" style="color:#7c3aed;margin:0">📏 MEASUREMENT READINGS</p>
                     <button type="button" onclick="addCalibRow()" style="font-size:12px;padding:5px 12px;border-radius:8px;background:#ede9fe;color:#7c3aed;border:1px solid #c4b5fd;cursor:pointer;font-weight:600">+ Add Row</button>
                 </div>
+                <!-- Spreadsheet toolbar: tap a cell, then tap an action.
+                     Works on touch (phone/tablet) and pointer (laptop).
+                     Enter inside any cell input moves focus to the next editable cell. -->
+                <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px;padding:6px;background:#fff;border:1px solid #ddd6fe;border-radius:6px">
+                    <span id="calToolbarStatus" style="font-size:10px;color:#6b21a8;font-weight:600;padding:0 6px;min-width:80px">Tap a cell</span>
+                    <button type="button" onclick="_calMergeRight()" title="Extend the focused cell rightward by one column" style="font-size:11px;padding:4px 8px;border-radius:5px;background:#ede9fe;color:#7c3aed;border:1px solid #c4b5fd;cursor:pointer;font-weight:600">⇥ Merge Right</button>
+                    <button type="button" onclick="_calMergeBelow()" title="Extend the focused cell downward by one row" style="font-size:11px;padding:4px 8px;border-radius:5px;background:#ede9fe;color:#7c3aed;border:1px solid #c4b5fd;cursor:pointer;font-weight:600">⤓ Merge Below</button>
+                    <button type="button" onclick="_calSplit()" title="Split the focused merged cell back into individual cells" style="font-size:11px;padding:4px 8px;border-radius:5px;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;cursor:pointer;font-weight:600">⤬ Split</button>
+                    <button type="button" onclick="_calClearAllMerges()" title="Remove all merges in this table" style="font-size:11px;padding:4px 8px;border-radius:5px;background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;cursor:pointer;font-weight:600">Clear All</button>
+                    <span style="flex:1"></span>
+                    <button type="button" onclick="_calResetWidths()" title="Reset all column widths to default" style="font-size:11px;padding:4px 8px;border-radius:5px;background:#e0f2fe;color:#075985;border:1px solid #7dd3fc;cursor:pointer;font-weight:600">↔ Reset Widths</button>
+                </div>
                 <div style="overflow-x:auto">
                     <table style="width:100%;border-collapse:collapse;font-size:12px" id="calibTable">
                         <thead id="calibTableHead"></thead>
                         <tbody id="calibTableBody"></tbody>
                     </table>
                 </div>
-                <p style="font-size:10px;color:var(--muted);margin-top:6px">Result auto-calculates: PASS if actual ≤ wear limit, FAIL if exceeded.</p>
+                <p style="font-size:10px;color:var(--muted);margin-top:6px">Result auto-calculates: PASS if actual ≤ wear limit, FAIL if exceeded. · Press <kbd style="background:#f3f4f6;border:1px solid #d1d5db;border-radius:3px;padding:0 4px;font-size:10px">Enter</kbd> to move to next cell · Drag column header right edge to resize.</p>
             </div>
 
             <!-- Overall result & remarks -->
@@ -3613,6 +3625,210 @@
     let _customColKeys    = [];  // auto-generated 'c0','c1','c2'... keys
     let _customTitle      = '';
 
+    // ── Spreadsheet-feature state ──
+    // colWidths   : array of pixel widths per column (resizable headers)
+    // merges      : array of {r, c, rs, cs} — origin cell with row-span and col-span
+    //               cells covered by another's span are skipped during render
+    // focusCell   : {r, c} of the currently focused cell — used by Merge/Split toolbar
+    //               actions which operate on the active cell rather than a selection
+    //               (touch-friendly: tap a cell, tap a button)
+    let _calibColWidths = [];
+    let _calibMerges    = [];
+    let _calibFocusCell = null;
+
+    // Reset spreadsheet state when switching templates or creating fresh
+    function _calResetGridState(numCols) {
+        _calibColWidths = new Array(numCols).fill(0).map((_, i) => i < 2 ? 100 : 80);
+        _calibMerges    = [];
+        _calibFocusCell = null;
+    }
+
+    // ── Helpers: merge geometry ──────────────────────────────────────
+    // Is (r,c) covered by another cell's span (i.e. should NOT be rendered)?
+    function _calIsMergedOut(r, c) {
+        return _calibMerges.some(m =>
+            !(m.r === r && m.c === c) &&
+            r >= m.r && r < m.r + m.rs &&
+            c >= m.c && c < m.c + m.cs
+        );
+    }
+    // Get merge originating at (r,c) — or null
+    function _calGetMergeAt(r, c) {
+        return _calibMerges.find(m => m.r === r && m.c === c) || null;
+    }
+    // Number of columns in the current table (template or custom)
+    function _calNumCols() {
+        if (!_calibTemplate) return 0;
+        return _calibTemplate._isCustom ? _customColHeaders.length : _calibTemplate.colHeaders.length;
+    }
+    function _calNumRows() { return _calibRows.length; }
+
+    // ── Toolbar actions: merge / split / clear ───────────────────────
+    function _calMergeRight() {
+        if (!_calibFocusCell) { _calToast('Tap a cell first'); return; }
+        const {r, c} = _calibFocusCell;
+        let m = _calGetMergeAt(r, c);
+        if (!m) { m = { r, c, rs: 1, cs: 1 }; _calibMerges.push(m); }
+        if (c + m.cs >= _calNumCols()) { _calToast('Already at the right edge'); _calCleanEmptyMerge(m); return; }
+        // Block if the cell we'd absorb already belongs to another merge
+        const absorbC = c + m.cs;
+        const conflict = _calibMerges.find(other => other !== m && (
+            (absorbC >= other.c && absorbC < other.c + other.cs) &&
+            (r >= other.r && r < other.r + other.rs)
+        ));
+        if (conflict) { _calToast('Adjacent cell is part of another merge — split it first'); _calCleanEmptyMerge(m); return; }
+        m.cs += 1;
+        renderCalibTable();
+    }
+    function _calMergeBelow() {
+        if (!_calibFocusCell) { _calToast('Tap a cell first'); return; }
+        const {r, c} = _calibFocusCell;
+        let m = _calGetMergeAt(r, c);
+        if (!m) { m = { r, c, rs: 1, cs: 1 }; _calibMerges.push(m); }
+        if (r + m.rs >= _calNumRows()) { _calToast('Already at the last row'); _calCleanEmptyMerge(m); return; }
+        const absorbR = r + m.rs;
+        const conflict = _calibMerges.find(other => other !== m && (
+            (absorbR >= other.r && absorbR < other.r + other.rs) &&
+            (c >= other.c && c < other.c + other.cs)
+        ));
+        if (conflict) { _calToast('Cell below is part of another merge — split it first'); _calCleanEmptyMerge(m); return; }
+        m.rs += 1;
+        renderCalibTable();
+    }
+    function _calSplit() {
+        if (!_calibFocusCell) { _calToast('Tap a merged cell first'); return; }
+        const {r, c} = _calibFocusCell;
+        const idx = _calibMerges.findIndex(m => m.r === r && m.c === c);
+        if (idx < 0) { _calToast('That cell is not merged'); return; }
+        _calibMerges.splice(idx, 1);
+        renderCalibTable();
+    }
+    function _calClearAllMerges() {
+        if (!_calibMerges.length) { _calToast('No merges to clear'); return; }
+        if (!confirm('Clear ALL merges in this table?')) return;
+        _calibMerges = [];
+        renderCalibTable();
+    }
+    function _calResetWidths() {
+        _calResetGridState(_calNumCols());
+        // Keep merges (only reset widths) — actually _calResetGridState clears both. Re-init widths only:
+        _calibColWidths = new Array(_calNumCols()).fill(0).map((_, i) => i < 2 ? 100 : 80);
+        renderCalibTable();
+    }
+    function _calCleanEmptyMerge(m) {
+        // Remove a 1x1 merge that we tentatively added but didn't end up extending
+        if (m && m.rs === 1 && m.cs === 1) {
+            const idx = _calibMerges.indexOf(m);
+            if (idx >= 0) _calibMerges.splice(idx, 1);
+        }
+    }
+
+    // ── Focus + keyboard navigation ──────────────────────────────────
+    function _calSetFocus(r, c) {
+        _calibFocusCell = { r, c };
+        // Update visual highlight without full re-render — find all .cal-cell, then mark
+        document.querySelectorAll('#calibTable td[data-cal-r]').forEach(td => {
+            const tr = parseInt(td.getAttribute('data-cal-r'));
+            const tc = parseInt(td.getAttribute('data-cal-c'));
+            td.style.outline = (tr === r && tc === c) ? '2px solid #7c3aed' : '';
+            td.style.outlineOffset = (tr === r && tc === c) ? '-2px' : '';
+        });
+        // Show in toolbar
+        const statusEl = document.getElementById('calToolbarStatus');
+        if (statusEl) {
+            const m = _calGetMergeAt(r, c);
+            statusEl.textContent = m
+                ? `Cell ${_calLabel(r, c)} · merged (${m.rs}×${m.cs})`
+                : `Cell ${_calLabel(r, c)}`;
+        }
+    }
+    function _calLabel(r, c) {
+        // Letter for column (A, B, C…) + number for row (1-based) — spreadsheet style
+        return String.fromCharCode(65 + c) + (r + 1);
+    }
+    function _calOnInputKeyDown(ev, r, c) {
+        if (ev.key === 'Enter') {
+            ev.preventDefault();
+            const dir = ev.shiftKey ? -1 : 1;
+            const next = _calFindNextCell(r, c, dir);
+            if (next) _calFocusInputAt(next.r, next.c);
+        } else if (ev.key === 'ArrowDown' && (ev.ctrlKey || ev.metaKey || ev.altKey)) {
+            // Ctrl/Cmd/Alt + Down: jump down a row (normal Down moves within input text)
+            ev.preventDefault();
+            const next = _calFindCellInDirection(r, c, 1, 0);
+            if (next) _calFocusInputAt(next.r, next.c);
+        } else if (ev.key === 'ArrowUp' && (ev.ctrlKey || ev.metaKey || ev.altKey)) {
+            ev.preventDefault();
+            const next = _calFindCellInDirection(r, c, -1, 0);
+            if (next) _calFocusInputAt(next.r, next.c);
+        } else if (ev.key === 'Tab') {
+            // Tab natively focuses next form element; if it's a merged-out cell's input
+            // (shouldn't exist since we skip rendering) — leave default behavior.
+        }
+    }
+    function _calFindNextCell(r, c, dir) {
+        const rows = _calNumRows(), cols = _calNumCols();
+        let nr = r, nc = c;
+        for (let safety = 0; safety < rows * cols + 1; safety++) {
+            nc += dir;
+            if (nc >= cols) { nc = 0; nr += 1; }
+            if (nc < 0)     { nc = cols - 1; nr -= 1; }
+            if (nr < 0 || nr >= rows) return null;
+            if (!_calIsMergedOut(nr, nc)) return { r: nr, c: nc };
+        }
+        return null;
+    }
+    function _calFindCellInDirection(r, c, dr, dc) {
+        const rows = _calNumRows(), cols = _calNumCols();
+        let nr = r + dr, nc = c + dc;
+        while (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+            if (!_calIsMergedOut(nr, nc)) return { r: nr, c: nc };
+            nr += dr; nc += dc;
+        }
+        return null;
+    }
+    function _calFocusInputAt(r, c) {
+        const inp = document.querySelector(`#calibTableBody input[data-cal-r="${r}"][data-cal-c="${c}"]`);
+        if (inp) {
+            inp.focus();
+            if (typeof inp.select === 'function') inp.select();
+        }
+        _calSetFocus(r, c);
+    }
+
+    // ── Column resize (drag handle on header right edge) ────────────
+    function _calStartColResize(ev, ci) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const startX = (ev.clientX != null ? ev.clientX : (ev.touches?.[0]?.clientX || 0));
+        const startW = _calibColWidths[ci] || 100;
+        const onMove = (e) => {
+            const x = (e.clientX != null ? e.clientX : (e.touches?.[0]?.clientX || 0));
+            const w = Math.max(40, Math.min(400, startW + (x - startX)));
+            _calibColWidths[ci] = w;
+            // Apply live via inline style on cells in this column (no full re-render for perf)
+            document.querySelectorAll(`#calibTable [data-cal-c="${ci}"]`).forEach(el => {
+                el.style.width = w + 'px';
+                el.style.minWidth = w + 'px';
+            });
+            if (e.cancelable) e.preventDefault();
+        };
+        const onEnd = () => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onEnd);
+            document.removeEventListener('touchmove', onMove);
+            document.removeEventListener('touchend', onEnd);
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onEnd);
+        document.addEventListener('touchmove', onMove, { passive: false });
+        document.addEventListener('touchend', onEnd);
+    }
+    function _calToast(msg) {
+        if (typeof showToast === 'function') showToast(msg, 2200);
+        else console.log(msg);
+    }
+
     function onCalibComponentChange(comp) {
         const tpl = CALIB_TEMPLATES[comp] || CALIB_TEMPLATES['Other'];
         _calibTemplate = tpl;
@@ -3625,6 +3841,9 @@
         } else {
             _calibRows = tpl.defaultRows.map(r => ({...r}));
         }
+        // Switching templates wipes spreadsheet state (widths/merges) — they're
+        // template-specific and don't carry across structural changes.
+        _calResetGridState(_calNumCols());
         renderCalibTable();
     }
 
@@ -3634,13 +3853,35 @@
         const tbody = document.getElementById('calibTableBody');
         if (!thead || !tbody) return;
 
+        // Ensure colWidths array matches the column count (may have changed via add/remove col)
+        const nCols = _calNumCols();
+        if (_calibColWidths.length !== nCols) {
+            // Preserve existing widths where possible; default new columns
+            const old = _calibColWidths;
+            _calibColWidths = new Array(nCols).fill(0).map((_, i) =>
+                old[i] != null ? old[i] : (i < 2 ? 100 : 80)
+            );
+        }
+        // Discard any merges that are now out-of-bounds (column removed, row deleted)
+        const nRows = _calNumRows();
+        _calibMerges = _calibMerges.filter(m =>
+            m.r + m.rs <= nRows && m.c + m.cs <= nCols
+        );
+
+        // Helper to produce the resize handle markup for a header cell
+        const resizeHandle = (ci) => `<span
+            onmousedown="_calStartColResize(event, ${ci})"
+            ontouchstart="_calStartColResize(event, ${ci})"
+            title="Drag to resize column"
+            style="position:absolute;top:0;right:-3px;width:8px;height:100%;cursor:col-resize;z-index:2;background:transparent;touch-action:none"></span>`;
+
         const thStyle = 'padding:6px 8px;background:#1e3a5f;color:#fff;font-size:11px;font-weight:600;white-space:nowrap;border:1px solid #334155';
 
         // ── CUSTOM TABLE BUILDER MODE ────────────────────────────
         if (_calibTemplate._isCustom) {
-            // Header: editable column labels + remove button + "+Col" button
+            // Header: editable column labels + remove button + "+Col" button + resize handle
             const headerCells = _customColHeaders.map((h, ci) => `
-                <th style="${thStyle};min-width:90px">
+                <th data-cal-c="${ci}" style="${thStyle};min-width:${_calibColWidths[ci]}px;width:${_calibColWidths[ci]}px;position:relative">
                     <div style="display:flex;align-items:center;gap:4px">
                         <input type="text" value="${(h||'').replace(/"/g,'&quot;')}"
                             placeholder="Column ${ci+1}"
@@ -3648,6 +3889,7 @@
                             style="flex:1;border:1px solid #475569;background:rgba(255,255,255,.1);color:#fff;font-size:11px;padding:3px 5px;border-radius:3px;outline:none"/>
                         ${_customColHeaders.length > 1 ? `<button type="button" onclick="removeCustomCol(${ci})" title="Remove column" style="color:#fca5a5;background:none;border:none;cursor:pointer;font-size:13px;line-height:1;padding:0 2px">✕</button>` : ''}
                     </div>
+                    ${resizeHandle(ci)}
                 </th>`).join('');
             thead.innerHTML = `<tr>${headerCells}<th style="${thStyle};width:60px">
                 <button type="button" onclick="addCustomCol()" title="Add column" style="background:#10b981;color:#fff;border:none;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:11px;font-weight:600">+ Col</button>
@@ -3655,11 +3897,20 @@
 
             tbody.innerHTML = _calibRows.map((row, ri) => {
                 const cells = _customColKeys.map((key, ci) => {
+                    if (_calIsMergedOut(ri, ci)) return '';   // covered by another cell's span
+                    const m = _calGetMergeAt(ri, ci);
+                    const spanAttrs = m ? ` rowspan="${m.rs}" colspan="${m.cs}"` : '';
                     const val = row[key] || '';
-                    return `<td style="padding:3px 4px;border:1px solid #e2e8f0;min-width:90px">
+                    const w = _calibColWidths[ci];
+                    return `<td data-cal-r="${ri}" data-cal-c="${ci}"${spanAttrs}
+                        onclick="_calSetFocus(${ri},${ci})"
+                        style="padding:3px 4px;border:1px solid #e2e8f0;min-width:${w}px;width:${w}px">
                         <input type="text" value="${val.replace(/"/g,'&quot;')}"
                             placeholder=""
+                            data-cal-r="${ri}" data-cal-c="${ci}"
                             onchange="_calibRows[${ri}]['${key}']=this.value"
+                            onfocus="_calSetFocus(${ri},${ci})"
+                            onkeydown="_calOnInputKeyDown(event, ${ri}, ${ci})"
                             style="width:100%;border:none;background:transparent;font-size:11px;padding:3px 4px;outline:none;color:#1e3a5f"/>
                     </td>`;
                 }).join('');
@@ -3686,6 +3937,8 @@
                         style="width:100%;padding:5px 8px;border:1px solid #93c5fd;border-radius:4px;font-size:12px;background:#fff"/>
                 </div>
                 <div>💡 <b>Tip:</b> Click column headers to rename. Use ✕ on rows/columns to remove. Click "+ Col" to add a new column. Type any value into any cell.</div>`;
+            // Restore focus highlight if it was set
+            if (_calibFocusCell) _calSetFocus(_calibFocusCell.r, _calibFocusCell.c);
             return;
         }
 
@@ -3694,31 +3947,47 @@
         if (customTip) customTip.remove();
 
         // ── STANDARD TEMPLATE MODE (existing behavior) ────────────
-        thead.innerHTML = '<tr>' + _calibTemplate.colHeaders.map(h=>`<th style="${thStyle}">${h}</th>`).join('') + '<th style="'+thStyle+'">Del</th></tr>';
+        const headerCellsStd = _calibTemplate.colHeaders.map((h, ci) =>
+            `<th data-cal-c="${ci}" style="${thStyle};min-width:${_calibColWidths[ci]}px;width:${_calibColWidths[ci]}px;position:relative">${h}${resizeHandle(ci)}</th>`
+        ).join('');
+        thead.innerHTML = '<tr>' + headerCellsStd + '<th style="'+thStyle+'">Del</th></tr>';
 
         tbody.innerHTML = _calibRows.map((row,ri) => {
             return '<tr>' + _calibTemplate.rowKeys.map((key,ci) => {
+                if (_calIsMergedOut(ri, ci)) return '';
+                const m = _calGetMergeAt(ri, ci);
+                const spanAttrs = m ? ` rowspan="${m.rs}" colspan="${m.cs}"` : '';
+                const w = _calibColWidths[ci];
                 const isResult = key === 'result';
                 const val = row[key]||'';
                 const resultCol = isResult ? getCalibResult(row) : '';
                 const resultStyle = resultCol==='PASS'?'background:#dcfce7;color:#15803d;font-weight:700':
                                     resultCol==='FAIL'?'background:#fee2e2;color:#dc2626;font-weight:700':'';
                 if (isResult) {
-                    return `<td style="padding:5px 8px;border:1px solid #e2e8f0;text-align:center;font-size:11px;${resultStyle}">${resultCol||'—'}</td>`;
+                    return `<td data-cal-r="${ri}" data-cal-c="${ci}"${spanAttrs}
+                        onclick="_calSetFocus(${ri},${ci})"
+                        style="padding:5px 8px;border:1px solid #e2e8f0;text-align:center;font-size:11px;min-width:${w}px;width:${w}px;${resultStyle}">${resultCol||'—'}</td>`;
                 }
                 const isFixed = ci < 2 && _calibTemplate.colHeaders[ci] !== 'Actual (mm)' && !_calibTemplate.colHeaders[ci].startsWith('Actual');
-                const inputW = ci < 2 ? '80px' : '70px';
-                return `<td style="padding:3px 4px;border:1px solid #e2e8f0">
+                return `<td data-cal-r="${ri}" data-cal-c="${ci}"${spanAttrs}
+                    onclick="_calSetFocus(${ri},${ci})"
+                    style="padding:3px 4px;border:1px solid #e2e8f0;min-width:${w}px;width:${w}px">
                     <input type="text" value="${val}" placeholder="${_calibTemplate.colHeaders[ci]}"
+                        data-cal-r="${ri}" data-cal-c="${ci}"
                         onchange="_calibRows[${ri}]['${key}']=this.value;renderCalibTable()"
-                        style="width:${inputW};border:none;background:transparent;font-size:11px;padding:3px 4px;outline:none;color:#1e3a5f"
-                        ${isFixed&&val?'readonly style="width:'+inputW+';border:none;background:transparent;font-size:11px;padding:3px 4px;color:#374151;font-weight:500"':''}/>
+                        onfocus="_calSetFocus(${ri},${ci})"
+                        onkeydown="_calOnInputKeyDown(event, ${ri}, ${ci})"
+                        style="width:100%;border:none;background:transparent;font-size:11px;padding:3px 4px;outline:none;color:#1e3a5f"
+                        ${isFixed&&val?'readonly style="width:100%;border:none;background:transparent;font-size:11px;padding:3px 4px;color:#374151;font-weight:500"':''}/>
                 </td>`;
             }).join('') +
             `<td style="padding:3px 6px;border:1px solid #e2e8f0;text-align:center">
                 <button type="button" onclick="_calibRows.splice(${ri},1);renderCalibTable()" style="color:#dc2626;background:none;border:none;cursor:pointer;font-size:14px;line-height:1">✕</button>
             </td></tr>`;
         }).join('');
+
+        // Restore focus highlight if it was set (after any structural re-render)
+        if (_calibFocusCell) _calSetFocus(_calibFocusCell.r, _calibFocusCell.c);
     }
 
     // Custom Table column operations
@@ -3782,6 +4051,7 @@
         document.getElementById('calibOverall').value='PASS';
         _calibRows=[]; _calibTemplate=null;
         _customColHeaders=[]; _customColKeys=[]; _customTitle='';
+        _calibColWidths=[]; _calibMerges=[]; _calibFocusCell=null;
         const thead=document.getElementById('calibTableHead');
         const tbody=document.getElementById('calibTableBody');
         if(thead)thead.innerHTML=''; if(tbody)tbody.innerHTML='';
@@ -3811,6 +4081,12 @@
                     _customTitle      = rec.customTitle || '';
                 }
                 _calibRows = rec.rows ? rec.rows.map(r=>({...r})) : [];
+                // Restore spreadsheet-feature state (defaults if missing on legacy records)
+                _calibColWidths = Array.isArray(rec.colWidths) && rec.colWidths.length
+                    ? [...rec.colWidths]
+                    : new Array(_calNumCols()).fill(0).map((_, i) => i < 2 ? 100 : 80);
+                _calibMerges    = Array.isArray(rec.merges) ? rec.merges.map(m=>({...m})) : [];
+                _calibFocusCell = null;
                 renderCalibTable();
             }
         }
@@ -3826,6 +4102,7 @@
         document.getElementById('calibModal').classList.remove('show');
         _calibRows=[]; _calibTemplate=null;
         _customColHeaders=[]; _customColKeys=[]; _customTitle='';
+        _calibColWidths=[]; _calibMerges=[]; _calibFocusCell=null;
         // Remove the custom tip element if present
         const tip = document.getElementById('customTableTip'); if (tip) tip.remove();
         _concurEndEdit();
@@ -3865,7 +4142,11 @@
                             : _calibRows.map(r => ({...r, result:getCalibResult(r)})),
             // Custom Table-specific fields
             _isCustom:  isCustom,
-            customTitle: isCustom ? (_customTitle || '') : ''
+            customTitle: isCustom ? (_customTitle || '') : '',
+            // Spreadsheet-feature state — kept alongside the data so the table
+            // looks the same on next edit / print. New fields, safe defaults if absent.
+            colWidths: [..._calibColWidths],
+            merges:    _calibMerges.map(m => ({...m}))
         };
         _stampRecord(rec);
 
