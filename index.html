@@ -6466,12 +6466,39 @@
             handleDeepLink(); // handle #pdf=TXN_ID links from Google Sheets
         }
 
+        // Map of view IDs to friendly section labels — used for the browser tab title.
+        // Keys must match the actual IDs passed to switchView().
+        const VIEW_LABELS = {
+            dashboard:     'Dashboard',
+            transactions:  'Transactions',
+            expenses:      'Expenses',
+            staff:         'Staff',
+            projexp:       'Projects',
+            funds:         'Funds',
+            payreq:        'Pay Requests',
+            direxp:        'Directors',
+            pettycash:     'Petty Cash',
+            tax:           'Tax',
+            docs:          'Documents',
+            parties:       'Parties',
+            mis:           'MIS',
+            settings:      'Settings'
+        };
+
+        function _updateBrowserTabTitle() {
+            const label = VIEW_LABELS[currentView] || currentView || '';
+            // Format: "<Section> · IMSE EASY BMS"  — section first so it's visible
+            // when the browser tab is narrow (only first ~15 chars shown).
+            document.title = label ? (label + ' · IMSE EASY BMS') : 'IMSE EASY BMS';
+        }
+
         function switchView(view) {
             currentView = view;
             // Lock settings when navigating away
             if (view !== 'settings') {
                 settingsUnlocked = false;
             }
+            _updateBrowserTabTitle();
             renderView();
         }
 
@@ -6481,6 +6508,10 @@
                 console.error('mainContent element not found');
                 return;
             }
+            // Keep browser tab title in sync with the current section.
+            // (Belt-and-braces — switchView() also calls this, but renderView is
+            //  invoked from many places after data saves, so doing it here covers all paths.)
+            try { _updateBrowserTabTitle(); } catch (e) {}
             
             if (currentView === 'dashboard') renderDashboard(content);
             else if (currentView === 'transactions') renderTransactions(content);
@@ -25760,7 +25791,9 @@ Automated WFH alert — ${company} Attendance System.`;
                             return `
                             <tr class="border-t hover:bg-purple-50/30">
                                 <td class="px-3 py-2">
-                                    <div class="font-medium text-gray-800">${(d.docName||'—').replace(/</g,'&lt;')}</div>
+                                    ${(d.attachments||[]).length > 0
+                                        ? `<button onclick="viewCompanyDocAttachments('${d.docID}')" class="font-medium text-indigo-700 hover:text-indigo-900 hover:underline text-left" title="Click to view attachment(s)">${(d.docName||'—').replace(/</g,'&lt;')}</button>`
+                                        : `<div class="font-medium text-gray-800">${(d.docName||'—').replace(/</g,'&lt;')}</div>`}
                                     ${d.insuranceType ? `<div class="text-[10px] text-gray-500">${d.insuranceType}</div>` : ''}
                                 </td>
                                 <td class="px-3 py-2 text-xs">${d.docCategory || '—'}</td>
@@ -25777,8 +25810,9 @@ Automated WFH alert — ${company} Attendance System.`;
                                     <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${statusColors[status]||'bg-gray-100'}">${status}</span>
                                     ${ackBadge}
                                 </td>
-                                <td class="px-3 py-2 text-center text-xs">${(d.attachments||[]).length > 0 ? `<span class="text-blue-600 font-bold">${d.attachments.length}</span>` : '—'}</td>
+                                <td class="px-3 py-2 text-center text-xs">${(d.attachments||[]).length > 0 ? `<button onclick="viewCompanyDocAttachments('${d.docID}')" class="text-blue-600 hover:text-blue-800 font-bold" title="View ${d.attachments.length} attachment(s)">${d.attachments.length}</button>` : '—'}</td>
                                 <td class="px-3 py-2 text-right whitespace-nowrap">
+                                    ${(d.attachments||[]).length > 0 ? `<button onclick="viewCompanyDocAttachments('${d.docID}')" class="text-emerald-600 hover:text-emerald-800 text-xs font-medium mr-1" title="Open attachments without entering Edit mode">👁 View</button>` : ''}
                                     <button onclick="openCompanyDocModal('${d.docID}')" class="text-indigo-600 hover:text-indigo-800 text-xs font-medium mr-1">Edit</button>
                                     ${(status === 'Expiring' || status === 'Expired') && !d.renewalReminderAcknowledged ? `<button onclick="acknowledgeDocReminder('${d.docID}')" class="text-blue-600 hover:text-blue-800 text-xs font-medium mr-1" title="Mark renewal as acknowledged — hide from daily reminder emails">✓ Ack</button>` : ''}
                                     ${d.renewalReminderAcknowledged ? `<button onclick="unacknowledgeDocReminder('${d.docID}')" class="text-blue-600 hover:text-blue-800 text-xs font-medium mr-1" title="Re-enable reminders">↺ Unack</button>` : ''}
@@ -25803,6 +25837,73 @@ Automated WFH alert — ${company} Attendance System.`;
 
         // ── Add / Edit modal ──
         window._docStagedAttachments = [];
+
+        // ════════════════════════════════════════════════════════════════
+        // VIEW DOCUMENT ATTACHMENTS — list view, no edit mode
+        // ────────────────────────────────────────────────────────────────
+        // Opens a lightweight modal listing all attachments on a document
+        // with direct "Open in Drive" links. Avoids loading the full Edit
+        // form when the user just wants to look at the file.
+        // ════════════════════════════════════════════════════════════════
+        function viewCompanyDocAttachments(docID) {
+            const d = (companyDocuments||[]).find(x => x.docID === docID);
+            if (!d) { alert('Document not found.'); return; }
+            const atts = d.attachments || [];
+            if (atts.length === 0) { alert('No attachments on this document.'); return; }
+
+            // If exactly one attachment, just open it in a new tab — no modal needed
+            if (atts.length === 1) {
+                const a = atts[0];
+                if (a.driveFileId) {
+                    const w = window.open(`https://drive.google.com/file/d/${a.driveFileId}/view`, '_blank');
+                    if (!w) alert('Pop-up blocked. Please allow pop-ups for this site to view attachments.');
+                } else {
+                    alert('Attachment metadata is incomplete — cannot open.');
+                }
+                return;
+            }
+
+            // Multiple attachments — show modal picker
+            let modalEl = document.getElementById('docViewModal');
+            if (!modalEl) {
+                modalEl = document.createElement('div');
+                modalEl.id = 'docViewModal';
+                modalEl.className = 'modal';
+                document.body.appendChild(modalEl);
+            }
+            const fmtSize = b => !b ? '' : (b < 1024 ? b+' B' : b < 1024*1024 ? (b/1024).toFixed(1)+' KB' : (b/(1024*1024)).toFixed(2)+' MB');
+            const expDate = d.isLifetime ? 'Lifetime' : (d.expiryDate || '—');
+
+            modalEl.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl m-4 max-h-[92vh] overflow-y-auto">
+                <div class="bg-gradient-to-r from-purple-600 to-indigo-600 p-5 text-white flex justify-between items-center sticky top-0 z-10">
+                    <div>
+                        <h2 class="text-lg font-bold">📂 ${(d.docName||'Document').replace(/</g,'&lt;')}</h2>
+                        <p class="text-xs opacity-90 mt-0.5">${d.docCategory || '—'} · Cert#: ${(d.certNo||'—').replace(/</g,'&lt;')} · Expires: ${expDate}</p>
+                    </div>
+                    <button onclick="document.getElementById('docViewModal').classList.remove('show')" class="text-white text-2xl font-bold leading-none">✕</button>
+                </div>
+                <div class="p-5 space-y-2">
+                    <p class="text-xs text-gray-500 mb-2">${atts.length} attachment(s) — click any to open in Drive</p>
+                    ${atts.map((a, idx) => `
+                        <div class="border border-gray-200 rounded-lg p-3 flex items-center gap-3 hover:bg-purple-50/30">
+                            <div class="text-2xl">${a.type && a.type.startsWith('image/') ? '🖼' : '📄'}</div>
+                            <div class="flex-1 min-w-0">
+                                <div class="text-sm font-medium text-gray-800 truncate" title="${(a.name||'attachment').replace(/"/g,'&quot;')}">${(a.name||'Attachment '+(idx+1)).replace(/</g,'&lt;')}</div>
+                                <div class="text-[11px] text-gray-500">${a.type||''} ${fmtSize(a.size)}${a.uploadedAt ? ' · uploaded '+a.uploadedAt.substring(0,10) : ''}${a.uploadedBy ? ' by '+a.uploadedBy : ''}</div>
+                            </div>
+                            ${a.driveFileId
+                                ? `<button onclick="window.open('https://drive.google.com/file/d/${a.driveFileId}/view','_blank')" class="px-4 py-2 bg-purple-600 text-white rounded-lg text-xs font-semibold hover:bg-purple-700">👁 Open</button>`
+                                : '<span class="text-xs text-red-500">No file ID</span>'}
+                        </div>`).join('')}
+                    <div class="flex justify-end gap-2 pt-3 border-t mt-3">
+                        <button onclick="document.getElementById('docViewModal').classList.remove('show')" class="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm">Close</button>
+                        <button onclick="document.getElementById('docViewModal').classList.remove('show'); openCompanyDocModal('${docID}')" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-semibold">✏️ Edit Document</button>
+                    </div>
+                </div>
+            </div>`;
+            modalEl.classList.add('show');
+        }
 
         function openCompanyDocModal(docID) {
             const isEdit = !!docID;
