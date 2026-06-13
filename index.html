@@ -6489,7 +6489,71 @@
             const label = VIEW_LABELS[currentView] || currentView || '';
             // Format: "<Section> · IMSE EASY BMS"  — section first so it's visible
             // when the browser tab is narrow (only first ~15 chars shown).
-            document.title = label ? (label + ' · IMSE EASY BMS') : 'IMSE EASY BMS';
+            const newTitle = label ? (label + ' · IMSE EASY BMS') : 'IMSE EASY BMS';
+            if (document.title !== newTitle) {
+                document.title = newTitle;
+                console.log('[BMS] tab title →', newTitle, '(currentView:', currentView + ')');
+            }
+        }
+
+        // Set title at script-load time too — doesn't wait for any renderView call.
+        // This guarantees the initial title is correct even before data loads.
+        try { _updateBrowserTabTitle(); } catch (e) { console.warn('initial title set failed', e); }
+
+        // MutationObserver safety net — if anything else ever overrides the title
+        // (extensions, third-party scripts, etc.), we re-apply ours within a frame.
+        // Helps diagnose "tab title not changing" complaints by surfacing the override.
+        try {
+            const titleEl = document.querySelector('title');
+            if (titleEl && !window._bmsTitleObserver) {
+                window._bmsTitleObserver = new MutationObserver(() => {
+                    const expected = (VIEW_LABELS[currentView] || currentView || '') + ' · IMSE EASY BMS';
+                    if (document.title !== expected && document.title !== 'IMSE EASY BMS') {
+                        console.warn('[BMS] tab title was changed externally to:', document.title, '— restoring');
+                        _updateBrowserTabTitle();
+                    }
+                });
+                window._bmsTitleObserver.observe(titleEl, { childList: true, characterData: true, subtree: true });
+            }
+        } catch (e) { /* observer not critical */ }
+
+        // ── Nav bar highlight updater ─────────────────────────────
+        // The nav bar HTML is rendered once at app startup via a big template
+        // literal — it is NOT re-rendered when switchView() updates currentView.
+        // So the "active" button class is stuck on whatever view was current
+        // when the page first loaded. This function scans all nav buttons that
+        // call switchView() and re-applies the correct active/inactive classes
+        // to match the new currentView.
+        const NAV_ACTIVE_CLASSES = {
+            dashboard:    'bg-indigo-100 text-indigo-700',
+            transactions: 'bg-indigo-100 text-indigo-700',
+            expenses:     'bg-orange-100 text-orange-700',
+            staff:        'bg-teal-100 text-teal-700',
+            projexp:      'bg-yellow-100 text-yellow-700',
+            funds:        'bg-emerald-100 text-emerald-700',
+            payreq:       'bg-cyan-100 text-cyan-700',
+            direxp:       'bg-rose-100 text-rose-700',
+            pettycash:    'bg-amber-100 text-amber-800',
+            tax:          'bg-red-100 text-red-700',
+            mis:          'bg-green-100 text-green-700',
+            parties:      'bg-indigo-100 text-indigo-700',
+            docs:         'bg-purple-100 text-purple-700',
+            settings:     'bg-indigo-100 text-indigo-700'
+        };
+        function _updateNavBarHighlight() {
+            try {
+                // Find every nav button whose onclick is switchView('xxx')
+                document.querySelectorAll('nav button[onclick^="switchView"]').forEach(btn => {
+                    const m = (btn.getAttribute('onclick')||'').match(/switchView\('([^']+)'\)/);
+                    if (!m) return;
+                    const view = m[1];
+                    const baseClasses = 'px-4 py-2 rounded-lg';
+                    const stateClasses = (view === currentView)
+                        ? (NAV_ACTIVE_CLASSES[view] || 'bg-indigo-100 text-indigo-700')
+                        : 'text-gray-600 hover:bg-gray-100';
+                    btn.className = baseClasses + ' ' + stateClasses;
+                });
+            } catch (e) { /* nav not yet mounted — first render will handle it */ }
         }
 
         function switchView(view) {
@@ -6499,6 +6563,7 @@
                 settingsUnlocked = false;
             }
             _updateBrowserTabTitle();
+            _updateNavBarHighlight();
             renderView();
         }
 
@@ -6512,6 +6577,7 @@
             // (Belt-and-braces — switchView() also calls this, but renderView is
             //  invoked from many places after data saves, so doing it here covers all paths.)
             try { _updateBrowserTabTitle(); } catch (e) {}
+            try { _updateNavBarHighlight(); } catch (e) {}
             
             if (currentView === 'dashboard') renderDashboard(content);
             else if (currentView === 'transactions') renderTransactions(content);
