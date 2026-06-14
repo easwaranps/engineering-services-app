@@ -4319,9 +4319,10 @@
                                     ${d.category?`<span class="badge" style="margin-left:6px;background:#eff6ff;color:#1d4ed8;font-size:10px">${d.category}</span>`:''}
                                 </div>
                                 <div class="flex gap-1.5 flex-wrap">
-                                    <button onclick="editDayEntry('${w.wlID}','${d.entryID}')" style="padding:4px 8px;border-radius:6px;border:1.5px solid var(--border);background:#fff;cursor:pointer;font-size:11px;color:var(--muted)">✏️</button>
-                                    <button onclick="openCalibModal('${w.wlID}','${d.entryID}')" style="padding:4px 8px;border-radius:6px;border:1.5px solid #e9d5ff;background:#faf5ff;cursor:pointer;font-size:11px;color:#7c3aed;font-weight:600">📐 ${(d.calibrations||[]).length?d.calibrations.length+' Cal':'+ Cal'}</button>
-                                    <button onclick="deleteDayEntry('${w.wlID}','${d.entryID}')" style="padding:4px 8px;border-radius:6px;border:1.5px solid #fecaca;background:#fff;cursor:pointer;font-size:11px;color:#dc2626">✕</button>
+                                    <button onclick="editDayEntry('${w.wlID}','${d.entryID}')" style="padding:4px 8px;border-radius:6px;border:1.5px solid var(--border);background:#fff;cursor:pointer;font-size:11px;color:var(--muted)" title="Edit entry">✏️</button>
+                                    <button onclick="openCalibModal('${w.wlID}','${d.entryID}')" style="padding:4px 8px;border-radius:6px;border:1.5px solid #e9d5ff;background:#faf5ff;cursor:pointer;font-size:11px;color:#7c3aed;font-weight:600" title="Add/edit calibration">📐 ${(d.calibrations||[]).length?d.calibrations.length+' Cal':'+ Cal'}</button>
+                                    <button onclick="dayEntryPDF('${w.wlID}','${d.entryID}')" style="padding:4px 8px;border-radius:6px;border:1.5px solid #bfdbfe;background:#eff6ff;cursor:pointer;font-size:11px;color:#1d4ed8;font-weight:600" title="Download this day's activity as PDF">📄 PDF</button>
+                                    <button onclick="deleteDayEntry('${w.wlID}','${d.entryID}')" style="padding:4px 8px;border-radius:6px;border:1.5px solid #fecaca;background:#fff;cursor:pointer;font-size:11px;color:#dc2626" title="Delete entry">✕</button>
                                 </div>
                             </div>
                             <!-- Technicians -->
@@ -4828,9 +4829,19 @@
     }
 
     // ── WORK LOG PDF — Full Project Report ───────────────────────
-    async function wlPDF(wlID){
+    async function wlPDF(wlID, entryIDFilter){
         const wl=workLogs.find(x=>x.wlID===wlID);if(!wl)return;
-        const days=[...(wl.dailyEntries||[])].sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+        // When entryIDFilter is provided, restrict to that single day's entry.
+        // This powers the per-day PDF button (dayEntryPDF wrapper) while sharing
+        // all the rendering, photo-fetch, and pagination logic with the full report.
+        const allDays=[...(wl.dailyEntries||[])].sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+        const days = entryIDFilter
+            ? allDays.filter(d => d.entryID === entryIDFilter)
+            : allDays;
+        if (entryIDFilter && !days.length) {
+            showToast('Day entry not found.');
+            return;
+        }
         showToast('⏳ Generating PDF…',6000);
         if(!window.jspdf){
             await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
@@ -4951,8 +4962,9 @@
 
             // Report title — centred below the header bar
             doc.setFontSize(11);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
-            doc.text('TIME SHEET AND WORK DONE REPORT', PW/2, 33, {align:'center'});
-            const titleW = doc.getTextWidth('TIME SHEET AND WORK DONE REPORT');
+            const reportTitle = entryIDFilter ? 'DAILY ACTIVITY REPORT' : 'TIME SHEET AND WORK DONE REPORT';
+            doc.text(reportTitle, PW/2, 33, {align:'center'});
+            const titleW = doc.getTextWidth(reportTitle);
             doc.setDrawColor(15,58,95);doc.setLineWidth(0.4);
             doc.line(PW/2 - titleW/2, 34.5, PW/2 + titleW/2, 34.5);
         }
@@ -5212,8 +5224,18 @@
         for(let p=1;p<=total;p++){doc.setPage(p);drawPageHeader();drawSignatureFooter(p,total);}
 
         const safe=(wl.project||'WorkReport').replace(/\s+/g,'_').replace(/[^a-zA-Z0-9_-]/g,'');
-        doc.save('TimeSheet_'+safe+'_'+(wl.workStartDate||'nodate')+'.pdf');
+        const filename = entryIDFilter
+            ? 'DailyActivity_'+safe+'_'+((days[0]?.date)||'nodate')+'.pdf'
+            : 'TimeSheet_'+safe+'_'+(wl.workStartDate||'nodate')+'.pdf';
+        doc.save(filename);
         showToast('✅ PDF downloaded');
+    }
+
+    // Per-day PDF wrapper — generates a PDF containing only the specified daily entry.
+    // Delegates to wlPDF with the entryID filter so all rendering (photos,
+    // calibrations, pagination, header/footer) stays consistent.
+    async function dayEntryPDF(wlID, entryID) {
+        return wlPDF(wlID, entryID);
     }
     window.gapiLoaded = gapiLoaded;
     window.gisLoaded  = gisLoaded;
