@@ -5004,20 +5004,25 @@
         // Page 1
         drawPageHeader();y=42;
 
-        // Project details
-        doc.autoTable({startY:y,margin:{top:42,left:ML,right:MR,bottom:SIG_H+FOOTER_SAFETY+2},theme:'grid',
-            styles:{fontSize:9.5,cellPadding:3.5},
-            body:[
-                [{content:'Vessel Name',styles:{fontStyle:'bold',fillColor:[241,245,249]}},{content:vessel}],
-                [{content:'Port',       styles:{fontStyle:'bold',fillColor:[241,245,249]}},{content:port}],
-                [{content:'Project Name',styles:{fontStyle:'bold',fillColor:[241,245,249]}},{content:projName}],
-                [{content:'Date',       styles:{fontStyle:'bold',fillColor:[241,245,249]}},{content:dateRange}],
-                ...(wl.scopeOfWork?[[{content:'Scope of Work',styles:{fontStyle:'bold',fillColor:[241,245,249]}},{content:wl.scopeOfWork}]]:[]),
-            ],
-            columnStyles:{0:{cellWidth:40},1:{cellWidth:CW-40}},
-            didDrawPage:(data)=>{ if(data.pageNumber>1) drawPageHeader(); }
-        });
-        y=doc.lastAutoTable.finalY+10;
+        // Project details — only on the full work-log report. The per-day PDF
+        // skips this block (the project header context is redundant when the
+        // user is downloading a single day's activity, and the date is already
+        // shown per-row in the Technician Time Log below).
+        if (!entryIDFilter) {
+            doc.autoTable({startY:y,margin:{top:42,left:ML,right:MR,bottom:SIG_H+FOOTER_SAFETY+2},theme:'grid',
+                styles:{fontSize:9.5,cellPadding:3.5},
+                body:[
+                    [{content:'Vessel Name',styles:{fontStyle:'bold',fillColor:[241,245,249]}},{content:vessel}],
+                    [{content:'Port',       styles:{fontStyle:'bold',fillColor:[241,245,249]}},{content:port}],
+                    [{content:'Project Name',styles:{fontStyle:'bold',fillColor:[241,245,249]}},{content:projName}],
+                    [{content:'Date',       styles:{fontStyle:'bold',fillColor:[241,245,249]}},{content:dateRange}],
+                    ...(wl.scopeOfWork?[[{content:'Scope of Work',styles:{fontStyle:'bold',fillColor:[241,245,249]}},{content:wl.scopeOfWork}]]:[]),
+                ],
+                columnStyles:{0:{cellWidth:40},1:{cellWidth:CW-40}},
+                didDrawPage:(data)=>{ if(data.pageNumber>1) drawPageHeader(); }
+            });
+            y=doc.lastAutoTable.finalY+10;
+        }
 
         // ── SECTION I — Technician Time Log ──────────────────────
         if(y+20>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=42;}
