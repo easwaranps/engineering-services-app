@@ -4887,9 +4887,16 @@
         const co      = appSettings?.companyName || 'IMSE TECH SERVICES PVT LTD';
         const co_gst  = appSettings?.gstNumber   || '';
         console.log('wlPDF: appSettings keys:', Object.keys(appSettings||{}), '| logoData length:', appSettings?.logoData?.length||0);
-        const dateRange=wl.workStartDate&&wl.workEndDate
-            ?wl.workStartDate.split('-').reverse().join('.')+' to '+wl.workEndDate.split('-').reverse().join('.')
-            :wl.workStartDate?wl.workStartDate.split('-').reverse().join('.'):'—';
+        // In single-day mode (per-day PDF), the "Date" row should show the actual
+        // day's date rather than the work log's start/end range. The full report
+        // continues to show the work-log date range as before.
+        const dateRange = entryIDFilter && days[0]?.date
+            ? days[0].date.split('-').reverse().join('.')
+            : wl.workStartDate && wl.workEndDate
+                ? wl.workStartDate.split('-').reverse().join('.')+' to '+wl.workEndDate.split('-').reverse().join('.')
+                : wl.workStartDate
+                    ? wl.workStartDate.split('-').reverse().join('.')
+                    : '—';
         const SIG_H=20;                              // footer band height (was 26)
         const FOOTER_SAFETY=4;                        // extra gap above footer
         const CONTENT_BOTTOM=297-SIG_H-FOOTER_SAFETY; // bottom Y where content must stop
