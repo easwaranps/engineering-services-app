@@ -8686,7 +8686,7 @@
                         <!-- Extra info -->
                         <div>
                             <p style="font-size:10px;font-weight:700;color:#374151;letter-spacing:.05em;margin-bottom:4px">OTHER</p>
-                            ${e.panNumber?`<p style="font-size:12px"><span class="text-gray-500">PAN:</span> ${e.panNumber}</p>`:''}
+                            ${e.vendorPAN?`<p style="font-size:12px"><span class="text-gray-500">PAN:</span> ${e.vendorPAN}</p>`:''}
                             ${e.placeOfSupply?`<p style="font-size:12px"><span class="text-gray-500">Place:</span> ${e.placeOfSupply}</p>`:''}
                             ${e.sgst||e.cgst||e.igst?`<p style="font-size:12px"><span class="text-gray-500">GST:</span> SGST ${fmt(e.sgst)} | CGST ${fmt(e.cgst)} | IGST ${fmt(e.igst)}</p>`:''}
                         </div>
@@ -10475,7 +10475,17 @@
                 // Keep legacy field populated with first attachment for backward compat
                 billPhotoData:     billAttachments[0]?.data || null,
                 billPhotoName:     billAttachments[0]?.name || null,
-                createdAt:         currentExpense?.createdAt || new Date().toISOString()
+                createdAt:         currentExpense?.createdAt || new Date().toISOString(),
+                // ── Preserve back-office fields not present in the form ──
+                // The form rebuilds expObj from scratch. Any field NOT in the form
+                // gets lost on edit unless we explicitly carry it forward from the
+                // existing record. These fields are managed elsewhere (GSTR-2B match
+                // modal, GSTR-2B JSON import, Tally posting, second-eye verification)
+                // so without this preservation block, editing any bill silently
+                // wipes its match/verify/Tally state.
+                gstr2bMatched:     currentExpense?.gstr2bMatched     || false,
+                gstr2bMatchedDate: currentExpense?.gstr2bMatchedDate || null,
+                gstr2bMatchedBy:   currentExpense?.gstr2bMatchedBy   || null
             };
 
             // ── Level 2 concurrency: stamp record ──
@@ -20989,7 +20999,14 @@ Automated WFH alert — ${company} Attendance System.`;
                     tallyVoucherDriveId: _currentDirExp?.tallyVoucherDriveId || null,
                     tallyVoucherData:    _currentDirExp?.tallyVoucherData    || null,
                     tallyVoucherName:    _currentDirExp?.tallyVoucherName    || '',
-                    tallyVoucherMime:    _currentDirExp?.tallyVoucherMime    || ''
+                    tallyVoucherMime:    _currentDirExp?.tallyVoucherMime    || '',
+                    // GSTR-2B match state — preserved same as Tally fields above.
+                    // Editing a director expense should not silently unmatch it
+                    // from GSTR-2B (the match was set via the GSTR-2B Match modal
+                    // or auto-import, not via this form).
+                    gstr2bMatched:       _currentDirExp?.gstr2bMatched     || false,
+                    gstr2bMatchedDate:   _currentDirExp?.gstr2bMatchedDate || null,
+                    gstr2bMatchedBy:     _currentDirExp?.gstr2bMatchedBy   || null
                 };
                 // ── Level 2 concurrency: stamp record ──
                 _stampRecord(expObj);
@@ -28067,12 +28084,13 @@ Automated WFH alert — ${company} Attendance System.`;
             const pfx = `${year}-${String(month).padStart(2,'0')}-`;
             let touched = 0;
             (expenses || []).forEach(e => {
-                if (e.billType === 'SUPPLIER' && e.itcEligibility !== 'blocked' && !e.isRCM &&
+                if (e.billType === 'SUPPLIER' && e.itcEligibility !== 'blocked' && !e.rcmApplicable &&
                     (e.billDate || '').startsWith(pfx) &&
                     ((parseFloat(e.cgst)||0) + (parseFloat(e.sgst)||0) + (parseFloat(e.igst)||0) > 0)) {
                     e.gstr2bMatched = checked;
                     e.gstr2bMatchedDate = checked ? new Date().toISOString() : '';
                     e.gstr2bMatchedBy = checked ? ((typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin') : '';
+                    if (typeof _stampRecord === 'function') _stampRecord(e);
                     touched++;
                 }
             });
@@ -28082,6 +28100,7 @@ Automated WFH alert — ${company} Attendance System.`;
                     d.gstr2bMatched = checked;
                     d.gstr2bMatchedDate = checked ? new Date().toISOString() : '';
                     d.gstr2bMatchedBy = checked ? ((typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin') : '';
+                    if (typeof _stampRecord === 'function') _stampRecord(d);
                     touched++;
                 }
             });
@@ -28354,6 +28373,12 @@ Automated WFH alert — ${company} Attendance System.`;
                 arr[idx].gstr2bMatched     = true;
                 arr[idx].gstr2bMatchedDate = stamp;
                 arr[idx].gstr2bMatchedBy   = user + ' (auto-import)';
+                // Stamp lastModifiedAt/By so the concurrency mediator's per-record
+                // merge logic treats this as a real local change. Without the stamp,
+                // a subsequent poll from Drive could roll our gstr2bMatched=true back
+                // (the mediator only preserves records that look "recently modified
+                // by us").
+                if (typeof _stampRecord === 'function') _stampRecord(arr[idx]);
             });
 
             try {
