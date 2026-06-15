@@ -12012,8 +12012,15 @@
             // Bills-based ITC (unconfirmed) is shown as "at risk" — does NOT reduce
             // the deposit amount, but is surfaced so the user can chase suppliers.
             const payBy20Panel = (() => {
-                const snap = _getLatestCashLedgerSnapshot();
+                // Use the snapshot most appropriate to the month being viewed:
+                // for April's filing, ideally the snapshot uploaded around 19-May
+                // (showing the ledger state when April's challan was being prepared).
+                // Falls back to the latest snapshot when no historical match exists.
+                const snap = _getSnapshotForFilingMonth(month, year);
+                const latestSnap = _getLatestCashLedgerSnapshot();
+                const isHistoricalSnap = !!(snap && latestSnap && snap.snapshotID !== latestSnap.snapshotID);
                 const confirmed = _getConfirmedGSTR2BITC(month, year);
+                const priorRCM  = _getPriorMonthRCMITC(month, year);
                 // Filing due date = 20th of NEXT month
                 const dueDate = new Date(year, month, 20);   // month is 1-indexed; new Date uses 0-indexed (so month value gives next month)
                 const dueDateStr = dueDate.toISOString().split('T')[0];
@@ -12034,16 +12041,18 @@
 
                 // Net to deposit per head (cannot go negative — excess credit carries forward in ledger)
                 // Note: cross-head set-off rules apply but are complex; this panel shows
-                // head-wise gap so user knows where to deposit
-                const depIGST = Math.max(0, +(liabIGST - cashIGST - confirmed.igst).toFixed(2));
-                const depCGST = Math.max(0, +(liabCGST - cashCGST - confirmed.cgst).toFixed(2));
-                const depSGST = Math.max(0, +(liabSGST - cashSGST - confirmed.sgst).toFixed(2));
+                // head-wise gap so user knows where to deposit.
+                // priorRCM = prior-month RCM tax that we self-deposited last filing —
+                //   claimable as ITC this filing per the conservative reading of Sec 16(2)(c).
+                const depIGST = Math.max(0, +(liabIGST - cashIGST - confirmed.igst - priorRCM.igst).toFixed(2));
+                const depCGST = Math.max(0, +(liabCGST - cashCGST - confirmed.cgst - priorRCM.cgst).toFixed(2));
+                const depSGST = Math.max(0, +(liabSGST - cashSGST - confirmed.sgst - priorRCM.sgst).toFixed(2));
                 const depTotal = +(depIGST + depCGST + depSGST).toFixed(2);
 
                 // Surplus per head (when ledger + ITC exceeds liability — carries forward)
-                const surIGST = Math.max(0, +(cashIGST + confirmed.igst - liabIGST).toFixed(2));
-                const surCGST = Math.max(0, +(cashCGST + confirmed.cgst - liabCGST).toFixed(2));
-                const surSGST = Math.max(0, +(cashSGST + confirmed.sgst - liabSGST).toFixed(2));
+                const surIGST = Math.max(0, +(cashIGST + confirmed.igst + priorRCM.igst - liabIGST).toFixed(2));
+                const surCGST = Math.max(0, +(cashCGST + confirmed.cgst + priorRCM.cgst - liabCGST).toFixed(2));
+                const surSGST = Math.max(0, +(cashSGST + confirmed.sgst + priorRCM.sgst - liabSGST).toFixed(2));
                 const surTotal = +(surIGST + surCGST + surSGST).toFixed(2);
 
                 // ITC at risk (bills with GST entered but not yet GSTR-2B matched)
@@ -12058,7 +12067,7 @@
                             <p class="text-white text-opacity-80 text-xs mt-0.5">Liability − Cash Ledger − Confirmed GSTR-2B ITC = Net to Deposit</p>
                         </div>
                         <div class="flex items-center gap-2 flex-wrap">
-                            ${snap ? `<span class="px-3 py-1 bg-white bg-opacity-20 text-white rounded-lg text-xs">📥 Ledger: ${snap.snapshotID} (${(snap.uploadedAt||'').substring(0,10)}) · ${(gstCashLedgerSnapshots||[]).length} total</span>` : `<span class="px-3 py-1 bg-red-500 text-white rounded-lg text-xs font-bold">⚠ No Ledger Uploaded (${(gstCashLedgerSnapshots||[]).length} snapshots in storage)</span>`}
+                            ${snap ? `<span class="px-3 py-1 ${isHistoricalSnap ? 'bg-blue-500' : 'bg-white bg-opacity-20'} text-white rounded-lg text-xs" title="${isHistoricalSnap ? 'Historical snapshot used for this month\'s context — latest is '+latestSnap.snapshotID+' uploaded '+(latestSnap.uploadedAt||'').substring(0,10) : ''}">📥 Ledger: ${snap.snapshotID} (${(snap.uploadedAt||'').substring(0,10)}) · ${(gstCashLedgerSnapshots||[]).length} total${isHistoricalSnap ? ' · 🕰 historical' : ''}</span>` : `<span class="px-3 py-1 bg-red-500 text-white rounded-lg text-xs font-bold">⚠ No Ledger Uploaded (${(gstCashLedgerSnapshots||[]).length} snapshots in storage)</span>`}
                             <button onclick="openCashLedgerUploadModal()" class="px-3 py-2 bg-white text-purple-700 rounded-lg text-xs font-semibold hover:bg-purple-50">📥 Upload CSV</button>
                             <button onclick="openCashLedgerHistoryModal()" class="px-3 py-2 bg-white bg-opacity-20 text-white rounded-lg text-xs hover:bg-opacity-30">📜 History</button>
                         </div>
@@ -12105,6 +12114,14 @@
                                     <td class="px-4 py-2 text-xs text-right text-amber-700">${fmt(confirmed.sgst)}</td>
                                     <td class="px-4 py-2 text-xs text-right text-amber-700">${fmt(confirmed.total)}</td>
                                 </tr>
+                                ${priorRCM.total > 0 ? `
+                                <tr class="border-t bg-blue-50/30">
+                                    <td class="px-4 py-2 text-xs">− Prior-month RCM ITC <span class="text-[10px] text-gray-400">(${priorRCM.count} RCM bill(s) from ${['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][priorRCM.prevMonth]} ${priorRCM.prevYear} self-paid last filing)</span></td>
+                                    <td class="px-4 py-2 text-xs text-right text-blue-700">${fmt(priorRCM.igst)}</td>
+                                    <td class="px-4 py-2 text-xs text-right text-blue-700">${fmt(priorRCM.cgst)}</td>
+                                    <td class="px-4 py-2 text-xs text-right text-blue-700">${fmt(priorRCM.sgst)}</td>
+                                    <td class="px-4 py-2 text-xs text-right text-blue-700">${fmt(priorRCM.total)}</td>
+                                </tr>` : ''}
                                 <tr class="border-t-2 border-${dueColor}-300 bg-${dueColor}-50">
                                     <td class="px-4 py-2 text-sm font-bold text-${dueColor}-900">
                                         = NET TO DEPOSIT before <strong>20 ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][month%12]} ${month===12?year+1:year}</strong>
@@ -12148,7 +12165,23 @@
                         <p class="text-xs text-red-800">
                             <strong>⚠ No Cash Ledger snapshot uploaded.</strong> Download the Electronic Cash Ledger from gst.gov.in and upload it via the button above. Without this, the system uses ₹0 for available cash, which over-states what you need to deposit.
                         </p>
-                    </div>` : ''}
+                    </div>` : (() => {
+                        // Composition breakdown of what's currently in the cash ledger snapshot
+                        const comp = _analyzeCashLedger(snap);
+                        if (!comp || comp.totalCredits === 0) return '';
+                        const items = [];
+                        if (comp.manualDeposits > 0) items.push(`<span class="inline-block px-2 py-1 bg-white rounded-md text-emerald-700">💰 Manual Deposits: <strong>${fmt(comp.manualDeposits)}</strong></span>`);
+                        if (comp.gstTDS > 0)         items.push(`<span class="inline-block px-2 py-1 bg-white rounded-md text-blue-700">📥 GST TDS (govt clients): <strong>${fmt(comp.gstTDS)}</strong></span>`);
+                        if (comp.refunds > 0)        items.push(`<span class="inline-block px-2 py-1 bg-white rounded-md text-purple-700">↩ Refunds: <strong>${fmt(comp.refunds)}</strong></span>`);
+                        if (comp.otherCredits > 0)   items.push(`<span class="inline-block px-2 py-1 bg-white rounded-md text-gray-700">Other credits: <strong>${fmt(comp.otherCredits)}</strong></span>`);
+                        if (comp.debits > 0)         items.push(`<span class="inline-block px-2 py-1 bg-white rounded-md text-red-700">↑ Debits (offsets): <strong>${fmt(comp.debits)}</strong></span>`);
+                        return `
+                        <div class="px-5 py-3 bg-slate-50 border-t border-slate-200">
+                            <p class="text-[11px] text-slate-600 font-semibold uppercase mb-2">📊 Cash Ledger composition (this snapshot — period ${snap.periodFrom || '?'} → ${snap.periodTo || '?'})</p>
+                            <div class="flex flex-wrap gap-2 text-xs">${items.join(' ')}</div>
+                            <p class="text-[10px] text-slate-500 mt-1.5">Totals are sums of CGST + SGST + IGST + Cess across categorized transactions. Categories inferred from transaction descriptions on the portal.</p>
+                        </div>`;
+                    })()}
 
                     ${confirmed.overrideNote ? `
                     <div class="px-5 py-3 bg-blue-50 border-t border-blue-200">
@@ -12156,6 +12189,43 @@
                             <strong>📝 GSTR-2B Override note (${d.monthName} ${year}):</strong> ${confirmed.overrideNote.replace(/</g,'&lt;')}
                         </p>
                     </div>` : ''}
+
+                    <!-- Filing Checklist (collapsible) — day-by-day rhythm for this month's filing -->
+                    ${(() => {
+                        const mNames = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                        const nextM = month === 12 ? 1 : month + 1;
+                        const nextY = month === 12 ? year + 1 : year;
+                        const nextMN = mNames[nextM];
+                        return `
+                        <details class="border-t border-purple-200">
+                            <summary class="px-5 py-3 cursor-pointer text-xs font-semibold text-purple-700 hover:bg-purple-50 select-none">
+                                📋 Filing Checklist — ${d.monthName} ${year} returns
+                            </summary>
+                            <div class="px-5 pb-4 pt-1 text-xs text-gray-700">
+                                <table class="w-full">
+                                    <tbody>
+                                        <tr class="border-b border-gray-100"><td class="py-1.5 pr-3 font-semibold text-gray-500 whitespace-nowrap w-40">1–10 ${nextMN}</td><td class="py-1.5">Finalize all ${d.monthName} invoices and supplier bills</td></tr>
+                                        <tr class="border-b border-gray-100"><td class="py-1.5 pr-3 font-semibold text-gray-500 whitespace-nowrap">By 11 ${nextMN}</td><td class="py-1.5">File <strong>GSTR-1</strong> (your outward supplies) on <a href="https://www.gst.gov.in" target="_blank" class="text-purple-600 underline">gst.gov.in</a></td></tr>
+                                        <tr class="border-b border-gray-100"><td class="py-1.5 pr-3 font-semibold text-gray-500 whitespace-nowrap">14 ${nextMN}</td><td class="py-1.5">Portal auto-generates your <strong>GSTR-2B</strong> for ${d.monthName} (you'll download it)</td></tr>
+                                        <tr class="border-b border-gray-100"><td class="py-1.5 pr-3 font-semibold text-gray-500 whitespace-nowrap">~19 ${nextMN}</td><td class="py-1.5">
+                                            <div class="space-y-0.5">
+                                                <div>• Download Electronic Cash Ledger CSV → upload via <strong>📥 Upload CSV</strong> above</div>
+                                                <div>• Download GSTR-2B JSON → import via <strong>📋 GSTR-2B Match</strong> ${snap ? '' : '<span class="text-amber-700">(after cash ledger uploaded)</span>'}</div>
+                                                <div>• Verify the deposit amount on this panel</div>
+                                            </div>
+                                        </td></tr>
+                                        <tr><td class="py-1.5 pr-3 font-semibold text-gray-500 whitespace-nowrap">By 20 ${nextMN}</td><td class="py-1.5">
+                                            <div class="space-y-0.5">
+                                                <div>• Create challan + deposit cash on the portal (auto-credits to your ledger)</div>
+                                                <div>• File <strong>GSTR-3B</strong> using the numbers shown above</div>
+                                            </div>
+                                        </td></tr>
+                                    </tbody>
+                                </table>
+                                <p class="text-[10px] text-gray-400 mt-2 italic">Late filing carries interest @18% per annum on tax due + late fee ₹50/day (₹20/day for nil returns).</p>
+                            </div>
+                        </details>`;
+                    })()}
                 </div>`;
             })();
 
@@ -27452,9 +27522,102 @@ Automated WFH alert — ${company} Attendance System.`;
                 .sort((a, b) => (b.uploadedAt || '').localeCompare(a.uploadedAt || ''))[0];
         }
 
+        // ── Get the most contextually-appropriate snapshot for a filing month ──
+        // For viewing April 2026 (filing due 20-May-2026), the most accurate snapshot
+        // to show is one uploaded AROUND the filing date — typically the snapshot
+        // downloaded ~19-May (a day before filing) showing the ledger as it was when
+        // the user made their challan deposit.
+        //
+        // Algorithm:
+        //   • Compute filing due date = 20th of (month + 1)
+        //   • From all snapshots, pick those whose uploadedAt is ON OR BEFORE that date
+        //   • Among eligible, return the latest (closest to filing)
+        //   • If none eligible (user hasn't uploaded snapshots for past months),
+        //     fall back to the absolute latest snapshot — better than nothing,
+        //     and the UI flags the historical-vs-latest mismatch.
+        function _getSnapshotForFilingMonth(month, year) {
+            if (!gstCashLedgerSnapshots || gstCashLedgerSnapshots.length === 0) return null;
+
+            const filingYear  = month === 12 ? year + 1 : year;
+            const filingMonth = month === 12 ? 1 : month + 1;
+            const filingDate  = `${filingYear}-${String(filingMonth).padStart(2,'0')}-20`;
+
+            const eligible = gstCashLedgerSnapshots
+                .filter(s => s.uploadedAt && s.uploadedAt.substring(0,10) <= filingDate)
+                .sort((a, b) => (b.uploadedAt || '').localeCompare(a.uploadedAt || ''));
+
+            if (eligible.length > 0) return eligible[0];
+            // Fallback — best available even if from after the filing window
+            return _getLatestCashLedgerSnapshot();
+        }
+
         // ── Compute confirmed GSTR-2B ITC for a given month/year ──
         // Sums all bills + director expenses that are gstr2bMatched=true and fall in the period.
         // Returns per-head breakdown.
+        // ── Prior-month RCM ITC ────────────────────────────────────
+        // RCM works in two halves:
+        //   Month M: RCM bill received → output liability in M (3.1(d) of GSTR-3B)
+        //   Filing for M (paid by 20th of M+1): you deposit the RCM tax in cash
+        //   Filing for M+1: you CLAIM the RCM tax as ITC
+        // So when computing M+1's deposit, prior month (M's) RCM total is an
+        // ITC offset. This was missing — caused over-deposit by the RCM amount.
+        // Conservative reading per Sec 16(2)(c) + Rule 36: ITC available only
+        // in the GSTR-3B filed AFTER the one where RCM was reported as output.
+        // ── Cash Ledger composition ────────────────────────────────
+        // Break down the latest snapshot's credits into categories so the user
+        // can see WHAT'S in the ledger balance: manual deposits, GST TDS from
+        // govt clients, refunds, others. Helps catch unexpected entries and
+        // reconcile against bank statements.
+        function _analyzeCashLedger(snap) {
+            if (!snap || !Array.isArray(snap.transactions)) return null;
+            const cat = { manualDeposits: 0, gstTDS: 0, refunds: 0, otherCredits: 0, debits: 0, totalCredits: 0 };
+            snap.transactions.forEach(t => {
+                const amt = (t.cgst?.total||0) + (t.sgst?.total||0) + (t.igst?.total||0) + (t.cess?.total||0);
+                if (amt === 0) return;
+                const desc = (t.description || '').toLowerCase();
+                if (t.type === 'Debit') {
+                    cat.debits += amt;
+                } else if (t.type === 'Credit') {
+                    cat.totalCredits += amt;
+                    if (/tds/.test(desc))                              cat.gstTDS         += amt;
+                    else if (/refund/.test(desc))                      cat.refunds        += amt;
+                    else if (/challan|deposit|paid|electronic/.test(desc)) cat.manualDeposits += amt;
+                    else                                                cat.otherCredits   += amt;
+                }
+            });
+            return {
+                manualDeposits: +cat.manualDeposits.toFixed(2),
+                gstTDS:         +cat.gstTDS.toFixed(2),
+                refunds:        +cat.refunds.toFixed(2),
+                otherCredits:   +cat.otherCredits.toFixed(2),
+                debits:         +cat.debits.toFixed(2),
+                totalCredits:   +cat.totalCredits.toFixed(2)
+            };
+        }
+
+        function _getPriorMonthRCMITC(month, year) {
+            let prevMonth = month - 1, prevYear = year;
+            if (prevMonth < 1) { prevMonth = 12; prevYear = year - 1; }
+            const pfx = `${prevYear}-${String(prevMonth).padStart(2,'0')}-`;
+            const result = { igst: 0, cgst: 0, sgst: 0, total: 0, prevMonth, prevYear, count: 0 };
+
+            (expenses || []).forEach(e => {
+                if (!e.isRCM) return;
+                if (e.itcEligibility === 'blocked') return;   // some RCM expenses are blocked credit (e.g., personal nature)
+                if (!(e.billDate || '').startsWith(pfx)) return;
+                result.cgst += parseFloat(e.cgst) || 0;
+                result.sgst += parseFloat(e.sgst) || 0;
+                result.igst += parseFloat(e.igst) || 0;
+                result.count++;
+            });
+
+            result.total = +(result.cgst + result.sgst + result.igst).toFixed(2);
+            result.cgst  = +result.cgst.toFixed(2);
+            result.sgst  = +result.sgst.toFixed(2);
+            result.igst  = +result.igst.toFixed(2);
+            return result;
+        }
+
         function _getConfirmedGSTR2BITC(month, year) {
             const pfx = `${year}-${String(month).padStart(2,'0')}-`;
             const result = { igst: 0, cgst: 0, sgst: 0, total: 0, matchedBillCount: 0, totalBillCount: 0 };
@@ -27808,6 +27971,8 @@ Automated WFH alert — ${company} Attendance System.`;
 
                     <!-- Bulk actions -->
                     <div class="flex flex-wrap gap-2 items-center bg-gray-50 rounded-lg p-2">
+                        <button onclick="openGSTR2BImportModal(${month}, ${year})" class="px-3 py-1.5 bg-purple-600 text-white rounded text-xs font-semibold hover:bg-purple-700" title="Upload GSTR-2B JSON from gst.gov.in to auto-match bills">📥 Import GSTR-2B JSON</button>
+                        <span class="text-gray-300">|</span>
                         <button onclick="_g2bBulkMatch(${month}, ${year}, true)" class="px-3 py-1.5 bg-green-600 text-white rounded text-xs font-semibold hover:bg-green-700">\u2713 Match ALL</button>
                         <button onclick="_g2bBulkMatch(${month}, ${year}, false)" class="px-3 py-1.5 bg-gray-500 text-white rounded text-xs font-semibold hover:bg-gray-600">Unmatch ALL</button>
                         <span class="text-xs text-gray-500 ml-auto">${all.length} bill(s) in this period</span>
@@ -27948,6 +28113,255 @@ Automated WFH alert — ${company} Attendance System.`;
                 renderView();
             } catch (e) { alert('Could not save: ' + e.message); }
         }
+
+        // ════════════════════════════════════════════════════════════════
+        // GSTR-2B JSON IMPORT + AUTO-MATCH
+        // ────────────────────────────────────────────────────────────────
+        // The GST portal lets users download their GSTR-2B as a JSON file
+        // (Returns → GSTR-2B → Download). The JSON contains a list of B2B
+        // invoices the portal has confirmed for this filing period. We can
+        // automate the "tick which bills are GSTR-2B matched" step by
+        // matching each portal invoice to a BMS supplier bill using:
+        //   - Vendor GSTIN (CTIN in the JSON) — primary key
+        //   - Invoice number — primary key
+        // (We don't match on amount because rounding/tax-config differences
+        //  between systems often cause minor mismatches.)
+        // ════════════════════════════════════════════════════════════════
+        function _g2bNormalizeInvoiceNumber(n) {
+            // Strip non-alphanumeric and uppercase, so "INV-001/2026" and
+            // "inv001-2026" become "INV0012026" for comparison.
+            return (n||'').toString().toUpperCase().replace(/[^A-Z0-9]/g, '').trim();
+        }
+
+        function _g2bExtractPortalInvoices(json) {
+            // The portal's JSON structure can vary slightly; we look in the
+            // most common location: data.docdata.b2b[].inv[].
+            // We also gracefully handle the alternate root: data.b2b[].inv[].
+            const root = json?.data || json || {};
+            const docs = root.docdata?.b2b || root.b2b || [];
+            const out = [];
+            docs.forEach(supplier => {
+                const ctin  = supplier.ctin || supplier.gstin || '';
+                const trdnm = supplier.trdnm || supplier.lgnm || '';
+                const supFiledOn = supplier.supfildt || '';
+                (supplier.inv || []).forEach(inv => {
+                    out.push({
+                        gstin:         (ctin||'').toUpperCase().trim(),
+                        vendorName:    trdnm,
+                        invoiceNumber: inv.inum || '',
+                        invoiceDate:   inv.idt || '',
+                        invoiceTotal:  parseFloat(inv.val) || 0,
+                        taxableValue:  parseFloat(inv.txval) || 0,
+                        igst:          parseFloat(inv.iamt) || 0,
+                        cgst:          parseFloat(inv.camt) || 0,
+                        sgst:          parseFloat(inv.samt) || 0,
+                        cess:          parseFloat(inv.csamt) || 0,
+                        itcAvailable:  (inv.itcAvl === 'Y' || inv.itc_avail === 'Y'),
+                        supFiledOn:    supFiledOn,
+                        _key:          (ctin||'').toUpperCase().trim() + '||' + _g2bNormalizeInvoiceNumber(inv.inum)
+                    });
+                });
+            });
+            return out;
+        }
+
+        function openGSTR2BImportModal(month, year) {
+            const monthName = ['','January','February','March','April','May','June','July','August','September','October','November','December'][month] || month;
+            let modal = document.getElementById('gstr2bImportModal');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'gstr2bImportModal';
+                modal.className = 'modal show';
+                document.body.appendChild(modal);
+            }
+            modal.classList.add('show');
+            window._g2bImportContext = { month, year, parsed: null };
+
+            modal.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl m-4 max-h-[92vh] overflow-y-auto">
+                <div class="bg-gradient-to-r from-purple-600 to-indigo-600 p-5 text-white flex justify-between items-center sticky top-0 z-10">
+                    <div>
+                        <h3 class="text-lg font-bold">📥 Import GSTR-2B JSON — ${monthName} ${year}</h3>
+                        <p class="text-purple-100 text-xs mt-1">Download from gst.gov.in → Returns → GSTR-2B → Download. We'll match against your BMS bills.</p>
+                    </div>
+                    <button onclick="document.getElementById('gstr2bImportModal').remove()" class="text-white text-2xl">×</button>
+                </div>
+                <div class="p-5 space-y-4">
+                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-900">
+                        <strong>How to get the file:</strong>
+                        Log in to gst.gov.in → Returns Dashboard → choose the filing period (e.g. ${monthName} ${year}) → GSTR-2B → Download → choose JSON format.
+                    </div>
+                    <div class="border-2 border-dashed border-purple-300 rounded-xl p-6 bg-purple-50/30 text-center">
+                        <input type="file" id="g2bImportFile" accept=".json,application/json" onchange="_g2bImportPreview()" class="text-sm"/>
+                        <p class="text-xs text-purple-600 mt-2">Select the GSTR-2B JSON file you downloaded</p>
+                    </div>
+                    <div id="g2bImportPreview"></div>
+                </div>
+            </div>`;
+        }
+
+        async function _g2bImportPreview() {
+            const ctx = window._g2bImportContext;
+            if (!ctx) return;
+            const input = document.getElementById('g2bImportFile');
+            if (!input.files || input.files.length === 0) return;
+            const file = input.files[0];
+            const previewEl = document.getElementById('g2bImportPreview');
+            previewEl.innerHTML = '<div class="text-xs text-gray-500">Parsing…</div>';
+            let json;
+            try {
+                const text = await file.text();
+                json = JSON.parse(text);
+            } catch (e) {
+                previewEl.innerHTML = `<div class="bg-red-50 border border-red-300 rounded-lg p-4 text-xs text-red-800">⚠ Not a valid JSON file: ${e.message}</div>`;
+                return;
+            }
+
+            const portalInvs = _g2bExtractPortalInvoices(json);
+            if (portalInvs.length === 0) {
+                previewEl.innerHTML = `<div class="bg-amber-50 border border-amber-300 rounded-lg p-4 text-xs text-amber-800">⚠ No B2B invoices found in this JSON. Make sure you downloaded GSTR-2B (not GSTR-1 or another return).</div>`;
+                return;
+            }
+
+            // Gather BMS bills for this month — supplier bills with GST that AREN'T RCM
+            const { month, year } = ctx;
+            const pfx = `${year}-${String(month).padStart(2,'0')}-`;
+            const bmsBills = (expenses||[]).filter(e =>
+                e.billType === 'SUPPLIER' && !e.isRCM &&
+                e.itcEligibility !== 'blocked' &&
+                (e.billDate||'').startsWith(pfx) &&
+                ((parseFloat(e.cgst)||0)+(parseFloat(e.sgst)||0)+(parseFloat(e.igst)||0) > 0)
+            );
+            const bmsDirs = (directorExpenses||[]).filter(d =>
+                d.itcEligible === 'eligible' &&
+                (d.expDate||'').startsWith(pfx) &&
+                ((parseFloat(d.cgstAmt)||parseFloat(d.cgst)||0) + (parseFloat(d.sgstAmt)||parseFloat(d.sgst)||0) + (parseFloat(d.igstAmt)||parseFloat(d.igst)||0) > 0)
+            );
+
+            // Build the portal-invoice lookup keyed by gstin+invoiceNumber
+            const portalByKey = new Map();
+            portalInvs.forEach(p => { portalByKey.set(p._key, p); });
+
+            // Match each BMS bill to a portal invoice
+            const matched = [];        // { bill, portal, source }
+            const unmatchedBills = []; // BMS bills with no portal match
+            const matchedPortalKeys = new Set();
+
+            const tryMatch = (item, sourceArr) => {
+                const gstin = (item.vendorGSTIN||'').toUpperCase().trim();
+                const billNo = _g2bNormalizeInvoiceNumber(item.billNo);
+                if (!gstin || !billNo) {
+                    unmatchedBills.push({ item, source: sourceArr, reason: gstin ? 'missing-bill-no' : 'missing-vendor-gstin' });
+                    return;
+                }
+                const key = gstin + '||' + billNo;
+                const p = portalByKey.get(key);
+                if (p) {
+                    matched.push({ item, portal: p, source: sourceArr });
+                    matchedPortalKeys.add(key);
+                } else {
+                    unmatchedBills.push({ item, source: sourceArr, reason: 'not-in-portal' });
+                }
+            };
+            bmsBills.forEach(b => tryMatch(b, 'expenses'));
+            bmsDirs.forEach(d  => tryMatch(d, 'directorExpenses'));
+
+            // Portal invoices that didn't correspond to any BMS bill
+            const extraInPortal = portalInvs.filter(p => !matchedPortalKeys.has(p._key));
+
+            ctx.parsed = { portalInvs, matched, unmatchedBills, extraInPortal };
+
+            const fmt = n => '₹' + (+n || 0).toLocaleString('en-IN', {minimumFractionDigits:2});
+            const sumITC = arr => arr.reduce((s,m) => {
+                const it = m.item || m;
+                const c = parseFloat(it.cgst || it.cgstAmt) || 0;
+                const s2 = parseFloat(it.sgst || it.sgstAmt) || 0;
+                const i = parseFloat(it.igst || it.igstAmt) || 0;
+                return s + c + s2 + i;
+            }, 0);
+
+            previewEl.innerHTML = `
+            <div class="space-y-3">
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                    <div class="bg-purple-50 rounded p-2 border border-purple-200"><p class="text-[10px] uppercase font-bold text-purple-700">Portal Invoices</p><p class="text-lg font-bold">${portalInvs.length}</p></div>
+                    <div class="bg-green-50 rounded p-2 border border-green-200"><p class="text-[10px] uppercase font-bold text-green-700">✓ Auto-Matched</p><p class="text-lg font-bold text-green-700">${matched.length}</p><p class="text-[10px]">${fmt(sumITC(matched))} ITC</p></div>
+                    <div class="bg-amber-50 rounded p-2 border border-amber-200"><p class="text-[10px] uppercase font-bold text-amber-700">⚠ In BMS, not in Portal</p><p class="text-lg font-bold text-amber-700">${unmatchedBills.length}</p><p class="text-[10px]">${fmt(sumITC(unmatchedBills.map(u=>({item:u.item}))))} ITC</p></div>
+                    <div class="bg-red-50 rounded p-2 border border-red-200"><p class="text-[10px] uppercase font-bold text-red-700">⚠ In Portal, not in BMS</p><p class="text-lg font-bold text-red-700">${extraInPortal.length}</p></div>
+                </div>
+
+                ${matched.length > 0 ? `
+                <details open class="border border-green-200 rounded-lg">
+                    <summary class="px-3 py-2 bg-green-50 cursor-pointer font-bold text-xs text-green-800">✓ Will be auto-matched (${matched.length})</summary>
+                    <table class="w-full text-xs">
+                        <thead class="bg-green-50/50"><tr><th class="px-2 py-1 text-left">BMS ID</th><th class="text-left">Vendor</th><th class="text-left">Bill #</th><th class="text-right">CGST</th><th class="text-right">SGST</th><th class="text-right">IGST</th></tr></thead>
+                        <tbody>${matched.map(m => {
+                            const it = m.item;
+                            return `<tr class="border-t hover:bg-green-50/30"><td class="px-2 py-1 font-mono text-[10px]">${it.expID || it.deID}</td><td class="px-2 py-1">${(m.portal.vendorName || it.companyName || it.vendor || '—').substring(0,30)}</td><td class="px-2 py-1 font-mono text-[10px]">${it.billNo}</td><td class="text-right px-2">${fmt(it.cgst||it.cgstAmt)}</td><td class="text-right px-2">${fmt(it.sgst||it.sgstAmt)}</td><td class="text-right px-2">${fmt(it.igst||it.igstAmt)}</td></tr>`;
+                        }).join('')}</tbody>
+                    </table>
+                </details>` : ''}
+
+                ${unmatchedBills.length > 0 ? `
+                <details class="border border-amber-200 rounded-lg">
+                    <summary class="px-3 py-2 bg-amber-50 cursor-pointer font-bold text-xs text-amber-800">⚠ In BMS but not in Portal (${unmatchedBills.length})</summary>
+                    <p class="px-3 py-2 text-[11px] text-amber-700">These bills exist in BMS but the supplier hasn't filed GSTR-1 yet (or filed in a different month). Won't be auto-matched. Chase the supplier or use the monthly override field if you have evidence of the bill.</p>
+                    <table class="w-full text-xs">
+                        <thead class="bg-amber-50/50"><tr><th class="px-2 py-1 text-left">BMS ID</th><th class="text-left">Vendor</th><th class="text-left">GSTIN</th><th class="text-left">Bill #</th><th class="text-right">ITC</th><th class="text-left">Reason</th></tr></thead>
+                        <tbody>${unmatchedBills.map(u => {
+                            const it = u.item;
+                            const itc = (parseFloat(it.cgst||it.cgstAmt)||0)+(parseFloat(it.sgst||it.sgstAmt)||0)+(parseFloat(it.igst||it.igstAmt)||0);
+                            const reasonLabel = { 'missing-vendor-gstin':'Vendor GSTIN missing in BMS','missing-bill-no':'Bill # missing','not-in-portal':'Not in GSTR-2B' }[u.reason] || u.reason;
+                            return `<tr class="border-t hover:bg-amber-50/30"><td class="px-2 py-1 font-mono text-[10px]">${it.expID || it.deID}</td><td class="px-2 py-1">${(it.companyName||it.vendor||'—').substring(0,25)}</td><td class="px-2 py-1 font-mono text-[10px]">${it.vendorGSTIN || '—'}</td><td class="px-2 py-1 font-mono text-[10px]">${it.billNo}</td><td class="text-right px-2">${fmt(itc)}</td><td class="px-2 py-1 text-amber-700">${reasonLabel}</td></tr>`;
+                        }).join('')}</tbody>
+                    </table>
+                </details>` : ''}
+
+                ${extraInPortal.length > 0 ? `
+                <details class="border border-red-200 rounded-lg">
+                    <summary class="px-3 py-2 bg-red-50 cursor-pointer font-bold text-xs text-red-800">⚠ In Portal but not in BMS (${extraInPortal.length})</summary>
+                    <p class="px-3 py-2 text-[11px] text-red-700">These invoices appear in your GSTR-2B but you haven't entered them as bills in BMS. Likely missing entries — add them as Supplier expenses to claim ITC.</p>
+                    <table class="w-full text-xs">
+                        <thead class="bg-red-50/50"><tr><th class="px-2 py-1 text-left">Vendor</th><th class="text-left">GSTIN</th><th class="text-left">Bill #</th><th class="text-left">Date</th><th class="text-right">Value</th><th class="text-right">CGST</th><th class="text-right">SGST</th><th class="text-right">IGST</th></tr></thead>
+                        <tbody>${extraInPortal.map(p => `<tr class="border-t hover:bg-red-50/30"><td class="px-2 py-1">${(p.vendorName||'—').substring(0,25)}</td><td class="px-2 py-1 font-mono text-[10px]">${p.gstin}</td><td class="px-2 py-1 font-mono text-[10px]">${p.invoiceNumber}</td><td class="px-2 py-1 text-[10px]">${p.invoiceDate}</td><td class="text-right px-2">${fmt(p.invoiceTotal)}</td><td class="text-right px-2">${fmt(p.cgst)}</td><td class="text-right px-2">${fmt(p.sgst)}</td><td class="text-right px-2">${fmt(p.igst)}</td></tr>`).join('')}</tbody>
+                    </table>
+                </details>` : ''}
+
+                <div class="flex justify-end gap-3 pt-3 border-t">
+                    <button onclick="document.getElementById('gstr2bImportModal').remove()" class="px-5 py-2 border border-gray-300 text-gray-600 rounded-xl hover:bg-gray-50 text-sm">Cancel</button>
+                    <button ${matched.length === 0 ? 'disabled' : ''} onclick="_g2bConfirmImport()" class="px-6 py-2 bg-purple-600 text-white rounded-xl hover:bg-purple-700 font-bold text-sm disabled:opacity-40 disabled:cursor-not-allowed">💾 Apply ${matched.length} Auto-Match${matched.length===1?'':'es'}</button>
+                </div>
+            </div>`;
+        }
+
+        async function _g2bConfirmImport() {
+            const ctx = window._g2bImportContext;
+            if (!ctx?.parsed?.matched?.length) return;
+            const { month, year } = ctx;
+            const stamp = new Date().toISOString();
+            const user = (typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin';
+
+            ctx.parsed.matched.forEach(m => {
+                const arr = m.source === 'expenses' ? expenses : directorExpenses;
+                const idField = m.source === 'expenses' ? 'expID' : 'deID';
+                const idx = arr.findIndex(x => x[idField] === m.item[idField]);
+                if (idx < 0) return;
+                arr[idx].gstr2bMatched     = true;
+                arr[idx].gstr2bMatchedDate = stamp;
+                arr[idx].gstr2bMatchedBy   = user + ' (auto-import)';
+            });
+
+            try {
+                await Promise.all([saveData('expenses', expenses), saveData('directorExpenses', directorExpenses)]);
+                document.getElementById('gstr2bImportModal')?.remove();
+                document.getElementById('gstr2bMatchModal')?.remove();
+                renderView();
+                openGSTR2BMatchModal(month, year);
+                alert(`✓ ${ctx.parsed.matched.length} bill(s) auto-matched from GSTR-2B.\n\n${ctx.parsed.unmatchedBills.length} BMS bill(s) didn't match (supplier didn't file?).\n${ctx.parsed.extraInPortal.length} portal invoice(s) not in BMS (missing entries?).`);
+            } catch (e) {
+                alert('Could not save: ' + e.message);
+            }
+        }
+
 
 
 
