@@ -27602,7 +27602,7 @@ Automated WFH alert — ${company} Attendance System.`;
             const result = { igst: 0, cgst: 0, sgst: 0, total: 0, prevMonth, prevYear, count: 0 };
 
             (expenses || []).forEach(e => {
-                if (!e.isRCM) return;
+                if (!e.rcmApplicable) return;
                 if (e.itcEligibility === 'blocked') return;   // some RCM expenses are blocked credit (e.g., personal nature)
                 if (!(e.billDate || '').startsWith(pfx)) return;
                 result.cgst += parseFloat(e.cgst) || 0;
@@ -27626,7 +27626,7 @@ Automated WFH alert — ${company} Attendance System.`;
             (expenses || []).forEach(e => {
                 if (e.billType !== 'SUPPLIER') return;
                 if (e.itcEligibility === 'blocked') return;
-                if (e.isRCM) return;   // RCM bills create their own ITC after self-payment, not GSTR-2B route
+                if (e.rcmApplicable) return;   // RCM bills create their own ITC after self-payment, not GSTR-2B route
                 if (!(e.billDate || '').startsWith(pfx)) return;
                 const cgst = parseFloat(e.cgst) || 0;
                 const sgst = parseFloat(e.sgst) || 0;
@@ -28249,7 +28249,13 @@ Automated WFH alert — ${company} Attendance System.`;
 
             const tryMatch = (item, sourceArr) => {
                 const gstin = (item.vendorGSTIN||'').toUpperCase().trim();
-                const billNo = _g2bNormalizeInvoiceNumber(item.billNo);
+                // Director expenses (and some legacy regular expense entries) store
+                // the supplier's invoice number in `refNo` rather than `billNo`.
+                // The form has both fields; users commonly populate one or the other.
+                // Trying both maximises the match rate without false positives —
+                // GSTIN+invoice-number is the natural unique key on the portal side.
+                const candidateInvNo = (item.billNo || item.refNo || '').toString();
+                const billNo = _g2bNormalizeInvoiceNumber(candidateInvNo);
                 if (!gstin || !billNo) {
                     unmatchedBills.push({ item, source: sourceArr, reason: gstin ? 'missing-bill-no' : 'missing-vendor-gstin' });
                     return;
