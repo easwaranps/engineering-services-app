@@ -183,6 +183,7 @@
                             <select id="baCurrency" class="w-full px-3 py-2 border rounded-lg text-sm" required>
                                 <option value="INR">INR</option>
                                 <option value="USD">USD</option>
+                                <option value="EUR">EUR</option>
                                 <option value="GBP">GBP</option>
                                 <option value="SGD">SGD</option>
                             </select>
@@ -311,6 +312,7 @@
                         <select id="expCurrency" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" onchange="calcExpAmounts()">
                             <option value="INR">INR</option>
                             <option value="USD">USD</option>
+                            <option value="EUR">EUR</option>
                             <option value="GBP">GBP</option>
                             <option value="SGD">SGD</option>
                         </select>
@@ -915,6 +917,7 @@
                         <select id="txnCurrency" class="w-full px-4 py-2 border border-gray-300 rounded-lg" required>
                             <option value="INR" data-symbol="₹">INR (₹)</option>
                             <option value="USD" data-symbol="$">USD ($)</option>
+                            <option value="EUR" data-symbol="€">EUR (€)</option>
                             <option value="GBP" data-symbol="£">GBP (£)</option>
                             <option value="SGD" data-symbol="S$">SGD (S$)</option>
                         </select>
@@ -1385,6 +1388,7 @@
         const CURRENCY_SYMBOLS = {
             'INR': '₹',
             'USD': '$',
+            'EUR': '€',
             'GBP': '£',
             'SGD': 'S$'
         };
@@ -5041,9 +5045,12 @@
                 // PDF-safe currency prefix — jsPDF default font (Helvetica) cannot render
                 // ₹ or £ or S$ correctly — they print as apostrophe + broken spacing.
                 // Use plain text labels inside PDF only.
+                // EUR follows the same convention even though € itself does render in
+                // Helvetica — keeps the visual pattern uniform across all foreign currencies.
                 const PDF_CURRENCY = {
                     'INR': 'INR ',
                     'USD': 'USD ',
+                    'EUR': 'EUR ',
                     'GBP': 'GBP ',
                     'SGD': 'SGD '
                 };
