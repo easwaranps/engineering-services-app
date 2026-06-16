@@ -10492,7 +10492,11 @@
                 // wipes its match/verify/Tally state.
                 gstr2bMatched:     currentExpense?.gstr2bMatched     || false,
                 gstr2bMatchedDate: currentExpense?.gstr2bMatchedDate || null,
-                gstr2bMatchedBy:   currentExpense?.gstr2bMatchedBy   || null
+                gstr2bMatchedBy:   currentExpense?.gstr2bMatchedBy   || null,
+                // GSTR-2B claim month override — set by the JSON import when a bill
+                // appears in a different month's GSTR-2B than its bill date (late
+                // supplier filing). Preserved on edit so the override survives.
+                gstr2bClaimMonth:  currentExpense?.gstr2bClaimMonth   || null
             };
 
             // ── Level 2 concurrency: stamp record ──
@@ -12038,6 +12042,7 @@
                 const isHistoricalSnap = !!(snap && latestSnap && snap.snapshotID !== latestSnap.snapshotID);
                 const confirmed = _getConfirmedGSTR2BITC(month, year);
                 const priorRCM  = _getPriorMonthRCMITC(month, year);
+                const pending   = _getPendingTaxCredits(month, year);
                 // Filing due date = 20th of NEXT month
                 const dueDate = new Date(year, month, 20);   // month is 1-indexed; new Date uses 0-indexed (so month value gives next month)
                 const dueDateStr = dueDate.toISOString().split('T')[0];
@@ -12061,15 +12066,17 @@
                 // head-wise gap so user knows where to deposit.
                 // priorRCM = prior-month RCM tax that we self-deposited last filing —
                 //   claimable as ITC this filing per the conservative reading of Sec 16(2)(c).
-                const depIGST = Math.max(0, +(liabIGST - cashIGST - confirmed.igst - priorRCM.igst).toFixed(2));
-                const depCGST = Math.max(0, +(liabCGST - cashCGST - confirmed.cgst - priorRCM.cgst).toFixed(2));
-                const depSGST = Math.max(0, +(liabSGST - cashSGST - confirmed.sgst - priorRCM.sgst).toFixed(2));
+                // pending  = GST TDS receivable etc. — manually entered credits not yet
+                //   reflected in the cash ledger snapshot (per CA's review on the 19th).
+                const depIGST = Math.max(0, +(liabIGST - cashIGST - confirmed.igst - priorRCM.igst - pending.igst).toFixed(2));
+                const depCGST = Math.max(0, +(liabCGST - cashCGST - confirmed.cgst - priorRCM.cgst - pending.cgst).toFixed(2));
+                const depSGST = Math.max(0, +(liabSGST - cashSGST - confirmed.sgst - priorRCM.sgst - pending.sgst).toFixed(2));
                 const depTotal = +(depIGST + depCGST + depSGST).toFixed(2);
 
-                // Surplus per head (when ledger + ITC exceeds liability — carries forward)
-                const surIGST = Math.max(0, +(cashIGST + confirmed.igst + priorRCM.igst - liabIGST).toFixed(2));
-                const surCGST = Math.max(0, +(cashCGST + confirmed.cgst + priorRCM.cgst - liabCGST).toFixed(2));
-                const surSGST = Math.max(0, +(cashSGST + confirmed.sgst + priorRCM.sgst - liabSGST).toFixed(2));
+                // Surplus per head (when ledger + ITC + pending exceeds liability — carries forward)
+                const surIGST = Math.max(0, +(cashIGST + confirmed.igst + priorRCM.igst + pending.igst - liabIGST).toFixed(2));
+                const surCGST = Math.max(0, +(cashCGST + confirmed.cgst + priorRCM.cgst + pending.cgst - liabCGST).toFixed(2));
+                const surSGST = Math.max(0, +(cashSGST + confirmed.sgst + priorRCM.sgst + pending.sgst - liabSGST).toFixed(2));
                 const surTotal = +(surIGST + surCGST + surSGST).toFixed(2);
 
                 // ITC at risk (bills with GST entered but not yet GSTR-2B matched)
@@ -12123,6 +12130,17 @@
                                     <td class="px-4 py-2 text-xs text-right text-green-700">${fmt(cashCGST)}</td>
                                     <td class="px-4 py-2 text-xs text-right text-green-700">${fmt(cashSGST)}</td>
                                     <td class="px-4 py-2 text-xs text-right text-green-700">${fmt(cashTotal)}</td>
+                                </tr>
+                                <tr class="border-t ${pending.total > 0 ? 'bg-cyan-50/30' : ''}">
+                                    <td class="px-4 py-2 text-xs">
+                                        − GST TDS / Pending Cash Credits
+                                        <button onclick="openPendingCreditsModal(${month}, ${year})" class="ml-1 text-[10px] text-cyan-700 hover:text-cyan-900 underline" title="Enter GST TDS receivable, advance deposits etc. not yet in the cash ledger">${pending.total > 0 ? '✏️ edit' : '+ add'}</button>
+                                        ${pending.note ? `<div class="text-[10px] text-gray-400 mt-0.5 italic" title="${pending.note.replace(/"/g,'&quot;')}">${pending.note.substring(0,80)}${pending.note.length > 80 ? '…' : ''}</div>` : ''}
+                                    </td>
+                                    <td class="px-4 py-2 text-xs text-right text-cyan-700">${fmt(pending.igst)}</td>
+                                    <td class="px-4 py-2 text-xs text-right text-cyan-700">${fmt(pending.cgst)}</td>
+                                    <td class="px-4 py-2 text-xs text-right text-cyan-700">${fmt(pending.sgst)}</td>
+                                    <td class="px-4 py-2 text-xs text-right text-cyan-700">${fmt(pending.total)}</td>
                                 </tr>
                                 <tr class="border-t">
                                     <td class="px-4 py-2 text-xs">− GSTR-2B Confirmed ITC <span class="text-[10px] text-gray-400">(${confirmed.matchedBillCount}/${confirmed.totalBillCount} bills matched${confirmed.overrideNote?' + override':''})</span></td>
@@ -21013,7 +21031,8 @@ Automated WFH alert — ${company} Attendance System.`;
                     // or auto-import, not via this form).
                     gstr2bMatched:       _currentDirExp?.gstr2bMatched     || false,
                     gstr2bMatchedDate:   _currentDirExp?.gstr2bMatchedDate || null,
-                    gstr2bMatchedBy:     _currentDirExp?.gstr2bMatchedBy   || null
+                    gstr2bMatchedBy:     _currentDirExp?.gstr2bMatchedBy   || null,
+                    gstr2bClaimMonth:    _currentDirExp?.gstr2bClaimMonth   || null
                 };
                 // ── Level 2 concurrency: stamp record ──
                 _stampRecord(expObj);
@@ -27642,21 +27661,158 @@ Automated WFH alert — ${company} Attendance System.`;
             return result;
         }
 
+        // ── Pending Tax Credits (GST TDS receivable + similar) ─────────────
+        // Govt clients deduct 2% GST TDS when settling our invoices. They file
+        // GSTR-7 by 10th of next month; the TDS appears in our portal's "TDS/TCS
+        // Credit Received" section. After we ACCEPT it, it transfers to our
+        // Electronic Cash Ledger as a credit. Until then it's a known-future
+        // credit that the cash ledger snapshot doesn't yet reflect.
+        //
+        // This function returns user-entered manual credits for the filing
+        // month — typically GST TDS that's been deducted by govt clients but
+        // hasn't yet shown up in the cash ledger CSV. The CA usually reviews
+        // these on the 19th (one day before filing) and tells the user the
+        // total. The Pay-by-20 panel subtracts this from Net to Deposit.
+        function _getPendingTaxCredits(month, year) {
+            const monthKey = `${year}-${String(month).padStart(2,'0')}`;
+            const ent = settings?.pendingTaxCredits?.[monthKey] || {};
+            const igst = parseFloat(ent.igst) || 0;
+            const cgst = parseFloat(ent.cgst) || 0;
+            const sgst = parseFloat(ent.sgst) || 0;
+            return {
+                igst: +igst.toFixed(2),
+                cgst: +cgst.toFixed(2),
+                sgst: +sgst.toFixed(2),
+                total: +(igst + cgst + sgst).toFixed(2),
+                note: ent.note || '',
+                updatedAt: ent.updatedAt || '',
+                updatedBy: ent.updatedBy || ''
+            };
+        }
+
+        async function openPendingCreditsModal(month, year) {
+            const monthName = ['','January','February','March','April','May','June','July','August','September','October','November','December'][month] || month;
+            const current = _getPendingTaxCredits(month, year);
+            let modal = document.getElementById('pendingCreditsModal');
+            if (modal) modal.remove();
+            modal = document.createElement('div');
+            modal.id = 'pendingCreditsModal';
+            modal.className = 'modal show';
+            document.body.appendChild(modal);
+            modal.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-xl m-4 max-h-[92vh] overflow-y-auto">
+                <div class="bg-gradient-to-r from-blue-600 to-cyan-600 p-5 text-white flex justify-between items-center sticky top-0 z-10">
+                    <div>
+                        <h3 class="text-lg font-bold">💰 GST TDS / Pending Cash Credits — ${monthName} ${year}</h3>
+                        <p class="text-blue-100 text-xs mt-1">Manual entry for credits not yet showing in the cash ledger CSV</p>
+                    </div>
+                    <button onclick="document.getElementById('pendingCreditsModal').remove()" class="text-white text-2xl">×</button>
+                </div>
+                <div class="p-5 space-y-4">
+                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-900">
+                        <strong>When to use this:</strong>
+                        On the 19th of next month, your CA reviews the cash ledger AND the
+                        <em>TDS &amp; TCS Credit Received</em> section on gst.gov.in. Any GST TDS that govt
+                        clients deducted from your invoice payments (and filed via GSTR-7) appears in that
+                        TDS section. If it hasn't yet flowed into the cash ledger, enter the amounts here so
+                        they're counted toward this month's filing.
+                    </div>
+                    <div class="grid grid-cols-3 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">IGST</label>
+                            <input id="pcIGST" type="number" step="0.01" value="${current.igst || ''}" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="0.00"/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">CGST</label>
+                            <input id="pcCGST" type="number" step="0.01" value="${current.cgst || ''}" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="0.00"/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">SGST</label>
+                            <input id="pcSGST" type="number" step="0.01" value="${current.sgst || ''}" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="0.00"/>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Note (source / reference / comments)</label>
+                        <textarea id="pcNote" rows="3" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="e.g., 'GST TDS from Govt Client X invoice 5005 deducted 15-Apr — GSTR-7 filed 10-May, awaiting cash ledger reflection per CA Mr. Ramesh on 19-May'">${(current.note||'').replace(/</g,'&lt;')}</textarea>
+                    </div>
+                    ${current.updatedAt ? `<p class="text-[11px] text-gray-500">Last updated ${current.updatedAt.substring(0,16).replace('T',' ')} by ${current.updatedBy||'—'}</p>` : ''}
+                    <div class="flex justify-between gap-2 pt-3 border-t">
+                        ${current.total > 0 ? `<button onclick="_clearPendingCredits(${month}, ${year})" class="px-4 py-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 text-sm">🗑 Clear</button>` : '<span></span>'}
+                        <div class="flex gap-2">
+                            <button onclick="document.getElementById('pendingCreditsModal').remove()" class="px-4 py-2 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 text-sm">Cancel</button>
+                            <button onclick="_savePendingCredits(${month}, ${year})" class="px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold text-sm">💾 Save</button>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+        }
+
+        async function _savePendingCredits(month, year) {
+            const monthKey = `${year}-${String(month).padStart(2,'0')}`;
+            if (!settings.pendingTaxCredits) settings.pendingTaxCredits = {};
+            const igst = parseFloat(document.getElementById('pcIGST')?.value) || 0;
+            const cgst = parseFloat(document.getElementById('pcCGST')?.value) || 0;
+            const sgst = parseFloat(document.getElementById('pcSGST')?.value) || 0;
+            settings.pendingTaxCredits[monthKey] = {
+                igst, cgst, sgst,
+                note:      (document.getElementById('pcNote')?.value || '').trim(),
+                updatedAt: new Date().toISOString(),
+                updatedBy: (typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin'
+            };
+            try {
+                await saveData('settings', settings);
+                document.getElementById('pendingCreditsModal')?.remove();
+                renderView();
+                showToast?.('✓ Pending credits saved');
+            } catch (e) { alert('Could not save: ' + e.message); }
+        }
+
+        async function _clearPendingCredits(month, year) {
+            if (!confirm('Clear pending credits for this month?')) return;
+            const monthKey = `${year}-${String(month).padStart(2,'0')}`;
+            if (settings?.pendingTaxCredits?.[monthKey]) {
+                delete settings.pendingTaxCredits[monthKey];
+                try {
+                    await saveData('settings', settings);
+                    document.getElementById('pendingCreditsModal')?.remove();
+                    renderView();
+                    showToast?.('✓ Cleared');
+                } catch (e) { alert('Could not save: ' + e.message); }
+            }
+        }
+
         function _getConfirmedGSTR2BITC(month, year) {
-            const pfx = `${year}-${String(month).padStart(2,'0')}-`;
-            const result = { igst: 0, cgst: 0, sgst: 0, total: 0, matchedBillCount: 0, totalBillCount: 0 };
+            const monthKey = `${year}-${String(month).padStart(2,'0')}`;       // "2026-04"
+            const pfx      = monthKey + '-';                                    // "2026-04-"
+            // Per Section 16(2)(aa), a bill is ITC-claimable in the month it
+            // appears in our GSTR-2B — which is normally the month of its bill date,
+            // but can be a LATER month if the supplier filed GSTR-1 late.
+            // The `gstr2bClaimMonth` field lets the user (or the JSON auto-import)
+            // override the bill-date month → e.g. a March bill claimed in April
+            // because the supplier filed GSTR-1 in May.
+            const claimMatches = (bill) => {
+                const cm = (bill.gstr2bClaimMonth || '').trim();
+                if (cm) return cm === monthKey;
+                // Fall back to bill's natural date month
+                const billDate = bill.billDate || '';
+                return billDate.startsWith(pfx);
+            };
+            const result = { igst: 0, cgst: 0, sgst: 0, total: 0, matchedBillCount: 0, totalBillCount: 0, crossMonthCount: 0 };
 
             // Bills with GST input
             (expenses || []).forEach(e => {
                 if (e.billType !== 'SUPPLIER') return;
                 if (e.itcEligibility === 'blocked') return;
                 if (e.rcmApplicable) return;   // RCM bills create their own ITC after self-payment, not GSTR-2B route
-                if (!(e.billDate || '').startsWith(pfx)) return;
+                if (!claimMatches(e)) return;
                 const cgst = parseFloat(e.cgst) || 0;
                 const sgst = parseFloat(e.sgst) || 0;
                 const igst = parseFloat(e.igst) || 0;
                 if (cgst === 0 && sgst === 0 && igst === 0) return;
                 result.totalBillCount++;
+                if (e.gstr2bClaimMonth && e.gstr2bClaimMonth !== (e.billDate||'').substring(0,7)) {
+                    result.crossMonthCount++;
+                }
                 if (e.gstr2bMatched) {
                     result.matchedBillCount++;
                     result.cgst += cgst;
@@ -27668,12 +27824,20 @@ Automated WFH alert — ${company} Attendance System.`;
             // Director expenses with ITC
             (directorExpenses || []).forEach(d => {
                 if (d.itcEligible !== 'eligible') return;
-                if (!(d.expDate || '').startsWith(pfx)) return;
+                // For director expenses, the "natural" month is the supplier's invoice
+                // date (billDate) — the same rule as regular expenses. Plus the same
+                // gstr2bClaimMonth override applies for late-filing suppliers.
+                const naturalDate = d.billDate || d.expDate || '';
+                const dirBill = { billDate: naturalDate, gstr2bClaimMonth: d.gstr2bClaimMonth };
+                if (!claimMatches(dirBill)) return;
                 const cgst = parseFloat(d.cgstAmt) || parseFloat(d.cgst) || 0;
                 const sgst = parseFloat(d.sgstAmt) || parseFloat(d.sgst) || 0;
                 const igst = parseFloat(d.igstAmt) || parseFloat(d.igst) || 0;
                 if (cgst === 0 && sgst === 0 && igst === 0) return;
                 result.totalBillCount++;
+                if (d.gstr2bClaimMonth && d.gstr2bClaimMonth !== naturalDate.substring(0,7)) {
+                    result.crossMonthCount++;
+                }
                 if (d.gstr2bMatched) {
                     result.matchedBillCount++;
                     result.cgst += cgst;
@@ -27682,8 +27846,8 @@ Automated WFH alert — ${company} Attendance System.`;
                 }
             });
 
-            // Apply monthly override if set (added to confirmed bill-based total)
-            const monthKey = `${year}-${String(month).padStart(2,'0')}`;
+            // Apply monthly override if set (added to confirmed bill-based total).
+            // monthKey is already declared at the top of this function.
             const ov = settings?.gstr2bMonthlyOverrides?.[monthKey];
             if (ov) {
                 result.cgst += (parseFloat(ov.cgstAdjustment) || 0);
@@ -27931,29 +28095,42 @@ Automated WFH alert — ${company} Attendance System.`;
             const monthName = ['','January','February','March','April','May','June','July','August','September','October','November','December'][month] || month;
             const fmt = n => '\u20B9' + (+n || 0).toLocaleString('en-IN', {minimumFractionDigits:2});
 
-            // Collect ITC-eligible bills for this period
+            // Collect ITC-eligible bills for this claim period.
+            // A bill belongs here if either:
+            //   - its gstr2bClaimMonth equals the selected month (explicit cross-month claim), OR
+            //   - it has no gstr2bClaimMonth and its billDate falls in this month (default)
+            const _claimMatch = (b) => {
+                const cm = (b.gstr2bClaimMonth || '').trim();
+                if (cm) return cm === `${year}-${String(month).padStart(2,'0')}`;
+                return (b.billDate || '').startsWith(pfx);
+            };
             const bills = (expenses || []).filter(e =>
                 e.billType === 'SUPPLIER' &&
                 e.itcEligibility !== 'blocked' &&
-                !e.isRCM &&
-                (e.billDate || '').startsWith(pfx) &&
+                !e.rcmApplicable &&
+                _claimMatch(e) &&
                 ((parseFloat(e.cgst)||0) + (parseFloat(e.sgst)||0) + (parseFloat(e.igst)||0) > 0)
             ).map(e => ({
                 type: 'bill', id: e.expID, sourceArray: 'expenses',
                 date: e.billDate, party: e.companyName || e.vendor || '\u2014',
                 billNo: e.billNo || '\u2014',
+                claimMonth:  e.gstr2bClaimMonth || '',
+                naturalMonth: (e.billDate || '').substring(0,7),
                 cgst: parseFloat(e.cgst)||0, sgst: parseFloat(e.sgst)||0, igst: parseFloat(e.igst)||0,
                 matched: !!e.gstr2bMatched, matchedDate: e.gstr2bMatchedDate || '', matchedBy: e.gstr2bMatchedBy || ''
             }));
 
-            const dirs = (directorExpenses || []).filter(d =>
-                d.itcEligible === 'eligible' &&
-                (d.expDate || '').startsWith(pfx) &&
-                ((parseFloat(d.cgstAmt)||parseFloat(d.cgst)||0) + (parseFloat(d.sgstAmt)||parseFloat(d.sgst)||0) + (parseFloat(d.igstAmt)||parseFloat(d.igst)||0) > 0)
-            ).map(d => ({
+            const dirs = (directorExpenses || []).filter(d => {
+                if (d.itcEligible !== 'eligible') return false;
+                const naturalDate = d.billDate || d.expDate || '';
+                return _claimMatch({ billDate: naturalDate, gstr2bClaimMonth: d.gstr2bClaimMonth }) &&
+                    ((parseFloat(d.cgstAmt)||parseFloat(d.cgst)||0) + (parseFloat(d.sgstAmt)||parseFloat(d.sgst)||0) + (parseFloat(d.igstAmt)||parseFloat(d.igst)||0) > 0);
+            }).map(d => ({
                 type: 'director', id: d.deID, sourceArray: 'directorExpenses',
-                date: d.expDate, party: (d.vendorName || d.party || '\u2014') + ' (via ' + (d.dir1 || d.dir2 || 'Dir') + ')',
+                date: d.billDate || d.expDate, party: (d.vendorName || d.party || '\u2014') + ' (via ' + (d.dir1 || d.dir2 || 'Dir') + ')',
                 billNo: d.billNo || '\u2014',
+                claimMonth:   d.gstr2bClaimMonth || '',
+                naturalMonth: (d.billDate || d.expDate || '').substring(0,7),
                 cgst: parseFloat(d.cgstAmt)||parseFloat(d.cgst)||0,
                 sgst: parseFloat(d.sgstAmt)||parseFloat(d.sgst)||0,
                 igst: parseFloat(d.igstAmt)||parseFloat(d.igst)||0,
@@ -28023,7 +28200,10 @@ Automated WFH alert — ${company} Attendance System.`;
                                     <td class="px-3 py-2 text-center">
                                         <input type="checkbox" ${r.matched?'checked':''} onchange="_g2bToggleMatch('${r.sourceArray}', '${r.id}', this.checked)" class="w-4 h-4"/>
                                     </td>
-                                    <td class="px-3 py-2 text-xs">${r.date}</td>
+                                    <td class="px-3 py-2 text-xs">
+                                        ${r.date}
+                                        ${r.claimMonth && r.claimMonth !== r.naturalMonth ? `<div class="text-[9px] text-purple-700 bg-purple-100 inline-block px-1 rounded mt-0.5" title="Bill is dated ${r.naturalMonth}; portal showed it in this month's GSTR-2B (supplier filed late)">📅 from ${(() => { const [y,m]=r.naturalMonth.split('-'); return ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(m)] + ' ' + y; })()}</div>` : ''}
+                                    </td>
                                     <td class="px-3 py-2 text-xs">
                                         <div class="font-medium">${r.party.replace(/</g,'&lt;')}</div>
                                         <div class="text-[10px] text-gray-500">Bill: ${r.billNo}</div>
@@ -28251,16 +28431,20 @@ Automated WFH alert — ${company} Attendance System.`;
 
             // Gather BMS bills for this month — supplier bills with GST that AREN'T RCM
             const { month, year } = ctx;
-            const pfx = `${year}-${String(month).padStart(2,'0')}-`;
+            const monthKey = `${year}-${String(month).padStart(2,'0')}`;
+            const pfx = monthKey + '-';
+            // Search ALL ITC-eligible BMS bills (not just this month) so late-filing
+            // suppliers' bills get caught here. A March bill that appears in April's
+            // GSTR-2B (because the supplier filed GSTR-1 in May) needs to be matched
+            // even though its billDate is March. We'll record the matched portal
+            // period as gstr2bClaimMonth so the April panel picks it up correctly.
             const bmsBills = (expenses||[]).filter(e =>
-                e.billType === 'SUPPLIER' && !e.isRCM &&
+                e.billType === 'SUPPLIER' && !e.rcmApplicable &&
                 e.itcEligibility !== 'blocked' &&
-                (e.billDate||'').startsWith(pfx) &&
                 ((parseFloat(e.cgst)||0)+(parseFloat(e.sgst)||0)+(parseFloat(e.igst)||0) > 0)
             );
             const bmsDirs = (directorExpenses||[]).filter(d =>
                 d.itcEligible === 'eligible' &&
-                (d.expDate||'').startsWith(pfx) &&
                 ((parseFloat(d.cgstAmt)||parseFloat(d.cgst)||0) + (parseFloat(d.sgstAmt)||parseFloat(d.sgst)||0) + (parseFloat(d.igstAmt)||parseFloat(d.igst)||0) > 0)
             );
 
@@ -28369,8 +28553,10 @@ Automated WFH alert — ${company} Attendance System.`;
             const ctx = window._g2bImportContext;
             if (!ctx?.parsed?.matched?.length) return;
             const { month, year } = ctx;
+            const monthKey = `${year}-${String(month).padStart(2,'0')}`;
             const stamp = new Date().toISOString();
             const user = (typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin';
+            let crossMonthCount = 0;
 
             ctx.parsed.matched.forEach(m => {
                 const arr = m.source === 'expenses' ? expenses : directorExpenses;
@@ -28380,11 +28566,14 @@ Automated WFH alert — ${company} Attendance System.`;
                 arr[idx].gstr2bMatched     = true;
                 arr[idx].gstr2bMatchedDate = stamp;
                 arr[idx].gstr2bMatchedBy   = user + ' (auto-import)';
+                // Record the GSTR-2B claim month explicitly. For a bill whose billDate
+                // is in a different month from the JSON's period (= late supplier filing),
+                // this is what makes the bill appear under the correct month's panel.
+                const naturalMonth = (arr[idx].billDate || arr[idx].expDate || '').substring(0,7);
+                arr[idx].gstr2bClaimMonth = monthKey;
+                if (naturalMonth && naturalMonth !== monthKey) crossMonthCount++;
                 // Stamp lastModifiedAt/By so the concurrency mediator's per-record
-                // merge logic treats this as a real local change. Without the stamp,
-                // a subsequent poll from Drive could roll our gstr2bMatched=true back
-                // (the mediator only preserves records that look "recently modified
-                // by us").
+                // merge logic treats this as a real local change.
                 if (typeof _stampRecord === 'function') _stampRecord(arr[idx]);
             });
 
@@ -28394,7 +28583,8 @@ Automated WFH alert — ${company} Attendance System.`;
                 document.getElementById('gstr2bMatchModal')?.remove();
                 renderView();
                 openGSTR2BMatchModal(month, year);
-                alert(`✓ ${ctx.parsed.matched.length} bill(s) auto-matched from GSTR-2B.\n\n${ctx.parsed.unmatchedBills.length} BMS bill(s) didn't match (supplier didn't file?).\n${ctx.parsed.extraInPortal.length} portal invoice(s) not in BMS (missing entries?).`);
+                const crossNote = crossMonthCount > 0 ? `\n📅 ${crossMonthCount} bill(s) were dated in a different month (supplier filed late) — they're now claimed in ${monthKey}.` : '';
+                alert(`✓ ${ctx.parsed.matched.length} bill(s) auto-matched from GSTR-2B.${crossNote}\n\n${ctx.parsed.unmatchedBills.length} BMS bill(s) didn't match (supplier didn't file?).\n${ctx.parsed.extraInPortal.length} portal invoice(s) not in BMS (missing entries?).`);
             } catch (e) {
                 alert('Could not save: ' + e.message);
             }
