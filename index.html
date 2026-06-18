@@ -5761,7 +5761,7 @@
             document.getElementById('syncSuccessModal').classList.add('show');
         }
 
-        async function syncToGoogleSheets() {
+        async function _syncToSheetsLegacy() {
             const btn = event.target;
             const originalHTML = btn.innerHTML;
 
@@ -13227,8 +13227,39 @@
             }
 
             // Settings are unlocked - show full settings page
+            const lastSync = settings.lastSheetsSyncAt ? settings.lastSheetsSyncAt.substring(0,16).replace('T',' ') : null;
+            const currentSheetId = settings.googleSheetsId || DEFAULT_SHEETS_ID;
             content.innerHTML = `
                 <h2 class="text-3xl font-bold mb-6">Settings</h2>
+
+                <!-- Integrations panel — Google Sheets sync configuration -->
+                <div class="bg-gradient-to-br from-emerald-50 to-cyan-50 border-2 border-emerald-200 rounded-2xl shadow-lg p-6 mb-6">
+                    <h3 class="text-xl font-bold mb-1 text-emerald-900">🔗 Integrations — Google Sheets</h3>
+                    <p class="text-xs text-emerald-700 mb-4">Push all your BMS data into a Google Sheet for external reporting, analysis, or sharing with your CA. Sync is manual — click the button below when you want to refresh the sheet.</p>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+                        <div class="md:col-span-2">
+                            <label class="block text-xs font-semibold text-emerald-800 mb-1">Google Sheet ID</label>
+                            <input type="text" id="googleSheetsId" value="${currentSheetId}" placeholder="${DEFAULT_SHEETS_ID}" class="w-full px-3 py-2 border rounded-lg text-xs font-mono"/>
+                            <p class="text-[10px] text-emerald-700 mt-1">From the sheet URL: docs.google.com/spreadsheets/d/<strong>SHEET_ID</strong>/edit</p>
+                        </div>
+                        <div class="flex items-end">
+                            <button onclick="_saveSheetsId()" class="w-full px-3 py-2 bg-white border border-emerald-300 text-emerald-700 rounded-lg text-xs hover:bg-emerald-50">💾 Save Sheet ID</button>
+                        </div>
+                    </div>
+                    <div class="flex flex-wrap gap-2 items-center">
+                        <button onclick="syncToGoogleSheets()" class="px-4 py-2 bg-gradient-to-r from-emerald-600 to-cyan-600 text-white rounded-lg font-semibold text-sm hover:from-emerald-700 hover:to-cyan-700 shadow">📊 Sync to Google Sheets</button>
+                        <a href="https://docs.google.com/spreadsheets/d/${currentSheetId}/edit" target="_blank" class="px-4 py-2 bg-white border border-emerald-300 text-emerald-700 rounded-lg text-sm hover:bg-emerald-50">↗ Open Sheet</a>
+                        ${lastSync ? `<span class="text-xs text-emerald-700 ml-2">Last synced: <strong>${lastSync}</strong> by ${settings.lastSheetsSyncBy || '—'}</span>` : ''}
+                    </div>
+                    <div id="sheetsSyncStatus" class="mt-3 text-sm font-medium"></div>
+                    <details class="mt-3">
+                        <summary class="text-xs cursor-pointer text-emerald-700 font-semibold">What gets synced?</summary>
+                        <p class="text-[11px] text-emerald-800 mt-2 leading-relaxed">
+                            12 tabs are pushed: <strong>Settings</strong>, <strong>Parties</strong>, <strong>AllTransactions</strong>, <strong>ApprovedTxns</strong>, <strong>Expenses</strong>, <strong>DirectorExpenses</strong>, <strong>Staff</strong>, <strong>Payslips</strong>, <strong>Attendance</strong>, <strong>WorkLogs</strong>, <strong>DailyEntries</strong>, <strong>Calibrations</strong>. Each sync replaces the entire tab content with the current BMS data — manual edits in those tabs will be overwritten. Tabs that don't exist in your sheet are skipped automatically.
+                        </p>
+                    </details>
+                </div>
+
                 <div class="bg-white rounded-2xl shadow-lg p-6">
                     <h3 class="text-xl font-bold mb-4">Company Information</h3>
                     <form onsubmit="saveSettings(event)" class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -27823,7 +27854,10 @@ Automated WFH alert — ${company} Attendance System.`;
 
             // Director expenses with ITC
             (directorExpenses || []).forEach(d => {
-                if (d.itcEligible !== 'eligible') return;
+                // The director-expense form dropdown stores 'full', 'partial', 'blocked',
+                // or 'none' — NOT 'eligible'. Anything that isn't explicitly blocked or
+                // marked not-eligible counts as claimable for GSTR-2B reconciliation.
+                if (d.itcEligible === 'blocked' || d.itcEligible === 'none') return;
                 // For director expenses, the "natural" month is the supplier's invoice
                 // date (billDate) — the same rule as regular expenses. Plus the same
                 // gstr2bClaimMonth override applies for late-filing suppliers.
@@ -28121,7 +28155,7 @@ Automated WFH alert — ${company} Attendance System.`;
             }));
 
             const dirs = (directorExpenses || []).filter(d => {
-                if (d.itcEligible !== 'eligible') return false;
+                if (d.itcEligible === 'blocked' || d.itcEligible === 'none') return false;
                 const naturalDate = d.billDate || d.expDate || '';
                 return _claimMatch({ billDate: naturalDate, gstr2bClaimMonth: d.gstr2bClaimMonth }) &&
                     ((parseFloat(d.cgstAmt)||parseFloat(d.cgst)||0) + (parseFloat(d.sgstAmt)||parseFloat(d.sgst)||0) + (parseFloat(d.igstAmt)||parseFloat(d.igst)||0) > 0);
@@ -28282,7 +28316,9 @@ Automated WFH alert — ${company} Attendance System.`;
                 }
             });
             (directorExpenses || []).forEach(d => {
-                if (d.itcEligible === 'eligible' && (d.expDate || '').startsWith(pfx) &&
+                const dEligible = d.itcEligible !== 'blocked' && d.itcEligible !== 'none';
+                const matchDate = d.billDate || d.expDate || '';
+                if (dEligible && matchDate.startsWith(pfx) &&
                     ((parseFloat(d.cgstAmt)||parseFloat(d.cgst)||0) + (parseFloat(d.sgstAmt)||parseFloat(d.sgst)||0) + (parseFloat(d.igstAmt)||parseFloat(d.igst)||0) > 0)) {
                     d.gstr2bMatched = checked;
                     d.gstr2bMatchedDate = checked ? new Date().toISOString() : '';
@@ -28340,9 +28376,12 @@ Automated WFH alert — ${company} Attendance System.`;
         }
 
         function _g2bExtractPortalInvoices(json) {
-            // The portal's JSON structure can vary slightly; we look in the
-            // most common location: data.docdata.b2b[].inv[].
-            // We also gracefully handle the alternate root: data.b2b[].inv[].
+            // GSTR-2B JSON structure varies slightly across portal versions.
+            // - Current portal export (2024+): cgst, sgst, igst, cess, dt, itcavl
+            // - Older format: camt, samt, iamt, csamt, idt, itcAvl
+            // - Even older: in `data.b2b[]` instead of `data.docdata.b2b[]`
+            // We read whichever fields are present so the parser works against
+            // either format without forcing the user to convert.
             const root = json?.data || json || {};
             const docs = root.docdata?.b2b || root.b2b || [];
             const out = [];
@@ -28351,18 +28390,21 @@ Automated WFH alert — ${company} Attendance System.`;
                 const trdnm = supplier.trdnm || supplier.lgnm || '';
                 const supFiledOn = supplier.supfildt || '';
                 (supplier.inv || []).forEach(inv => {
+                    const cgst = parseFloat(inv.cgst ?? inv.camt)  || 0;
+                    const sgst = parseFloat(inv.sgst ?? inv.samt)  || 0;
+                    const igst = parseFloat(inv.igst ?? inv.iamt)  || 0;
+                    const cess = parseFloat(inv.cess ?? inv.csamt) || 0;
+                    const invoiceDate = inv.dt || inv.idt || '';
+                    const itcAvailable = (inv.itcavl === 'Y' || inv.itcAvl === 'Y' || inv.itc_avail === 'Y');
                     out.push({
                         gstin:         (ctin||'').toUpperCase().trim(),
                         vendorName:    trdnm,
                         invoiceNumber: inv.inum || '',
-                        invoiceDate:   inv.idt || '',
+                        invoiceDate:   invoiceDate,
                         invoiceTotal:  parseFloat(inv.val) || 0,
                         taxableValue:  parseFloat(inv.txval) || 0,
-                        igst:          parseFloat(inv.iamt) || 0,
-                        cgst:          parseFloat(inv.camt) || 0,
-                        sgst:          parseFloat(inv.samt) || 0,
-                        cess:          parseFloat(inv.csamt) || 0,
-                        itcAvailable:  (inv.itcAvl === 'Y' || inv.itc_avail === 'Y'),
+                        igst, cgst, sgst, cess,
+                        itcAvailable,
                         supFiledOn:    supFiledOn,
                         _key:          (ctin||'').toUpperCase().trim() + '||' + _g2bNormalizeInvoiceNumber(inv.inum)
                     });
@@ -28444,7 +28486,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 ((parseFloat(e.cgst)||0)+(parseFloat(e.sgst)||0)+(parseFloat(e.igst)||0) > 0)
             );
             const bmsDirs = (directorExpenses||[]).filter(d =>
-                d.itcEligible === 'eligible' &&
+                d.itcEligible !== 'blocked' && d.itcEligible !== 'none' &&
                 ((parseFloat(d.cgstAmt)||parseFloat(d.cgst)||0) + (parseFloat(d.sgstAmt)||parseFloat(d.sgst)||0) + (parseFloat(d.igstAmt)||parseFloat(d.igst)||0) > 0)
             );
 
@@ -28590,14 +28632,353 @@ Automated WFH alert — ${company} Attendance System.`;
             }
         }
 
+        // ════════════════════════════════════════════════════════════════
+        // GOOGLE SHEETS SYNC — one-way push from BMS JSON to a shared Sheet
+        // ────────────────────────────────────────────────────────────────
+        // The user maintains a separate "Engineering Services Data" Google Sheet
+        // with 19 tabs (Parties, AllTransactions, Expenses, Staff, WorkLogs,
+        // DailyEntries, Attendance, etc.). This module pushes each in-memory
+        // dataset into the corresponding tab, replacing its contents.
+        //
+        // Trigger: manual ("Sync to Google Sheets" button in Settings) — NOT
+        // automatic on every save. Sync touches all tabs and can take a
+        // few seconds; we don't want it blocking routine edits.
+        //
+        // Sheet ID is settable in Settings → Integrations. Default is the user's
+        // existing sheet ID. The OAuth scope `spreadsheets` is already part of
+        // SCOPES (line 1384) so no re-auth is needed.
+        // ════════════════════════════════════════════════════════════════
+        const DEFAULT_SHEETS_ID = '1qJaofeM7RQwK4Q6da2Tk8a0wkuNA79eCIwKY46VqgTQ';
 
+        function _sheetsActiveSheetId() {
+            return ((settings && settings.googleSheetsId) || DEFAULT_SHEETS_ID).trim();
+        }
 
+        function _sheetsCellValue(v) {
+            if (v === null || v === undefined) return '';
+            if (typeof v === 'object') {
+                try { return JSON.stringify(v); } catch (e) { return ''; }
+            }
+            return v;
+        }
 
+        async function _sheetsReplaceTab(sheetId, tabName, rows) {
+            const tk = accessToken;
+            if (!tk) throw new Error('Not authenticated — sign in first.');
+            const enc = encodeURIComponent(tabName);
+            const clearRes = await fetch(
+                `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${enc}!A:ZZ:clear`,
+                { method: 'POST', headers: { 'Authorization': 'Bearer ' + tk } }
+            );
+            if (!clearRes.ok) {
+                const err = await clearRes.text();
+                throw new Error(`Clear "${tabName}" failed (${clearRes.status}): ${err.substring(0,200)}`);
+            }
+            const writeRes = await fetch(
+                `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${enc}!A1?valueInputOption=RAW`,
+                {
+                    method: 'PUT',
+                    headers: { 'Authorization': 'Bearer ' + tk, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ values: rows.map(r => r.map(_sheetsCellValue)) })
+                }
+            );
+            if (!writeRes.ok) {
+                const err = await writeRes.text();
+                throw new Error(`Write "${tabName}" failed (${writeRes.status}): ${err.substring(0,200)}`);
+            }
+        }
 
+        async function _sheetsGetTabs(sheetId) {
+            const tk = accessToken;
+            if (!tk) throw new Error('Not authenticated');
+            const res = await fetch(
+                `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties.title`,
+                { headers: { 'Authorization': 'Bearer ' + tk } }
+            );
+            if (!res.ok) {
+                const t = await res.text();
+                throw new Error(`Sheet access failed (${res.status}): ${t.substring(0,200)}`);
+            }
+            const data = await res.json();
+            return (data.sheets || []).map(s => s.properties.title);
+        }
 
+        function _sheetsMapParties() {
+            return {
+                headers: ['Party ID','Name','Type','Address','GST','PAN','Contact Person','Email','Mobile'],
+                rows: (parties||[]).map(p => [
+                    p.partyID||'', p.partyName||p.name||'', p.partyType||p.type||'',
+                    p.address||'', p.gstNumber||'', p.panNumber||'',
+                    p.contactPerson||'', p.email||'', p.mobile||p.phone||''
+                ])
+            };
+        }
+        function _sheetsMapAllTransactions() {
+            return {
+                headers: ['Txn ID','Category','Direction','Party','Vendor Code','Date','Reference','Status','Currency','Subtotal','Tax','Grand Total'],
+                rows: (transactions||[]).map(t => [
+                    t.txnID||'', t.category||t.type||'', t.direction||'',
+                    t.party||t.partyName||'', t.vendorCode||'',
+                    t.date||t.txnDate||'', t.reference||'',
+                    t.status||'', t.currency||'INR',
+                    t.subtotal||0, t.tax||t.taxAmount||0, t.grandTotal||t.total||0
+                ])
+            };
+        }
+        function _sheetsMapApprovedTransactions() {
+            const m = _sheetsMapAllTransactions();
+            const statusIdx = m.headers.indexOf('Status');
+            const filteredHeaders = m.headers.filter((_, i) => i !== statusIdx);
+            const approvedRows = m.rows
+                .filter(r => ['approved','sent','paid','closed'].includes(String(r[statusIdx]||'').toLowerCase()))
+                .map(r => r.filter((_, i) => i !== statusIdx));
+            return { headers: filteredHeaders, rows: approvedRows };
+        }
+        function _sheetsMapExpenses() {
+            return {
+                headers: ['Bill Log Ref No','Bill No','Bill Date','Company/Vendor','Description','Currency','Exch Rate','Bill Amt','Bill Amt INR','CGST','SGST','IGST','Credit Note','TDS?','Taxable Amt','TDS%','TDS Amt','Net Amt','Advance Amt','Advance Date','Balance','Pay Status','Pay Mode','Cheque No','Pay Date','Bank','Remark'],
+                rows: (expenses||[]).map(e => [
+                    e.expID||'', e.billNo||'', e.billDate||'', e.companyName||e.vendor||'',
+                    e.description||'', e.currency||'INR', e.exchangeRate||1,
+                    e.billAmount||0, e.billINR||e.billAmountINR||e.billAmount||0,
+                    e.cgst||0, e.sgst||0, e.igst||0, e.creditNote||'',
+                    e.tdsApplicable?'Yes':'No', e.taxableAmount||0,
+                    e.tdsRate||0, e.tdsAmount||0, e.netAmount||0,
+                    e.advanceAmt||0, e.advanceDate||'', e.balance||0,
+                    e.paymentStatus||e.payStatus||'', e.paymentMode||e.payMode||'',
+                    e.chequeNo||'', e.payDate||'', e.bankName||'', e.remarks||''
+                ])
+            };
+        }
+        function _sheetsMapDirectorExpenses() {
+            return {
+                headers: ['Exp ID','Director','Date','Category','Description','Vendor','Amount','GST?','CGST','SGST','IGST','GST Total','ITC Eligible','ITC Amt','Bill No','Bill Date','GSTIN','HSN/SAC','Pay Mode','Reimbursed','Reimb Amt','Reimb Date','Attachments','Ref'],
+                rows: (directorExpenses||[]).map(d => [
+                    d.deID||'', d.director||d.dir1||d.dir2||'', d.expDate||'',
+                    d.category||'', d.description||'', d.vendor||'',
+                    d.amount||0, d.gstApplicable?'Yes':'No',
+                    d.cgstAmt||d.cgst||0, d.sgstAmt||d.sgst||0, d.igstAmt||d.igst||0,
+                    d.gstAmt||0, d.itcEligible||'', d.itcAmt||0,
+                    d.billNo||'', d.billDate||'', d.vendorGSTIN||'', d.hsnCode||'',
+                    d.payMode||'', d.reimbursed?'Yes':'No',
+                    d.reimbursedAmt||'', d.reimbursedDate||'',
+                    (d.attachments||[]).length, d.refNo||''
+                ])
+            };
+        }
+        function _sheetsMapStaff() {
+            const sl = (typeof staffList !== 'undefined') ? staffList : (typeof staff !== 'undefined' ? staff : []);
+            return {
+                headers: ['Staff ID','Name','Type','Designation','Department','Emp Code','DOJ','Mobile','Email','UAN','Basic Salary','HRA%','DA%','PF%','TDS Monthly','Status'],
+                rows: (sl||[]).map(s => [
+                    s.staffID||'', s.name||'', s.staffType||s.type||'',
+                    s.designation||'', s.department||'', s.empCode||'',
+                    s.doj||s.dateOfJoining||'', s.mobile||s.phone||'', s.email||'',
+                    s.uan||'', s.basicSalary||0, s.hraPercent||0, s.daPercent||0,
+                    s.pfPercent||0, s.tdsMonthly||0, s.status||(s.active===false?'Inactive':'Active')
+                ])
+            };
+        }
+        function _sheetsMapPayslips() {
+            const ps = (typeof payslips !== 'undefined') ? payslips : [];
+            return {
+                headers: ['Payslip ID','Staff ID','Name','Staff Type','Period','Gross','PF','ESIC','PT','TDS','LOP','Net Pay','Status','Generated'],
+                rows: (ps||[]).map(p => [
+                    p.payslipID||p.id||'', p.staffID||'', p.staffName||p.name||'',
+                    p.staffType||'', p.period||(p.month && p.year ? p.month+'-'+p.year : ''),
+                    p.gross||p.grossPay||0, p.pf||p.pfDeduction||0, p.esic||p.esicDeduction||0,
+                    p.pt||p.ptDeduction||0, p.tds||p.tdsDeduction||0,
+                    p.lop||p.lopDays||0, p.netPay||p.net||0,
+                    p.status||'', p.generatedAt||p.createdAt||''
+                ])
+            };
+        }
+        function _sheetsMapAttendance() {
+            const att = (typeof attendance !== 'undefined') ? attendance : [];
+            return {
+                headers: ['Staff ID','Staff Name','Staff Type','Designation','Date','Day','Status','Project','Check-In','Check-Out','Late (mins)','Hours Worked','WFH Sessions','WFH Eff.Hrs','Remarks'],
+                rows: (att||[]).map(a => {
+                    const d = a.date ? new Date(a.date) : null;
+                    const dayName = d ? ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()] : '';
+                    return [
+                        a.staffID||'', a.staffName||a.name||'', a.staffType||'',
+                        a.designation||'', a.date||'', dayName,
+                        a.status||'', a.project||'', a.checkIn||'', a.checkOut||'',
+                        a.lateMins||0, a.hoursWorked||0,
+                        (a.wfhSessions||[]).length, a.wfhEffectiveHours||0,
+                        a.remarks||''
+                    ];
+                })
+            };
+        }
+        function _sheetsMapWorkLogs() {
+            return {
+                headers: ['WL ID','Project','Ref','Client','Location','Work Start','Work End','Scope','Technicians','Total Days','Status'],
+                rows: (workLogs||[]).map(w => [
+                    w.wlID||'', w.project||'', w.ref||'',
+                    w.client||'', w.location||'',
+                    w.workStartDate||'', w.workEndDate||'',
+                    w.scopeOfWork||'',
+                    (w.technicians||[]).map(t => t.name).join(', '),
+                    (w.dailyEntries||[]).length,
+                    w.status||''
+                ])
+            };
+        }
+        function _sheetsMapDailyEntries() {
+            const rows = [];
+            (workLogs||[]).forEach(w => {
+                (w.dailyEntries||[]).forEach(d => {
+                    rows.push([
+                        w.wlID||'', w.project||'',
+                        d.date||'', d.startTime||'', d.endTime||'',
+                        d.category||'',
+                        (d.technicians||[]).map(t => {
+                            const sameTime = (!t.startTime || t.startTime === d.startTime) && (!t.endTime || t.endTime === d.endTime);
+                            return t.name + (sameTime ? '' : ` (${t.startTime||d.startTime}-${t.endTime||d.endTime})`);
+                        }).join('; '),
+                        d.description||'', d.observations||'', d.exclusions||'',
+                        d.recommendations||'', d.witnessName||'', d.witnessDesig||'',
+                        d.witnessRemarks||'',
+                        (d.photos||[]).length, (d.calibrations||[]).length,
+                        d.lastModifiedBy||''
+                    ]);
+                });
+            });
+            return {
+                headers: ['WL ID','Project','Date','Start Time','End Time','Category','Technicians','Work Carried Out','Observations','Exclusions','Recommendations','Witness Name','Witness Desig','Witness Remarks','Photos','Calibrations','Entered By'],
+                rows
+            };
+        }
+        function _sheetsMapCalibrations() {
+            const rows = [];
+            (workLogs||[]).forEach(w => {
+                (w.dailyEntries||[]).forEach(d => {
+                    (d.calibrations||[]).forEach(c => {
+                        const readings = c.rows || [];
+                        const passCount = readings.filter(r => (r.result||'').toUpperCase() === 'PASS').length;
+                        const failCount = readings.filter(r => (r.result||'').toUpperCase() === 'FAIL').length;
+                        const overall  = failCount === 0 ? 'PASS' : (passCount === 0 ? 'FAIL' : 'PARTIAL');
+                        rows.push([
+                            w.wlID||'', w.project||'', d.date||'',
+                            c.component||c.customTitle||'', c.unitNo||'', c.maker||'',
+                            c.nominalMM||'', c.standardMM||'', c.wearLimitMM||'',
+                            c.instrument||'', overall,
+                            readings.length, passCount, failCount,
+                            c.remarks||''
+                        ]);
+                    });
+                });
+            });
+            return {
+                headers: ['WL ID','Project','Entry Date','Component','Unit No','Maker','Nominal (mm)','Standard (mm)','Wear Limit (mm)','Instrument','Overall Result','No. of Readings','PASS Count','FAIL Count','Remarks'],
+                rows
+            };
+        }
+        function _sheetsMapSettings() {
+            const s = settings || {};
+            const rows = [
+                ['Company Name',  s.companyName || ''],
+                ['GST Number',    s.gstNumber || ''],
+                ['MSME Number',   s.msmeNumber || ''],
+                ['CIN Number',    s.cinNumber || ''],
+                ['PAN Number',    s.panNumber || ''],
+                ['Address',       s.address || ''],
+                ['Phone',         s.phone || ''],
+                ['Email',         s.email || ''],
+                ['Last Synced',   new Date().toISOString()]
+            ];
+            return { headers: ['Field','Value'], rows };
+        }
 
+        const _sheetsMappings = [
+            { tab: 'Settings',         mapper: _sheetsMapSettings },
+            { tab: 'Parties',          mapper: _sheetsMapParties },
+            { tab: 'AllTransactions',  mapper: _sheetsMapAllTransactions },
+            { tab: 'ApprovedTxns',     mapper: _sheetsMapApprovedTransactions },
+            { tab: 'Expenses',         mapper: _sheetsMapExpenses },
+            { tab: 'DirectorExpenses', mapper: _sheetsMapDirectorExpenses },
+            { tab: 'Staff',            mapper: _sheetsMapStaff },
+            { tab: 'Payslips',         mapper: _sheetsMapPayslips },
+            { tab: 'Attendance',       mapper: _sheetsMapAttendance },
+            { tab: 'WorkLogs',         mapper: _sheetsMapWorkLogs },
+            { tab: 'DailyEntries',     mapper: _sheetsMapDailyEntries },
+            { tab: 'Calibrations',     mapper: _sheetsMapCalibrations }
+        ];
 
+        async function _saveSheetsId() {
+            const el = document.getElementById('googleSheetsId');
+            if (!el) return;
+            const v = (el.value || '').trim();
+            settings.googleSheetsId = v || DEFAULT_SHEETS_ID;
+            try {
+                await saveData('settings', settings);
+                if (typeof showToast === 'function') showToast('✓ Sheet ID saved');
+                renderView();
+            } catch (e) {
+                alert('Could not save: ' + e.message);
+            }
+        }
 
+        async function syncToGoogleSheets() {
+            const sheetId = _sheetsActiveSheetId();
+            const statusEl = document.getElementById('sheetsSyncStatus');
+            const setStatus = (msg, color = '#475569') => {
+                if (statusEl) statusEl.innerHTML = `<span style="color:${color}">${msg}</span>`;
+            };
+
+            if (!accessToken) { alert('Sign in to Google Drive first.'); return; }
+            if (!sheetId)     { alert('Configure a Google Sheet ID in Settings → Integrations first.'); return; }
+
+            setStatus('🔌 Connecting to sheet…');
+
+            let existingTabs;
+            try {
+                existingTabs = await _sheetsGetTabs(sheetId);
+            } catch (e) {
+                setStatus(`❌ ${e.message}`, '#dc2626');
+                alert('Could not access the sheet. Check:\n• Sheet ID is correct\n• You have edit permission on the sheet\n• You signed in with the right Google account\n\nError: ' + e.message);
+                return;
+            }
+
+            const results = { ok: 0, skip: 0, fail: 0 };
+            const failures = [];
+            const skipped  = [];
+
+            for (let i = 0; i < _sheetsMappings.length; i++) {
+                const { tab, mapper } = _sheetsMappings[i];
+                setStatus(`⏳ ${i+1}/${_sheetsMappings.length}: ${tab}…`);
+
+                if (!existingTabs.includes(tab)) {
+                    results.skip++;
+                    skipped.push(tab);
+                    continue;
+                }
+                try {
+                    const { headers, rows } = mapper();
+                    await _sheetsReplaceTab(sheetId, tab, [headers, ...rows]);
+                    results.ok++;
+                } catch (e) {
+                    results.fail++;
+                    failures.push({ tab, error: e.message });
+                    console.error('Sheets sync failed for', tab, e);
+                }
+            }
+
+            const summary = `Sync complete — ${results.ok} tab(s) written` +
+                (results.skip > 0 ? `, ${results.skip} skipped (tab not in sheet): ${skipped.join(', ')}` : '') +
+                (results.fail > 0 ? `, ${results.fail} failed` : '');
+            setStatus((results.fail === 0 ? '✅ ' : '⚠ ') + summary, results.fail === 0 ? '#15803d' : '#b45309');
+
+            if (failures.length) {
+                alert('Some tabs failed:\n\n' + failures.map(f => `• ${f.tab}: ${f.error}`).join('\n'));
+            }
+
+            settings.lastSheetsSyncAt = new Date().toISOString();
+            settings.lastSheetsSyncBy = (typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin';
+            try { await saveData('settings', settings); } catch (e) {}
+            renderView();
+        }
 
         // ── Render Payment Requests list view ──
         // Persistent filter state across re-renders
