@@ -4511,18 +4511,41 @@
     function renderDayStaffRows(wlID){
         const el=document.getElementById('dayStaffList');if(!el)return;
         const wl=workLogs.find(x=>x.wlID===wlID);
+        // Common times entered at the top of the form serve as the DEFAULT
+        // for any new technician. Each tech can override their own start/end
+        // if their hours differ (e.g. one tech arrived late, one left early).
+        const defStart = document.getElementById('dayStartTime')?.value || '';
+        const defEnd   = document.getElementById('dayEndTime')?.value   || '';
         el.innerHTML=_dayStaffRows.map((r,i)=>`
-        <div style="display:flex;gap:8px;align-items:center">
-            <select onchange="_dayStaffRows[${i}].name=this.value;_dayStaffRows[${i}].staffID=staffList.find(s=>s.name===this.value)?.staffID||''" class="field-input flex-1" style="font-size:13px">
-                <option value="">— Select —</option>
-                ${staffList.map(s=>`<option value="${s.name}"${s.name===r.name?' selected':''}>${s.name} (${s.staffType||'Staff'})</option>`).join('')}
-            </select>
-            <button type="button" onclick="_dayStaffRows.splice(${i},1);renderDayStaffRows('${wlID}')" style="color:#dc2626;background:none;border:none;font-size:18px;cursor:pointer;padding:4px">✕</button>
+        <div style="border:1px solid var(--border);border-radius:8px;padding:8px;background:#fafafa;margin-bottom:6px">
+            <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+                <select onchange="_dayStaffRows[${i}].name=this.value;_dayStaffRows[${i}].staffID=staffList.find(s=>s.name===this.value)?.staffID||''" class="field-input" style="flex:1;font-size:13px;min-width:120px">
+                    <option value="">— Select technician —</option>
+                    ${staffList.map(s=>`<option value="${s.name}"${s.name===r.name?' selected':''}>${s.name} (${s.staffType||'Staff'})</option>`).join('')}
+                </select>
+                <button type="button" onclick="_dayStaffRows.splice(${i},1);renderDayStaffRows('${wlID}')" title="Remove technician" style="color:#dc2626;background:none;border:none;font-size:18px;cursor:pointer;padding:0 4px">✕</button>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+                <div style="flex:1;min-width:90px">
+                    <label style="font-size:10px;color:#6b7280;display:block;margin-bottom:2px">Start time</label>
+                    <input type="time" value="${r.startTime||defStart}" onchange="_dayStaffRows[${i}].startTime=this.value" class="field-input" style="font-size:12px;padding:4px 6px;width:100%" placeholder="Start"/>
+                </div>
+                <div style="flex:1;min-width:90px">
+                    <label style="font-size:10px;color:#6b7280;display:block;margin-bottom:2px">End time</label>
+                    <input type="time" value="${r.endTime||defEnd}" onchange="_dayStaffRows[${i}].endTime=this.value" class="field-input" style="font-size:12px;padding:4px 6px;width:100%" placeholder="End"/>
+                </div>
+                <div style="flex:2;min-width:140px">
+                    <label style="font-size:10px;color:#6b7280;display:block;margin-bottom:2px">Remarks for this technician (optional)</label>
+                    <input type="text" value="${(r.remarks||'').replace(/"/g,'&quot;')}" onchange="_dayStaffRows[${i}].remarks=this.value" class="field-input" style="font-size:12px;padding:4px 6px;width:100%" placeholder="e.g., late arrival, half-day"/>
+                </div>
+            </div>
         </div>`).join('');
     }
     function addDayStaffRow(){
         const wlID=document.getElementById('dayWlID').value;
-        _dayStaffRows.push({name:'',staffID:''});renderDayStaffRows(wlID);
+        // New rows inherit the common time as their default — user can override
+        _dayStaffRows.push({name:'',staffID:'',startTime:'',endTime:'',remarks:''});
+        renderDayStaffRows(wlID);
     }
 
     // ── PHOTO HELPERS (Phase 2: titles) ──────────────────────────────
@@ -4693,10 +4716,22 @@
         document.getElementById('dayWitnessName').value=entry?.witnessName||'';
         document.getElementById('dayWitnessDesig').value=entry?.witnessDesig||'';
         document.getElementById('dayWitnessRemarks').value=entry?.witnessRemarks||'';
-        // Pre-fill technicians from entry or from project
-        if(entry?.technicians?.length) _dayStaffRows=entry.technicians.map(t=>({name:t.name,staffID:t.staffID||''}));
-        else if(wl?.technicians?.length) _dayStaffRows=wl.technicians.map(t=>({name:t.name,staffID:t.staffID||''}));
-        else _dayStaffRows=[{name:'',staffID:''}];
+        // Pre-fill technicians from entry or from project.
+        // Saved technician records may have per-tech startTime/endTime/remarks
+        // (added in the per-technician times feature). Older records will have
+        // those fields blank — the renderer fills them from the common time
+        // at the top of the form, preserving the original UX for legacy data.
+        if(entry?.technicians?.length) _dayStaffRows=entry.technicians.map(t=>({
+            name:      t.name,
+            staffID:   t.staffID || '',
+            startTime: t.startTime || '',
+            endTime:   t.endTime   || '',
+            remarks:   t.remarks   || ''
+        }));
+        else if(wl?.technicians?.length) _dayStaffRows=wl.technicians.map(t=>({
+            name:t.name, staffID:t.staffID||'', startTime:'', endTime:'', remarks:''
+        }));
+        else _dayStaffRows=[{name:'',staffID:'',startTime:'',endTime:'',remarks:''}];
         renderDayStaffRows(wlID);
         if(entry?.photos)_dayPhotos=[...entry.photos];
         renderDayPhotoGrid();
@@ -4759,7 +4794,18 @@
         }
         const wlIdx=workLogs.findIndex(x=>x.wlID===wlID);if(wlIdx<0)return;
         if(!workLogs[wlIdx].dailyEntries)workLogs[wlIdx].dailyEntries=[];
-        const techs=_dayStaffRows.filter(r=>r.name).map(r=>({name:r.name,staffID:r.staffID||staffList.find(s=>s.name===r.name)?.staffID||''}));
+        // Fall back to common time when individual tech time is blank — preserves
+        // the original "set once, applies to all" workflow for users who don't
+        // need per-tech granularity.
+        const defStart = document.getElementById('dayStartTime').value;
+        const defEnd   = document.getElementById('dayEndTime').value;
+        const techs=_dayStaffRows.filter(r=>r.name).map(r=>({
+            name:      r.name,
+            staffID:   r.staffID || staffList.find(s=>s.name===r.name)?.staffID || '',
+            startTime: r.startTime || defStart,
+            endTime:   r.endTime   || defEnd,
+            remarks:   r.remarks   || ''
+        }));
         const entry={
             entryID:       entryID||('DE'+Date.now()),
             date:          document.getElementById('dayDate').value,
@@ -5033,13 +5079,21 @@
         days.forEach(d=>{
             const techs=(d.technicians||[]).length>0?d.technicians:(wl.technicians||[]);
             techs.forEach((t,ti)=>{
+                // Prefer the tech's individual time; fall back to the day's common
+                // time for backward compatibility with entries made before per-tech
+                // times were supported.
+                const techStart = t.startTime || d.startTime || '';
+                const techEnd   = t.endTime   || d.endTime   || '';
+                // Per-tech remarks shown on each row when set; otherwise show the
+                // day's common time-log remarks on the first row only.
+                const techRemarks = t.remarks || (ti===0 ? (d.timeLogRemarks || '') : '');
                 timeLogRows.push([
                     ti===0?{content:d.date?d.date.split('-').reverse().join('.'):'—'}:{content:''},
                     {content:String(ti+1)+'.'},
                     {content:t.name||'—'},
-                    {content:d.startTime||''},
-                    {content:d.endTime||''},
-                    {content:ti===0?(d.timeLogRemarks||''):''}
+                    {content:techStart},
+                    {content:techEnd},
+                    {content:techRemarks}
                 ]);
             });
         });
