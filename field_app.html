@@ -592,11 +592,11 @@
                     <input type="text" id="fbCustomerName" class="field-input" required style="font-size:13px"/>
                 </div>
                 <div>
-                    <label style="font-size:11px;font-weight:600;color:#92400e">Location</label>
+                    <label style="font-size:11px;font-weight:600;color:#92400e">Vessel</label>
                     <input type="text" id="fbLocation" class="field-input" style="font-size:13px"/>
                 </div>
                 <div>
-                    <label style="font-size:11px;font-weight:600;color:#92400e">Vessel</label>
+                    <label style="font-size:11px;font-weight:600;color:#92400e">Project</label>
                     <input type="text" id="fbVessel" class="field-input" style="font-size:13px"/>
                 </div>
                 <div>
@@ -643,13 +643,13 @@
 
             <!-- Signed copy attachment (photograph of the paper form) -->
             <div style="background:#fef9c3;border:1px solid #fde68a;border-radius:8px;padding:10px">
-                <label style="font-size:11px;font-weight:600;color:#854d0e;display:block;margin-bottom:4px">📎 Photo of signed form (optional)</label>
+                <label style="font-size:11px;font-weight:600;color:#854d0e;display:block;margin-bottom:4px">📎 Scanned/photographed signed form (after customer returns it)</label>
                 <input type="file" id="fbSignedFile" accept="image/*,application/pdf" class="field-input" style="font-size:11px"/>
                 <div id="fbSignedFilePreview" style="font-size:10px;color:#854d0e;margin-top:4px"></div>
             </div>
 
-            <div class="flex justify-between gap-2 pt-2">
-                <button type="button" id="fbPdfBtn" onclick="feedbackPDF(document.getElementById('fbWlID').value)" style="padding:8px 14px;border-radius:10px;background:#1e3a5f;color:#fff;border:none;cursor:pointer;font-size:13px;font-weight:600;display:none">📄 PDF</button>
+            <div class="flex justify-between gap-2 pt-2 flex-wrap">
+                <button type="button" onclick="printFeedbackFromForm()" style="padding:8px 14px;border-radius:10px;background:#1e3a5f;color:#fff;border:none;cursor:pointer;font-size:13px;font-weight:600" title="Generate a printable PDF using the current form values — print, give to customer for signature, then scan back and upload above">🖨 Print Form for Customer</button>
                 <span style="flex:1"></span>
                 <button type="button" onclick="closeFeedbackModal()" style="padding:8px 14px;border-radius:10px;border:1.5px solid var(--border);background:#fff;cursor:pointer;font-size:13px">Cancel</button>
                 <button type="submit" class="btn-primary" style="font-size:13px;padding:8px 16px;background:linear-gradient(135deg,#92400e,#f59e0b)">💾 Save Feedback</button>
@@ -5032,8 +5032,6 @@
             : '';
         document.getElementById('fbSignedFile').value = '';
 
-        document.getElementById('fbPdfBtn').style.display = (fb && Object.keys(_fbRatings).length) ? 'block' : 'none';
-
         _renderFeedbackRatings();
         document.getElementById('feedbackModal').classList.add('show');
     }
@@ -5126,12 +5124,46 @@
         }
     }
 
+    // Reads everything currently in the feedback modal's form inputs and
+    // returns a complete feedback object — without saving. Lets us generate
+    // a "print blank for customer signature" PDF while the form is still
+    // open, before the user has saved (or even before they've selected
+    // any ratings).
+    function _collectFeedbackFromForm() {
+        return {
+            customerName:   document.getElementById('fbCustomerName').value.trim(),
+            vessel:         document.getElementById('fbVessel').value.trim(),
+            location:       document.getElementById('fbLocation').value.trim(),
+            startDate:      document.getElementById('fbStartDate').value,
+            completionDate: document.getElementById('fbCompletionDate').value,
+            orderNumber:    document.getElementById('fbOrderNumber').value.trim(),
+            ratings:        { ..._fbRatings },
+            remarks:        document.getElementById('fbRemarks').value.trim(),
+            suggestions:    document.getElementById('fbSuggestions').value.trim(),
+            inchargeName:   document.getElementById('fbInchargeName').value.trim(),
+            signedDate:     document.getElementById('fbSignedDate').value,
+            signedAttachment: _fbSignedAttachment
+        };
+    }
+
+    // Triggered by the "Print Form for Customer" button. Reads the current
+    // form values and prints — no save required. Customer signs the printed
+    // copy and the technician later uploads it via the file picker above.
+    async function printFeedbackFromForm() {
+        const wlID = document.getElementById('fbWlID').value;
+        if (!wlID) { showToast('Open a work log first'); return; }
+        const formData = _collectFeedbackFromForm();
+        await feedbackPDF(wlID, formData);
+    }
+
     // ── Feedback PDF — mirrors the ITSPL/QR/CF paper form ──────────────
-    async function feedbackPDF(wlID) {
+    // Accepts an optional `fbOverride` so we can print a blank form (or a
+    // partially-filled form) from the modal without persisting first.
+    async function feedbackPDF(wlID, fbOverride) {
         const wl = workLogs.find(x => x.wlID === wlID);
         if (!wl) { showToast('Work log not found'); return; }
-        const fb = wl.customerFeedback;
-        if (!fb) { showToast('No feedback captured yet — fill in the form first'); return; }
+        const fb = fbOverride || wl.customerFeedback;
+        if (!fb) { showToast('No feedback data — fill in the form first'); return; }
 
         showToast('⏳ Generating PDF…', 4000);
 
@@ -5185,12 +5217,12 @@
                     {content:'Customer\u2019s Name',styles:{cellWidth:36,fontStyle:'bold',fillColor:[241,245,249]}},
                     {content:fb.customerName||'',styles:{cellWidth:46}},
                     {content:'4.',styles:{cellWidth:8,halign:'center'}},
-                    {content:'Location',styles:{cellWidth:30,fontStyle:'bold',fillColor:[241,245,249]}},
+                    {content:'Vessel',styles:{cellWidth:30,fontStyle:'bold',fillColor:[241,245,249]}},
                     {content:fb.location||'',styles:{cellWidth:CW-128}}
                 ],
                 [
                     {content:'2.',styles:{halign:'center'}},
-                    {content:'Vessel',styles:{fontStyle:'bold',fillColor:[241,245,249]}},
+                    {content:'Project',styles:{fontStyle:'bold',fillColor:[241,245,249]}},
                     {content:fb.vessel||''},
                     {content:'5.',styles:{halign:'center'}},
                     {content:'Starting Date',styles:{fontStyle:'bold',fillColor:[241,245,249]}},
