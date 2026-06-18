@@ -576,6 +576,88 @@
     </div>
 </div>
 
+<!-- Customer Feedback Modal — captured at project completion, mirrors ITSPL/QR/CF form -->
+<div id="feedbackModal" class="modal">
+    <div class="modal-box" style="max-width:680px">
+        <div class="modal-hdr" style="background:linear-gradient(135deg,#92400e,#f59e0b)">
+            <span class="font-bold text-white text-lg">📋 Customer Feedback</span>
+            <button type="button" onclick="closeFeedbackModal()" style="background:none;border:none;color:#fff;font-size:22px;cursor:pointer;line-height:1">✕</button>
+        </div>
+        <form id="feedbackForm" onsubmit="saveFeedback(event)" class="p-5 space-y-3">
+            <input type="hidden" id="fbWlID"/>
+            <!-- Top metadata (mirrors top table of paper form) -->
+            <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:10px;display:grid;grid-template-columns:1fr 1fr;gap:8px">
+                <div>
+                    <label style="font-size:11px;font-weight:600;color:#92400e">Customer's Name</label>
+                    <input type="text" id="fbCustomerName" class="field-input" required style="font-size:13px"/>
+                </div>
+                <div>
+                    <label style="font-size:11px;font-weight:600;color:#92400e">Location</label>
+                    <input type="text" id="fbLocation" class="field-input" style="font-size:13px"/>
+                </div>
+                <div>
+                    <label style="font-size:11px;font-weight:600;color:#92400e">Vessel</label>
+                    <input type="text" id="fbVessel" class="field-input" style="font-size:13px"/>
+                </div>
+                <div>
+                    <label style="font-size:11px;font-weight:600;color:#92400e">Starting Date</label>
+                    <input type="date" id="fbStartDate" class="field-input" style="font-size:13px"/>
+                </div>
+                <div>
+                    <label style="font-size:11px;font-weight:600;color:#92400e">Customer's Order Number</label>
+                    <input type="text" id="fbOrderNumber" class="field-input" style="font-size:13px"/>
+                </div>
+                <div>
+                    <label style="font-size:11px;font-weight:600;color:#92400e">Completion Date</label>
+                    <input type="date" id="fbCompletionDate" class="field-input" style="font-size:13px"/>
+                </div>
+            </div>
+
+            <!-- Ratings (5 items × 3 levels) -->
+            <div style="background:#fafaf9;border:1px solid var(--border);border-radius:8px;padding:10px">
+                <p style="font-size:12px;font-weight:700;color:#1f2937;margin-bottom:6px">EVALUATION BY THE INCHARGE OF THE VESSEL</p>
+                <p style="font-size:10px;color:var(--muted);margin-bottom:8px">Tap to select rating. Excellent = 10, Good = 7, Poor = 4.</p>
+                <div id="fbRatingsContainer"></div>
+            </div>
+
+            <!-- Comments -->
+            <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px">
+                <p style="font-size:12px;font-weight:700;color:#065f46;margin-bottom:6px">COMMENTS ON THE JOB AS EXECUTED</p>
+                <label style="font-size:11px;font-weight:600;color:#065f46;display:block;margin-bottom:2px">Remarks (if any)</label>
+                <textarea id="fbRemarks" rows="3" class="field-input" style="font-size:12px" placeholder="Customer's overall feedback on the work executed"></textarea>
+                <label style="font-size:11px;font-weight:600;color:#065f46;display:block;margin-top:6px;margin-bottom:2px">Suggestions (if any)</label>
+                <textarea id="fbSuggestions" rows="3" class="field-input" style="font-size:12px" placeholder="Customer's suggestions for improvement"></textarea>
+            </div>
+
+            <!-- Signature info -->
+            <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px;display:grid;grid-template-columns:1fr 1fr;gap:8px">
+                <div>
+                    <label style="font-size:11px;font-weight:600;color:#1e40af">Incharge Name &amp; Designation</label>
+                    <input type="text" id="fbInchargeName" class="field-input" style="font-size:13px" placeholder="e.g., Chief Engineer Mr. XYZ"/>
+                </div>
+                <div>
+                    <label style="font-size:11px;font-weight:600;color:#1e40af">Date Signed</label>
+                    <input type="date" id="fbSignedDate" class="field-input" style="font-size:13px"/>
+                </div>
+            </div>
+
+            <!-- Signed copy attachment (photograph of the paper form) -->
+            <div style="background:#fef9c3;border:1px solid #fde68a;border-radius:8px;padding:10px">
+                <label style="font-size:11px;font-weight:600;color:#854d0e;display:block;margin-bottom:4px">📎 Photo of signed form (optional)</label>
+                <input type="file" id="fbSignedFile" accept="image/*,application/pdf" class="field-input" style="font-size:11px"/>
+                <div id="fbSignedFilePreview" style="font-size:10px;color:#854d0e;margin-top:4px"></div>
+            </div>
+
+            <div class="flex justify-between gap-2 pt-2">
+                <button type="button" id="fbPdfBtn" onclick="feedbackPDF(document.getElementById('fbWlID').value)" style="padding:8px 14px;border-radius:10px;background:#1e3a5f;color:#fff;border:none;cursor:pointer;font-size:13px;font-weight:600;display:none">📄 PDF</button>
+                <span style="flex:1"></span>
+                <button type="button" onclick="closeFeedbackModal()" style="padding:8px 14px;border-radius:10px;border:1.5px solid var(--border);background:#fff;cursor:pointer;font-size:13px">Cancel</button>
+                <button type="submit" class="btn-primary" style="font-size:13px;padding:8px 16px;background:linear-gradient(135deg,#92400e,#f59e0b)">💾 Save Feedback</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <!-- Daily Entry Modal -->
 <div id="dayModal" class="modal">
     <div class="modal-box" style="max-width:640px">
@@ -4285,11 +4367,12 @@
                         </div>
                     </div>
                     <!-- Action buttons -->
-                    <div class="flex gap-2 mt-3">
-                        <button onclick="openDayModal('${w.wlID}')" class="btn-primary flex-1" style="font-size:12px;padding:8px 10px;background:linear-gradient(135deg,#065f46,#0d9488)">
+                    <div class="flex gap-2 mt-3 flex-wrap">
+                        <button onclick="openDayModal('${w.wlID}')" class="btn-primary flex-1" style="font-size:12px;padding:8px 10px;background:linear-gradient(135deg,#065f46,#0d9488);min-width:140px">
                             + Add Daily Update
                         </button>
                         <button onclick="wlPDF('${w.wlID}')" style="padding:8px 12px;border-radius:10px;background:#1e3a5f;color:#fff;border:none;cursor:pointer;font-size:12px;font-weight:600">📄 Report</button>
+                        <button onclick="openFeedbackModal('${w.wlID}')" style="padding:8px 12px;border-radius:10px;background:${w.customerFeedback?'#f59e0b':'#fff'};color:${w.customerFeedback?'#fff':'#92400e'};border:1.5px solid #f59e0b;cursor:pointer;font-size:12px;font-weight:600" title="${w.customerFeedback ? 'View / re-print customer feedback (already captured)' : 'Capture customer feedback at project completion'}">📋 Feedback${w.customerFeedback ? ' ✓' : ''}</button>
                         <button onclick="editWorkLog('${w.wlID}')" style="padding:8px 10px;border-radius:10px;border:1.5px solid var(--border);background:#fff;cursor:pointer;font-size:12px;color:var(--muted)">✏️</button>
                         <button onclick="deleteWorkLog('${w.wlID}')" style="padding:8px 10px;border-radius:10px;border:1.5px solid #fecaca;background:#fff;cursor:pointer;font-size:12px;color:#dc2626">✕</button>
                     </div>
@@ -4875,6 +4958,323 @@
     }
 
     // ── WORK LOG PDF — Full Project Report ───────────────────────
+    // ════════════════════════════════════════════════════════════════
+    // CUSTOMER FEEDBACK — ITSPL/QR/CF
+    // ────────────────────────────────────────────────────────────────
+    // Project-completion feedback form mirroring the paper template
+    // (Issue 01, dated 01.08.2018). Captured per work log; stored as
+    // wl.customerFeedback. PDF can be printed for physical signature,
+    // or the signed paper form can be photographed and attached.
+    //
+    // Rating scale: Excellent = 10, Good = 7, Poor = 4 (per template).
+    // The 5 evaluation items match the template wording exactly so
+    // the PDF and the paper form are interchangeable for audit.
+    // ════════════════════════════════════════════════════════════════
+    const FB_RATING_ITEMS = [
+        { key: 'workmanship', label: 'Quality of Workmanship' },
+        { key: 'timeliness',  label: 'Timely Completion of Jobs' },
+        { key: 'materials',   label: 'Quality of Materials Used' },
+        { key: 'supervision', label: 'Quality of Supervision / Co-ordination' },
+        { key: 'attitude',    label: 'Attitude of the Staff' }
+    ];
+    const FB_RATING_VALUES = [
+        { key: 'excellent', label: 'Excellent', score: 10, color: '#15803d' },
+        { key: 'good',      label: 'Good',      score: 7,  color: '#1d4ed8' },
+        { key: 'poor',      label: 'Poor',      score: 4,  color: '#dc2626' }
+    ];
+
+    let _fbRatings = {};        // { itemKey: 'excellent'|'good'|'poor' }
+    let _fbSignedAttachment = null;  // { driveFileId, name, mime, size }
+
+    function _renderFeedbackRatings() {
+        const el = document.getElementById('fbRatingsContainer');
+        if (!el) return;
+        el.innerHTML = FB_RATING_ITEMS.map(item => `
+            <div style="display:grid;grid-template-columns:1fr auto auto auto;gap:6px;align-items:center;padding:5px 0;border-bottom:1px solid #e5e7eb">
+                <div style="font-size:12px;color:#1f2937;font-weight:500">${item.label}</div>
+                ${FB_RATING_VALUES.map(v => `
+                    <button type="button" onclick="_fbSetRating('${item.key}','${v.key}')"
+                        style="font-size:11px;padding:4px 10px;border-radius:6px;border:1.5px solid ${_fbRatings[item.key]===v.key ? v.color : '#d1d5db'};background:${_fbRatings[item.key]===v.key ? v.color : '#fff'};color:${_fbRatings[item.key]===v.key ? '#fff' : v.color};font-weight:600;cursor:pointer;min-width:74px">${v.label} (${v.score})</button>
+                `).join('')}
+            </div>
+        `).join('');
+    }
+    function _fbSetRating(itemKey, valueKey) {
+        _fbRatings[itemKey] = valueKey;
+        _renderFeedbackRatings();
+    }
+
+    async function openFeedbackModal(wlID) {
+        const wl = workLogs.find(x => x.wlID === wlID);
+        if (!wl) { showToast('Work log not found'); return; }
+
+        document.getElementById('fbWlID').value = wlID;
+        const fb = wl.customerFeedback || {};
+
+        // Auto-fill from project where possible; existing feedback overrides
+        document.getElementById('fbCustomerName').value   = fb.customerName   || wl.client           || '';
+        document.getElementById('fbVessel').value         = fb.vessel         || wl.vessel           || wl.project || '';
+        document.getElementById('fbLocation').value       = fb.location       || wl.location         || '';
+        document.getElementById('fbStartDate').value      = fb.startDate      || wl.workStartDate    || '';
+        document.getElementById('fbCompletionDate').value = fb.completionDate || wl.workEndDate      || '';
+        document.getElementById('fbOrderNumber').value    = fb.orderNumber    || wl.customerOrderNo  || wl.ref || '';
+        document.getElementById('fbRemarks').value        = fb.remarks        || '';
+        document.getElementById('fbSuggestions').value    = fb.suggestions    || '';
+        document.getElementById('fbInchargeName').value   = fb.inchargeName   || '';
+        document.getElementById('fbSignedDate').value     = fb.signedDate     || '';
+
+        _fbRatings = { ...(fb.ratings || {}) };
+        _fbSignedAttachment = fb.signedAttachment || null;
+
+        const filePreview = document.getElementById('fbSignedFilePreview');
+        filePreview.innerHTML = _fbSignedAttachment
+            ? `Attached: <a href="https://drive.google.com/file/d/${_fbSignedAttachment.driveFileId}/view" target="_blank" style="color:#1d4ed8;text-decoration:underline">${_fbSignedAttachment.name || 'signed-form'}</a> <button type="button" onclick="_fbClearAttachment()" style="color:#dc2626;background:none;border:none;cursor:pointer;font-size:11px;margin-left:6px">[remove]</button>`
+            : '';
+        document.getElementById('fbSignedFile').value = '';
+
+        document.getElementById('fbPdfBtn').style.display = (fb && Object.keys(_fbRatings).length) ? 'block' : 'none';
+
+        _renderFeedbackRatings();
+        document.getElementById('feedbackModal').classList.add('show');
+    }
+
+    function closeFeedbackModal() {
+        document.getElementById('feedbackModal').classList.remove('show');
+        _fbRatings = {};
+        _fbSignedAttachment = null;
+    }
+
+    function _fbClearAttachment() {
+        _fbSignedAttachment = null;
+        document.getElementById('fbSignedFilePreview').innerHTML = '';
+    }
+
+    async function saveFeedback(ev) {
+        ev.preventDefault();
+        const wlID = document.getElementById('fbWlID').value;
+        const wlIdx = workLogs.findIndex(x => x.wlID === wlID);
+        if (wlIdx < 0) { showToast('Work log not found'); return; }
+
+        // Validate at least one rating chosen — full validation isn't enforced
+        // because the customer may decline to rate every item.
+        if (Object.keys(_fbRatings).length === 0) {
+            if (!confirm('No ratings selected. Save feedback anyway?')) return;
+        }
+
+        // Upload the signed-copy file if a fresh one was picked
+        const fileInput = document.getElementById('fbSignedFile');
+        if (fileInput.files && fileInput.files[0]) {
+            try {
+                showToast('⏳ Uploading signed copy…');
+                const f = fileInput.files[0];
+                const folder = await getOrCreateSubFolder('CustomerFeedback');
+                const uploaded = await uploadFileToDriveFolder(folder, f);
+                _fbSignedAttachment = {
+                    driveFileId: uploaded.id,
+                    name: f.name,
+                    mime: f.type,
+                    size: f.size,
+                    uploadedAt: new Date().toISOString(),
+                    uploadedBy: (currentUser?.name) || 'Field'
+                };
+            } catch (err) {
+                showToast('⚠ Attachment upload failed — saving feedback without it');
+                console.error(err);
+            }
+        }
+
+        // Compute total score (sum of selected items' scores). Useful for trend
+        // reporting later if we add an MIS view of customer satisfaction.
+        let totalScore = 0;
+        Object.keys(_fbRatings).forEach(k => {
+            const v = FB_RATING_VALUES.find(rv => rv.key === _fbRatings[k]);
+            if (v) totalScore += v.score;
+        });
+
+        const stamp = new Date().toISOString();
+        const user = (currentUser?.name) || 'Field';
+        const prev = workLogs[wlIdx].customerFeedback;
+
+        workLogs[wlIdx].customerFeedback = {
+            customerName:   document.getElementById('fbCustomerName').value.trim(),
+            vessel:         document.getElementById('fbVessel').value.trim(),
+            location:       document.getElementById('fbLocation').value.trim(),
+            startDate:      document.getElementById('fbStartDate').value,
+            completionDate: document.getElementById('fbCompletionDate').value,
+            orderNumber:    document.getElementById('fbOrderNumber').value.trim(),
+            ratings:        { ..._fbRatings },
+            totalScore,
+            remarks:        document.getElementById('fbRemarks').value.trim(),
+            suggestions:    document.getElementById('fbSuggestions').value.trim(),
+            inchargeName:   document.getElementById('fbInchargeName').value.trim(),
+            signedDate:     document.getElementById('fbSignedDate').value,
+            signedAttachment: _fbSignedAttachment,
+            createdAt:      prev?.createdAt || stamp,
+            createdBy:      prev?.createdBy || user,
+            updatedAt:      stamp,
+            updatedBy:      user
+        };
+        _stampRecord(workLogs[wlIdx]);
+
+        try {
+            await saveData('workLogs', workLogs);
+            closeFeedbackModal();
+            renderView();
+            showToast('✅ Customer feedback saved');
+        } catch (err) {
+            showToast('⚠ Save failed: ' + (err.message || 'try again'));
+        }
+    }
+
+    // ── Feedback PDF — mirrors the ITSPL/QR/CF paper form ──────────────
+    async function feedbackPDF(wlID) {
+        const wl = workLogs.find(x => x.wlID === wlID);
+        if (!wl) { showToast('Work log not found'); return; }
+        const fb = wl.customerFeedback;
+        if (!fb) { showToast('No feedback captured yet — fill in the form first'); return; }
+
+        showToast('⏳ Generating PDF…', 4000);
+
+        if (!window.jspdf) {
+            await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+            await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+        }
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+        const PW = doc.internal.pageSize.width;
+        const ML = 15, MR = 15, CW = PW - ML - MR;
+
+        // ── Header bar (logo if available + company name + form metadata) ──
+        const logoData = (typeof appSettings !== 'undefined' && appSettings?.logoData) ? appSettings.logoData : '';
+        if (logoData) {
+            try { doc.addImage(logoData, 'PNG', ML, 8, 22, 18); } catch (e) {}
+        }
+        doc.setFontSize(13); doc.setFont('helvetica','bold'); doc.setTextColor(15,58,95);
+        doc.text('IMSE TECH - SERVICES PVT LTD', ML + (logoData ? 26 : 0), 14);
+        doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(80,80,80);
+        doc.text('ITSPL/QR/CF', ML + (logoData ? 26 : 0), 19);
+
+        // Top-right metadata box (issue no / date / rev)
+        const metaX = PW - MR - 60;
+        doc.setDrawColor(120,120,120); doc.setLineWidth(0.2);
+        doc.rect(metaX, 8, 60, 18);
+        doc.setFontSize(7);
+        doc.text('ISSUE NO:',  metaX + 2, 12); doc.text('01',           metaX + 30, 12);
+        doc.text('DATE:',      metaX + 2, 15); doc.text('01.08.2018',   metaX + 30, 15);
+        doc.text('REV:',       metaX + 2, 18); doc.text('00',           metaX + 30, 18);
+        doc.text('PAGE:',      metaX + 2, 21); doc.text('1 of 1',       metaX + 30, 21);
+
+        doc.setDrawColor(15,58,95); doc.setLineWidth(0.6); doc.line(ML, 29, PW-MR, 29);
+
+        // Title
+        doc.setFontSize(14); doc.setFont('helvetica','bold'); doc.setTextColor(15,58,95);
+        doc.text('CUSTOMER FEEDBACK', PW/2, 38, {align:'center'});
+
+        let y = 45;
+        const fmtDate = d => d ? d.split('-').reverse().join('.') : '';
+
+        // ── Top metadata table (2-column layout like the paper form) ──
+        doc.autoTable({
+            startY: y,
+            margin: { left: ML, right: MR },
+            theme: 'grid',
+            styles: { fontSize: 9, cellPadding: 2.8 },
+            body: [
+                [
+                    {content:'1.',styles:{cellWidth:8,halign:'center'}},
+                    {content:'Customer\u2019s Name',styles:{cellWidth:36,fontStyle:'bold',fillColor:[241,245,249]}},
+                    {content:fb.customerName||'',styles:{cellWidth:46}},
+                    {content:'4.',styles:{cellWidth:8,halign:'center'}},
+                    {content:'Location',styles:{cellWidth:30,fontStyle:'bold',fillColor:[241,245,249]}},
+                    {content:fb.location||'',styles:{cellWidth:CW-128}}
+                ],
+                [
+                    {content:'2.',styles:{halign:'center'}},
+                    {content:'Vessel',styles:{fontStyle:'bold',fillColor:[241,245,249]}},
+                    {content:fb.vessel||''},
+                    {content:'5.',styles:{halign:'center'}},
+                    {content:'Starting Date',styles:{fontStyle:'bold',fillColor:[241,245,249]}},
+                    {content:fmtDate(fb.startDate)}
+                ],
+                [
+                    {content:'3.',styles:{halign:'center'}},
+                    {content:'Customer\u2019s Order Number',styles:{fontStyle:'bold',fillColor:[241,245,249]}},
+                    {content:fb.orderNumber||''},
+                    {content:'6.',styles:{halign:'center'}},
+                    {content:'Completion Date',styles:{fontStyle:'bold',fillColor:[241,245,249]}},
+                    {content:fmtDate(fb.completionDate)}
+                ]
+            ]
+        });
+        y = doc.lastAutoTable.finalY + 6;
+
+        // ── Ratings table ──
+        doc.autoTable({
+            startY: y,
+            margin: { left: ML, right: MR },
+            theme: 'grid',
+            styles: { fontSize: 9, cellPadding: 2.8 },
+            headStyles: { fillColor: [30,58,138], textColor: [255,255,255], fontStyle:'bold', fontSize:9, halign:'center' },
+            head: [
+                [{content:'EVALUATION BY THE INCHARGE OF THE VESSEL',colSpan:4,styles:{halign:'center'}}],
+                [
+                    {content:'DESCRIPTION',styles:{cellWidth:CW-90}},
+                    {content:'Excellent (10)',styles:{cellWidth:30}},
+                    {content:'Good (7)',     styles:{cellWidth:30}},
+                    {content:'Poor (4)',     styles:{cellWidth:30}}
+                ]
+            ],
+            body: FB_RATING_ITEMS.map((item, i) => {
+                const sel = fb.ratings?.[item.key];
+                const mark = (val) => sel === val ? {content:'\u2713',styles:{halign:'center',fontStyle:'bold',textColor:[15,118,110],fontSize:14}} : {content:'',styles:{halign:'center'}};
+                return [
+                    {content:(i+1)+'. '+item.label,styles:{cellWidth:CW-90}},
+                    mark('excellent'),
+                    mark('good'),
+                    mark('poor')
+                ];
+            })
+        });
+        y = doc.lastAutoTable.finalY + 6;
+
+        // ── Comments table (Remarks + Suggestions, paper-form style) ──
+        doc.autoTable({
+            startY: y,
+            margin: { left: ML, right: MR },
+            theme: 'grid',
+            styles: { fontSize: 9, cellPadding: 4, minCellHeight: 18 },
+            headStyles: { fillColor: [30,58,138], textColor: [255,255,255], fontStyle:'bold', halign:'center' },
+            head: [[{content:'COMMENTS ON THE JOB AS EXECUTED',colSpan:1,styles:{halign:'center'}}]],
+            body: [
+                [{content: 'REMARKS (IF ANY):\n\n' + (fb.remarks || ''), styles:{minCellHeight:28}}],
+                [{content: 'SUGGESTIONS (IF ANY):\n\n' + (fb.suggestions || ''), styles:{minCellHeight:28}}]
+            ]
+        });
+        y = doc.lastAutoTable.finalY + 6;
+
+        // ── Date / Signature block ──
+        doc.autoTable({
+            startY: y,
+            margin: { left: ML, right: MR },
+            theme: 'grid',
+            styles: { fontSize: 9, cellPadding: 3, minCellHeight: 24 },
+            body: [[
+                {content: 'DATE\n\n' + (fmtDate(fb.signedDate) || ''), styles:{cellWidth:CW/2, valign:'top'}},
+                {content: 'SIGNATURE OF INCHARGE\n\n' + (fb.inchargeName || ''), styles:{cellWidth:CW/2, valign:'top'}}
+            ]]
+        });
+        y = doc.lastAutoTable.finalY + 4;
+
+        // Project reference footer (matches paper form's bottom-of-page note)
+        doc.setFontSize(8); doc.setFont('helvetica','italic'); doc.setTextColor(80,80,80);
+        const projRef = (wl.ref ? wl.ref + ' - ' : '') + (wl.vessel || wl.project || '');
+        doc.text(projRef, ML, y + 3);
+
+        const safe = (wl.project || 'CustomerFeedback').replace(/\s+/g,'_').replace(/[^a-zA-Z0-9_-]/g,'');
+        doc.save('CustomerFeedback_' + safe + '_' + (fb.completionDate || new Date().toISOString().substring(0,10)) + '.pdf');
+        showToast('✅ Feedback PDF downloaded');
+    }
+
     async function wlPDF(wlID, entryIDFilter){
         const wl=workLogs.find(x=>x.wlID===wlID);if(!wl)return;
         // When entryIDFilter is provided, restrict to that single day's entry.
