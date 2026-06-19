@@ -350,6 +350,16 @@
                                 </div>
                             </div>
                         </div>
+                        <!-- GSTR-2B Claim Month override — for suppliers who file late, e.g.
+                             a March bill that only shows up in the supplier's April GSTR-1/2B.
+                             Leave blank to use the Bill Date's own month (default behavior).
+                             JSON auto-import also sets this automatically on a cross-month match;
+                             this lets the user set it manually ahead of time too. -->
+                        <div class="mt-3 pt-3 border-t border-blue-200">
+                            <label class="block text-xs font-semibold text-blue-800 mb-1">GSTR-2B Claim Month <span class="text-gray-500 font-normal">(only if supplier files late — leave blank otherwise)</span></label>
+                            <input type="month" id="expGstr2bClaimMonth" class="field-editable w-full md:w-1/3 px-3 py-2 border border-blue-300 rounded-lg text-sm"/>
+                            <div class="text-[11px] text-blue-600 mt-1">e.g. a March bill the supplier only files in April's GSTR-1 → set this to April. ITC will then be claimable in April's reconciliation, not March's.</div>
+                        </div>
                     </div>
 
                     <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
@@ -9611,6 +9621,9 @@
                 document.getElementById('expIGST').value          = exp.igst||'';
                 document.getElementById('expCreditNote').value    = exp.creditNote||'';
                 document.getElementById('expCreditNoteDetails').value = exp.creditNoteDetails||'';
+                // Restore GSTR-2B Claim Month override (blank = use Bill Date's month, default)
+                const claimMonthEl = document.getElementById('expGstr2bClaimMonth');
+                if (claimMonthEl) claimMonthEl.value = exp.gstr2bClaimMonth || '';
                 // Restore RCM toggle + sync help text + recalc total (RCM excludes GST from total)
                 const rcmEl = document.getElementById('expRCMApplicable');
                 if (rcmEl) rcmEl.checked = !!exp.rcmApplicable;
@@ -10598,10 +10611,14 @@
                 gstr2bMatched:     currentExpense?.gstr2bMatched     || false,
                 gstr2bMatchedDate: currentExpense?.gstr2bMatchedDate || null,
                 gstr2bMatchedBy:   currentExpense?.gstr2bMatchedBy   || null,
-                // GSTR-2B claim month override — set by the JSON import when a bill
-                // appears in a different month's GSTR-2B than its bill date (late
-                // supplier filing). Preserved on edit so the override survives.
-                gstr2bClaimMonth:  currentExpense?.gstr2bClaimMonth   || null
+                // GSTR-2B claim month override — manually settable via the form
+                // (expGstr2bClaimMonth, type="month" → "YYYY-MM"), OR auto-set by
+                // the JSON import when a bill appears in a different month's GSTR-2B
+                // than its bill date (late supplier filing). The form field wins if
+                // the user has typed something in; otherwise we preserve whatever
+                // value already exists (e.g. set previously by JSON import) so a
+                // routine edit doesn't silently clear an auto-detected override.
+                gstr2bClaimMonth:  document.getElementById('expGstr2bClaimMonth')?.value || currentExpense?.gstr2bClaimMonth || null
             };
 
             // ── Level 2 concurrency: stamp record ──
@@ -12198,7 +12215,10 @@
                         <div class="flex items-center gap-2 flex-wrap">
                             ${snap ? `<span class="px-3 py-1 ${isHistoricalSnap ? 'bg-blue-500' : 'bg-white bg-opacity-20'} text-white rounded-lg text-xs" title="${isHistoricalSnap ? 'Historical snapshot used for this month\'s context — latest is '+latestSnap.snapshotID+' uploaded '+(latestSnap.uploadedAt||'').substring(0,10) : ''}">📥 Ledger: ${snap.snapshotID} (${(snap.uploadedAt||'').substring(0,10)}) · ${(gstCashLedgerSnapshots||[]).length} total${isHistoricalSnap ? ' · 🕰 historical' : ''}</span>` : `<span class="px-3 py-1 bg-red-500 text-white rounded-lg text-xs font-bold">⚠ No Ledger Uploaded (${(gstCashLedgerSnapshots||[]).length} snapshots in storage)</span>`}
                             <button onclick="openCashLedgerUploadModal()" class="px-3 py-2 bg-white text-purple-700 rounded-lg text-xs font-semibold hover:bg-purple-50">📥 Upload CSV</button>
+                            <button onclick="openCashLedgerManualModal()" class="px-3 py-2 bg-white bg-opacity-20 text-white rounded-lg text-xs font-semibold hover:bg-opacity-30" title="Type in the balance by hand if you don't have a fresh CSV — e.g. a figure your CA gave you over the phone">✏️ Manual Entry</button>
                             <button onclick="openCashLedgerHistoryModal()" class="px-3 py-2 bg-white bg-opacity-20 text-white rounded-lg text-xs hover:bg-opacity-30">📜 History</button>
+                            <button onclick="gstCAStatementPDF(${month}, ${year})" class="px-3 py-2 bg-white bg-opacity-20 text-white rounded-lg text-xs font-semibold hover:bg-opacity-30" title="PDF with computed totals + a blank field for your CA to fill in the cash ledger balance">🖨 Statement for CA</button>
+                            <button onclick="openGSTPaymentModal(${month}, ${year})" class="px-3 py-2 bg-white text-purple-700 rounded-lg text-xs font-bold hover:bg-purple-50" title="Record the final payment after management approval — attach approval voucher + Tally voucher">💰 Record Payment</button>
                         </div>
                     </div>
 
@@ -12284,7 +12304,33 @@
                         </table>
                     </div>
 
-                    <!-- ITC at risk warning -->
+                    <!-- Payment status strip — shows recorded payment (if any) for this filing month -->
+                    ${(() => {
+                        const monthKey = `${year}-${String(month).padStart(2,'0')}`;
+                        const pay = settings?.gstPayments?.[monthKey];
+                        if (!pay) return `
+                        <div class="px-5 py-3 bg-gray-50 border-t border-gray-200 flex items-center justify-between flex-wrap gap-2">
+                            <p class="text-xs text-gray-500">No payment recorded yet for this filing month.</p>
+                            <button onclick="openGSTPaymentModal(${month}, ${year})" class="px-3 py-1.5 bg-purple-600 text-white rounded-lg text-xs font-semibold hover:bg-purple-700">💰 Record Payment</button>
+                        </div>`;
+                        const hasApproval = !!(pay.approvalVoucherDriveId || pay.approvalVoucherData);
+                        const hasTally    = !!(pay.tallyVoucherDriveId || pay.tallyVoucherData);
+                        return `
+                        <div class="px-5 py-3 bg-green-50 border-t border-green-200">
+                            <div class="flex items-center justify-between flex-wrap gap-2">
+                                <p class="text-xs text-green-900">
+                                    <strong>✓ Paid ${fmt(pay.amountPaid)}</strong> on ${(pay.paymentDate||'').substring(0,10) || '—'}
+                                    ${pay.paymentRef ? ' · Ref: '+pay.paymentRef.replace(/</g,'&lt;') : ''}
+                                    ${pay.paymentMode ? ' · '+pay.paymentMode.replace(/</g,'&lt;') : ''}
+                                </p>
+                                <div class="flex items-center gap-2">
+                                    <span onclick="${hasApproval?`_viewGSTPaymentVoucher(${month},${year},'approval')`:''}" class="text-[10px] px-2 py-1 rounded-lg font-semibold ${hasApproval?'bg-green-100 text-green-700 cursor-pointer hover:bg-green-200':'bg-amber-100 text-amber-700'}">${hasApproval?'✓ Approval voucher':'⚠ No approval voucher'}</span>
+                                    <span onclick="${hasTally?`_viewGSTPaymentVoucher(${month},${year},'tally')`:''}" class="text-[10px] px-2 py-1 rounded-lg font-semibold ${hasTally?'bg-green-100 text-green-700 cursor-pointer hover:bg-green-200':'bg-amber-100 text-amber-700'}">${hasTally?'✓ Tally voucher':'⚠ No Tally voucher'}</span>
+                                    <button onclick="openGSTPaymentModal(${month}, ${year})" class="px-3 py-1.5 bg-white border border-green-300 text-green-700 rounded-lg text-xs font-semibold hover:bg-green-100">✏️ Edit</button>
+                                </div>
+                            </div>
+                        </div>`;
+                    })()}
                     ${itcAtRisk > 0 ? `
                     <div class="px-5 py-3 bg-amber-50 border-t border-amber-200">
                         <p class="text-xs text-amber-900">
@@ -20738,6 +20784,16 @@ Automated WFH alert — ${company} Attendance System.`;
                                     </div>
                                 </div>
                             </div>
+                            <!-- GSTR-2B Claim Month override — for suppliers who file late, e.g.
+                                 a March bill that only shows up in the supplier's April GSTR-1/2B.
+                                 Leave blank to use the Bill Date's own month (default behavior). -->
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">GSTR-2B Claim Month <span class="text-gray-400 font-normal">(only if supplier files late)</span></label>
+                                    <input type="month" id="deGstr2bClaimMonth" value="${exp?.gstr2bClaimMonth||''}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                                    <div class="text-[11px] text-gray-400 mt-1">e.g. March bill filed by supplier in April's GSTR-1 → set to April.</div>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -21168,7 +21224,9 @@ Automated WFH alert — ${company} Attendance System.`;
                     gstr2bMatched:       _currentDirExp?.gstr2bMatched     || false,
                     gstr2bMatchedDate:   _currentDirExp?.gstr2bMatchedDate || null,
                     gstr2bMatchedBy:     _currentDirExp?.gstr2bMatchedBy   || null,
-                    gstr2bClaimMonth:    _currentDirExp?.gstr2bClaimMonth   || null
+                    // Manual override wins if the user typed something in; otherwise
+                    // preserve whatever value already exists (e.g. set by JSON import).
+                    gstr2bClaimMonth:    document.getElementById('deGstr2bClaimMonth')?.value || _currentDirExp?.gstr2bClaimMonth || null
                 };
                 // ── Level 2 concurrency: stamp record ──
                 _stampRecord(expObj);
@@ -27917,6 +27975,363 @@ Automated WFH alert — ${company} Attendance System.`;
             }
         }
 
+        // ════════════════════════════════════════════════════════════════
+        // RECORD GST PAYMENT — final step on the Pay-by-20 panel.
+        // After the CA confirms the cash ledger balance and management
+        // approves the net amount, this records: amount paid, date, mode/ref,
+        // the management-approved payment voucher (attachment), and the Tally
+        // voucher (number + attachment) — same attach pattern used elsewhere
+        // (uploadAttachToSubFolder + _openVoucherAttachment), stored under
+        // settings.gstPayments[monthKey] so it's keyed the same way as
+        // pendingTaxCredits.
+        // ════════════════════════════════════════════════════════════════
+        let _gstPayApprovalAtt = null;
+        let _gstPayTallyAtt    = null;
+
+        function _getGSTPayment(month, year) {
+            const monthKey = `${year}-${String(month).padStart(2,'0')}`;
+            return settings?.gstPayments?.[monthKey] || null;
+        }
+
+        async function openGSTPaymentModal(month, year) {
+            const monthName = ['','January','February','March','April','May','June','July','August','September','October','November','December'][month] || month;
+            const current = _getGSTPayment(month, year) || {};
+            _gstPayApprovalAtt = current.approvalVoucherDriveId
+                ? { driveFileId: current.approvalVoucherDriveId, name: current.approvalVoucherName, mimeType: current.approvalVoucherMime }
+                : (current.approvalVoucherData ? { data: current.approvalVoucherData, name: current.approvalVoucherName } : null);
+            _gstPayTallyAtt = current.tallyVoucherDriveId
+                ? { driveFileId: current.tallyVoucherDriveId, name: current.tallyVoucherName, mimeType: current.tallyVoucherMime }
+                : (current.tallyVoucherData ? { data: current.tallyVoucherData, name: current.tallyVoucherName } : null);
+
+            // Default amount paid to the panel's computed Net to Deposit, if not already recorded
+            let suggestedAmt = current.amountPaid || '';
+            if (!suggestedAmt) {
+                try {
+                    const d = getTaxPeriodData(month, year);
+                    const snap = _getSnapshotForFilingMonth(month, year);
+                    const confirmed = _getConfirmedGSTR2BITC(month, year);
+                    const priorRCM  = _getPriorMonthRCMITC(month, year);
+                    const pending   = _getPendingTaxCredits(month, year);
+                    const liabIGST = +(d.gstOutputIGST||0).toFixed(2), liabCGST = +(d.gstOutputCGST||0).toFixed(2), liabSGST = +(d.gstOutputSGST||0).toFixed(2);
+                    const cashIGST = snap ? +(snap.closingBalance?.igst?.total||0).toFixed(2) : 0;
+                    const cashCGST = snap ? +(snap.closingBalance?.cgst?.total||0).toFixed(2) : 0;
+                    const cashSGST = snap ? +(snap.closingBalance?.sgst?.total||0).toFixed(2) : 0;
+                    const depIGST = Math.max(0, liabIGST - cashIGST - confirmed.igst - priorRCM.igst - pending.igst);
+                    const depCGST = Math.max(0, liabCGST - cashCGST - confirmed.cgst - priorRCM.cgst - pending.cgst);
+                    const depSGST = Math.max(0, liabSGST - cashSGST - confirmed.sgst - priorRCM.sgst - pending.sgst);
+                    suggestedAmt = +(depIGST + depCGST + depSGST).toFixed(2) || '';
+                } catch(e) { /* fall back to blank if anything's missing (e.g. no snapshot yet) */ }
+            }
+
+            let modal = document.getElementById('gstPaymentModal');
+            if (modal) modal.remove();
+            modal = document.createElement('div');
+            modal.id = 'gstPaymentModal';
+            modal.className = 'modal show';
+            document.body.appendChild(modal);
+            modal.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-xl m-4 max-h-[92vh] overflow-y-auto">
+                <div class="bg-gradient-to-r from-purple-600 to-indigo-600 p-5 text-white flex justify-between items-center sticky top-0 z-10">
+                    <div>
+                        <h3 class="text-lg font-bold">💰 Record GST Payment — ${monthName} ${year}</h3>
+                        <p class="text-purple-100 text-xs mt-1">After management approval — attach the approval voucher and the Tally voucher</p>
+                    </div>
+                    <button onclick="document.getElementById('gstPaymentModal').remove()" class="text-white text-2xl">×</button>
+                </div>
+                <div class="p-5 space-y-4">
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Amount Paid (₹) <span class="text-red-500">*</span></label>
+                            <input id="gpAmount" type="number" step="0.01" value="${suggestedAmt}" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="0.00"/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Payment Date <span class="text-red-500">*</span></label>
+                            <input id="gpDate" type="date" value="${current.paymentDate || new Date().toISOString().split('T')[0]}" max="${new Date().toISOString().split('T')[0]}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Payment Mode</label>
+                            <select id="gpMode" class="w-full px-3 py-2 border rounded-lg text-sm">
+                                <option value="">-- Select --</option>
+                                ${['Net Banking / Challan','NEFT','RTGS','Other'].map(m=>`<option value="${m}" ${current.paymentMode===m?'selected':''}>${m}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Reference / CPIN / CIN</label>
+                            <input id="gpRef" type="text" value="${(current.paymentRef||'').replace(/"/g,'&quot;')}" placeholder="e.g. CPIN no." class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Management Approval Note</label>
+                        <textarea id="gpApprovalNote" rows="2" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="e.g. Approved by [Director] over email on [date]">${(current.approvalNote||'').replace(/</g,'&lt;')}</textarea>
+                    </div>
+
+                    <!-- Approval voucher attachment -->
+                    <div class="border border-dashed border-purple-300 rounded-xl p-4 bg-purple-50/30">
+                        <label class="block text-xs font-semibold text-gray-600 mb-2">📎 Management Approval Voucher</label>
+                        <div id="gpApprovalGrid" class="flex flex-wrap gap-2 mb-2 min-h-6"></div>
+                        <input type="file" id="gpApprovalFile" accept="image/*,application/pdf" class="hidden" onchange="_gpHandleFile(this,'approval')"/>
+                        <button type="button" onclick="document.getElementById('gpApprovalFile').click()" class="text-xs px-3 py-1.5 rounded-lg border border-purple-300 bg-white text-purple-600 hover:bg-purple-50">+ Add Approval Voucher / Email Screenshot</button>
+                    </div>
+
+                    <!-- Tally voucher attachment -->
+                    <div class="border border-dashed border-teal-300 rounded-xl p-4 bg-teal-50/30">
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Tally Voucher Number</label>
+                        <input id="gpTallyVoucherNo" type="text" value="${(current.tallyVoucherNo||'').replace(/"/g,'&quot;')}" placeholder="e.g. PV-0045" class="w-full px-3 py-2 border border-teal-300 rounded-lg text-sm mb-3"/>
+                        <label class="block text-xs font-semibold text-gray-600 mb-2">📎 Tally Voucher Attachment</label>
+                        <div id="gpTallyGrid" class="flex flex-wrap gap-2 mb-2 min-h-6"></div>
+                        <input type="file" id="gpTallyFile" accept="image/*,application/pdf" class="hidden" onchange="_gpHandleFile(this,'tally')"/>
+                        <button type="button" onclick="document.getElementById('gpTallyFile').click()" class="text-xs px-3 py-1.5 rounded-lg border border-teal-300 bg-white text-teal-600 hover:bg-teal-50">+ Add Tally Voucher</button>
+                    </div>
+
+                    ${current.recordedAt ? `<p class="text-[11px] text-gray-500">Last updated ${current.recordedAt.substring(0,16).replace('T',' ')} by ${current.recordedBy||'—'}</p>` : ''}
+
+                    <div class="flex justify-between gap-2 pt-3 border-t">
+                        ${current.amountPaid ? `<button onclick="_clearGSTPayment(${month}, ${year})" class="px-4 py-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 text-sm">🗑 Clear</button>` : '<span></span>'}
+                        <div class="flex gap-2">
+                            <button onclick="document.getElementById('gstPaymentModal').remove()" class="px-4 py-2 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 text-sm">Cancel</button>
+                            <button onclick="_saveGSTPayment(${month}, ${year})" class="px-5 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-semibold text-sm">💾 Save</button>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+            _gpRenderGrid('approval');
+            _gpRenderGrid('tally');
+        }
+
+        async function _gpHandleFile(input, kind) {
+            const file = input.files[0]; if (!file) return;
+            if (file.size > 20*1024*1024) { alert('File too large. Max 20MB.'); return; }
+            input.value = '';
+            try {
+                const att = await uploadAttachToSubFolder(file, kind === 'approval' ? 'GSTPaymentApprovals' : 'TallyVouchers');
+                if (kind === 'approval') _gstPayApprovalAtt = att; else _gstPayTallyAtt = att;
+                _gpRenderGrid(kind);
+            } catch(err) { alert('Upload failed: ' + err.message); }
+        }
+
+        function _gpRenderGrid(kind) {
+            const grid = document.getElementById(kind === 'approval' ? 'gpApprovalGrid' : 'gpTallyGrid');
+            if (!grid) return;
+            const b = kind === 'approval' ? _gstPayApprovalAtt : _gstPayTallyAtt;
+            if (!b) { grid.innerHTML = ''; return; }
+            const isDrive = !!b.driveFileId;
+            const isImg   = isDrive ? (b.type === 'image' || (b.mimeType||'').startsWith('image/'))
+                                    : (b.data && b.data.startsWith('data:image'));
+            const preview = isDrive
+                ? (isImg
+                    ? `<img src="${driveViewUrl(b.driveFileId, false)}" style="width:56px;height:56px;border-radius:6px;object-fit:cover;border:1.5px solid #d1d5db" onerror="this.parentElement.innerHTML='<div style=\\'width:56px;height:56px;border-radius:6px;background:#f0fdf4;border:1.5px solid #bbf7d0;display:flex;align-items:center;justify-content:center;font-size:22px\\'>📄</div>'"/>`
+                    : `<div style="width:56px;height:56px;border-radius:6px;background:#f0fdf4;border:1.5px solid #bbf7d0;display:flex;align-items:center;justify-content:center;font-size:22px">📄</div>`)
+                : (isImg
+                    ? `<img src="${b.data}" style="width:56px;height:56px;border-radius:6px;object-fit:cover;border:1.5px solid #d1d5db"/>`
+                    : `<div style="width:56px;height:56px;border-radius:6px;background:#f0fdf4;border:1.5px solid #bbf7d0;display:flex;align-items:center;justify-content:center;font-size:22px">📄</div>`);
+            const badge = isDrive
+                ? `<span style="font-size:8px;color:#16a34a">☁️ Drive</span>`
+                : `<span style="font-size:8px;color:#9ca3af">💾 local</span>`;
+            const onDel = isDrive
+                ? `deleteDriveAttachment('${b.driveFileId}');${kind==='approval'?'_gstPayApprovalAtt':'_gstPayTallyAtt'}=null;_gpRenderGrid('${kind}')`
+                : `${kind==='approval'?'_gstPayApprovalAtt':'_gstPayTallyAtt'}=null;_gpRenderGrid('${kind}')`;
+            grid.innerHTML = `<div style="position:relative;display:inline-flex;flex-direction:column;align-items:center;gap:2px">
+                ${preview}
+                <span style="font-size:9px;color:#6b7280;max-width:56px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${b.name}">${b.name}</span>
+                ${badge}
+                <button type="button" onclick="${onDel}" style="position:absolute;top:-4px;right:-4px;background:#dc2626;color:#fff;border:none;border-radius:99px;width:16px;height:16px;font-size:9px;cursor:pointer;line-height:1">✕</button>
+            </div>`;
+        }
+
+        async function _saveGSTPayment(month, year) {
+            const monthKey = `${year}-${String(month).padStart(2,'0')}`;
+            const amountPaid = parseFloat(document.getElementById('gpAmount')?.value) || 0;
+            const paymentDate = document.getElementById('gpDate')?.value || '';
+            if (amountPaid <= 0) { alert('Please enter the amount paid.'); return; }
+            if (!paymentDate) { alert('Please enter the payment date.'); return; }
+
+            if (!settings.gstPayments) settings.gstPayments = {};
+            const a = _gstPayApprovalAtt, t = _gstPayTallyAtt;
+            settings.gstPayments[monthKey] = {
+                amountPaid,
+                paymentDate,
+                paymentMode: document.getElementById('gpMode')?.value || '',
+                paymentRef:  (document.getElementById('gpRef')?.value || '').trim(),
+                approvalNote: (document.getElementById('gpApprovalNote')?.value || '').trim(),
+                tallyVoucherNo: (document.getElementById('gpTallyVoucherNo')?.value || '').trim(),
+                // Approval voucher attachment (Drive-backed preferred; legacy base64 fallback)
+                approvalVoucherDriveId: a?.driveFileId || null,
+                approvalVoucherData:    a?.driveFileId ? null : (a?.data || null),
+                approvalVoucherName:    a?.name || '',
+                approvalVoucherMime:    a?.mimeType || '',
+                // Tally voucher attachment
+                tallyVoucherDriveId: t?.driveFileId || null,
+                tallyVoucherData:    t?.driveFileId ? null : (t?.data || null),
+                tallyVoucherName:    t?.name || '',
+                tallyVoucherMime:    t?.mimeType || '',
+                recordedAt: new Date().toISOString(),
+                recordedBy: (typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin'
+            };
+            try {
+                await saveData('settings', settings);
+                document.getElementById('gstPaymentModal')?.remove();
+                _gstPayApprovalAtt = null; _gstPayTallyAtt = null;
+                renderView();
+                showToast?.('✓ GST payment recorded');
+            } catch (e) { alert('Could not save: ' + e.message); }
+        }
+
+        async function _clearGSTPayment(month, year) {
+            if (!confirm('Clear the recorded payment for this month? Attachments will remain in Drive but unlinked.')) return;
+            const monthKey = `${year}-${String(month).padStart(2,'0')}`;
+            if (settings?.gstPayments?.[monthKey]) {
+                delete settings.gstPayments[monthKey];
+                try {
+                    await saveData('settings', settings);
+                    document.getElementById('gstPaymentModal')?.remove();
+                    renderView();
+                    showToast?.('✓ Cleared');
+                } catch (e) { alert('Could not save: ' + e.message); }
+            }
+        }
+
+        async function _viewGSTPaymentVoucher(month, year, kind) {
+            const pay = _getGSTPayment(month, year);
+            if (!pay) return;
+            const driveId = kind === 'approval' ? pay.approvalVoucherDriveId : pay.tallyVoucherDriveId;
+            const data    = kind === 'approval' ? pay.approvalVoucherData    : pay.tallyVoucherData;
+            const name    = kind === 'approval' ? pay.approvalVoucherName   : pay.tallyVoucherName;
+            const mime    = kind === 'approval' ? pay.approvalVoucherMime   : pay.tallyVoucherMime;
+            if (!driveId && !data) { alert('No attachment saved.'); return; }
+            await _openVoucherAttachment({ driveId, data, name, mime });
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        // GST STATEMENT FOR CA — pre-filing checkpoint
+        // Shows computed Output GST (incl. RCM out) − Input ITC (incl. RCM in)
+        // = Net GST Liability, by head, with a BLANK field for the CA to write
+        // in the Electronic Cash Ledger balance (as of whatever date they check
+        // it — typically the 19th, ahead of the 20th filing deadline). Totals
+        // only — no bill-level breakdown — so the CA can quickly read off the
+        // liability and fill in the one missing number by hand.
+        // ════════════════════════════════════════════════════════════════
+        async function gstCAStatementPDF(month, year) {
+            if (typeof showToast === 'function') showToast('⏳ Generating Statement PDF…', 4000);
+            if (!window.jspdf) {
+                await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+                await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+            }
+            const {jsPDF} = window.jspdf;
+            const doc = new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+            const ML=14, MR=14, CW=210-ML-MR, PW=210;
+            const fmt = n => 'INR '+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
+
+            const d = getTaxPeriodData(month, year);
+            const monthLabel = d.monthName + ' ' + year;
+            const rgb = [124,58,237];        // purple, matches Pay-by-20 panel
+            const rgbLight = [221,214,254];
+
+            // Output side (incl. RCM out, already rolled into gstOutputIGST/CGST/SGST)
+            const outIGST = +(d.gstOutputIGST || 0).toFixed(2);
+            const outCGST = +(d.gstOutputCGST || 0).toFixed(2);
+            const outSGST = +(d.gstOutputSGST || 0).toFixed(2);
+            const outTotal = +(outIGST + outCGST + outSGST).toFixed(2);
+
+            // Input side (incl. RCM in, already rolled into gstInputIGST/CGST/SGST)
+            const inIGST = +(d.gstInputIGST || 0).toFixed(2);
+            const inCGST = +(d.gstInputCGST || 0).toFixed(2);
+            const inSGST = +(d.gstInputSGST || 0).toFixed(2);
+            const inTotal = +(inIGST + inCGST + inSGST).toFixed(2);
+
+            // Net liability before cash ledger (can be negative = net credit)
+            const netIGST = +(outIGST - inIGST).toFixed(2);
+            const netCGST = +(outCGST - inCGST).toFixed(2);
+            const netSGST = +(outSGST - inSGST).toFixed(2);
+            const netTotal = +(netIGST + netCGST + netSGST).toFixed(2);
+
+            // Header
+            doc.setFillColor(...rgb); doc.rect(0,0,210,36,'F');
+            doc.setFontSize(15); doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255);
+            doc.text('GST RECONCILIATION STATEMENT', PW/2, 12, {align:'center'});
+            doc.setFontSize(11); doc.setFont('helvetica','bold'); doc.setTextColor(...rgbLight);
+            doc.text('FOR CA REVIEW — ' + monthLabel.toUpperCase(), PW/2, 20, {align:'center'});
+            doc.setFontSize(8.5); doc.setFont('helvetica','normal'); doc.setTextColor(...rgbLight);
+            doc.text((settings.companyName||'IMSE Tech Services Pvt Ltd')+'  |  Generated: '+new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}), PW/2, 28, {align:'center'});
+            doc.setFillColor(...rgb); doc.rect(0,35,210,2,'F');
+            let y = 44;
+
+            doc.setFontSize(8.5); doc.setFont('helvetica','normal'); doc.setTextColor(80,80,80);
+            doc.text('Please review the computed totals below and fill in the Electronic Cash Ledger', ML, y);
+            y += 4.5;
+            doc.text('closing balance (as of the date you check it) in the blank section at the bottom.', ML, y);
+            y += 10;
+
+            // Computation table
+            doc.autoTable({
+                startY: y, margin:{left:ML, right:MR}, theme:'grid',
+                styles:{fontSize:8.5, cellPadding:3, valign:'middle'},
+                headStyles:{fillColor:rgb, textColor:[255,255,255], fontStyle:'bold', halign:'right'},
+                head:[['Component','IGST','CGST','SGST','Total']],
+                body:[
+                    [
+                        {content:'Output GST (incl. RCM out)', styles:{fontStyle:'bold', halign:'left', textColor:[109,40,217]}},
+                        {content:fmt(outIGST), styles:{halign:'right', textColor:[109,40,217]}},
+                        {content:fmt(outCGST), styles:{halign:'right', textColor:[109,40,217]}},
+                        {content:fmt(outSGST), styles:{halign:'right', textColor:[109,40,217]}},
+                        {content:fmt(outTotal), styles:{halign:'right', fontStyle:'bold', textColor:[109,40,217]}},
+                    ],
+                    [
+                        {content:'Less: Input ITC (incl. RCM in)', styles:{fontStyle:'bold', halign:'left', textColor:[21,128,61]}},
+                        {content:fmt(inIGST), styles:{halign:'right', textColor:[21,128,61]}},
+                        {content:fmt(inCGST), styles:{halign:'right', textColor:[21,128,61]}},
+                        {content:fmt(inSGST), styles:{halign:'right', textColor:[21,128,61]}},
+                        {content:fmt(inTotal), styles:{halign:'right', fontStyle:'bold', textColor:[21,128,61]}},
+                    ],
+                    [
+                        {content:'= NET GST LIABILITY', styles:{fontStyle:'bold', halign:'left', fillColor:[243,232,255], textColor:[88,28,135]}},
+                        {content:fmt(netIGST), styles:{halign:'right', fontStyle:'bold', fillColor:[243,232,255], textColor:[88,28,135]}},
+                        {content:fmt(netCGST), styles:{halign:'right', fontStyle:'bold', fillColor:[243,232,255], textColor:[88,28,135]}},
+                        {content:fmt(netSGST), styles:{halign:'right', fontStyle:'bold', fillColor:[243,232,255], textColor:[88,28,135]}},
+                        {content:fmt(netTotal), styles:{halign:'right', fontStyle:'bold', fillColor:[243,232,255], textColor:[88,28,135]}},
+                    ],
+                ],
+                columnStyles:{0:{cellWidth:CW-3*32-32, halign:'left'},1:{cellWidth:32},2:{cellWidth:32},3:{cellWidth:32},4:{cellWidth:32}},
+            });
+            y = doc.lastAutoTable.finalY + 4;
+            doc.setFontSize(7); doc.setFont('helvetica','italic'); doc.setTextColor(140,140,140);
+            doc.text('RCM amounts are already rolled into the Output and Input figures above (self-charged GST and its matching ITC).', ML, y);
+            y += 12;
+
+            // Blank cash ledger field for CA to fill by hand
+            if (y > 220) { doc.addPage(); y = 20; }
+            doc.setDrawColor(...rgb); doc.setLineWidth(0.6);
+            doc.roundedRect(ML, y, CW, 46, 2, 2, 'S');
+            doc.setFillColor(243,232,255);
+            doc.roundedRect(ML, y, CW, 8, 2, 2, 'F');
+            doc.rect(ML, y+4, CW, 4, 'F');   // square off bottom corners of the title strip
+            doc.setFontSize(9); doc.setFont('helvetica','bold'); doc.setTextColor(88,28,135);
+            doc.text('TO BE FILLED BY CA — ELECTRONIC CASH LEDGER BALANCE', ML + CW/2, y+5.5, {align:'center'});
+            y += 13;
+            doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(60,60,60);
+            doc.text('Balance as of (date): ____________________', ML + 5, y);
+            y += 10;
+            const blankColW = (CW - 10) / 3;
+            ['IGST','CGST','SGST'].forEach((head,i) => {
+                const bx = ML + 5 + i*blankColW;
+                doc.setFontSize(8); doc.setFont('helvetica','bold'); doc.setTextColor(80,80,80);
+                doc.text(head + ':  Rs. ____________________', bx, y);
+            });
+            y += 12;
+            doc.setFontSize(7.5); doc.setFont('helvetica','italic'); doc.setTextColor(120,120,120);
+            doc.text('CA Name: ____________________________          Date: ____________', ML + 5, y);
+
+            // Page footers
+            const pc = doc.getNumberOfPages();
+            for (let p=1; p<=pc; p++) {
+                doc.setPage(p);
+                doc.setFontSize(7); doc.setFont('helvetica','italic'); doc.setTextColor(150,150,150);
+                doc.text((settings.companyName||'IMSE Tech Services Pvt Ltd')+' — GST Statement for CA — '+monthLabel+' — Page '+p+'/'+pc, PW/2, 291, {align:'center'});
+            }
+            doc.save('GST_Statement_CA_'+year+'-'+String(month).padStart(2,'0')+'.pdf');
+        }
+
         function _getConfirmedGSTR2BITC(month, year) {
             const monthKey = `${year}-${String(month).padStart(2,'0')}`;       // "2026-04"
             const pfx      = monthKey + '-';                                    // "2026-04-"
@@ -28045,6 +28460,116 @@ Automated WFH alert — ${company} Attendance System.`;
             const m = document.getElementById('cashLedgerUploadModal');
             if (m) m.remove();
             window._clParsedSnapshot = null;
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        // CASH LEDGER — MANUAL ENTRY
+        // Same gstCashLedgerSnapshots array as CSV upload, tagged source:'manual'
+        // so the History view can badge it. Use this when you don't have a fresh
+        // CSV yet — e.g. a balance figure your CA reads out over the phone on
+        // the 19th before the 20th filing deadline. Works for any date, not
+        // just the 19th.
+        // ════════════════════════════════════════════════════════════════
+        function openCashLedgerManualModal() {
+            const today = new Date().toISOString().split('T')[0];
+            const modal = document.createElement('div');
+            modal.id = 'cashLedgerManualModal';
+            modal.className = 'modal show';
+            modal.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto m-4">
+                <div class="bg-gradient-to-r from-purple-600 to-indigo-600 p-5 text-white flex justify-between items-center sticky top-0 z-10">
+                    <div>
+                        <h3 class="text-lg font-bold">✏️ Manual Cash Ledger Entry</h3>
+                        <p class="text-purple-100 text-xs mt-1">Type in the closing balance by hand — useful when you don't have a fresh CSV yet</p>
+                    </div>
+                    <button onclick="document.getElementById('cashLedgerManualModal').remove()" class="text-white text-2xl hover:bg-white hover:bg-opacity-20 rounded-full w-9 h-9 flex items-center justify-center">×</button>
+                </div>
+                <div class="p-5 space-y-4">
+                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-900">
+                        This creates a snapshot just like a CSV upload would — it will show up in History and be used by the Pay-by-20 panel for whichever month it's relevant to. Use it when, for example, your CA reads out the balance as of the 19th and you don't want to wait for a portal CSV.
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Balance As Of Date <span class="text-red-500">*</span></label>
+                        <input type="date" id="clmDate" value="${today}" max="${today}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                    </div>
+                    <div class="grid grid-cols-3 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">IGST (₹)</label>
+                            <input type="number" id="clmIGST" min="0" step="0.01" placeholder="0.00" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">CGST (₹)</label>
+                            <input type="number" id="clmCGST" min="0" step="0.01" placeholder="0.00" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">SGST (₹)</label>
+                            <input type="number" id="clmSGST" min="0" step="0.01" placeholder="0.00" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Note <span class="text-gray-400 font-normal">(optional — e.g. who gave you the figure)</span></label>
+                        <input type="text" id="clmNote" placeholder="e.g. Told by CA over phone on 19-May" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                    </div>
+                    <div class="flex justify-end gap-3 pt-2 border-t mt-2">
+                        <button onclick="document.getElementById('cashLedgerManualModal').remove()" class="px-5 py-2 border border-gray-300 text-gray-600 rounded-xl hover:bg-gray-50">Cancel</button>
+                        <button onclick="saveCashLedgerManualEntry()" class="px-6 py-3 bg-purple-600 text-white rounded-xl hover:bg-purple-700 font-bold text-base">💾 Save Snapshot</button>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+        }
+
+        async function saveCashLedgerManualEntry() {
+            const dateVal = document.getElementById('clmDate')?.value || '';
+            const igst = parseFloat(document.getElementById('clmIGST')?.value) || 0;
+            const cgst = parseFloat(document.getElementById('clmCGST')?.value) || 0;
+            const sgst = parseFloat(document.getElementById('clmSGST')?.value) || 0;
+            const note = document.getElementById('clmNote')?.value || '';
+
+            if (!dateVal) { alert('Please enter the "Balance As Of" date.'); return; }
+            if (igst === 0 && cgst === 0 && sgst === 0) {
+                if (!confirm('All three balances are ₹0.00 — is that correct? Click OK to save anyway, or Cancel to go back and fill them in.')) return;
+            }
+
+            const fyCode = (typeof getFinancialYearCode === 'function') ? getFinancialYearCode(new Date()) : '2627';
+            const prefix = `CL-${fyCode}-`;
+            const existing = (gstCashLedgerSnapshots || [])
+                .map(s => parseInt((s.snapshotID || '').replace(prefix, '')) || 0);
+            const nextNum = (existing.length ? Math.max(...existing) : 0) + 1;
+
+            const snapshot = {
+                snapshotID: prefix + String(nextNum).padStart(3, '0'),
+                uploadedAt: new Date().toISOString(),
+                uploadedBy: (typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin',
+                source: 'manual',
+                manualAsOfDate: dateVal,
+                manualNote: note,
+                gstin: settings?.companyGSTIN || '',
+                legalName: settings?.companyName || '',
+                periodFrom: dateVal,
+                periodTo: dateVal,
+                openingBalance: null,
+                closingBalance: {
+                    igst: { total: +igst.toFixed(2) },
+                    cgst: { total: +cgst.toFixed(2) },
+                    sgst: { total: +sgst.toFixed(2) },
+                    cess: { total: 0 }
+                },
+                transactions: [],
+                parseWarnings: []
+            };
+            gstCashLedgerSnapshots.push(snapshot);
+            try {
+                await saveData('gstCashLedgerSnapshots', gstCashLedgerSnapshots);
+                alert(`✓ Manual snapshot saved as ${snapshot.snapshotID}.\n\nBalance as of ${dateVal}:\nIGST ₹${igst.toFixed(2)}\nCGST ₹${cgst.toFixed(2)}\nSGST ₹${sgst.toFixed(2)}\n\nTotal snapshots stored: ${gstCashLedgerSnapshots.length}`);
+                const m = document.getElementById('cashLedgerManualModal');
+                if (m) m.remove();
+                renderView();
+            } catch (e) {
+                gstCashLedgerSnapshots.pop();   // rollback
+                console.error('Manual cash ledger save error:', e);
+                alert('⚠ Could not save snapshot.\n\nError: ' + (e.message || e) + '\n\nThe data has NOT been saved. Try again, or share the error message for help.');
+            }
         }
 
         async function _clParsePreview() {
@@ -28192,7 +28717,7 @@ Automated WFH alert — ${company} Attendance System.`;
                                 const t = (s.closingBalance?.igst?.total||0) + (s.closingBalance?.cgst?.total||0) + (s.closingBalance?.sgst?.total||0) + (s.closingBalance?.cess?.total||0);
                                 return `
                                 <tr class="border-t hover:bg-purple-50/30 ${idx===0?'bg-green-50/30':''}">
-                                    <td class="px-3 py-2 text-xs font-mono text-purple-700">${s.snapshotID}${idx===0?' <span class="text-[10px] text-green-700 font-bold">(LATEST)</span>':''}</td>
+                                    <td class="px-3 py-2 text-xs font-mono text-purple-700">${s.snapshotID}${idx===0?' <span class="text-[10px] text-green-700 font-bold">(LATEST)</span>':''}${s.source==='manual'?' <span class="text-[10px] text-amber-700 font-bold bg-amber-100 px-1.5 py-0.5 rounded" title="'+(s.manualNote||'Entered manually').replace(/"/g,'&quot;')+'">✍️ manual</span>':''}</td>
                                     <td class="px-3 py-2 text-xs">${(s.uploadedAt||'').substring(0,10)}</td>
                                     <td class="px-3 py-2 text-xs">${s.periodFrom || '—'} → ${s.periodTo || '—'}</td>
                                     <td class="px-3 py-2 text-xs text-right">${fmt(s.closingBalance?.igst?.total)}</td>
