@@ -11457,9 +11457,12 @@
                 </tr>`;
             }).join('');
 
-            const gstStatus = d.netGST > 0
-                ? `<div class="flex items-center gap-2"><span class="text-2xl font-bold text-purple-700">${fmt(d.netGST)}</span><span class="text-sm text-purple-600">payable to govt</span></div>`
-                : `<div class="flex items-center gap-2"><span class="text-2xl font-bold text-teal-700">${fmt(Math.abs(d.netGST))}</span><span class="text-sm text-teal-600">input credit (carry forward)</span></div>`;
+            // Note: the standalone Output/Input/Net summary cards that used to live here
+            // were removed (2026-06) — they duplicated the same headline numbers shown
+            // in the Pay-by-20 panel's computation table right below, which also accounts
+            // for cash ledger + confirmed ITC (the more actionable figure). The bill-level
+            // detail tables below (Input Tax Credit Details / Output Tax Details) remain —
+            // they're the audit trail and aren't shown anywhere else.
 
             const gstPanel = `
             <div class="bg-white rounded-2xl shadow-sm mb-6 overflow-hidden">
@@ -11473,45 +11476,6 @@
                         <div class="text-right">
                             ${alertBadge(d.gstDaysLeft, false)}
                             <p class="text-white text-xs mt-1">Due: 20th ${months[month%12]} ${month===12?year+1:year}</p>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- GST Summary boxes -->
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-0 border-b">
-                    <div class="p-5 border-r">
-                        <p class="text-xs font-bold text-amber-600 uppercase mb-2">📥 GST Input (Expenses${d.rcmExps.length?' + RCM':''})</p>
-                        <p class="text-2xl font-bold text-amber-700">${fmt(d.combinedITCTotal)}</p>
-                        <div class="mt-2 space-y-1 text-xs text-gray-500">
-                            <div class="flex justify-between"><span>CGST</span><span class="font-medium">${fmt(d.gstInputCGST)}</span></div>
-                            <div class="flex justify-between"><span>SGST</span><span class="font-medium">${fmt(d.gstInputSGST)}</span></div>
-                            <div class="flex justify-between"><span>IGST</span><span class="font-medium">${fmt(d.gstInputIGST)}</span></div>
-                            ${d.rcmTotal > 0 ? `<div class="flex justify-between text-orange-600 pt-1 border-t border-orange-100"><span>incl. RCM</span><span class="font-bold">${fmt(d.rcmTotal)}</span></div>` : ''}
-                        </div>
-                        <p class="text-xs text-amber-600 mt-2">${d.gstInputExps.length} expense bill${d.gstInputExps.length!==1?'s':''} + ${d.dirITCEligible.length} director expense${d.dirITCEligible.length!==1?'s':''}${d.rcmExps.length?' + '+d.rcmExps.length+' RCM bill(s)':''}</p>
-                    </div>
-                    <div class="p-5 border-r">
-                        <p class="text-xs font-bold text-purple-600 uppercase mb-2">📤 GST Output (Invoices${d.rcmExps.length?' + RCM':''})</p>
-                        <p class="text-2xl font-bold text-purple-700">${fmt(d.gstOutput)}</p>
-                        <div class="mt-2 space-y-1 text-xs text-gray-500">
-                            <div class="flex justify-between"><span>CGST</span><span class="font-medium">${fmt(d.gstOutputCGST)}</span></div>
-                            <div class="flex justify-between"><span>SGST</span><span class="font-medium">${fmt(d.gstOutputSGST)}</span></div>
-                            <div class="flex justify-between"><span>IGST</span><span class="font-medium">${fmt(d.gstOutputIGST)}</span></div>
-                            ${d.rcmTotal > 0 ? `<div class="flex justify-between text-orange-600 pt-1 border-t border-orange-100"><span>incl. RCM</span><span class="font-bold">${fmt(d.rcmTotal)}</span></div>` : ''}
-                        </div>
-                        <p class="text-xs text-purple-600 mt-2">${d.outInvoices.length} outgoing invoice(s)${d.rcmExps.length?' + '+d.rcmExps.length+' RCM bill(s)':''}</p>
-                    </div>
-                    <div class="p-5 ${d.netGST>0?'bg-purple-50':'bg-teal-50'}">
-                        <p class="text-xs font-bold uppercase mb-2 ${d.netGST>0?'text-purple-600':'text-teal-600'}">
-                            ${d.netGST>0?'💸 NET GST PAYABLE':'💰 NET CREDIT (CARRY FWD)'}
-                        </p>
-                        ${gstStatus}
-                        <div class="mt-3 text-xs text-gray-500 space-y-1">
-                            <div class="flex justify-between"><span>Output</span><span>${fmt(d.gstOutput)}</span></div>
-                            <div class="flex justify-between"><span>− Input Credit</span><span>${fmt(d.combinedITCTotal)}</span></div>
-                            <div class="flex justify-between font-bold border-t pt-1 ${d.netGST>0?'text-purple-700':'text-teal-700'}">
-                                <span>= Net</span><span>${d.netGST>0?fmt(d.netGST):'('+fmt(Math.abs(d.netGST))+')'}</span>
-                            </div>
                         </div>
                     </div>
                 </div>
