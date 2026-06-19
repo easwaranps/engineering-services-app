@@ -3246,6 +3246,91 @@
             }
         }
 
+        // Inspect a backup without touching live data — opens a modal showing
+        // the record count, file size, and the first few records' summaries.
+        // Use this BEFORE clicking Restore, especially if you're not sure
+        // which backup slot has the data you need (auto-backups can capture
+        // an already-wiped state if the wipe happened before the 30-min
+        // throttle window allowed a fresh backup).
+        async function inspectBackup(type, slot) {
+            try {
+                const folderId = await getOrCreateAppFolder();
+                const authHdr  = { 'Authorization': `Bearer ${accessToken}` };
+                const backupName = `${type}_backup_${slot}.json`;
+                const q = encodeURIComponent(`name='${backupName}' and '${folderId}' in parents and trashed=false`);
+                const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,size,modifiedTime)&spaces=drive`, { headers: authHdr });
+                if (!res.ok) throw new Error('Cannot search Drive');
+                const d = await res.json();
+                if (!d.files?.length) {
+                    alert(`Backup slot ${slot} for "${type}" doesn't exist in Drive yet. (Slots fill up as the file gets saved over time — at most one new backup per 30 minutes.)`);
+                    return;
+                }
+                const fileMeta = d.files[0];
+                const fileRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileMeta.id}?alt=media`, { headers: authHdr });
+                if (!fileRes.ok) throw new Error('Cannot read backup file');
+                const content = await fileRes.json();
+
+                // Build a compact summary depending on whether the file is an array,
+                // an object, or something else.
+                let summary, preview;
+                if (Array.isArray(content)) {
+                    summary = `Array of ${content.length} record(s)`;
+                    preview = content.slice(0, 8).map((rec, i) => {
+                        const keys = Object.keys(rec || {}).slice(0, 6);
+                        const kvs = keys.map(k => {
+                            const v = rec[k];
+                            const s = (v === null || v === undefined) ? '—' :
+                                      (typeof v === 'object' ? JSON.stringify(v).substring(0,40) :
+                                       String(v).substring(0,40));
+                            return `<span style="color:#0f766e">${k}</span>: ${s}`;
+                        }).join(' · ');
+                        return `<div style="padding:4px 8px;border-bottom:1px solid #f1f5f9;font-family:monospace;font-size:10px">${i+1}. ${kvs}</div>`;
+                    }).join('') + (content.length > 8 ? `<div style="padding:4px 8px;font-style:italic;color:#64748b;font-size:10px">… and ${content.length - 8} more record(s)</div>` : '');
+                } else if (typeof content === 'object' && content !== null) {
+                    summary = `Object with ${Object.keys(content).length} key(s)`;
+                    preview = Object.keys(content).slice(0, 12).map(k => {
+                        const v = content[k];
+                        const s = (typeof v === 'object') ? JSON.stringify(v).substring(0,80) : String(v).substring(0,80);
+                        return `<div style="padding:4px 8px;border-bottom:1px solid #f1f5f9;font-family:monospace;font-size:10px"><span style="color:#0f766e">${k}</span>: ${s}</div>`;
+                    }).join('');
+                } else {
+                    summary = `Plain value (${typeof content})`;
+                    preview = `<div style="padding:8px;font-family:monospace;font-size:11px">${String(content).substring(0,200)}</div>`;
+                }
+
+                const sizeKB = ((parseInt(fileMeta.size)||0) / 1024).toFixed(2);
+                const modStr = (fileMeta.modifiedTime || '').replace('T',' ').substring(0,19);
+
+                const insp = document.createElement('div');
+                insp.id = 'inspectBackupModal';
+                insp.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100000;display:flex;align-items:center;justify-content:center;padding:16px';
+                insp.innerHTML = `
+                <div style="background:#fff;border-radius:14px;width:min(640px,96vw);max-height:88vh;overflow-y:auto">
+                    <div style="background:linear-gradient(135deg,#1d4ed8,#3b82f6);padding:14px 18px;border-radius:14px 14px 0 0;display:flex;justify-content:space-between;align-items:center">
+                        <div style="color:#fff;font-weight:700;font-size:14px">👁 Inspect Backup: ${backupName}</div>
+                        <button onclick="document.getElementById('inspectBackupModal').remove()" style="color:#fff;font-size:20px;background:none;border:none;cursor:pointer">✕</button>
+                    </div>
+                    <div style="padding:16px">
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;font-size:12px">
+                            <div style="background:#eff6ff;padding:8px 10px;border-radius:6px"><strong>Size:</strong> ${sizeKB} KB</div>
+                            <div style="background:#f0fdf4;padding:8px 10px;border-radius:6px"><strong>Modified:</strong> ${modStr}</div>
+                            <div style="grid-column:1/-1;background:#fefce8;padding:8px 10px;border-radius:6px"><strong>Content:</strong> ${summary}</div>
+                        </div>
+                        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;max-height:340px;overflow-y:auto">
+                            ${preview || '<div style="padding:14px;color:#64748b;font-style:italic">Empty backup (file exists but contains no data)</div>'}
+                        </div>
+                        <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end">
+                            <button onclick="document.getElementById('inspectBackupModal').remove()" style="padding:7px 14px;border:1.5px solid #cbd5e1;background:#fff;border-radius:8px;font-size:12px;cursor:pointer">Close</button>
+                            <button onclick="document.getElementById('inspectBackupModal').remove(); restoreBackup('${type}',${slot})" style="padding:7px 14px;background:#dc2626;color:#fff;border:none;border-radius:8px;font-size:12px;cursor:pointer;font-weight:600">↩ Restore This Backup</button>
+                        </div>
+                    </div>
+                </div>`;
+                document.body.appendChild(insp);
+            } catch (e) {
+                alert('Inspect failed: ' + e.message);
+            }
+        }
+
         // Restore a backup — called from Settings → Data Recovery
         async function restoreBackup(type, slot) {
             if (!confirm(`⚠️ RESTORE ${type} from backup slot ${slot}?\n\nThis will OVERWRITE current ${type} data with the backup.\n\nCurrent data will be saved as backup_1 first.`)) return;
@@ -4065,32 +4150,52 @@
             const modal = document.createElement('div');
             modal.id = 'dataRecoveryModal';
             modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;display:flex;align-items:center;justify-content:center';
-            const dataTypes = ['staff','expenses','transactions','projectExpenses','directorExpenses','workLogs','settings','payslips'];
+            // ALL 18 saveData types — must stay in sync with the saveData call sites.
+            // Petty cash is the most common recovery scenario when offices/transactions
+            // get wiped by a stale poll-merge, so it's grouped at the top.
+            const dataGroups = [
+                { label: '💰 Petty Cash', types: ['pettyCashOffices','pettyCashTransactions','pettyCashStatements'] },
+                { label: '👥 People',     types: ['staff','payslips'] },
+                { label: '🧾 Transactions & Bills', types: ['transactions','expenses','directorExpenses','projectExpenses'] },
+                { label: '🏗 Operations',  types: ['workLogs','paymentRequests'] },
+                { label: '🏦 Funds & Banking', types: ['bankAccounts','fundRequests','fundPools'] },
+                { label: '📋 Reference Data', types: ['parties','companyDocuments','gstCashLedgerSnapshots','settings'] }
+            ];
             modal.innerHTML = `
-            <div style="background:#fff;border-radius:16px;width:min(560px,96vw);max-height:90vh;overflow-y:auto">
-                <div style="background:linear-gradient(135deg,#dc2626,#991b1b);padding:16px 20px;border-radius:16px 16px 0 0;display:flex;justify-content:space-between;align-items:center">
+            <div style="background:#fff;border-radius:16px;width:min(720px,96vw);max-height:92vh;overflow-y:auto">
+                <div style="background:linear-gradient(135deg,#dc2626,#991b1b);padding:16px 20px;border-radius:16px 16px 0 0;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:2">
                     <div style="color:#fff;font-weight:700;font-size:15px">🔄 Data Recovery — Version History</div>
                     <button onclick="document.getElementById('dataRecoveryModal').remove()" style="color:#fff;font-size:22px;background:none;border:none;cursor:pointer">✕</button>
                 </div>
                 <div style="padding:20px">
                     <div style="background:#fef9c3;border:1px solid #fde68a;border-radius:10px;padding:12px;margin-bottom:16px;font-size:12px;color:#92400e">
-                        ⚠️ This restores data from a backup slot. The current data will be saved as backup_1 before restoring.
-                        Use this only if data was accidentally overwritten.
+                        ⚠️ Restore overwrites the current file with the chosen backup slot. The current data is saved as <em>backup_1</em> first, so a restore can itself be reverted. Backups are auto-created before saves (at most once every 30 min per file), with up to 5 rolling slots — <strong>backup_1 is the most recent, backup_5 is the oldest</strong>.
                     </div>
-                    <table style="width:100%;border-collapse:collapse;font-size:13px">
-                        <thead><tr style="background:#f8fafc">
-                            <th style="padding:9px 12px;text-align:left;font-size:11px;color:#64748b;text-transform:uppercase">Data File</th>
-                            ${Array.from({length:MAX_BACKUPS},(_,i)=>`<th style="padding:9px 8px;text-align:center;font-size:11px;color:#64748b">Backup ${i+1}</th>`).join('')}
-                        </tr></thead>
-                        <tbody>
-                            ${dataTypes.map(t=>`<tr style="border-bottom:1px solid #e5e7eb">
-                                <td style="padding:9px 12px;font-weight:600">${t}</td>
-                                ${Array.from({length:MAX_BACKUPS},(_,i)=>`<td style="padding:9px 8px;text-align:center">
-                                    <button onclick="restoreBackup('${t}',${i+1})" style="padding:4px 10px;background:#fef2f2;color:#dc2626;border:1px solid #fecaca;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600">↩ Restore</button>
-                                </td>`).join('')}
-                            </tr>`).join('')}
-                        </tbody>
-                    </table>
+                    ${dataGroups.map(g => `
+                        <div style="margin-bottom:14px">
+                            <h4 style="font-size:12px;font-weight:700;color:#475569;margin-bottom:6px;padding-bottom:4px;border-bottom:1.5px solid #e2e8f0">${g.label}</h4>
+                            <table style="width:100%;border-collapse:collapse;font-size:13px">
+                                <thead><tr style="background:#f8fafc">
+                                    <th style="padding:7px 10px;text-align:left;font-size:10px;color:#64748b;text-transform:uppercase;width:42%">Data File</th>
+                                    ${Array.from({length:MAX_BACKUPS},(_,i)=>`<th style="padding:7px 4px;text-align:center;font-size:10px;color:#64748b">Slot ${i+1}</th>`).join('')}
+                                </tr></thead>
+                                <tbody>
+                                    ${g.types.map(t=>`<tr style="border-bottom:1px solid #f1f5f9">
+                                        <td style="padding:7px 10px;font-weight:600;font-family:monospace;font-size:12px">${t}</td>
+                                        ${Array.from({length:MAX_BACKUPS},(_,i)=>`<td style="padding:5px 2px;text-align:center;white-space:nowrap">
+                                            <button onclick="inspectBackup('${t}',${i+1})" style="padding:3px 5px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:4px;font-size:9px;cursor:pointer;font-weight:600;margin-right:1px" title="View this backup before restoring (no overwrite)">👁</button><button onclick="restoreBackup('${t}',${i+1})" style="padding:3px 6px;background:#fef2f2;color:#dc2626;border:1px solid #fecaca;border-radius:4px;font-size:10px;cursor:pointer;font-weight:600">↩ ${i+1}</button>
+                                        </td>`).join('')}
+                                    </tr>`).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    `).join('')}
+                    <details style="margin-top:14px">
+                        <summary style="font-size:11px;color:#64748b;cursor:pointer;font-weight:600">Don't see a backup slot you need? Check Drive directly</summary>
+                        <div style="font-size:11px;color:#475569;padding:8px 12px;background:#f8fafc;border-radius:8px;margin-top:6px;line-height:1.6">
+                            All backups live in your Drive's <strong>"Engineering Service App"</strong> folder as <code>&lt;type&gt;_backup_N.json</code>. If a slot button above says "not found" when you click it, the file doesn't exist in Drive — either it hasn't been saved enough times for that slot to fill, or the file was manually deleted. You can also open any backup JSON directly in Drive to inspect it before restoring.
+                        </div>
+                    </details>
                 </div>
             </div>`;
             document.body.appendChild(modal);
