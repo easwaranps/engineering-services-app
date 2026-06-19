@@ -10853,10 +10853,18 @@
             // bill's GST is recorded but excluded from the ITC summary (blocked
             // credits, ineligible vendors, personal-use items, etc.). Bills
             // without the flag (legacy entries) default to claimable.
+            // BUGFIX (2026-06): also respect gstr2bClaimMonth — a bill the user has
+            // manually flagged as claimable in a LATER month (late-filing supplier)
+            // must move to that month's Input Tax Credit table, not stay under its
+            // own Bill Date's month. Same rule _getConfirmedGSTR2BITC already used
+            // for the Pay-by-20 panel; this was missing here, which is why a bill
+            // with a claim-month override didn't show up under the right month.
             const gstInputExps = expenses.filter(e => {
                 const hasTax = (parseFloat(e.cgst)||0)+(parseFloat(e.sgst)||0)+(parseFloat(e.igst)||0) > 0;
                 const claimable = e.gstInputClaimable !== false;   // legacy entries: default true
-                return hasTax && claimable && (e.billDate||'').startsWith(pfx);
+                const cm = (e.gstr2bClaimMonth || '').trim();
+                const matchesMonth = cm ? (cm === pfx) : (e.billDate||'').startsWith(pfx);
+                return hasTax && claimable && matchesMonth;
             });
 
             // ── Outgoing Invoices for the period ────────────────────────────
@@ -10913,9 +10921,19 @@
             const gstInputBillsIGST = gstInputIGST;
 
             // ── Director Expenses ITC for the period ─────────────────────
+            // BUGFIX (2026-06): respect gstr2bClaimMonth override here too — was
+            // previously only honored in _getConfirmedGSTR2BITC (Pay-by-20 panel),
+            // not here, so a director expense with a manual claim-month override
+            // (e.g. a late-filing supplier) never moved to the right month's
+            // Input Tax Credit Details table. Natural date = billDate (supplier
+            // invoice date — what GSTR-2B is built on), falling back to expDate
+            // for older records that predate the billDate field, matching the
+            // same fallback used in _getConfirmedGSTR2BITC.
             const dirGSTExps = (directorExpenses||[]).filter(d => {
-                return d.gstApplicable && (parseFloat(d.gstAmt)||0) > 0
-                    && (d.expDate||'').startsWith(pfx);
+                if (!d.gstApplicable || !((parseFloat(d.gstAmt)||0) > 0)) return false;
+                const naturalDate = d.billDate || d.expDate || '';
+                const cm = (d.gstr2bClaimMonth || '').trim();
+                return cm ? (cm === pfx) : naturalDate.startsWith(pfx);
             });
             const dirITCEligible = dirGSTExps.filter(d =>
                 d.itcEligible !== 'blocked' && d.itcEligible !== 'none'
@@ -20332,7 +20350,12 @@ Automated WFH alert — ${company} Attendance System.`;
                 </div>
                 <div class="bg-gradient-to-br from-blue-600 to-blue-800 rounded-2xl p-4 shadow-sm text-white">
                     <div class="text-xs font-bold opacity-80 uppercase mb-1">ITC This Month</div>
-                    <div class="text-xl font-bold">${fmtC(directorExpenses.filter(d=>(d.expDate||'').startsWith(filterMonth)&&d.gstApplicable&&d.itcEligible!=='blocked'&&d.itcEligible!=='none').reduce((s,r)=>s+(parseFloat(r.itcAmt)||0),0))}</div>
+                    <div class="text-xl font-bold">${fmtC(directorExpenses.filter(d=>{
+                        if (!(d.gstApplicable && d.itcEligible!=='blocked' && d.itcEligible!=='none')) return false;
+                        const naturalDate = d.billDate || d.expDate || '';
+                        const cm = (d.gstr2bClaimMonth || '').trim();
+                        return cm ? (cm === filterMonth) : naturalDate.startsWith(filterMonth);
+                    }).reduce((s,r)=>s+(parseFloat(r.itcAmt)||0),0))}</div>
                     <div class="text-xs opacity-70 mt-1">GST Input Tax Credit</div>
                 </div>
             </div>
