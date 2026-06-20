@@ -1089,23 +1089,23 @@
                     
                     <!-- Line Items Table -->
                     <div class="overflow-x-auto">
-                        <table class="w-full text-sm border-collapse">
+                        <table class="text-sm border-collapse" style="min-width:1500px; width:100%;">
                             <thead>
                                 <tr class="bg-gray-100">
                                     <th class="border px-2 py-2 text-left w-12">S.No</th>
-                                    <th class="border px-2 py-2 text-left min-w-[200px]">Description</th>
-                                    <th id="thPartNo" class="border px-2 py-2 text-left w-28 hidden">Part No</th>
-                                    <th class="border px-2 py-2 text-left w-24">HSN Code</th>
-                                    <th class="border px-2 py-2 text-left w-20">Qty</th>
-                                    <th class="border px-2 py-2 text-left w-24">UOM</th>
-                                    <th class="border px-2 py-2 text-left w-28">Cost/Unit</th>
-                                    <th class="border px-2 py-2 text-left w-24">Discount%</th>
-                                    <th class="border px-2 py-2 text-right w-28">Taxable Amt</th>
-                                    <th class="border px-2 py-2 text-left w-20">SGST%</th>
-                                    <th class="border px-2 py-2 text-left w-20">CGST%</th>
-                                    <th class="border px-2 py-2 text-left w-20">IGST%</th>
-                                    <th class="border px-2 py-2 text-right w-28">Total</th>
-                                    <th class="border px-2 py-2 text-center w-20">Action</th>
+                                    <th class="border px-2 py-2 text-left" style="min-width:280px;">Description</th>
+                                    <th id="thPartNo" class="border px-2 py-2 text-left hidden" style="width:110px;">Part No</th>
+                                    <th class="border px-2 py-2 text-left" style="width:100px;">HSN Code</th>
+                                    <th class="border px-2 py-2 text-left" style="width:80px;">Qty</th>
+                                    <th class="border px-2 py-2 text-left" style="width:90px;">UOM</th>
+                                    <th class="border px-2 py-2 text-left" style="width:130px;">Cost/Unit</th>
+                                    <th class="border px-2 py-2 text-left" style="width:90px;">Discount%</th>
+                                    <th class="border px-2 py-2 text-right" style="width:120px;">Taxable Amt</th>
+                                    <th class="border px-2 py-2 text-left" style="width:80px;">SGST%</th>
+                                    <th class="border px-2 py-2 text-left" style="width:80px;">CGST%</th>
+                                    <th class="border px-2 py-2 text-left" style="width:80px;">IGST%</th>
+                                    <th class="border px-2 py-2 text-right" style="width:120px;">Total</th>
+                                    <th class="border px-2 py-2 text-center" style="width:90px;">Action</th>
                                 </tr>
                             </thead>
                             <tbody id="lineItems">
@@ -14675,9 +14675,10 @@
             tr.className = 'hover:bg-gray-50';
             tr.innerHTML = `
                 <td class="border px-2 py-2 text-center align-top">${rowNum}</td>
-                <td class="border px-2 py-2">
+                <td class="border px-2 py-2 align-top">
                     <textarea placeholder="Description (press Enter for new line)" 
-                        class="item-desc w-full px-2 py-1 border rounded text-sm resize-y min-h-[60px]" 
+                        class="item-desc w-full px-2 py-1 border rounded text-sm resize-y" 
+                        style="min-height:38px; height:38px;"
                         rows="2" required>${item?.description || ''}</textarea>
                 </td>
                 <td class="td-partno border px-2 py-2 align-top hidden">
