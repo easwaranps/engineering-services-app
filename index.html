@@ -5443,12 +5443,13 @@
                 startY += 22;
 
                 // Column widths — A4 usable width = 182mm (14mm margins each side)
-                // For PO: add Part No col (14mm), narrow desc 36→27mm, total 28→25mm
+                // For PO/Quotation: add Part No col (14mm), narrow desc 36→27mm, total 28→25mm
                 const isPO = txn.txnCategory === 'PO';
+                const showPartNo = txn.txnCategory === 'PO' || txn.txnCategory === 'QUOTATION';
                 const COL = {
                     sno:     7,
-                    desc:    isPO ? 27 : 36,
-                    partno:  14,               // only rendered for PO
+                    desc:    showPartNo ? 27 : 36,
+                    partno:  14,               // only rendered for PO / Quotation
                     hsn:    13,
                     qty:    11,
                     uom:    10,
@@ -5458,7 +5459,7 @@
                     sgst:    9,
                     cgst:    9,
                     igst:    9,
-                    total:   isPO ? 25 : 28
+                    total:   showPartNo ? 25 : 28
                 };
 
                 // Build line-item rows
@@ -5478,7 +5479,7 @@
                     grandTotal    += lineTotal;
 
                     const row = [idx + 1, item.description];
-                    if (isPO) row.push(item.partNo || '');
+                    if (showPartNo) row.push(item.partNo || '');
                     row.push(
                         item.hsnCode || '',
                         fmt(item.qty),
@@ -5494,12 +5495,12 @@
                     return row;
                 });
 
-                // Build headers and columnStyles conditionally for PO
-                const tableHead = isPO
+                // Build headers and columnStyles conditionally for PO / Quotation
+                const tableHead = showPartNo
                     ? [['#', 'Description', 'Part No', 'HSN', 'Qty', 'UOM', 'Rate', 'Disc%', 'Taxable', 'SGST%', 'CGST%', 'IGST%', 'Total']]
                     : [['#', 'Description', 'HSN', 'Qty', 'UOM', 'Rate', 'Disc%', 'Taxable Amt', 'SGST%', 'CGST%', 'IGST%', 'Total']];
 
-                const colStyles = isPO ? {
+                const colStyles = showPartNo ? {
                     0:  { cellWidth: COL.sno,    halign: 'center' },
                     1:  { cellWidth: COL.desc,   halign: 'left'   },
                     2:  { cellWidth: COL.partno, halign: 'left'   },
@@ -5554,7 +5555,7 @@
                 // ── Totals table — drawn flush below the line-items table ──
                 // Amount column matches the "Total" column width above (28mm)
                 const totalTableWidth =
-                    COL.sno + COL.desc + (isPO ? COL.partno : 0) + COL.hsn + COL.qty + COL.uom +
+                    COL.sno + COL.desc + (showPartNo ? COL.partno : 0) + COL.hsn + COL.qty + COL.uom +
                     COL.rate + COL.disc + COL.taxable + COL.sgst + COL.cgst +
                     COL.igst + COL.total;
 
@@ -14685,6 +14686,7 @@
                 <td class="border px-2 py-2 align-top">
                     <select class="item-uom w-full px-2 py-1 border rounded text-sm">
                         <option value="NOS" ${item?.uom === 'NOS' ? 'selected' : ''}>NOS</option>
+                        <option value="PCS" ${item?.uom === 'PCS' ? 'selected' : ''}>PCS</option>
                         <option value="KG" ${item?.uom === 'KG' ? 'selected' : ''}>KG</option>
                         <option value="MTR" ${item?.uom === 'MTR' ? 'selected' : ''}>MTR</option>
                         <option value="LTR" ${item?.uom === 'LTR' ? 'selected' : ''}>LTR</option>
@@ -14699,8 +14701,35 @@
                     </select>
                 </td>
                 <td class="border px-2 py-2 align-top">
-                    <input type="number" placeholder="0.00" value="${item?.rate || 0}" 
-                        class="item-rate w-full px-2 py-1 border rounded text-sm" min="0" step="0.01" required />
+                    <div class="flex items-center gap-1">
+                        <input type="number" placeholder="0.00" value="${item?.rate || 0}" 
+                            class="item-rate w-full px-2 py-1 border rounded text-sm" min="0" step="0.01" required />
+                        <button type="button" onclick="toggleCostBasis('${id}')" title="Cost / Distributor Commission / Markup calculator (internal only — never printed)" class="text-xs px-1.5 py-1 rounded border border-gray-300 text-gray-500 hover:bg-gray-100 hover:text-purple-600 flex-shrink-0">🧮</button>
+                    </div>
+                    <!-- Cost-basis mini-panel: internal only. Computes Rate = Cost + Cost×Comm% + Cost×Markup%.
+                         Never read by the PDF generator (exportTransactionToPDF only reads item.rate and the
+                         standard fields) — these three values stay purely as a calculation aid + audit trail. -->
+                    <div id="costBasis-${id}" class="hidden mt-1.5 p-2 bg-purple-50 border border-purple-200 rounded-lg space-y-1.5">
+                        <p class="text-[10px] font-semibold text-purple-700 uppercase">Cost Basis <span class="text-purple-400 font-normal normal-case">(internal — never printed)</span></p>
+                        <div>
+                            <label class="text-[10px] text-gray-500">Base Cost (₹)</label>
+                            <input type="number" placeholder="0.00" value="${item?.costPrice ?? ''}" min="0" step="0.01"
+                                class="item-costprice w-full px-2 py-1 border border-purple-200 rounded text-xs" oninput="recalcRateFromCostBasis('${id}')" />
+                        </div>
+                        <div class="grid grid-cols-2 gap-1.5">
+                            <div>
+                                <label class="text-[10px] text-gray-500">Distributor Comm %</label>
+                                <input type="number" placeholder="0" value="${item?.distributorCommPct ?? ''}" min="0" step="0.01"
+                                    class="item-distcomm w-full px-2 py-1 border border-purple-200 rounded text-xs" oninput="recalcRateFromCostBasis('${id}')" />
+                            </div>
+                            <div>
+                                <label class="text-[10px] text-gray-500">Markup %</label>
+                                <input type="number" placeholder="0" value="${item?.markupPct ?? ''}" min="0" step="0.01"
+                                    class="item-markup w-full px-2 py-1 border border-purple-200 rounded text-xs" oninput="recalcRateFromCostBasis('${id}')" />
+                            </div>
+                        </div>
+                        <p class="text-[10px] text-purple-500">Rate auto-fills as Cost + Cost×Comm% + Cost×Markup%. You can still type the Rate directly above — it won't be overwritten unless you edit a Cost Basis field.</p>
+                    </div>
                 </td>
                 <td class="border px-2 py-2 align-top">
                     <input type="number" placeholder="0" value="${item?.discountPct || 0}" 
@@ -14733,8 +14762,9 @@
             document.getElementById('lineItems').appendChild(tr);
             document.getElementById('totalSection').classList.remove('hidden');
 
-            // Show Part No cell if current category is PO
-            if ((document.getElementById('txnCategory')?.value || '') === 'PO') {
+            // Show Part No cell if current category is PO or Quotation
+            const _curCat = document.getElementById('txnCategory')?.value || '';
+            if (_curCat === 'PO' || _curCat === 'QUOTATION') {
                 tr.querySelector('.td-partno')?.classList.remove('hidden');
             }
 
@@ -14751,6 +14781,31 @@
             if (document.getElementById('lineItems').children.length === 0) {
                 document.getElementById('totalSection').classList.add('hidden');
             }
+            updateTotals();
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        // COST BASIS — internal-only calculator per line item (Quotations etc.)
+        // Formula: Rate = Base Cost + (Base Cost × Distributor Comm%) + (Base Cost × Markup%)
+        // costPrice / distributorCommPct / markupPct are saved on the item
+        // alongside the usual fields, but exportTransactionToPDF (and every
+        // print/preview path) only ever reads item.rate + the standard fields —
+        // these three never appear in any PDF, print view, or client-facing output.
+        // ════════════════════════════════════════════════════════════════
+        function toggleCostBasis(id) {
+            const panel = document.getElementById(`costBasis-${id}`);
+            if (panel) panel.classList.toggle('hidden');
+        }
+
+        function recalcRateFromCostBasis(id) {
+            const row = document.getElementById(`line-${id}`);
+            if (!row) return;
+            const cost   = parseFloat(row.querySelector('.item-costprice')?.value) || 0;
+            const comm   = parseFloat(row.querySelector('.item-distcomm')?.value) || 0;
+            const markup = parseFloat(row.querySelector('.item-markup')?.value) || 0;
+            const rate = cost + (cost * comm / 100) + (cost * markup / 100);
+            const rateInput = row.querySelector('.item-rate');
+            if (rateInput) rateInput.value = rate ? rate.toFixed(2) : '';
             updateTotals();
         }
 
@@ -14926,7 +14981,13 @@
                     discountPct: parseFloat(row.querySelector('.item-discount').value) || 0,
                     sgstPct: parseFloat(row.querySelector('.item-sgst').value) || 0,
                     cgstPct: parseFloat(row.querySelector('.item-cgst').value) || 0,
-                    igstPct: parseFloat(row.querySelector('.item-igst').value) || 0
+                    igstPct: parseFloat(row.querySelector('.item-igst').value) || 0,
+                    // Cost Basis — internal only, never read by the PDF/print path.
+                    // Saved purely so the 🧮 calculator can be re-opened with the
+                    // same figures later (e.g. if you revisit a draft quotation).
+                    costPrice: row.querySelector('.item-costprice')?.value !== '' ? (parseFloat(row.querySelector('.item-costprice')?.value) || 0) : null,
+                    distributorCommPct: row.querySelector('.item-distcomm')?.value !== '' ? (parseFloat(row.querySelector('.item-distcomm')?.value) || 0) : null,
+                    markupPct: row.querySelector('.item-markup')?.value !== '' ? (parseFloat(row.querySelector('.item-markup')?.value) || 0) : null
                 }));
                 
                 const txnData = {
@@ -15451,13 +15512,18 @@
                 supplyField?.classList.add('hidden');
             }
 
-            // PO Extra Fields (Part Number + Terms): PO only
+            // PO Extra Fields (Terms & Conditions specific to PO): PO only
             if (cat === 'PO') {
                 poExtraFields?.classList.remove('hidden');
+            } else {
+                poExtraFields?.classList.add('hidden');
+            }
+
+            // Part No column: PO and Quotation (line-item level part code/number)
+            if (cat === 'PO' || cat === 'QUOTATION') {
                 document.getElementById('thPartNo')?.classList.remove('hidden');
                 document.querySelectorAll('.td-partno').forEach(td => td.classList.remove('hidden'));
             } else {
-                poExtraFields?.classList.add('hidden');
                 document.getElementById('thPartNo')?.classList.add('hidden');
                 document.querySelectorAll('.td-partno').forEach(td => td.classList.add('hidden'));
             }
