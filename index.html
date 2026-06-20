@@ -14450,6 +14450,10 @@
             }
 
             document.getElementById('lineItems').innerHTML = '';
+            // Defensive sweep: clear any cost-basis popovers left over in <body>
+            // from a previous session (normally cleaned by closeTransactionModal,
+            // this is just a safety net in case the modal was dismissed another way).
+            document.querySelectorAll('.cost-basis-popover').forEach(p => p.remove());
             document.getElementById('totalSection').classList.add('hidden');
             document.getElementById('supportingDocsSection').classList.add('hidden');
 
@@ -14586,6 +14590,11 @@
             document.getElementById('transactionModal').classList.remove('show');
             document.getElementById('transactionForm').reset();
             lineItemCounter = 0;
+            // Sweep up any cost-basis popovers that were reparented to <body>
+            // (see toggleCostBasis) — they'd otherwise leak across modal opens
+            // since they're no longer inside #lineItems and won't get cleared
+            // by the innerHTML reset below.
+            document.querySelectorAll('.cost-basis-popover').forEach(p => p.remove());
             _concurEndEdit();
         }
 
@@ -14700,35 +14709,42 @@
                         <option value="JOB" ${item?.uom === 'JOB' ? 'selected' : ''}>JOB</option>
                     </select>
                 </td>
-                <td class="border px-2 py-2 align-top">
+                <td class="border px-2 py-2 align-top" style="position:relative;">
                     <div class="flex items-center gap-1">
                         <input type="number" placeholder="0.00" value="${item?.rate || 0}" 
                             class="item-rate w-full px-2 py-1 border rounded text-sm" min="0" step="0.01" required />
-                        <button type="button" onclick="toggleCostBasis('${id}')" title="Cost / Distributor Commission / Markup calculator (internal only — never printed)" class="text-xs px-1.5 py-1 rounded border border-gray-300 text-gray-500 hover:bg-gray-100 hover:text-purple-600 flex-shrink-0">🧮</button>
+                        <button type="button" onclick="toggleCostBasis('${id}', event)" title="Cost / Distributor Commission / Markup calculator (internal only — never printed)" class="text-xs px-1.5 py-1 rounded border border-gray-300 text-gray-500 hover:bg-gray-100 hover:text-purple-600 flex-shrink-0">🧮</button>
                     </div>
                     <!-- Cost-basis mini-panel: internal only. Computes Rate = Cost + Cost×Comm% + Cost×Markup%.
                          Never read by the PDF generator (exportTransactionToPDF only reads item.rate and the
-                         standard fields) — these three values stay purely as a calculation aid + audit trail. -->
-                    <div id="costBasis-${id}" class="hidden mt-1.5 p-2 bg-purple-50 border border-purple-200 rounded-lg space-y-1.5">
-                        <p class="text-[10px] font-semibold text-purple-700 uppercase">Cost Basis <span class="text-purple-400 font-normal normal-case">(internal — never printed)</span></p>
-                        <div>
-                            <label class="text-[10px] text-gray-500">Base Cost (₹)</label>
+                         standard fields) — these three values stay purely as a calculation aid + audit trail.
+                         position:fixed + body-reparenting on open (see toggleCostBasis) so it escapes the
+                         line-items table's "overflow-x-auto" wrapper, which would otherwise clip an
+                         absolutely-positioned popover at the table's edge. -->
+                    <div id="costBasis-${id}" class="hidden cost-basis-popover" data-item-id="${id}" style="position:fixed; width:260px; z-index:9999; background:#faf5ff; border:1px solid #d8b4fe; border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,0.25); padding:12px;">
+                        <div class="flex items-center justify-between mb-2">
+                            <p class="text-[11px] font-bold text-purple-700 uppercase">🧮 Cost Basis</p>
+                            <button type="button" onclick="toggleCostBasis('${id}', event)" class="text-purple-400 hover:text-purple-700 text-sm leading-none px-1">✕</button>
+                        </div>
+                        <p class="text-[10px] text-purple-400 mb-2 normal-case">Internal only — never printed on PDF/quotation</p>
+                        <div class="mb-2">
+                            <label class="text-[11px] text-gray-600 block mb-0.5">Base Cost (₹)</label>
                             <input type="number" placeholder="0.00" value="${item?.costPrice ?? ''}" min="0" step="0.01"
-                                class="item-costprice w-full px-2 py-1 border border-purple-200 rounded text-xs" oninput="recalcRateFromCostBasis('${id}')" />
+                                class="item-costprice w-full px-2 py-1.5 border border-purple-300 rounded text-sm" oninput="recalcRateFromCostBasis('${id}')" />
                         </div>
-                        <div class="grid grid-cols-2 gap-1.5">
+                        <div class="grid grid-cols-2 gap-2 mb-2">
                             <div>
-                                <label class="text-[10px] text-gray-500">Distributor Comm %</label>
+                                <label class="text-[11px] text-gray-600 block mb-0.5">Distributor Comm %</label>
                                 <input type="number" placeholder="0" value="${item?.distributorCommPct ?? ''}" min="0" step="0.01"
-                                    class="item-distcomm w-full px-2 py-1 border border-purple-200 rounded text-xs" oninput="recalcRateFromCostBasis('${id}')" />
+                                    class="item-distcomm w-full px-2 py-1.5 border border-purple-300 rounded text-sm" oninput="recalcRateFromCostBasis('${id}')" />
                             </div>
                             <div>
-                                <label class="text-[10px] text-gray-500">Markup %</label>
+                                <label class="text-[11px] text-gray-600 block mb-0.5">Markup %</label>
                                 <input type="number" placeholder="0" value="${item?.markupPct ?? ''}" min="0" step="0.01"
-                                    class="item-markup w-full px-2 py-1 border border-purple-200 rounded text-xs" oninput="recalcRateFromCostBasis('${id}')" />
+                                    class="item-markup w-full px-2 py-1.5 border border-purple-300 rounded text-sm" oninput="recalcRateFromCostBasis('${id}')" />
                             </div>
                         </div>
-                        <p class="text-[10px] text-purple-500">Rate auto-fills as Cost + Cost×Comm% + Cost×Markup%. You can still type the Rate directly above — it won't be overwritten unless you edit a Cost Basis field.</p>
+                        <p class="text-[10px] text-purple-500 leading-snug normal-case">Rate auto-fills as Cost + Cost×Comm% + Cost×Markup%. You can still type the Rate directly — it won't be overwritten unless you edit a Cost Basis field.</p>
                     </div>
                 </td>
                 <td class="border px-2 py-2 align-top">
@@ -14778,6 +14794,10 @@
 
         function removeLineItem(id) {
             document.getElementById(`line-${id}`).remove();
+            // The cost-basis popover may have been reparented to <body> (see
+            // toggleCostBasis) if it was ever opened — clean it up too, or it'd
+            // be orphaned (still in the DOM, no longer attached to a real row).
+            document.getElementById(`costBasis-${id}`)?.remove();
             if (document.getElementById('lineItems').children.length === 0) {
                 document.getElementById('totalSection').classList.add('hidden');
             }
@@ -14792,9 +14812,53 @@
         // print/preview path) only ever reads item.rate + the standard fields —
         // these three never appear in any PDF, print view, or client-facing output.
         // ════════════════════════════════════════════════════════════════
-        function toggleCostBasis(id) {
+        function toggleCostBasis(id, evt) {
+            if (evt) evt.stopPropagation();
             const panel = document.getElementById(`costBasis-${id}`);
-            if (panel) panel.classList.toggle('hidden');
+            if (!panel) return;
+
+            // Reparent to <body> the first time this panel is opened, so it
+            // escapes the line-items table's `overflow-x-auto` wrapper (which
+            // would otherwise clip it at the table's edge regardless of
+            // position:fixed/absolute, since overflow-x:auto creates a new
+            // clipping context for both axes).
+            if (panel.parentElement !== document.body) {
+                document.body.appendChild(panel);
+            }
+
+            const isHidden = panel.classList.contains('hidden');
+            // Close any other open cost-basis popovers first (only one open at a time)
+            document.querySelectorAll('.cost-basis-popover').forEach(p => { if (p !== panel) p.classList.add('hidden'); });
+
+            if (isHidden) {
+                // Position relative to the 🧮 button that triggered this, clamped
+                // so the popover never runs off the right/bottom edge of the viewport.
+                const btn = evt?.currentTarget;
+                if (btn) {
+                    const r = btn.getBoundingClientRect();
+                    const panelW = 260;
+                    let left = r.left;
+                    let top  = r.bottom + 6;
+                    if (left + panelW > window.innerWidth - 12)  left = window.innerWidth - panelW - 12;
+                    if (left < 12) left = 12;
+                    if (top > window.innerHeight - 220) top = r.top - 6 - 260; // flip above if not enough room below
+                    panel.style.left = left + 'px';
+                    panel.style.top  = top + 'px';
+                }
+                panel.classList.remove('hidden');
+                // Click-outside-to-close: attach once per open, remove on close
+                setTimeout(() => {
+                    const closeHandler = (e) => {
+                        if (!panel.contains(e.target)) {
+                            panel.classList.add('hidden');
+                            document.removeEventListener('click', closeHandler);
+                        }
+                    };
+                    document.addEventListener('click', closeHandler);
+                }, 0);
+            } else {
+                panel.classList.add('hidden');
+            }
         }
 
         function recalcRateFromCostBasis(id) {
