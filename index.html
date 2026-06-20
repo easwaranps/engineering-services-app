@@ -5200,6 +5200,7 @@
                 // Header drawn on every page
                 const logoData   = settings.logoData || DEFAULT_LOGO;
                 const companyMSME = settings.msmeNumber || '';
+                const companyIEC  = settings.iecNumber  || '';
 
                 function addHeader(doc, pageNum) {
                     const pageW  = 210;
@@ -5239,11 +5240,15 @@
                     doc.setCharSpace(0);
                     doc.setTextColor(0, 0, 0);
 
-                    // ── GST + MSME — right-aligned below name ────────────────
+                    // ── IEC + GST + MSME — right-aligned below name ──────────
                     doc.setFontSize(7.5);
                     doc.setFont('helvetica', 'bold');
                     doc.setTextColor(40, 40, 100);
                     let ryY = logoY + 12;
+                    if (companyIEC) {
+                        doc.text('IEC: ' + companyIEC, pageW - margin, ryY, { align: 'right' });
+                        ryY += 4;
+                    }
                     if (companyGST) {
                         doc.text('GST: ' + companyGST, pageW - margin, ryY, { align: 'right' });
                         ryY += 4;
@@ -13402,6 +13407,10 @@
                             <input type="text" id="companyName" value="${settings.companyName || ''}" class="w-full px-4 py-2 border rounded-lg" />
                         </div>
                         <div>
+                            <label class="block text-sm font-semibold mb-2">IEC Number <span class="text-gray-400 font-normal">(Import Export Code)</span></label>
+                            <input type="text" id="companyIEC" value="${settings.iecNumber || ''}" placeholder="e.g. 0313060142" class="w-full px-4 py-2 border rounded-lg" />
+                        </div>
+                        <div>
                             <label class="block text-sm font-semibold mb-2">GST Number</label>
                             <input type="text" id="companyGST" value="${settings.gstNumber || ''}" class="w-full px-4 py-2 border rounded-lg" />
                         </div>
@@ -15743,6 +15752,7 @@
             try {
                 settings = {
                     companyName: document.getElementById('companyName').value,
+                    iecNumber: document.getElementById('companyIEC')?.value || settings.iecNumber || '',
                     gstNumber: document.getElementById('companyGST').value,
                     companyAddress: document.getElementById('companyAddress').value,
                     msmeNumber: document.getElementById('msmeNumber')?.value || settings.msmeNumber || '',
@@ -29696,6 +29706,7 @@ Automated WFH alert — ${company} Attendance System.`;
             const s = settings || {};
             const rows = [
                 ['Company Name',  s.companyName || ''],
+                ['IEC Number',    s.iecNumber || ''],
                 ['GST Number',    s.gstNumber || ''],
                 ['MSME Number',   s.msmeNumber || ''],
                 ['CIN Number',    s.cinNumber || ''],
