@@ -14863,10 +14863,14 @@
 
         function recalcRateFromCostBasis(id) {
             const row = document.getElementById(`line-${id}`);
-            if (!row) return;
-            const cost   = parseFloat(row.querySelector('.item-costprice')?.value) || 0;
-            const comm   = parseFloat(row.querySelector('.item-distcomm')?.value) || 0;
-            const markup = parseFloat(row.querySelector('.item-markup')?.value) || 0;
+            // The Cost Basis inputs live inside the popover (#costBasis-${id}),
+            // which gets reparented to <body> on first open (see toggleCostBasis)
+            // — so it's no longer a descendant of the row. Look it up separately.
+            const panel = document.getElementById(`costBasis-${id}`);
+            if (!row || !panel) return;
+            const cost   = parseFloat(panel.querySelector('.item-costprice')?.value) || 0;
+            const comm   = parseFloat(panel.querySelector('.item-distcomm')?.value) || 0;
+            const markup = parseFloat(panel.querySelector('.item-markup')?.value) || 0;
             const rate = cost + (cost * comm / 100) + (cost * markup / 100);
             const rateInput = row.querySelector('.item-rate');
             if (rateInput) rateInput.value = rate ? rate.toFixed(2) : '';
@@ -15034,25 +15038,38 @@
                 if (currentTransaction?.txnID) {
                     if (await _concurBlockIfStale('transactions', [{ id: currentTransaction.txnID, idKey: 'txnID' }])) return;
                 }
-                const items = Array.from(document.getElementById('lineItems').children).map((row, idx) => ({
-                    itemID: `item-${idx + 1}`,
-                    description: row.querySelector('.item-desc').value,
-                    partNo: row.querySelector('.item-partno')?.value || '',
-                    hsnCode: row.querySelector('.item-hsn').value,
-                    qty: parseFloat(row.querySelector('.item-qty').value) || 0,
-                    uom: row.querySelector('.item-uom').value,
-                    rate: parseFloat(row.querySelector('.item-rate').value) || 0,
-                    discountPct: parseFloat(row.querySelector('.item-discount').value) || 0,
-                    sgstPct: parseFloat(row.querySelector('.item-sgst').value) || 0,
-                    cgstPct: parseFloat(row.querySelector('.item-cgst').value) || 0,
-                    igstPct: parseFloat(row.querySelector('.item-igst').value) || 0,
-                    // Cost Basis — internal only, never read by the PDF/print path.
-                    // Saved purely so the 🧮 calculator can be re-opened with the
-                    // same figures later (e.g. if you revisit a draft quotation).
-                    costPrice: row.querySelector('.item-costprice')?.value !== '' ? (parseFloat(row.querySelector('.item-costprice')?.value) || 0) : null,
-                    distributorCommPct: row.querySelector('.item-distcomm')?.value !== '' ? (parseFloat(row.querySelector('.item-distcomm')?.value) || 0) : null,
-                    markupPct: row.querySelector('.item-markup')?.value !== '' ? (parseFloat(row.querySelector('.item-markup')?.value) || 0) : null
-                }));
+                const items = Array.from(document.getElementById('lineItems').children).map((row, idx) => {
+                    // Cost Basis inputs (Base Cost / Distributor Comm% / Markup%) live
+                    // inside the popover, which gets reparented to <body> the first
+                    // time it's opened (see toggleCostBasis) — so it's no longer a
+                    // descendant of `row` and must be looked up separately by the
+                    // row's actual DOM id (not the array index, which can drift if
+                    // rows were added/removed/reordered).
+                    const rowItemId = (row.id || '').replace(/^line-/, '');
+                    const costPanel = document.getElementById(`costBasis-${rowItemId}`);
+                    const cbCost  = costPanel?.querySelector('.item-costprice')?.value;
+                    const cbComm  = costPanel?.querySelector('.item-distcomm')?.value;
+                    const cbMark  = costPanel?.querySelector('.item-markup')?.value;
+                    return {
+                        itemID: `item-${idx + 1}`,
+                        description: row.querySelector('.item-desc').value,
+                        partNo: row.querySelector('.item-partno')?.value || '',
+                        hsnCode: row.querySelector('.item-hsn').value,
+                        qty: parseFloat(row.querySelector('.item-qty').value) || 0,
+                        uom: row.querySelector('.item-uom').value,
+                        rate: parseFloat(row.querySelector('.item-rate').value) || 0,
+                        discountPct: parseFloat(row.querySelector('.item-discount').value) || 0,
+                        sgstPct: parseFloat(row.querySelector('.item-sgst').value) || 0,
+                        cgstPct: parseFloat(row.querySelector('.item-cgst').value) || 0,
+                        igstPct: parseFloat(row.querySelector('.item-igst').value) || 0,
+                        // Cost Basis — internal only, never read by the PDF/print path.
+                        // Saved purely so the 🧮 calculator can be re-opened with the
+                        // same figures later (e.g. if you revisit a draft quotation).
+                        costPrice: (cbCost !== undefined && cbCost !== '') ? (parseFloat(cbCost) || 0) : null,
+                        distributorCommPct: (cbComm !== undefined && cbComm !== '') ? (parseFloat(cbComm) || 0) : null,
+                        markupPct: (cbMark !== undefined && cbMark !== '') ? (parseFloat(cbMark) || 0) : null
+                    };
+                });
                 
                 const txnData = {
                     txnID: currentTransaction?.txnID || generateTxnID(document.getElementById('txnCategory').value),
