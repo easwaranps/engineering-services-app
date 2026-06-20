@@ -14703,7 +14703,8 @@
                 </td>
                 <td class="border px-2 py-2 align-top">
                     <!-- Excel-style formula bar: type a plain number, or start with "=" for
-                         a formula using + - * / ( ) and decimals, e.g. =150971*(1+0.20+0.15)
+                         a formula using + - * / ( ) %, and decimals, e.g. =150971*(1+0.20+0.15)
+                         or =6114325.50*2% for percentage-based lines like Packing & Forwarding.
                          While focused/being edited, shows the raw formula text typed.
                          On blur, evaluates and displays the computed result (rounded to 2dp) —
                          the formula itself is preserved in data-formula and restored on refocus.
@@ -14717,7 +14718,7 @@
                         class="item-rate w-full px-2 py-1 border rounded text-sm font-mono"
                         onfocus="_rateFormulaFocus(this)"
                         onblur="_rateFormulaBlur(this)"
-                        title="Type a number, or start with = for a formula, e.g. =150971*(1+0.20+0.15)"
+                        title="Type a number, or start with = for a formula, e.g. =150971*(1+0.20+0.15) or =6114325.50*2%"
                         required />
                 </td>
                 <td class="border px-2 py-2 align-top">
@@ -14776,7 +14777,8 @@
         // ════════════════════════════════════════════════════════════════
         // RATE FORMULA BAR — Excel-style entry on the Unit Cost / Rate field.
         // Type a plain number (e.g. 1500), or a formula starting with "="
-        // using numbers, + - * / ( ) and decimals (e.g. =150971*(1+0.20+0.15)).
+        // using numbers, + - * / ( ) %, and decimals (e.g. =150971*(1+0.20+0.15),
+        // or =6114325.50*2% for a percentage-of-amount line like Packing & Fwd).
         //
         // While the cell is focused, it shows the raw text you're typing/last
         // typed (the formula, if any). On blur it evaluates and displays the
@@ -14835,7 +14837,7 @@
                 input.dataset.computed = String(isFinite(n) ? n : 0);
                 input.value = formatNumber2(isFinite(n) ? n : 0);
                 input.classList.remove('border-red-400');
-                input.title = 'Type a number, or start with = for a formula, e.g. =150971*(1+0.20+0.15)';
+                input.title = 'Type a number, or start with = for a formula, e.g. =150971*(1+0.20+0.15) or =6114325.50*2%';
             }
             updateTotals();
         }
@@ -14847,7 +14849,11 @@
         function evalRateFormula(expr) {
             const s = expr.replace(/\s+/g, '');
             if (!s) throw new Error('Empty formula');
-            if (!/^[0-9+\-*/().]+$/.test(s)) throw new Error('Only numbers and + - * / ( ) are allowed');
+            // % supported as a postfix "percent" operator, Excel-style: 2% means
+            // 0.02, and 6114325.50*2% means 6114325.50 * 0.02. Binds tighter than
+            // * and / (applies immediately to the number/parenthesised group
+            // right before it), handled in parseFactor below.
+            if (!/^[0-9+\-*/().%]+$/.test(s)) throw new Error('Only numbers and + - * / ( ) % are allowed');
             let pos = 0;
             function peek() { return s[pos]; }
             function parseNumber() {
@@ -14861,16 +14867,23 @@
                 return Number(numStr);
             }
             function parseFactor() {
+                let val;
                 if (peek() === '(') {
                     pos++; // consume '('
-                    const val = parseExpr();
+                    val = parseExpr();
                     if (peek() !== ')') throw new Error('Missing closing )');
                     pos++; // consume ')'
-                    return val;
+                } else if (peek() === '-') {
+                    pos++; return -parseFactor();
+                } else if (peek() === '+') {
+                    pos++; return parseFactor();
+                } else {
+                    val = parseNumber();
                 }
-                if (peek() === '-') { pos++; return -parseFactor(); }
-                if (peek() === '+') { pos++; return parseFactor(); }
-                return parseNumber();
+                // Postfix %: consume as many trailing % as typed (e.g. rare but
+                // harmless to support "5%%" → 0.0005) by dividing by 100 each time.
+                while (peek() === '%') { pos++; val /= 100; }
+                return val;
             }
             function parseTerm() {
                 let val = parseFactor();
