@@ -12264,7 +12264,7 @@
                                 </tr>
                                 ${priorRCM.total > 0 ? `
                                 <tr class="border-t bg-blue-50/30">
-                                    <td class="px-4 py-2 text-xs">− Prior-month RCM ITC <span class="text-[10px] text-gray-400">(${priorRCM.count} RCM bill(s) from ${['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][priorRCM.prevMonth]} ${priorRCM.prevYear} self-paid last filing)</span></td>
+                                    <td class="px-4 py-2 text-xs">− Prior-month RCM ITC <span class="text-[10px] text-gray-400">(${priorRCM.count} RCM bill(s) from ${['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][priorRCM.prevMonth]} ${priorRCM.prevYear} self-paid last filing)</span> <button type="button" onclick='_showPriorRCMBills(${JSON.stringify(priorRCM).replace(/'/g,"&apos;")})' class="text-[10px] text-blue-600 underline hover:text-blue-800">🔍 view bills</button></td>
                                     <td class="px-4 py-2 text-xs text-right text-blue-700">${fmt(priorRCM.igst)}</td>
                                     <td class="px-4 py-2 text-xs text-right text-blue-700">${fmt(priorRCM.cgst)}</td>
                                     <td class="px-4 py-2 text-xs text-right text-blue-700">${fmt(priorRCM.sgst)}</td>
@@ -21467,7 +21467,7 @@ Automated WFH alert — ${company} Attendance System.`;
 
         async function dirExpReconPDF(month) {
             const dirs = getDirNames();
-            showToast ? showToast('⏳ Generating Reconciliation PDF…',5000) : null;
+            _showToast('⏳ Generating Reconciliation PDF…', '#0d9488', 5000);
             if (!window.jspdf) {
                 await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
                 await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
@@ -28033,7 +28033,7 @@ Automated WFH alert — ${company} Attendance System.`;
             let prevMonth = month - 1, prevYear = year;
             if (prevMonth < 1) { prevMonth = 12; prevYear = year - 1; }
             const pfx = `${prevYear}-${String(prevMonth).padStart(2,'0')}-`;
-            const result = { igst: 0, cgst: 0, sgst: 0, total: 0, prevMonth, prevYear, count: 0 };
+            const result = { igst: 0, cgst: 0, sgst: 0, total: 0, prevMonth, prevYear, count: 0, bills: [] };
 
             (expenses || []).forEach(e => {
                 if (!e.rcmApplicable) return;
@@ -28043,6 +28043,17 @@ Automated WFH alert — ${company} Attendance System.`;
                 result.sgst += parseFloat(e.sgst) || 0;
                 result.igst += parseFloat(e.igst) || 0;
                 result.count++;
+                // Kept for the "view bills" drill-down so the user can verify
+                // exactly which bills contributed — instead of just trusting a
+                // total, they can see the actual Bill Date/vendor/amount list.
+                result.bills.push({
+                    expID: e.expID || '',
+                    billDate: e.billDate || '',
+                    vendor: e.companyName || e.staffName || e.vendor || '—',
+                    cgst: parseFloat(e.cgst) || 0,
+                    sgst: parseFloat(e.sgst) || 0,
+                    igst: parseFloat(e.igst) || 0
+                });
             });
 
             result.total = +(result.cgst + result.sgst + result.igst).toFixed(2);
@@ -28050,6 +28061,65 @@ Automated WFH alert — ${company} Attendance System.`;
             result.sgst  = +result.sgst.toFixed(2);
             result.igst  = +result.igst.toFixed(2);
             return result;
+        }
+
+        // Verification popup for the "🔍 view bills" link on the Prior-Month RCM
+        // row — shows exactly which bills (Bill Date, vendor, amounts) were
+        // summed into the total, so the user can confirm at a glance whether
+        // two different months' totals being similar/equal is a coincidence
+        // (genuinely matching bill amounts) or a data issue (a bill dated in
+        // the wrong month).
+        function _showPriorRCMBills(priorRCM) {
+            const monthName = ['','January','February','March','April','May','June','July','August','September','October','November','December'][priorRCM.prevMonth] || priorRCM.prevMonth;
+            const fmt2 = n => '₹' + (+n || 0).toLocaleString('en-IN', {minimumFractionDigits:2});
+            const rows = (priorRCM.bills || []).map(b => `
+                <tr class="border-t">
+                    <td class="px-3 py-2 text-xs">${b.billDate || '—'}</td>
+                    <td class="px-3 py-2 text-xs">${(b.vendor||'').replace(/</g,'&lt;')}</td>
+                    <td class="px-3 py-2 text-xs text-right">${fmt2(b.igst)}</td>
+                    <td class="px-3 py-2 text-xs text-right">${fmt2(b.cgst)}</td>
+                    <td class="px-3 py-2 text-xs text-right">${fmt2(b.sgst)}</td>
+                    <td class="px-3 py-2 text-xs text-right font-semibold">${fmt2(b.igst+b.cgst+b.sgst)}</td>
+                </tr>`).join('');
+            const modal = document.createElement('div');
+            modal.id = 'priorRCMBillsModal';
+            modal.className = 'modal show';
+            modal.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl m-4 max-h-[85vh] overflow-y-auto">
+                <div class="bg-gradient-to-r from-blue-600 to-indigo-600 p-4 text-white flex justify-between items-center sticky top-0">
+                    <div>
+                        <h3 class="text-base font-bold">RCM Bills — ${monthName} ${priorRCM.prevYear}</h3>
+                        <p class="text-blue-100 text-xs mt-0.5">These ${priorRCM.count} bill(s) make up the Prior-Month RCM ITC total shown</p>
+                    </div>
+                    <button onclick="document.getElementById('priorRCMBillsModal').remove()" class="text-white text-2xl">×</button>
+                </div>
+                <div class="p-4">
+                    <table class="w-full text-sm">
+                        <thead class="bg-gray-50 text-xs text-gray-500 uppercase">
+                            <tr>
+                                <th class="px-3 py-2 text-left">Bill Date</th>
+                                <th class="px-3 py-2 text-left">Vendor</th>
+                                <th class="px-3 py-2 text-right">IGST</th>
+                                <th class="px-3 py-2 text-right">CGST</th>
+                                <th class="px-3 py-2 text-right">SGST</th>
+                                <th class="px-3 py-2 text-right">Total</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows || '<tr><td colspan="6" class="px-3 py-4 text-center text-gray-400 text-xs">No bills found</td></tr>'}</tbody>
+                        <tfoot class="bg-blue-50 font-bold text-xs">
+                            <tr>
+                                <td colspan="2" class="px-3 py-2 text-right">TOTAL:</td>
+                                <td class="px-3 py-2 text-right">${fmt2(priorRCM.igst)}</td>
+                                <td class="px-3 py-2 text-right">${fmt2(priorRCM.cgst)}</td>
+                                <td class="px-3 py-2 text-right">${fmt2(priorRCM.sgst)}</td>
+                                <td class="px-3 py-2 text-right">${fmt2(priorRCM.total)}</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                    <p class="text-[11px] text-gray-400 mt-3">If the same bill appears here for two different months, check its Bill Date in Expenses — it likely needs correcting to the month the service/rent actually relates to.</p>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
         }
 
         // ── Pending Tax Credits (GST TDS receivable + similar) ─────────────
@@ -28154,7 +28224,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 await saveData('settings', settings);
                 document.getElementById('pendingCreditsModal')?.remove();
                 renderView();
-                showToast?.('✓ Pending credits saved');
+                _showToast('✓ Pending credits saved', '#16a34a');
             } catch (e) { alert('Could not save: ' + e.message); }
         }
 
@@ -28167,7 +28237,7 @@ Automated WFH alert — ${company} Attendance System.`;
                     await saveData('settings', settings);
                     document.getElementById('pendingCreditsModal')?.remove();
                     renderView();
-                    showToast?.('✓ Cleared');
+                    _showToast('✓ Cleared', '#16a34a');
                 } catch (e) { alert('Could not save: ' + e.message); }
             }
         }
@@ -28371,7 +28441,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 document.getElementById('gstPaymentModal')?.remove();
                 _gstPayApprovalAtt = null; _gstPayTallyAtt = null;
                 renderView();
-                showToast?.('✓ GST payment recorded');
+                _showToast('✓ GST payment recorded', '#16a34a');
             } catch (e) { alert('Could not save: ' + e.message); }
         }
 
@@ -28384,7 +28454,7 @@ Automated WFH alert — ${company} Attendance System.`;
                     await saveData('settings', settings);
                     document.getElementById('gstPaymentModal')?.remove();
                     renderView();
-                    showToast?.('✓ Cleared');
+                    _showToast('✓ Cleared', '#16a34a');
                 } catch (e) { alert('Could not save: ' + e.message); }
             }
         }
