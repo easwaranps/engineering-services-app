@@ -14450,10 +14450,6 @@
             }
 
             document.getElementById('lineItems').innerHTML = '';
-            // Defensive sweep: clear any cost-basis popovers left over in <body>
-            // from a previous session (normally cleaned by closeTransactionModal,
-            // this is just a safety net in case the modal was dismissed another way).
-            document.querySelectorAll('.cost-basis-popover').forEach(p => p.remove());
             document.getElementById('totalSection').classList.add('hidden');
             document.getElementById('supportingDocsSection').classList.add('hidden');
 
@@ -14590,11 +14586,6 @@
             document.getElementById('transactionModal').classList.remove('show');
             document.getElementById('transactionForm').reset();
             lineItemCounter = 0;
-            // Sweep up any cost-basis popovers that were reparented to <body>
-            // (see toggleCostBasis) — they'd otherwise leak across modal opens
-            // since they're no longer inside #lineItems and won't get cleared
-            // by the innerHTML reset below.
-            document.querySelectorAll('.cost-basis-popover').forEach(p => p.remove());
             _concurEndEdit();
         }
 
@@ -14710,43 +14701,24 @@
                         <option value="JOB" ${item?.uom === 'JOB' ? 'selected' : ''}>JOB</option>
                     </select>
                 </td>
-                <td class="border px-2 py-2 align-top" style="position:relative;">
-                    <div class="flex items-center gap-1">
-                        <input type="number" placeholder="0.00" value="${item?.rate || 0}" 
-                            class="item-rate w-full px-2 py-1 border rounded text-sm" min="0" step="0.01" required />
-                        <button type="button" onclick="toggleCostBasis('${id}', event)" title="Cost / Distributor Commission / Markup calculator (internal only — never printed)" class="text-xs px-1.5 py-1 rounded border border-gray-300 text-gray-500 hover:bg-gray-100 hover:text-purple-600 flex-shrink-0">🧮</button>
-                    </div>
-                    <!-- Cost-basis mini-panel: internal only. Computes Rate = Cost + Cost×Comm% + Cost×Markup%.
-                         Never read by the PDF generator (exportTransactionToPDF only reads item.rate and the
-                         standard fields) — these three values stay purely as a calculation aid + audit trail.
-                         position:fixed + body-reparenting on open (see toggleCostBasis) so it escapes the
-                         line-items table's "overflow-x-auto" wrapper, which would otherwise clip an
-                         absolutely-positioned popover at the table's edge. -->
-                    <div id="costBasis-${id}" class="hidden cost-basis-popover" data-item-id="${id}" style="position:fixed; width:260px; z-index:9999; background:#faf5ff; border:1px solid #d8b4fe; border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,0.25); padding:12px;">
-                        <div class="flex items-center justify-between mb-2">
-                            <p class="text-[11px] font-bold text-purple-700 uppercase">🧮 Cost Basis</p>
-                            <button type="button" onclick="toggleCostBasis('${id}', event)" class="text-purple-400 hover:text-purple-700 text-sm leading-none px-1">✕</button>
-                        </div>
-                        <p class="text-[10px] text-purple-400 mb-2 normal-case">Internal only — never printed on PDF/quotation</p>
-                        <div class="mb-2">
-                            <label class="text-[11px] text-gray-600 block mb-0.5">Base Cost (₹)</label>
-                            <input type="number" placeholder="0.00" value="${item?.costPrice ?? ''}" min="0" step="0.01"
-                                class="item-costprice w-full px-2 py-1.5 border border-purple-300 rounded text-sm" oninput="recalcRateFromCostBasis('${id}')" />
-                        </div>
-                        <div class="grid grid-cols-2 gap-2 mb-2">
-                            <div>
-                                <label class="text-[11px] text-gray-600 block mb-0.5">Distributor Comm %</label>
-                                <input type="number" placeholder="0" value="${item?.distributorCommPct ?? ''}" min="0" step="0.01"
-                                    class="item-distcomm w-full px-2 py-1.5 border border-purple-300 rounded text-sm" oninput="recalcRateFromCostBasis('${id}')" />
-                            </div>
-                            <div>
-                                <label class="text-[11px] text-gray-600 block mb-0.5">Markup %</label>
-                                <input type="number" placeholder="0" value="${item?.markupPct ?? ''}" min="0" step="0.01"
-                                    class="item-markup w-full px-2 py-1.5 border border-purple-300 rounded text-sm" oninput="recalcRateFromCostBasis('${id}')" />
-                            </div>
-                        </div>
-                        <p class="text-[10px] text-purple-500 leading-snug normal-case">Rate auto-fills as Cost + Cost×Comm% + Cost×Markup%. You can still type the Rate directly — it won't be overwritten unless you edit a Cost Basis field.</p>
-                    </div>
+                <td class="border px-2 py-2 align-top">
+                    <!-- Excel-style formula bar: type a plain number, or start with "=" for
+                         a formula using + - * / ( ) and decimals, e.g. =150971*(1+0.20+0.15)
+                         While focused/being edited, shows the raw formula text typed.
+                         On blur, evaluates and displays the computed result (rounded to 2dp) —
+                         the formula itself is preserved in data-formula and restored on refocus.
+                         Evaluated safely via evalRateFormula() — no eval()/Function() on user
+                         input. Internal only: the PDF/print path only ever reads the computed
+                         numeric item.rate, never the formula string. -->
+                    <input type="text" inputmode="decimal" placeholder="0.00 or =formula"
+                        value="${formatNumber2(item?.rate || 0)}"
+                        data-formula="${(item?.rateFormula || '').replace(/"/g,'&quot;')}"
+                        data-computed="${item?.rate || 0}"
+                        class="item-rate w-full px-2 py-1 border rounded text-sm font-mono"
+                        onfocus="_rateFormulaFocus(this)"
+                        onblur="_rateFormulaBlur(this)"
+                        title="Type a number, or start with = for a formula, e.g. =150971*(1+0.20+0.15)"
+                        required />
                 </td>
                 <td class="border px-2 py-2 align-top">
                     <input type="number" placeholder="0" value="${item?.discountPct || 0}" 
@@ -14795,10 +14767,6 @@
 
         function removeLineItem(id) {
             document.getElementById(`line-${id}`).remove();
-            // The cost-basis popover may have been reparented to <body> (see
-            // toggleCostBasis) if it was ever opened — clean it up too, or it'd
-            // be orphaned (still in the DOM, no longer attached to a real row).
-            document.getElementById(`costBasis-${id}`)?.remove();
             if (document.getElementById('lineItems').children.length === 0) {
                 document.getElementById('totalSection').classList.add('hidden');
             }
@@ -14806,76 +14774,138 @@
         }
 
         // ════════════════════════════════════════════════════════════════
-        // COST BASIS — internal-only calculator per line item (Quotations etc.)
-        // Formula: Rate = Base Cost + (Base Cost × Distributor Comm%) + (Base Cost × Markup%)
-        // costPrice / distributorCommPct / markupPct are saved on the item
-        // alongside the usual fields, but exportTransactionToPDF (and every
-        // print/preview path) only ever reads item.rate + the standard fields —
-        // these three never appear in any PDF, print view, or client-facing output.
+        // RATE FORMULA BAR — Excel-style entry on the Unit Cost / Rate field.
+        // Type a plain number (e.g. 1500), or a formula starting with "="
+        // using numbers, + - * / ( ) and decimals (e.g. =150971*(1+0.20+0.15)).
+        //
+        // While the cell is focused, it shows the raw text you're typing/last
+        // typed (the formula, if any). On blur it evaluates and displays the
+        // computed result rounded to 2dp — same as Excel's formula bar vs
+        // cell display behavior. The formula string is preserved in the
+        // input's data-formula attribute and on the saved item as
+        // item.rateFormula, purely so re-opening the transaction shows the
+        // formula again instead of just the number.
+        //
+        // Evaluated by evalRateFormula() below — a small hand-written
+        // recursive-descent parser, NOT eval()/new Function() on raw user
+        // input. Only digits, decimals, + - * / ( ) and whitespace are
+        // accepted; anything else throws, caught and surfaced as an error
+        // state rather than executed.
+        //
+        // Internal only: exportTransactionToPDF (and every print/preview
+        // path) only ever reads the computed item.rate number — it never
+        // reads item.rateFormula, so the formula text itself never appears
+        // on any client-facing PDF or printout.
         // ════════════════════════════════════════════════════════════════
-        function toggleCostBasis(id, evt) {
-            if (evt) evt.stopPropagation();
-            const panel = document.getElementById(`costBasis-${id}`);
-            if (!panel) return;
-
-            // Reparent to <body> the first time this panel is opened, so it
-            // escapes the line-items table's `overflow-x-auto` wrapper (which
-            // would otherwise clip it at the table's edge regardless of
-            // position:fixed/absolute, since overflow-x:auto creates a new
-            // clipping context for both axes).
-            if (panel.parentElement !== document.body) {
-                document.body.appendChild(panel);
-            }
-
-            const isHidden = panel.classList.contains('hidden');
-            // Close any other open cost-basis popovers first (only one open at a time)
-            document.querySelectorAll('.cost-basis-popover').forEach(p => { if (p !== panel) p.classList.add('hidden'); });
-
-            if (isHidden) {
-                // Position relative to the 🧮 button that triggered this, clamped
-                // so the popover never runs off the right/bottom edge of the viewport.
-                const btn = evt?.currentTarget;
-                if (btn) {
-                    const r = btn.getBoundingClientRect();
-                    const panelW = 260;
-                    let left = r.left;
-                    let top  = r.bottom + 6;
-                    if (left + panelW > window.innerWidth - 12)  left = window.innerWidth - panelW - 12;
-                    if (left < 12) left = 12;
-                    if (top > window.innerHeight - 220) top = r.top - 6 - 260; // flip above if not enough room below
-                    panel.style.left = left + 'px';
-                    panel.style.top  = top + 'px';
-                }
-                panel.classList.remove('hidden');
-                // Click-outside-to-close: attach once per open, remove on close
-                setTimeout(() => {
-                    const closeHandler = (e) => {
-                        if (!panel.contains(e.target)) {
-                            panel.classList.add('hidden');
-                            document.removeEventListener('click', closeHandler);
-                        }
-                    };
-                    document.addEventListener('click', closeHandler);
-                }, 0);
-            } else {
-                panel.classList.add('hidden');
-            }
+        function _rateFormulaFocus(input) {
+            // Re-show the raw formula (if any) for editing, Excel-style.
+            const formula = input.dataset.formula || '';
+            if (formula) input.value = formula;
+            input.select();
         }
 
-        function recalcRateFromCostBasis(id) {
-            const row = document.getElementById(`line-${id}`);
-            // The Cost Basis inputs live inside the popover (#costBasis-${id}),
-            // which gets reparented to <body> on first open (see toggleCostBasis)
-            // — so it's no longer a descendant of the row. Look it up separately.
-            const panel = document.getElementById(`costBasis-${id}`);
-            if (!row || !panel) return;
-            const cost   = parseFloat(panel.querySelector('.item-costprice')?.value) || 0;
-            const comm   = parseFloat(panel.querySelector('.item-distcomm')?.value) || 0;
-            const markup = parseFloat(panel.querySelector('.item-markup')?.value) || 0;
-            const rate = cost + (cost * comm / 100) + (cost * markup / 100);
-            const rateInput = row.querySelector('.item-rate');
-            if (rateInput) rateInput.value = rate ? rate.toFixed(2) : '';
+        function _rateFormulaBlur(input) {
+            const raw = (input.value || '').trim();
+            if (!raw) {
+                input.dataset.formula = '';
+                input.dataset.computed = '0';
+                input.value = '';
+                updateTotals();
+                return;
+            }
+            if (raw.startsWith('=')) {
+                try {
+                    const result = evalRateFormula(raw.slice(1));
+                    if (!isFinite(result) || result < 0) throw new Error('Invalid result');
+                    input.dataset.formula = raw;
+                    input.dataset.computed = String(result);
+                    input.value = formatNumber2(result);
+                    input.classList.remove('border-red-400');
+                } catch (e) {
+                    // Bad formula: keep the raw text visible (in red) so the user
+                    // can see and fix it, rather than silently losing their input.
+                    input.classList.add('border-red-400');
+                    input.title = 'Formula error: ' + e.message + ' — fix and click away again, or clear to enter a plain number.';
+                    input.dataset.formula = raw;
+                    // Don't touch data-computed — keep last good value for totals.
+                }
+            } else {
+                const n = parseFloat(raw.replace(/,/g, ''));
+                input.dataset.formula = '';
+                input.dataset.computed = String(isFinite(n) ? n : 0);
+                input.value = formatNumber2(isFinite(n) ? n : 0);
+                input.classList.remove('border-red-400');
+                input.title = 'Type a number, or start with = for a formula, e.g. =150971*(1+0.20+0.15)';
+            }
             updateTotals();
+        }
+
+        // Safe arithmetic evaluator: numbers, + - * / ( ), no variables, no
+        // function calls, no property access — nothing that could reach
+        // outside simple arithmetic. Recursive-descent over +- then */ then
+        // unary then parens/number, matching standard operator precedence.
+        function evalRateFormula(expr) {
+            const s = expr.replace(/\s+/g, '');
+            if (!s) throw new Error('Empty formula');
+            if (!/^[0-9+\-*/().]+$/.test(s)) throw new Error('Only numbers and + - * / ( ) are allowed');
+            let pos = 0;
+            function peek() { return s[pos]; }
+            function parseNumber() {
+                const start = pos;
+                if (s[pos] === '-' || s[pos] === '+') pos++;
+                while (pos < s.length && /[0-9.]/.test(s[pos])) pos++;
+                const numStr = s.slice(start, pos);
+                if (numStr === '' || numStr === '-' || numStr === '+' || isNaN(Number(numStr))) {
+                    throw new Error('Invalid number near position ' + start);
+                }
+                return Number(numStr);
+            }
+            function parseFactor() {
+                if (peek() === '(') {
+                    pos++; // consume '('
+                    const val = parseExpr();
+                    if (peek() !== ')') throw new Error('Missing closing )');
+                    pos++; // consume ')'
+                    return val;
+                }
+                if (peek() === '-') { pos++; return -parseFactor(); }
+                if (peek() === '+') { pos++; return parseFactor(); }
+                return parseNumber();
+            }
+            function parseTerm() {
+                let val = parseFactor();
+                while (peek() === '*' || peek() === '/') {
+                    const op = peek(); pos++;
+                    const rhs = parseFactor();
+                    if (op === '*') val *= rhs;
+                    else {
+                        if (rhs === 0) throw new Error('Division by zero');
+                        val /= rhs;
+                    }
+                }
+                return val;
+            }
+            function parseExpr() {
+                let val = parseTerm();
+                while (peek() === '+' || peek() === '-') {
+                    const op = peek(); pos++;
+                    const rhs = parseTerm();
+                    val = op === '+' ? val + rhs : val - rhs;
+                }
+                return val;
+            }
+            const result = parseExpr();
+            if (pos !== s.length) throw new Error('Unexpected character near position ' + pos);
+            return Math.round(result * 100) / 100;
+        }
+
+        // Small helper: format a number to exactly 2 decimal places for the
+        // formula-bar display (distinct from formatNumber() used in totals,
+        // which may add thousands separators — keep this one plain so it's
+        // safe to re-parse if the user edits the displayed number directly).
+        function formatNumber2(n) {
+            const v = parseFloat(n);
+            return isFinite(v) ? v.toFixed(2) : '0.00';
         }
 
         // Add multiple blank line items at once for faster data entry
@@ -14900,7 +14930,16 @@
             
             rows.forEach(row => {
                 const qty = parseFloat(row.querySelector('.item-qty')?.value) || 0;
-                const rate = parseFloat(row.querySelector('.item-rate')?.value) || 0;
+                // Read the computed Rate, not the live input value — while the
+                // formula bar is focused/mid-edit, .value may hold raw formula
+                // text like "=150971*1.2" which would parse as NaN. data-computed
+                // always holds the last successfully evaluated number (see
+                // _rateFormulaBlur). Falls back to parsing .value directly for
+                // the very first render before any blur has occurred.
+                const rateEl = row.querySelector('.item-rate');
+                const rate = rateEl?.dataset.computed !== undefined
+                    ? (parseFloat(rateEl.dataset.computed) || 0)
+                    : (parseFloat(rateEl?.value) || 0);
                 const discountPct = parseFloat(row.querySelector('.item-discount')?.value) || 0;
                 const sgstPct = parseFloat(row.querySelector('.item-sgst')?.value) || 0;
                 const cgstPct = parseFloat(row.querySelector('.item-cgst')?.value) || 0;
@@ -15040,17 +15079,18 @@
                     if (await _concurBlockIfStale('transactions', [{ id: currentTransaction.txnID, idKey: 'txnID' }])) return;
                 }
                 const items = Array.from(document.getElementById('lineItems').children).map((row, idx) => {
-                    // Cost Basis inputs (Base Cost / Distributor Comm% / Markup%) live
-                    // inside the popover, which gets reparented to <body> the first
-                    // time it's opened (see toggleCostBasis) — so it's no longer a
-                    // descendant of `row` and must be looked up separately by the
-                    // row's actual DOM id (not the array index, which can drift if
-                    // rows were added/removed/reordered).
-                    const rowItemId = (row.id || '').replace(/^line-/, '');
-                    const costPanel = document.getElementById(`costBasis-${rowItemId}`);
-                    const cbCost  = costPanel?.querySelector('.item-costprice')?.value;
-                    const cbComm  = costPanel?.querySelector('.item-distcomm')?.value;
-                    const cbMark  = costPanel?.querySelector('.item-markup')?.value;
+                    // Rate / Unit Cost formula bar: the input shows raw formula text
+                    // (e.g. "=150971*(1.2)") while focused, and the computed number
+                    // once blurred — see _rateFormulaBlur(). Always read the computed
+                    // value from data-computed, NOT the input's live .value, since if
+                    // the user saves while the cell is still focused (mid-edit) the
+                    // visible text could be the unevaluated formula string, which
+                    // would parse as NaN → silently save Rate as 0.
+                    const rateInput = row.querySelector('.item-rate');
+                    const rateFormula  = rateInput?.dataset.formula || '';
+                    const rateComputed = rateInput?.dataset.computed !== undefined
+                        ? parseFloat(rateInput.dataset.computed) || 0
+                        : (parseFloat(rateInput?.value) || 0);   // legacy/no-formula fallback
                     return {
                         itemID: `item-${idx + 1}`,
                         description: row.querySelector('.item-desc').value,
@@ -15058,17 +15098,16 @@
                         hsnCode: row.querySelector('.item-hsn').value,
                         qty: parseFloat(row.querySelector('.item-qty').value) || 0,
                         uom: row.querySelector('.item-uom').value,
-                        rate: parseFloat(row.querySelector('.item-rate').value) || 0,
+                        rate: rateComputed,
+                        // Formula text — internal only, never read by the PDF/print path
+                        // (exportTransactionToPDF only reads item.rate, the computed
+                        // number). Saved purely so reopening the transaction re-shows
+                        // the formula in the cell instead of just the flattened number.
+                        rateFormula: rateFormula || null,
                         discountPct: parseFloat(row.querySelector('.item-discount').value) || 0,
                         sgstPct: parseFloat(row.querySelector('.item-sgst').value) || 0,
                         cgstPct: parseFloat(row.querySelector('.item-cgst').value) || 0,
-                        igstPct: parseFloat(row.querySelector('.item-igst').value) || 0,
-                        // Cost Basis — internal only, never read by the PDF/print path.
-                        // Saved purely so the 🧮 calculator can be re-opened with the
-                        // same figures later (e.g. if you revisit a draft quotation).
-                        costPrice: (cbCost !== undefined && cbCost !== '') ? (parseFloat(cbCost) || 0) : null,
-                        distributorCommPct: (cbComm !== undefined && cbComm !== '') ? (parseFloat(cbComm) || 0) : null,
-                        markupPct: (cbMark !== undefined && cbMark !== '') ? (parseFloat(cbMark) || 0) : null
+                        igstPct: parseFloat(row.querySelector('.item-igst').value) || 0
                     };
                 });
                 
