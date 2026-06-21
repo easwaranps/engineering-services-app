@@ -21918,10 +21918,19 @@ Automated WFH alert — ${company} Attendance System.`;
             const dirName = dirKey === 'dir1' ? dirs[0] : dirs[1];
             const led = computeDirectorLedger(dirKey, monthYM);
             const fmt = n => '₹'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
-            // Default: settle through end of month
+            // Default: settle through the 25th of the month (not month-end).
+            // Matches the real-world cycle: expenses booked up to the 25th get
+            // paid out together around month-end; anything booked after the
+            // 25th rolls forward as next month's opening balance. The 25th is
+            // a DEFAULT, not a hard rule — "Settle Through Date" below remains
+            // fully editable for months where the cutoff shifts slightly.
+            // (Clamped to the month's actual last day for short months, though
+            // this only matters for February in leap-year edge cases since the
+            // 25th always exists in every month — kept for safety.)
             const [yr,mo] = monthYM.split('-').map(Number);
             const lastDay = new Date(yr, mo, 0).getDate();
-            const settleThrough = monthYM + '-' + String(lastDay).padStart(2,'0');
+            const defaultCutoffDay = Math.min(25, lastDay);
+            const settleThrough = monthYM + '-' + String(defaultCutoffDay).padStart(2,'0');
             // List unpaid expenses up through settle date (FIFO order)
             const unpaid = (directorExpenses||[]).filter(d =>
                 d.director===dirKey && !d.reimbursed && (d.expDate||'') <= settleThrough
