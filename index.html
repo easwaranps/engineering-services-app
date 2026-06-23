@@ -8458,8 +8458,8 @@
                             : ''}
                            <button onclick='editTransaction(${tJson})' class="text-indigo-600 hover:text-indigo-800 mr-1 text-xs font-medium">Edit</button>
                            <button onclick="duplicateTransaction('${t.txnID}')" class="text-teal-600 hover:text-teal-800 mr-1 text-xs font-medium" title="Create a new ${(t.txnCategory||'transaction').toLowerCase().replace('_',' ')} as a copy of this one">📋 Copy</button>
-                           ${t.txnCategory === 'QUOTATION' && t.status === 'Sent'
-                               ? `<span class="text-xs text-gray-400 italic" title="Quotation has been sent to client — Delete is blocked to prevent accidental removal of a submitted document. Change status first if deletion is genuinely needed.">🔒 Sent</span>`
+                           ${['QUOTATION','INVOICE','PO','CREDIT_NOTE'].includes(t.txnCategory) && ['Sent','Approved','Completed','Paid'].includes(t.status)
+                               ? `<span class="text-xs text-gray-400 italic" title="${t.txnCategory.charAt(0)+t.txnCategory.slice(1).toLowerCase().replace('_',' ')} is ${t.status} — Delete is blocked to prevent accidental removal of a submitted document. Change status to Draft first if deletion is genuinely needed.">🔒 ${t.status}</span>`
                                : `<button onclick="deleteTransaction('${t.txnID}')" class="text-red-600 hover:text-red-800 text-xs font-medium">Del</button>`
                            }`
                     }
@@ -15177,21 +15177,13 @@
                     };
                 });
                 
+                // Read the manual ID override field early (just a DOM read, no
+                // dependency on _isNewOrDuplicate). Validation and application
+                // happen below, after _isNewOrDuplicate is declared.
                 const _manualIDRaw = (document.getElementById('txnManualID')?.value || '').trim().toUpperCase();
-                const _useManualID = _isNewOrDuplicate && _manualIDRaw.length > 0;
-                // Validate manual ID format if provided: must start with a known prefix
-                // followed by 7+ alphanumeric chars (e.g. QTE2627017, INV2627005)
-                if (_useManualID && !/^(QTE|PI|PO|INV|CN|TXN)[A-Z0-9]{4,}\d{3,}$/.test(_manualIDRaw)) {
-                    alert(`Invalid Document Number format: "${_manualIDRaw}"\n\nExpected format like QTE2627017 (prefix + FY code + serial). Leave blank to auto-assign.`);
-                    submitBtn.textContent = originalText;
-                    submitBtn.disabled = false;
-                    return;
-                }
 
                 const txnData = {
-                    txnID: currentTransaction?.txnID
-                         ? currentTransaction.txnID                              // editing: keep existing
-                         : (_useManualID ? _manualIDRaw : generateTxnID(document.getElementById('txnCategory').value)),
+                    txnID: currentTransaction?.txnID || generateTxnID(document.getElementById('txnCategory').value),
                     txnCategory: document.getElementById('txnCategory').value,
                     txnDirection: document.getElementById('txnDirection').value,
                     partyName: document.getElementById('txnParty').value,
@@ -15288,6 +15280,22 @@
                 // Duplicates also count as "new" — they have a pre-generated ID
                 // that may collide with concurrent inserts.
                 const _isNewOrDuplicate = !currentTransaction || !!currentTransaction._isDuplicate;
+
+                // Apply manual ID override for gap recovery (e.g. recreating a
+                // deleted QTE2627016). Only valid for new/duplicate records, not
+                // edits. Validate format here now that _isNewOrDuplicate is known.
+                if (_isNewOrDuplicate && _manualIDRaw.length > 0) {
+                    if (!/^(QTE|PI|PO|INV|CN|TXN)[A-Z0-9]{4,}\d{3,}$/.test(_manualIDRaw)) {
+                        alert(`Invalid Document Number format: "${_manualIDRaw}"\n\nExpected format like QTE2627017 (prefix + FY code + serial). Leave blank to auto-assign.`);
+                        submitBtn.textContent = originalText;
+                        submitBtn.disabled = false;
+                        return;
+                    }
+                    // Override the auto-generated ID — _resolveSequence below will
+                    // still check it isn't already taken in the fresh server copy.
+                    txnData.txnID = _manualIDRaw;
+                }
+
                 const _freshTxn = await _refetchFresh('transactions');
                 if (_freshTxn) {
                     if (_isNewOrDuplicate) {
