@@ -965,6 +965,29 @@
                         </select>
                     </div>
                 </div>
+
+                <!-- Optional Document Number override — only for gap recovery when a
+                     quotation/invoice was inadvertently deleted and you need to recreate
+                     it with the original number (e.g. QTE2627017 was deleted, you need
+                     to re-issue it). Leave blank for normal use — the system auto-assigns
+                     the next number. Only shown for new records (editing preserves the
+                     existing number; this field is hidden and irrelevant on edit). -->
+                <div id="txnManualIDWrap" class="hidden mb-4 p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                    <div class="flex items-center gap-2 mb-2">
+                        <span class="text-xs font-bold text-amber-800">⚠ Document Number Override</span>
+                        <span class="text-[10px] text-amber-600">(only for gap recovery — leave blank for normal auto-numbering)</span>
+                        <button type="button" onclick="document.getElementById('txnManualIDWrap').classList.add('hidden');document.getElementById('txnManualID').value='';" class="ml-auto text-[10px] text-amber-500 hover:text-amber-700">✕ Hide</button>
+                    </div>
+                    <input type="text" id="txnManualID" placeholder="e.g. QTE2627017 — leave blank for auto-assign"
+                        class="w-full md:w-64 px-3 py-2 border border-amber-300 rounded-lg text-sm font-mono"
+                        maxlength="20" oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,'')" />
+                    <p class="text-[10px] text-amber-600 mt-1">The system will check this number isn't already taken before saving. Format must match the auto-generated pattern (e.g. QTE2627017).</p>
+                </div>
+                <div id="txnManualIDTriggerWrap" class="hidden -mt-3 mb-4">
+                    <button type="button" onclick="document.getElementById('txnManualIDWrap').classList.remove('hidden');document.getElementById('txnManualIDTriggerWrap').classList.add('hidden');" class="text-[11px] text-gray-400 hover:text-amber-600 underline">
+                        Recreating a deleted document? Override the auto-assigned number →
+                    </button>
+                </div>
                 
                 <!-- Conditional fields for Invoice/Proforma -->
                 <div id="invoiceFields" class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4 hidden">
@@ -5050,14 +5073,22 @@
                          : category === 'INVOICE'           ? 'INV'
                          : category === 'CREDIT_NOTE'       ? 'CN' : 'TXN';
 
-            // Count only same-category transactions in the CURRENT financial year
+            // Use MAX-based serial, not COUNT-based. Count-based breaks when a
+            // record is deleted mid-sequence — the next auto-generated ID gets
+            // the same serial as an existing record, causing a collision.
+            // Max-based always produces a number strictly higher than any
+            // existing serial, so deletions leave gaps but never cause collisions.
+            // e.g. if QTE2627014/015/016/018 exist (017 was deleted), next = 019.
             const fyTxns = transactions.filter(t => {
                 if (t.txnCategory !== category) return false;
-                // Match FY code embedded in the existing ID (4 digits before the serial)
-                const match = t.txnID.match(/[A-Z]+(\d{4})\d{3,}$/);
+                const match = (t.txnID || '').match(/[A-Z]+(\d{4})(\d{3,})$/);
                 return match ? match[1] === fyCode : false;
             });
-            const nextNum = (fyTxns.length + 1).toString().padStart(3, '0');
+            const maxSerial = fyTxns.reduce((max, t) => {
+                const match = (t.txnID || '').match(/[A-Z]+\d{4}(\d{3,})$/);
+                return match ? Math.max(max, parseInt(match[1], 10)) : max;
+            }, 0);
+            const nextNum = (maxSerial + 1).toString().padStart(3, '0');
             return prefix + fyCode + nextNum;
         }
 
@@ -8427,7 +8458,10 @@
                             : ''}
                            <button onclick='editTransaction(${tJson})' class="text-indigo-600 hover:text-indigo-800 mr-1 text-xs font-medium">Edit</button>
                            <button onclick="duplicateTransaction('${t.txnID}')" class="text-teal-600 hover:text-teal-800 mr-1 text-xs font-medium" title="Create a new ${(t.txnCategory||'transaction').toLowerCase().replace('_',' ')} as a copy of this one">📋 Copy</button>
-                           <button onclick="deleteTransaction('${t.txnID}')" class="text-red-600 hover:text-red-800 text-xs font-medium">Del</button>`
+                           ${t.txnCategory === 'QUOTATION' && t.status === 'Sent'
+                               ? `<span class="text-xs text-gray-400 italic" title="Quotation has been sent to client — Delete is blocked to prevent accidental removal of a submitted document. Change status first if deletion is genuinely needed.">🔒 Sent</span>`
+                               : `<button onclick="deleteTransaction('${t.txnID}')" class="text-red-600 hover:text-red-800 text-xs font-medium">Del</button>`
+                           }`
                     }
                 </td>
             </tr>`;
@@ -14586,6 +14620,16 @@
 
             toggleSupportingDocs();
             updateTxnBankSection();  // Show/hide and populate bank dropdown
+
+            // Manual ID override — only relevant for new records (gap recovery).
+            // On edit, the number is already fixed; hide both the trigger and the
+            // panel so they don't confuse the user.
+            const isNewRecord = !txn?.txnID || txn?._isDuplicate;
+            document.getElementById('txnManualIDTriggerWrap')?.classList.toggle('hidden', !isNewRecord);
+            document.getElementById('txnManualIDWrap')?.classList.add('hidden');
+            const manualIDInput = document.getElementById('txnManualID');
+            if (manualIDInput) manualIDInput.value = '';
+
             document.getElementById('transactionModal').classList.add('show');
             // Level 2 concurrency
             _concurBeginEdit('transactions', txn?.txnID ? [{ id: txn.txnID, idKey: 'txnID' }] : []);
@@ -15133,8 +15177,21 @@
                     };
                 });
                 
+                const _manualIDRaw = (document.getElementById('txnManualID')?.value || '').trim().toUpperCase();
+                const _useManualID = _isNewOrDuplicate && _manualIDRaw.length > 0;
+                // Validate manual ID format if provided: must start with a known prefix
+                // followed by 7+ alphanumeric chars (e.g. QTE2627017, INV2627005)
+                if (_useManualID && !/^(QTE|PI|PO|INV|CN|TXN)[A-Z0-9]{4,}\d{3,}$/.test(_manualIDRaw)) {
+                    alert(`Invalid Document Number format: "${_manualIDRaw}"\n\nExpected format like QTE2627017 (prefix + FY code + serial). Leave blank to auto-assign.`);
+                    submitBtn.textContent = originalText;
+                    submitBtn.disabled = false;
+                    return;
+                }
+
                 const txnData = {
-                    txnID: currentTransaction?.txnID || generateTxnID(document.getElementById('txnCategory').value),
+                    txnID: currentTransaction?.txnID
+                         ? currentTransaction.txnID                              // editing: keep existing
+                         : (_useManualID ? _manualIDRaw : generateTxnID(document.getElementById('txnCategory').value)),
                     txnCategory: document.getElementById('txnCategory').value,
                     txnDirection: document.getElementById('txnDirection').value,
                     partyName: document.getElementById('txnParty').value,
@@ -15248,12 +15305,17 @@
                             freshArray: _freshTxn,
                             displayedID: txnData.txnID,
                             computeNext: (arr) => {
+                                // Max-based (not count-based) — mirrors generateTxnID() fix.
                                 const fyTxns = arr.filter(t => {
                                     if (t.txnCategory !== category) return false;
                                     const m = (t.txnID||'').match(/[A-Z]+(\d{4})\d{3,}$/);
                                     return m ? m[1] === fyCode : false;
                                 });
-                                return prefix + fyCode + String(fyTxns.length + 1).padStart(3,'0');
+                                const maxSerial = fyTxns.reduce((max, t) => {
+                                    const m = (t.txnID||'').match(/[A-Z]+\d{4}(\d{3,})$/);
+                                    return m ? Math.max(max, parseInt(m[1], 10)) : max;
+                                }, 0);
+                                return prefix + fyCode + String(maxSerial + 1).padStart(3,'0');
                             },
                             isTaken: (arr, id) => arr.some(t => t.txnID === id),
                             label: labelMap[category] || 'Transaction ID'
