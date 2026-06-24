@@ -7070,10 +7070,25 @@
                         <h2 class="text-white font-bold text-base">⚪ Closed Pools <span class="opacity-80">(${closedPools.length})</span></h2>
                         <span class="text-xs text-white opacity-90">Reconciled · Ready for Tally</span>
                     </div>
-                    <div class="divide-y divide-gray-100">
+                    <div class="divide-y divide-gray-100" id="closedPoolsList">
                         ${closedPools.slice(0, 10).map(p => _renderPoolRow(p, 'Closed')).join('')}
-                        ${closedPools.length > 10 ? `<div class="p-3 text-center text-xs text-gray-400">… and ${closedPools.length - 10} more</div>` : ''}
                     </div>
+                    ${closedPools.length > 10 ? `
+                    <div id="closedPoolsExtra" class="divide-y divide-gray-100 hidden">
+                        ${closedPools.slice(10).map(p => _renderPoolRow(p, 'Closed')).join('')}
+                    </div>
+                    <div class="p-3 text-center border-t border-gray-100">
+                        <button id="closedPoolsToggleBtn" onclick="
+                            const extra = document.getElementById('closedPoolsExtra');
+                            const btn   = document.getElementById('closedPoolsToggleBtn');
+                            const hidden = extra.classList.toggle('hidden');
+                            btn.textContent = hidden
+                                ? '▼ Show all ${closedPools.length} closed pools'
+                                : '▲ Show less';
+                        " class="text-xs text-gray-500 hover:text-gray-800 font-medium">
+                            ▼ Show all ${closedPools.length} closed pools
+                        </button>
+                    </div>` : ''}
                 </div>` : ''}
 
                 <!-- All Requests Quick Stats (helpful audit panel) -->
