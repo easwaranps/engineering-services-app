@@ -1173,16 +1173,16 @@
                                     <th class="border px-2 py-2 text-left w-12">S.No</th>
                                     <th class="border px-2 py-2 text-left" style="min-width:280px;">Description</th>
                                     <th id="thPartNo" class="border px-2 py-2 text-left hidden" style="width:110px;">Part No</th>
-                                    <th class="border px-2 py-2 text-left" style="width:100px;">HSN Code</th>
+                                    <th id="thHSN" class="border px-2 py-2 text-left" style="width:100px;">HSN Code</th>
                                     <th class="border px-2 py-2 text-left" style="width:80px;">Qty</th>
                                     <th class="border px-2 py-2 text-left" style="width:90px;">UOM</th>
-                                    <th class="border px-2 py-2 text-left" style="width:130px;">Cost/Unit</th>
-                                    <th class="border px-2 py-2 text-left" style="width:90px;">Discount%</th>
-                                    <th class="border px-2 py-2 text-right" style="width:120px;">Taxable Amt</th>
-                                    <th class="border px-2 py-2 text-left" style="width:80px;">SGST%</th>
-                                    <th class="border px-2 py-2 text-left" style="width:80px;">CGST%</th>
-                                    <th class="border px-2 py-2 text-left" style="width:80px;">IGST%</th>
-                                    <th class="border px-2 py-2 text-right" style="width:120px;">Total</th>
+                                    <th id="thRate" class="border px-2 py-2 text-left" style="width:130px;">Cost/Unit</th>
+                                    <th id="thDiscount" class="border px-2 py-2 text-left" style="width:90px;">Discount%</th>
+                                    <th id="thTaxable" class="border px-2 py-2 text-right" style="width:120px;">Taxable Amt</th>
+                                    <th id="thSGST" class="border px-2 py-2 text-left" style="width:80px;">SGST%</th>
+                                    <th id="thCGST" class="border px-2 py-2 text-left" style="width:80px;">CGST%</th>
+                                    <th id="thIGST" class="border px-2 py-2 text-left" style="width:80px;">IGST%</th>
+                                    <th id="thTotal" class="border px-2 py-2 text-right" style="width:120px;">Total</th>
                                     <th class="border px-2 py-2 text-center" style="width:90px;">Action</th>
                                 </tr>
                             </thead>
@@ -8519,6 +8519,7 @@
                         <option value="">All Statuses</option>
                         <option>Draft</option><option>Sent</option><option>Approved</option>
                         <option>Completed</option><option>Paid</option>
+                        <option>Issued</option><option>Acknowledged</option><option>Invoiced</option>
                     </select>
                 </div>
 
@@ -8665,6 +8666,7 @@
             { label: 'Quotations (Client)',           cat: 'QUOTATION',         dir: 'Outgoing',  color: 'bg-blue-600'   },
             { label: 'Proforma Invoices',              cat: 'PROFORMA_INVOICE',  dir: 'Outgoing',  color: 'bg-orange-500' },
             { label: 'Invoices (Client)',              cat: 'INVOICE',           dir: 'Outgoing',  color: 'bg-purple-600' },
+            { label: 'Delivery Notes (DC)',            cat: 'DELIVERY_NOTE',     dir: null,        color: 'bg-teal-600'   },
             { label: 'Credit Notes',                  cat: 'CREDIT_NOTE',       dir: null,        color: 'bg-red-600'    },
             { label: 'Purchase Orders (SubCon)',       cat: 'PO',          dir: 'Incoming',  color: 'bg-orange-600' },
             { label: 'Quotations (SubCon / Incoming)',cat: 'QUOTATION',   dir: 'Incoming',  color: 'bg-cyan-600'   },
@@ -15095,7 +15097,7 @@
                     <input type="text" placeholder="Part No" value="${item?.partNo || ''}" 
                         class="item-partno w-full px-2 py-1 border rounded text-sm" />
                 </td>
-                <td class="border px-2 py-2 align-top">
+                <td class="td-hsn border px-2 py-2 align-top">
                     <input type="text" placeholder="HSN" value="${item?.hsnCode || ''}" 
                         class="item-hsn w-full px-2 py-1 border rounded text-sm" />
                 </td>
@@ -15120,7 +15122,7 @@
                         <option value="JOB" ${item?.uom === 'JOB' ? 'selected' : ''}>JOB</option>
                     </select>
                 </td>
-                <td class="border px-2 py-2 align-top">
+                <td class="td-rate border px-2 py-2 align-top">
                     <!-- Excel-style formula bar: type a plain number, or start with "=" for
                          a formula using + - * / ( ) %, and decimals, e.g. =150971*(1+0.20+0.15)
                          or =6114325.50*2% for percentage-based lines like Packing & Forwarding.
@@ -15140,26 +15142,26 @@
                         title="Type a number, or start with = for a formula, e.g. =150971*(1+0.20+0.15) or =6114325.50*2%"
                         required />
                 </td>
-                <td class="border px-2 py-2 align-top">
+                <td class="td-discount border px-2 py-2 align-top">
                     <input type="number" placeholder="0" value="${item?.discountPct || 0}" 
                         class="item-discount w-full px-2 py-1 border rounded text-sm" min="0" max="100" step="0.01" />
                 </td>
-                <td class="border px-2 py-2 text-right align-top">
+                <td class="td-taxable border px-2 py-2 text-right align-top">
                     <span class="item-taxable font-medium text-sm">0.00</span>
                 </td>
-                <td class="border px-2 py-2 align-top">
+                <td class="td-sgst border px-2 py-2 align-top">
                     <input type="number" placeholder="0" value="${defaultSGST}" 
                         class="item-sgst w-full px-2 py-1 border rounded text-sm" min="0" max="100" step="0.01" ${useIGST ? 'readonly style="background:#f3f4f6"' : ''} />
                 </td>
-                <td class="border px-2 py-2 align-top">
+                <td class="td-cgst border px-2 py-2 align-top">
                     <input type="number" placeholder="0" value="${defaultCGST}" 
                         class="item-cgst w-full px-2 py-1 border rounded text-sm" min="0" max="100" step="0.01" ${useIGST ? 'readonly style="background:#f3f4f6"' : ''} />
                 </td>
-                <td class="border px-2 py-2 align-top">
+                <td class="td-igst border px-2 py-2 align-top">
                     <input type="number" placeholder="0" value="${defaultIGST}" 
                         class="item-igst w-full px-2 py-1 border rounded text-sm" min="0" max="100" step="0.01" ${!useIGST ? 'readonly style="background:#f3f4f6"' : ''} />
                 </td>
-                <td class="border px-2 py-2 text-right align-top">
+                <td class="td-total border px-2 py-2 text-right align-top">
                     <span class="item-total font-bold text-sm">0.00</span>
                 </td>
                 <td class="border px-2 py-2 text-center align-top">
@@ -15171,10 +15173,16 @@
             document.getElementById('lineItems').appendChild(tr);
             document.getElementById('totalSection').classList.remove('hidden');
 
-            // Show Part No cell if current category is PO or Quotation
+            // Show Part No cell if current category is PO, Quotation, or Delivery Note
             const _curCat = document.getElementById('txnCategory')?.value || '';
-            if (_curCat === 'PO' || _curCat === 'QUOTATION') {
+            if (_curCat === 'PO' || _curCat === 'QUOTATION' || _curCat === 'DELIVERY_NOTE') {
                 tr.querySelector('.td-partno')?.classList.remove('hidden');
+            }
+            // Hide price/tax cells for Delivery Notes (no financial data on a DC)
+            if (_curCat === 'DELIVERY_NOTE') {
+                ['td-hsn','td-rate','td-discount','td-taxable','td-sgst','td-cgst','td-igst','td-total'].forEach(c => {
+                    tr.querySelector('.'+c)?.classList.add('hidden');
+                });
             }
 
             tr.querySelectorAll('input, select').forEach(input => {
@@ -16141,7 +16149,21 @@
             }
 
             // Delivery Note: swap Status dropdown to DN-specific options,
-            // and hide GST/tax fields that don't apply to a delivery challan.
+            // and hide GST/tax/price fields that don't apply to a delivery challan.
+            const _dnPriceCols = ['thHSN','thRate','thDiscount','thTaxable','thSGST','thCGST','thIGST','thTotal'];
+            const _tdPriceCls  = ['td-hsn','td-rate','td-discount','td-taxable','td-sgst','td-cgst','td-igst','td-total'];
+            if (cat === 'DELIVERY_NOTE') {
+                // Hide price/tax columns in the header
+                _dnPriceCols.forEach(id => document.getElementById(id)?.classList.add('hidden'));
+                // Hide price/tax cells in all existing rows
+                _tdPriceCls.forEach(c => document.querySelectorAll('.'+c).forEach(el => el.classList.add('hidden')));
+                // Also hide the line items totals section
+                document.getElementById('totalSection')?.classList.add('hidden');
+            } else {
+                // Restore price/tax columns
+                _dnPriceCols.forEach(id => document.getElementById(id)?.classList.remove('hidden'));
+                _tdPriceCls.forEach(c => document.querySelectorAll('.'+c).forEach(el => el.classList.remove('hidden')));
+            }
             const statusSel = document.getElementById('txnStatus');
             if (statusSel) {
                 const currentStatus = statusSel.value;
