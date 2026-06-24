@@ -17333,6 +17333,12 @@ ${'─'.repeat(50)}
             const fmt2 = m => { const h=Math.floor(m/60),mn=m%60; return h>0?h+'h '+mn+'m':mn+'m'; };
             const INR  = n => '₹'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
 
+            // Pay period: 26th of the previous month → 25th of the current month
+            const _ppPrevM  = month === 1 ? 12 : month - 1;
+            const _ppPrevY  = month === 1 ? year - 1 : year;
+            const _ppPrevMN = MN[_ppPrevM - 1];
+            const periodRange = `26 ${_ppPrevMN} ${_ppPrevY} – 25 ${MN[month-1]} ${year}`;
+
             const LEAVE_MAP = {
                 'Casual Leave':  { short:'CL', color:[180,83,9],   bg:[255,237,213] },
                 'Sick Leave':    { short:'SL', color:[220,38,38],  bg:[254,226,226] },
@@ -17353,13 +17359,13 @@ ${'─'.repeat(50)}
             doc.setFontSize(10); doc.setFont('helvetica','normal'); doc.setTextColor(209,250,229);
             doc.text((settings.companyName||'IMSE Tech Services Pvt Ltd'), PW/2, 21, {align:'center'});
             doc.setFontSize(9);
-            doc.text('Period: '+monthLabel+'  |  Generated: '+new Date().toLocaleDateString('en-IN'), PW/2, 29, {align:'center'});
+            doc.text('Period: '+periodRange+'  |  Generated: '+new Date().toLocaleDateString('en-IN'), PW/2, 29, {align:'center'});
             doc.setFillColor(4,120,87); doc.rect(0,35,PW,2,'F');
             let y = 43;
 
             // ── Leave Balance Summary Table ───────────────────────────
             doc.setFontSize(10); doc.setFont('helvetica','bold'); doc.setTextColor(5,150,105);
-            doc.text('LEAVE BALANCE SUMMARY — '+monthLabel, ML, y); y+=6;
+            doc.text('LEAVE BALANCE SUMMARY — '+periodRange, ML, y); y+=6;
 
             const summaryBody = officeStaff.map(st => {
                 // Use the running-ledger calc — same source the on-screen report uses.
@@ -17466,9 +17472,21 @@ ${'─'.repeat(50)}
             y += 8;
 
             // ── Per-Staff Leave Detail ────────────────────────────────
+            // Use the same pay-period window (26th of previous month → 25th of
+            // current month) as the summary table above, so the two sections are
+            // consistent. Previously this used a calendar-month filter (1st→30th)
+            // which caused entries near month-end to appear in the wrong section.
+            const _detPM = month === 1 ? 12 : month - 1;
+            const _detPY = month === 1 ? year - 1 : year;
+            const _detPpStart = `${_detPY}-${String(_detPM).padStart(2,'0')}-26`;
+            const _detPpEnd   = `${year}-${String(month).padStart(2,'0')}-25`;
+
             officeStaff.forEach(st => {
                 const mAtt = (st.attendance||[])
-                    .filter(a=>{ const[ay,am]=a.date.split('-'); return +ay===year&&+am===month&&Object.keys(LEAVE_MAP).includes(a.status); })
+                    .filter(a=>{
+                        if (!a.date || !Object.keys(LEAVE_MAP).includes(a.status)) return false;
+                        return a.date >= _detPpStart && a.date <= _detPpEnd;
+                    })
                     .sort((a,b)=>a.date.localeCompare(b.date));
                 if (!mAtt.length) return;
                 if (y > 180) { doc.addPage(); y=15; }  // landscape A4 is 210mm tall
@@ -17529,12 +17547,28 @@ ${'─'.repeat(50)}
             const MN         = ['January','February','March','April','May','June','July','August','September','October','November','December'];
             const monthLabel = MN[month-1]+' '+year;
 
+            // Respect the "Filter by Date" dropdown in the Attendance panel.
+            // When a specific date is selected, the PDF shows only that date's
+            // records (useful for a single-day attendance snapshot). When no
+            // filter is set, falls back to the full calendar month.
+            const dateFilter = attGridState.dateFilter || '';
+            const isSingleDay = !!dateFilter;
+            const periodLabel = isSingleDay ? dateFilter : monthLabel;
+
+            // Date-match helper — single-day vs full-month
+            const _matchDate = (a) => {
+                if (!a.date) return false;
+                if (isSingleDay) return a.date === dateFilter;
+                const [ay,am] = a.date.split('-');
+                return +ay===year && +am===month;
+            };
+
             // Header
             doc.setFillColor(234,88,12); doc.rect(0,0,210,36,'F');
             doc.setFontSize(14); doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255);
             doc.text('STAFF ATTENDANCE — TIME & PUNCTUALITY REPORT', PW/2, 12, {align:'center'});
             doc.setFontSize(9); doc.setFont('helvetica','normal'); doc.setTextColor(254,215,170);
-            doc.text((settings.companyName||'IMSE Tech Services Pvt Ltd')+'  |  '+monthLabel, PW/2, 20, {align:'center'});
+            doc.text((settings.companyName||'IMSE Tech Services Pvt Ltd')+'  |  '+periodLabel+(isSingleDay?' (Single Day)':''), PW/2, 20, {align:'center'});
             doc.text('Office Start: '+offStart+' | End: '+(settings.officeEndTime||'18:00')+' | Sat End: '+(settings.saturdayEnd||'13:30')+' | Grace: '+graceMins+'min', PW/2, 28, {align:'center'});
             doc.setFillColor(220,38,38); doc.rect(0,35,210,2,'F');
             let y = 42;
@@ -17544,7 +17578,7 @@ ${'─'.repeat(50)}
             // Summary table per staff
             const LEAVE_TYPES = ['Casual Leave','Sick Leave','Earned Leave','Comp Off','Leave'];
             const summaryBody = officeStaff.map(st => {
-                const mAtt   = (st.attendance||[]).filter(a=>{ const[ay,am]=a.date.split('-'); return +ay===year&&+am===month; });
+                const mAtt   = (st.attendance||[]).filter(_matchDate);
                 const present= mAtt.filter(a=>['Present','OT'].includes(a.status)).length;
                 const wfhD   = mAtt.filter(a=>a.status==='WFH').length;
                 const cl     = mAtt.filter(a=>a.status==='Casual Leave').length;
@@ -17585,7 +17619,7 @@ ${'─'.repeat(50)}
 
             // Detailed late log per staff
             officeStaff.forEach(st => {
-                const mAtt = (st.attendance||[]).filter(a=>{ const[ay,am]=a.date.split('-'); return +ay===year&&+am===month&&a.lateMinutes>0; }).sort((a,b)=>a.date.localeCompare(b.date));
+                const mAtt = (st.attendance||[]).filter(a=>_matchDate(a)&&(a.lateMinutes||0)>0).sort((a,b)=>a.date.localeCompare(b.date));
                 if (!mAtt.length) return;
                 if (y > 240) { doc.addPage(); y=15; }
                 doc.setFillColor(255,247,237); doc.rect(ML,y,CW,7,'F');
