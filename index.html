@@ -3875,12 +3875,30 @@
                 // Not taken — proceed with what the user sees.
                 return { ok: true, id: displayedID, renumbered: false };
             }
-            // Collision detected — compute what we'd renumber to, then confirm.
+            // Collision detected — compute what we'd renumber to.
             const newID = computeNext(freshArray);
-            const msg = `${label} "${displayedID}" was just used by another user.\n\n`
-                      + `Save this record as "${newID}" instead?\n\n`
-                      + `OK     → save with the new number\n`
-                      + `Cancel → keep modal open (you can review and click Save again)`;
+            // Edge case: if newID is ALSO already taken in the fresh array
+            // (can happen if the refetch was slightly stale and two users
+            // saved simultaneously), don't present a misleading dialog —
+            // just report the conflict and let the user retry via Cancel,
+            // which will trigger another refetch and a clean resolution.
+            if (isTaken(freshArray, newID)) {
+                const proceed = window.confirm(
+                    `${label} "${displayedID}" was just used by another user.\n\n` +
+                    `The system could not automatically find a safe replacement number right now ` +
+                    `(multiple saves may have happened simultaneously).\n\n` +
+                    `Click OK to close this message and try saving again — ` +
+                    `the app will re-check Drive and assign the correct next number.\n\n` +
+                    `Click Cancel to keep the form open and review before saving.`
+                );
+                // Return ok:false so the save is aborted and re-tried fresh.
+                return { ok: false };
+            }
+            const msg =
+                `${label} "${displayedID}" was just used by another user.\n\n` +
+                `Your record will be saved as "${newID}" instead (the next available number).\n\n` +
+                `OK     → proceed and save as ${newID}\n` +
+                `Cancel → keep the form open so you can review before saving again`;
             const proceed = window.confirm(msg);
             if (!proceed) return { ok: false };
             return { ok: true, id: newID, renumbered: true };
