@@ -1870,18 +1870,54 @@
         })() : null;
 
         el.innerHTML = `
-        <!-- Pool status strip (Phase A+B) -->
-        <div class="card mb-3" style="background:linear-gradient(135deg,#0d7c66,#15803d);padding:12px 14px">
-            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-                <div style="flex:1;min-width:200px">
-                    <p style="font-size:10px;font-weight:700;color:#bbf7d0;text-transform:uppercase;letter-spacing:.5px">💰 Active Pool ${activePoolCount > 1 ? '('+activePoolCount+' available)' : ''}</p>
-                    ${activePool
-                        ? `<p style="font-size:14px;font-weight:700;color:#fff;font-family:monospace">${activePool.poolID}</p>
-                           <p style="font-size:13px;color:#fff">Balance: <b>${fmt(activeBal)}</b> ${activeBal < 500 ? '<span style="color:#fde68a;font-size:11px">⚠ low — request fresh fund</span>' : ''}</p>`
-                        : `<p style="font-size:13px;color:#fde68a">⚠ No active pool — request fresh fund to log expenses</p>`}
-                </div>
+        <!-- Pool status cards (Phase A+B) — matches main app style -->
+        <div class="card mb-3" style="background:linear-gradient(135deg,#0d7c66,#15803d);padding:12px 14px 10px">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:${activePoolCount > 0 ? '10px' : '0'}">
+                <p style="font-size:10px;font-weight:700;color:#bbf7d0;text-transform:uppercase;letter-spacing:.5px">
+                    💰 Active Pool${activePoolCount > 1 ? 's ('+activePoolCount+' available)' : activePoolCount === 1 ? '' : 's'}
+                    ${totalActiveBal > 0 ? `<span style="margin-left:8px;font-size:11px;color:#a7f3d0">· Total available: <b>${fmt(totalActiveBal)}</b></span>` : ''}
+                </p>
                 <button onclick="openFundReqModal()" style="padding:8px 16px;border-radius:9px;background:#fff;color:#15803d;border:none;cursor:pointer;font-size:13px;font-weight:700;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.15)">+ Request Fund</button>
             </div>
+            ${activePoolCount === 0
+                ? `<p style="font-size:13px;color:#fde68a;padding-bottom:4px">⚠ No active pool — request fresh fund to log expenses</p>`
+                : (() => {
+                    const activePools = (fundPools||[])
+                        .filter(p => p.status === 'Active')
+                        .sort((a,b) => (a.disbursedDate||'').localeCompare(b.disbursedDate||'') || (a.poolID||'').localeCompare(b.poolID||''));
+                    return activePools.map(pool => {
+                        const pb = _fieldComputePoolBalance(pool);
+                        const pct = pb.disbursed > 0 ? Math.min(100, (pb.spent / pb.disbursed) * 100) : 0;
+                        const barCol = pct > 90 ? '#dc2626' : pct > 70 ? '#d97706' : '#22c55e';
+                        const isLow = pb.balance < 500;
+                        return `
+                        <div style="background:rgba(0,0,0,.18);border-radius:10px;padding:10px 12px;margin-bottom:8px">
+                            <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:4px;margin-bottom:6px">
+                                <div>
+                                    <span style="font-size:13px;font-weight:700;color:#fff;font-family:monospace">${pool.poolID}</span>
+                                    ${pool.requestedByName ? `<span style="margin-left:8px;font-size:12px;font-weight:600;color:#bbf7d0">${pool.requestedByName}</span>` : ''}
+                                    ${pool.projectTag || pool.projectName ? `<span style="margin-left:6px;font-size:10px;background:rgba(255,255,255,.18);color:#d1fae5;padding:1px 7px;border-radius:10px">${pool.projectTag || pool.projectName}</span>` : ''}
+                                </div>
+                                <div style="text-align:right">
+                                    <span style="font-size:14px;font-weight:800;color:#fff">Bal ${fmt(pb.balance)}</span>
+                                    ${isLow ? `<span style="display:block;font-size:10px;color:#fde68a;margin-top:1px">⚠ low — request fresh fund</span>` : ''}
+                                </div>
+                            </div>
+                            <div style="display:flex;justify-content:space-between;font-size:10px;color:#a7f3d0;margin-bottom:4px">
+                                <span>Disb ${pool.disbursedDate || '—'} · ${fmt(pb.disbursed)} from ${pool.bankName||'bank'}</span>
+                                <span>${pb.expenseCount} expense${pb.expenseCount===1?'':'s'}</span>
+                            </div>
+                            <div style="background:rgba(0,0,0,.25);border-radius:4px;height:6px;overflow:hidden">
+                                <div style="height:100%;width:${pct}%;background:${barCol};border-radius:4px;transition:width .3s"></div>
+                            </div>
+                            <div style="display:flex;justify-content:space-between;font-size:10px;color:#a7f3d0;margin-top:3px">
+                                <span>Spent ${fmt(pb.spent)}</span>
+                                <span>Bal ${fmt(pb.balance)}</span>
+                            </div>
+                        </div>`;
+                    }).join('');
+                })()
+            }
             ${reqStatusInfo ? (() => {
                 // Status-aware action buttons:
                 //   Pending          → Edit + Cancel
@@ -1905,12 +1941,11 @@
                         actions = `<button onclick="requestFundCorrection('${lastReq.requestID}')" style="${btnStyle};background:rgba(0,0,0,.08);color:${reqStatusInfo.color}" title="Ask the office to amend this request — direct edit not allowed once processed">📨 Request Correction</button>`;
                     }
                 }
-                // Audit hint: show "edited" badge if editHistory present
                 const editBadge = (lastReq.editHistory && lastReq.editHistory.length)
                     ? `<span style="font-size:9px;color:${reqStatusInfo.color};opacity:.7;margin-left:6px" title="Edited ${lastReq.editHistory.length} time${lastReq.editHistory.length===1?'':'s'}">✎</span>`
                     : '';
                 return `
-                <div style="margin-top:10px;padding:8px 10px;background:${reqStatusInfo.bg};border-radius:8px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+                <div style="margin-top:8px;padding:8px 10px;background:${reqStatusInfo.bg};border-radius:8px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
                     <div style="font-size:12px;color:${reqStatusInfo.color};flex:1;min-width:160px">
                         <b>${reqStatusInfo.icon} Last Request:</b> ${fmt(lastReq.requestedAmount)} · ${reqStatusInfo.label}${editBadge}
                         <div style="font-size:10px;opacity:.85;margin-top:1px">Sent ${lastReq.requestedDate} ${lastReq.requestedTime||''}</div>
@@ -1920,7 +1955,7 @@
             })() : ''}
         </div>
 
-        <!-- Old grand summary (kept for project-level view) -->
+        <!-- Grand summary row -->
         <div class="grid grid-cols-2 gap-3 mb-3">
             <div class="card p-3" style="background:linear-gradient(135deg,#1e3a5f,#1d4ed8)">
                 <p style="font-size:10px;font-weight:600;color:#bfdbfe;margin-bottom:2px">TOTAL FIELD FUNDS</p>
@@ -1968,8 +2003,14 @@
             //      change based on the filter, because that would be misleading
             //      (showing "Spent: ₹93" while a ₹30,000 figure is hidden).
             const _filtered = projectExpenses.map(p => {
+                // Sort items newest-first within each project so the latest
+                // expense appears at the top without scrolling past older entries.
+                const _sortedItems = [...(p.items || [])].sort((a, b) =>
+                    (b.date || '').localeCompare(a.date || '') ||
+                    (b.itemID || '').localeCompare(a.itemID || '')
+                );
                 if (!_peSearchQ) {
-                    return { p, items: p.items || [], showAllItems: true };
+                    return { p, items: _sortedItems, showAllItems: true };
                 }
                 // Step 1: does the query match the project itself entirely?
                 const projHay = [
@@ -1977,7 +2018,7 @@
                     _dateHaystack(p.startDate), _dateHaystack(p.endDate)
                 ].filter(Boolean).join(' ');
                 if (_matchTokens(projHay, _peSearchQ)) {
-                    return { p, items: p.items || [], showAllItems: true };
+                    return { p, items: _sortedItems, showAllItems: true };
                 }
                 // Step 2: filter items by the query. CRITICAL — each item's haystack
                 // also includes the project-level fields. Otherwise a query like
@@ -1985,7 +2026,7 @@
                 // is only at item level, and neither layer alone has both. By folding
                 // project fields into each item's haystack, both tokens can be satisfied
                 // and the user gets the result they expect.
-                const matchingItems = (p.items || []).filter(it => {
+                const matchingItems = _sortedItems.filter(it => {
                     const itHay = [
                         projHay,    // ← project fields prefix so cross-level AND works
                         it.description, it.category, it.vendor, it.payMode, it.staffName,
@@ -2008,7 +2049,7 @@
                     // user has context. If items matched, show only those items.
                     return {
                         p,
-                        items: matchingItems.length > 0 ? matchingItems : (p.items || []),
+                        items: matchingItems.length > 0 ? matchingItems : _sortedItems,
                         showAllItems: matchingItems.length === 0
                     };
                 }
