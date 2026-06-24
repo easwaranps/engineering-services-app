@@ -14654,6 +14654,15 @@
             toggleSupportingDocs();
             updateTxnBankSection();  // Show/hide and populate bank dropdown
 
+            // Refresh the GST-mode lock on line items now that the party dropdown
+            // has its correct value. addLineItem() renders SGST/CGST/IGST with
+            // readonly baked in based on the party at render time — but when
+            // editing an existing transaction, the party value isn't set yet when
+            // addLineItem runs (it's set later in this function). Without this
+            // call, editing an existing inter-state invoice locks CGST/SGST
+            // permanently even though the mode should allow them to be editable.
+            refreshLineItemsForParty();
+
             // Manual ID override — only relevant for new records (gap recovery).
             // On edit, the number is already fixed; hide both the trigger and the
             // panel so they don't confuse the user.
@@ -17760,12 +17769,101 @@ ${'─'.repeat(50)}
         }
 
         async function attExportPDF(){
+            if (!window.jspdf) {
+                await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+                await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+            }
             const {jsPDF}=window.jspdf;
-            // ── PORTRAIT A4 ────────────────────────────────────────
-            const doc=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
             const MN=['January','February','March','April','May','June','July','August','September','October','November','December'];
             const shM=attGridState.periodMonth,shY=attGridState.periodYear;
             const selID=attGridState.staffID;
+            const dateFilter=attGridState.dateFilter||'';
+
+            // ── SINGLE DATE MODE ──────────────────────────────────────
+            // When "Filter by Date" is set, generate a one-page daily attendance
+            // summary (all staff, that date only) suitable for management submission.
+            if (dateFilter) {
+                const doc=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+                const ML=14,MR=14,PW=210,CW=PW-ML-MR;
+                const dt=new Date(dateFilter+'T00:00:00');
+                const dayLabel=dt.toLocaleDateString('en-IN',{weekday:'long',day:'2-digit',month:'long',year:'numeric'});
+                const staffToExport=selID?staff.filter(s=>s.staffID===selID):staff.filter(s=>s.status==='Active');
+
+                // Header
+                doc.setFillColor(15,58,95); doc.rect(0,0,PW,30,'F');
+                doc.setFontSize(15); doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255);
+                doc.text('DAILY ATTENDANCE REPORT', PW/2, 12, {align:'center'});
+                doc.setFontSize(10); doc.setFont('helvetica','normal'); doc.setTextColor(203,213,225);
+                doc.text((settings.companyName||'IMSE Tech Services Pvt Ltd'), PW/2, 20, {align:'center'});
+                doc.setFontSize(9);
+                doc.text(dayLabel, PW/2, 27, {align:'center'});
+                doc.setFillColor(29,78,216); doc.rect(0,29,PW,2,'F');
+
+                const STATUS_COL={
+                    'Present':[21,128,61],'OT':[21,128,61],'Working':[21,128,61],
+                    'WFH':[99,102,241],'Outstation':[29,78,216],'StandBy':[180,83,9],
+                    'Sailing':[67,56,202],'Anchorage':[14,116,144],
+                    'Half Day':[180,83,9],'Half Day-Afternoon':[180,83,9],
+                    'Leave':[124,58,237],'Casual Leave':[124,58,237],'Sick Leave':[124,58,237],
+                    'Earned Leave':[124,58,237],'Comp Off':[124,58,237],
+                    'Absent':[220,38,38],'Holiday':[180,83,9],
+                    'Sunday':[148,163,184],'Weekend':[148,163,184]
+                };
+
+                const rows = staffToExport.map((s,idx) => {
+                    const att=( s.attendance||[]).find(a=>a.date===dateFilter);
+                    const status=att?.status||'—';
+                    const col=STATUS_COL[status]||[100,100,100];
+                    const project=att?.project||att?.vessel||'—';
+                    const checkIn=att?.checkIn||'—';
+                    const checkOut=att?.checkOut||'—';
+                    const remarks=att?.remarks||'—';
+                    return [
+                        {content:String(idx+1), styles:{halign:'center',fontSize:8}},
+                        {content:s.name, styles:{fontStyle:'bold'}},
+                        {content:s.designation||s.staffType||'—', styles:{fontSize:7.5,textColor:[100,100,100]}},
+                        {content:status, styles:{fontStyle:'bold',textColor:col,halign:'center'}},
+                        {content:project, styles:{fontSize:7.5}},
+                        {content:checkIn, styles:{halign:'center',fontSize:8}},
+                        {content:checkOut, styles:{halign:'center',fontSize:8}},
+                        {content:remarks, styles:{fontSize:7.5,textColor:[100,100,100]}},
+                    ];
+                });
+
+                // Summary counts
+                const presentC=staffToExport.filter(s=>{const a=(s.attendance||[]).find(x=>x.date===dateFilter);return a&&['Present','OT','Working','Outstation','StandBy','Sailing','Anchorage'].includes(a.status);}).length;
+                const absentC=staffToExport.filter(s=>{const a=(s.attendance||[]).find(x=>x.date===dateFilter);return !a||a.status==='Absent';}).length;
+                const leaveC=staffToExport.filter(s=>{const a=(s.attendance||[]).find(x=>x.date===dateFilter);return a&&['Leave','Casual Leave','Sick Leave','Earned Leave','Comp Off','Half Day','Half Day-Afternoon'].includes(a.status);}).length;
+
+                doc.autoTable({
+                    startY:36, margin:{left:ML,right:MR}, theme:'grid',
+                    styles:{fontSize:8.5,cellPadding:2.5,valign:'middle'},
+                    headStyles:{fillColor:[15,58,95],textColor:[255,255,255],fontStyle:'bold',fontSize:8},
+                    head:[['#','Staff Name','Designation / Type','Status','Project / Location','Check-In','Check-Out','Remarks']],
+                    body:rows,
+                    columnStyles:{0:{cellWidth:8},1:{cellWidth:38},2:{cellWidth:34},3:{cellWidth:22,halign:'center'},4:{cellWidth:40},5:{cellWidth:16,halign:'center'},6:{cellWidth:16,halign:'center'},7:{cellWidth:CW-174}}
+                });
+                const finalY=doc.lastAutoTable.finalY+8;
+                doc.setFontSize(9); doc.setFont('helvetica','bold'); doc.setTextColor(30,64,175);
+                doc.text(`Present: ${presentC}  |  On Leave: ${leaveC}  |  Absent/Not Marked: ${absentC}  |  Total Staff: ${staffToExport.length}`, ML, finalY);
+
+                // Signature line for management
+                const sigY=finalY+16;
+                doc.setDrawColor(150,150,150); doc.setLineWidth(0.3);
+                doc.line(ML, sigY, ML+60, sigY);
+                doc.line(PW-MR-60, sigY, PW-MR, sigY);
+                doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(100,100,100);
+                doc.text('Prepared by', ML, sigY+5);
+                doc.text('Management Approval', PW-MR-60, sigY+5);
+
+                doc.setFontSize(7); doc.setFont('helvetica','italic'); doc.setTextColor(150,150,150);
+                doc.text((settings.companyName||'IMSE Tech Services Pvt Ltd')+' — Daily Attendance — '+dateFilter+' — Generated '+new Date().toLocaleDateString('en-IN'), PW/2, 291, {align:'center'});
+                doc.save('DailyAttendance_'+dateFilter+'.pdf');
+                return;
+            }
+
+            // ── FULL MONTH MODE (unchanged) ───────────────────────────
+            const doc=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
             const staffToExport=selID?staff.filter(s=>s.staffID===selID):staff.filter(s=>s.status==='Active');
             if(!staffToExport.length){alert('No staff to export.');return;}
             const dates=_attPeriodDates(shY,shM);
