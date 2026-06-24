@@ -30277,6 +30277,7 @@ Automated WFH alert — ${company} Attendance System.`;
 
             setStatus('🔌 Connecting to sheet…');
 
+            // Verify access and get list of existing tabs
             let existingTabs;
             try {
                 existingTabs = await _sheetsGetTabs(sheetId);
@@ -30286,38 +30287,84 @@ Automated WFH alert — ${company} Attendance System.`;
                 return;
             }
 
-            const results = { ok: 0, skip: 0, fail: 0 };
-            const failures = [];
-            const skipped  = [];
+            // Build data for every tab that exists in the sheet.
+            // Skip tabs that aren't in the sheet (no error — just note it).
+            setStatus('⏳ Building data for all tabs…');
+            const skipped = [];
+            const clearRanges = [];
+            const writeData   = [];
 
-            for (let i = 0; i < _sheetsMappings.length; i++) {
-                const { tab, mapper } = _sheetsMappings[i];
-                setStatus(`⏳ ${i+1}/${_sheetsMappings.length}: ${tab}…`);
-
-                if (!existingTabs.includes(tab)) {
-                    results.skip++;
-                    skipped.push(tab);
-                    continue;
-                }
+            for (const { tab, mapper } of _sheetsMappings) {
+                if (!existingTabs.includes(tab)) { skipped.push(tab); continue; }
                 try {
                     const { headers, rows } = mapper();
-                    await _sheetsReplaceTab(sheetId, tab, [headers, ...rows]);
-                    results.ok++;
+                    clearRanges.push(`${tab}!A:ZZ`);
+                    writeData.push({
+                        range: `${tab}!A1`,
+                        values: [headers, ...rows].map(r => r.map(_sheetsCellValue))
+                    });
                 } catch (e) {
-                    results.fail++;
-                    failures.push({ tab, error: e.message });
-                    console.error('Sheets sync failed for', tab, e);
+                    console.error('Mapper error for', tab, e);
+                    skipped.push(`${tab} (mapper error: ${e.message})`);
                 }
             }
 
-            const summary = `Sync complete — ${results.ok} tab(s) written` +
-                (results.skip > 0 ? `, ${results.skip} skipped (tab not in sheet): ${skipped.join(', ')}` : '') +
-                (results.fail > 0 ? `, ${results.fail} failed` : '');
-            setStatus((results.fail === 0 ? '✅ ' : '⚠ ') + summary, results.fail === 0 ? '#15803d' : '#b45309');
-
-            if (failures.length) {
-                alert('Some tabs failed:\n\n' + failures.map(f => `• ${f.tab}: ${f.error}`).join('\n'));
+            if (writeData.length === 0) {
+                setStatus('⚠ No matching tabs found in the sheet.', '#b45309');
+                return;
             }
+
+            // ── Step 1: Single batchClear — clears all tabs in ONE API call ──
+            // (vs. 1 clear call per tab — 19 calls → 1 call, eliminating 429s)
+            setStatus(`⏳ Clearing ${clearRanges.length} tab(s)…`);
+            try {
+                const clearRes = await fetch(
+                    `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values:batchClear`,
+                    {
+                        method: 'POST',
+                        headers: { 'Authorization': 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ranges: clearRanges })
+                    }
+                );
+                if (!clearRes.ok) {
+                    const err = await clearRes.text();
+                    throw new Error(`batchClear failed (${clearRes.status}): ${err.substring(0,300)}`);
+                }
+            } catch (e) {
+                setStatus('❌ Clear failed: ' + e.message, '#dc2626');
+                alert('Sync failed during clear step:\n\n' + e.message);
+                return;
+            }
+
+            // Brief pause between clear and write to avoid hitting write-quota
+            // (Google counts batchClear as a write operation too)
+            await new Promise(r => setTimeout(r, 1200));
+
+            // ── Step 2: Single batchUpdate — writes all tabs in ONE API call ──
+            setStatus(`⏳ Writing ${writeData.length} tab(s)…`);
+            try {
+                const writeRes = await fetch(
+                    `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values:batchUpdate`,
+                    {
+                        method: 'POST',
+                        headers: { 'Authorization': 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ valueInputOption: 'RAW', data: writeData })
+                    }
+                );
+                if (!writeRes.ok) {
+                    const err = await writeRes.text();
+                    throw new Error(`batchUpdate failed (${writeRes.status}): ${err.substring(0,300)}`);
+                }
+            } catch (e) {
+                setStatus('❌ Write failed: ' + e.message, '#dc2626');
+                alert('Sync failed during write step:\n\n' + e.message);
+                return;
+            }
+
+            // Success
+            const summary = `✅ Sync complete — ${writeData.length} tab(s) written` +
+                (skipped.length ? ` · ${skipped.length} skipped: ${skipped.join(', ')}` : '');
+            setStatus(summary, '#15803d');
 
             settings.lastSheetsSyncAt = new Date().toISOString();
             settings.lastSheetsSyncBy = (typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin';
