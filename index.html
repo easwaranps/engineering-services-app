@@ -29857,13 +29857,26 @@ Automated WFH alert — ${company} Attendance System.`;
         function _sheetsMapAllTransactions() {
             return {
                 headers: ['Txn ID','Category','Direction','Party','Vendor Code','Date','Reference','Status','Currency','Subtotal','Tax','Grand Total'],
-                rows: (transactions||[]).map(t => [
-                    t.txnID||'', t.category||t.type||'', t.direction||'',
-                    t.party||t.partyName||'', t.vendorCode||'',
-                    t.date||t.txnDate||'', t.reference||'',
-                    t.status||'', t.currency||'INR',
-                    t.subtotal||0, t.tax||t.taxAmount||0, t.grandTotal||t.total||0
-                ])
+                rows: (transactions||[]).map(t => {
+                    // Transactions don't store pre-computed totals as top-level fields —
+                    // amounts live in t.items[] and must be computed via calculateTotals().
+                    // Using t.subtotal/t.grandTotal directly always produces 0.
+                    const tot = calculateTotals(t.items||[]);
+                    return [
+                        t.txnID||'',
+                        t.txnCategory||t.category||t.type||'',
+                        t.txnDirection||t.direction||'',
+                        t.partyName||t.party||'',
+                        t.vendorCode||'',
+                        t.txnDate||t.date||'',
+                        t.reference||'',
+                        t.status||'',
+                        t.currency||'INR',
+                        tot.subtotal,
+                        tot.tax,
+                        tot.total
+                    ];
+                })
             };
         }
         function _sheetsMapApprovedTransactions() {
@@ -29871,7 +29884,9 @@ Automated WFH alert — ${company} Attendance System.`;
             const statusIdx = m.headers.indexOf('Status');
             const filteredHeaders = m.headers.filter((_, i) => i !== statusIdx);
             const approvedRows = m.rows
-                .filter(r => ['approved','sent','paid','closed'].includes(String(r[statusIdx]||'').toLowerCase()))
+                // Include Draft transactions are excluded — everything Sent or beyond
+                // is considered a committed document and gets exported here.
+                .filter(r => !['draft',''].includes(String(r[statusIdx]||'').toLowerCase()))
                 .map(r => r.filter((_, i) => i !== statusIdx));
             return { headers: filteredHeaders, rows: approvedRows };
         }
@@ -29932,24 +29947,6 @@ Automated WFH alert — ${company} Attendance System.`;
                     p.lop||p.lopDays||0, p.netPay||p.net||0,
                     p.status||'', p.generatedAt||p.createdAt||''
                 ])
-            };
-        }
-        function _sheetsMapAttendance() {
-            const att = (typeof attendance !== 'undefined') ? attendance : [];
-            return {
-                headers: ['Staff ID','Staff Name','Staff Type','Designation','Date','Day','Status','Project','Check-In','Check-Out','Late (mins)','Hours Worked','WFH Sessions','WFH Eff.Hrs','Remarks'],
-                rows: (att||[]).map(a => {
-                    const d = a.date ? new Date(a.date) : null;
-                    const dayName = d ? ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()] : '';
-                    return [
-                        a.staffID||'', a.staffName||a.name||'', a.staffType||'',
-                        a.designation||'', a.date||'', dayName,
-                        a.status||'', a.project||'', a.checkIn||'', a.checkOut||'',
-                        a.lateMins||0, a.hoursWorked||0,
-                        (a.wfhSessions||[]).length, a.wfhEffectiveHours||0,
-                        a.remarks||''
-                    ];
-                })
             };
         }
         function _sheetsMapWorkLogs() {
@@ -30033,19 +30030,225 @@ Automated WFH alert — ${company} Attendance System.`;
             return { headers: ['Field','Value'], rows };
         }
 
+        function _sheetsMapProformaInvoices() {
+            const proformas = (transactions||[]).filter(t => t.txnCategory === 'PROFORMA_INVOICE');
+            return {
+                headers: ['PI ID','Party','Vendor Code','Date','Reference','Currency','Subtotal','Tax','Grand Total','Status','Converted to Invoice'],
+                rows: proformas.map(t => {
+                    const tot = calculateTotals(t.items||[]);
+                    return [
+                        t.txnID||'', t.partyName||'', t.vendorCode||'',
+                        t.txnDate||'', t.reference||'',
+                        t.currency||'INR', tot.subtotal, tot.tax, tot.total,
+                        t.status||'', t.convertedToInvoice||''
+                    ];
+                })
+            };
+        }
+
+        function _sheetsMapFundRequests() {
+            // New pool-based fund requests (fundRequests.json — tech-bound requests to admin)
+            const rows = [];
+            (fundRequests||[]).forEach(r => {
+                rows.push([
+                    r.requestID||'', r.requestedByName||r.requestedBy||'',
+                    r.requestedDate||'', r.requestedAmount||0,
+                    r.purpose||'', r.projectTag||r.project||'',
+                    r.status||'', r.approvedAmt||r.approvedAmount||0,
+                    r.approvedDate||'', r.disbursedAmount||0,
+                    r.disbursedDate||'', r.bankName||'',
+                    r.rejectionReason||r.adminRemarks||''
+                ]);
+            });
+            // Also include legacy per-project fund requests from projectExpenses
+            (projectExpenses||[]).forEach(p => {
+                (p.fundRequests||[]).forEach(r => {
+                    rows.push([
+                        r.frID||'', r.addedBy||'',
+                        r.date||'', parseFloat(r.amount||0),
+                        r.purpose||'', p.projectName||'',
+                        r.status||'', parseFloat(r.releasedAmount||0),
+                        r.releasedDate||'', parseFloat(r.releasedAmount||0),
+                        r.releasedDate||'', r.releaseMode||'',
+                        r.officeRemarks||''
+                    ]);
+                });
+            });
+            return {
+                headers: ['Request ID','Requested By','Date','Requested Amt','Purpose','Project','Status','Approved Amt','Approved Date','Disbursed Amt','Disbursed Date','Bank/Mode','Remarks'],
+                rows
+            };
+        }
+
+        function _sheetsMapAttendanceFull() {
+            // Full attendance — one row per staff per attendance record.
+            // Uses staff[].attendance[] from the admin data (not a separate attendance array).
+            const rows = [];
+            const sl = (typeof staff !== 'undefined' ? staff : []);
+            sl.forEach(s => {
+                (s.attendance||[]).sort((a,b)=>(a.date||'').localeCompare(b.date||'')).forEach(a => {
+                    const dt = a.date ? new Date(a.date+'T00:00:00') : null;
+                    const dayName = dt ? dt.toLocaleDateString('en-IN',{weekday:'short'}) : '';
+                    let hoursWorked = '';
+                    if (a.checkIn && a.checkOut) {
+                        const [ih,im]=a.checkIn.split(':').map(Number);
+                        const [oh,om]=a.checkOut.split(':').map(Number);
+                        const diff=(oh*60+om)-(ih*60+im);
+                        if (diff>0) hoursWorked=(diff/60).toFixed(2);
+                    }
+                    const sessions=a.wfhSessions||[];
+                    const wfhEffMins=sessions.reduce((t,s)=>{
+                        if(!s.in||!s.out) return t;
+                        const [ih,im]=s.in.split(':').map(Number);
+                        const [oh,om]=s.out.split(':').map(Number);
+                        const d=(oh*60+om)-(ih*60+im); return t+(d>0?d:0);
+                    },0)||a.effectiveMins||0;
+                    rows.push([
+                        s.staffID||'', s.name||'', s.staffType||'', s.designation||'',
+                        a.date||'', dayName, a.status||'',
+                        a.project||'', a.checkIn||'', a.checkOut||'',
+                        a.lateMinutes||0, hoursWorked,
+                        sessions.length||'', wfhEffMins>0?(wfhEffMins/60).toFixed(2):'',
+                        a.remarks||''
+                    ]);
+                });
+            });
+            return {
+                headers: ['Staff ID','Staff Name','Staff Type','Designation','Date','Day','Status','Project','Check-In','Check-Out','Late (mins)','Hours Worked','WFH Sessions','WFH Eff.Hrs','Remarks'],
+                rows
+            };
+        }
+
+        function _sheetsMapWFHLog() {
+            const rows = [];
+            const sl = (typeof staff !== 'undefined' ? staff : []);
+            sl.forEach(s => {
+                (s.attendance||[]).filter(a=>a.status==='WFH').forEach(a => {
+                    const dt = a.date ? new Date(a.date+'T00:00:00') : null;
+                    const dayName = dt ? dt.toLocaleDateString('en-IN',{weekday:'short'}) : '';
+                    const sessions=a.wfhSessions||[];
+                    const firstIn=sessions.find(x=>x.in)?.in||a.checkIn||'';
+                    const lastOut=[...sessions].reverse().find(x=>x.out)?.out||a.checkOut||'';
+                    const totalMins=sessions.reduce((t,x)=>{
+                        if(!x.in||!x.out) return t;
+                        const [ih,im]=x.in.split(':').map(Number);
+                        const [oh,om]=x.out.split(':').map(Number);
+                        const d=(oh*60+om)-(ih*60+im); return t+(d>0?d:0);
+                    },0)||a.effectiveMins||0;
+                    if (sessions.length===0) {
+                        rows.push([s.staffID||'',s.name||'',a.date||'',dayName,
+                            1,a.checkIn||'',a.checkOut||'',
+                            totalMins>0?(totalMins/60).toFixed(2):'',
+                            '','','',(totalMins/60).toFixed(2),'',a.remarks||'']);
+                    } else {
+                        sessions.forEach((ses,idx) => {
+                            const [ih,im]=(ses.in||'00:00').split(':').map(Number);
+                            const [oh,om]=(ses.out||'00:00').split(':').map(Number);
+                            const durMins=(oh*60+om)-(ih*60+im);
+                            rows.push([s.staffID||'',s.name||'',a.date||'',dayName,
+                                idx+1,ses.in||'',ses.out||'',
+                                durMins>0?(durMins/60).toFixed(2):'',
+                                ses.task||ses.note||'',
+                                idx===0?firstIn:'',idx===sessions.length-1?lastOut:'',
+                                totalMins>0?(totalMins/60).toFixed(2):'',
+                                '','']);
+                        });
+                    }
+                });
+            });
+            return {
+                headers: ['Staff ID','Staff Name','Date','Day','Session No','Log-In','Log-Out','Duration (hrs)','Task/Note','First In','Last Out','Total Eff.Hrs','Punctuality','Work Summary'],
+                rows
+            };
+        }
+
+        function _sheetsMapProjectExpenses() {
+            const rows = [];
+            (projectExpenses||[]).forEach(p => {
+                (p.items||[]).forEach(it => {
+                    rows.push([
+                        p.projExpID||'', p.projectName||'', p.projectRef||'',
+                        it.itemID||'', it.date||'', it.category||'',
+                        it.description||'', it.vendor||'',
+                        parseFloat(it.amount||0), it.payMode||'',
+                        (it.technicians||[]).map(t=>t.name).join(', ')||it.staffName||'',
+                        it.poolID||'', it.addedBy||''
+                    ]);
+                });
+            });
+            return {
+                headers: ['Project ID','Project Name','Project Ref','Item ID','Date','Category','Description','Vendor','Amount','Pay Mode','Technicians','Pool ID','Entered By'],
+                rows
+            };
+        }
+
+        function _sheetsMapFieldExpenses() {
+            // Field expenses = project expense items, same as ProjectExpenses but
+            // this tab is the flat version the Sheets template expects under FieldExpenses
+            return _sheetsMapProjectExpenses();
+        }
+
+        function _sheetsMapStaffDocuments() {
+            const sl = (typeof staff !== 'undefined' ? staff : []);
+            const rows = [];
+            sl.forEach(s => {
+                (s.documents||[]).forEach(d => {
+                    rows.push([
+                        s.staffID||'', s.name||'', s.staffType||'',
+                        d.docID||'', d.docType||'', d.docName||'',
+                        d.docNumber||'', d.issueDate||'', d.expiryDate||'',
+                        d.issuedBy||'', d.remarks||'',
+                        d.attachments ? (d.attachments.length||0) : 0
+                    ]);
+                });
+            });
+            return {
+                headers: ['Staff ID','Staff Name','Staff Type','Doc ID','Doc Type','Doc Name','Doc Number','Issue Date','Expiry Date','Issued By','Remarks','Attachments'],
+                rows
+            };
+        }
+
+        function _sheetsMapWageRevisions() {
+            const sl = (typeof staff !== 'undefined' ? staff : []);
+            const rows = [];
+            sl.forEach(s => {
+                (s.wageRevisions||s.salaryRevisions||[]).forEach(r => {
+                    rows.push([
+                        s.staffID||'', s.name||'', s.staffType||'',
+                        r.revisionID||'', r.effectiveDate||r.date||'',
+                        parseFloat(r.oldBasic||r.previousBasic||0),
+                        parseFloat(r.newBasic||r.revisedBasic||0),
+                        r.reason||r.remarks||'', r.approvedBy||'',
+                        r.createdAt||''
+                    ]);
+                });
+            });
+            return {
+                headers: ['Staff ID','Staff Name','Staff Type','Revision ID','Effective Date','Old Basic (₹)','New Basic (₹)','Reason','Approved By','Created At'],
+                rows
+            };
+        }
+
         const _sheetsMappings = [
-            { tab: 'Settings',         mapper: _sheetsMapSettings },
-            { tab: 'Parties',          mapper: _sheetsMapParties },
-            { tab: 'AllTransactions',  mapper: _sheetsMapAllTransactions },
-            { tab: 'ApprovedTxns',     mapper: _sheetsMapApprovedTransactions },
-            { tab: 'Expenses',         mapper: _sheetsMapExpenses },
-            { tab: 'DirectorExpenses', mapper: _sheetsMapDirectorExpenses },
-            { tab: 'Staff',            mapper: _sheetsMapStaff },
-            { tab: 'Payslips',         mapper: _sheetsMapPayslips },
-            { tab: 'Attendance',       mapper: _sheetsMapAttendance },
-            { tab: 'WorkLogs',         mapper: _sheetsMapWorkLogs },
-            { tab: 'DailyEntries',     mapper: _sheetsMapDailyEntries },
-            { tab: 'Calibrations',     mapper: _sheetsMapCalibrations }
+            { tab: 'Settings',           mapper: _sheetsMapSettings },
+            { tab: 'Parties',            mapper: _sheetsMapParties },
+            { tab: 'AllTransactions',    mapper: _sheetsMapAllTransactions },
+            { tab: 'ApprovedTxns',       mapper: _sheetsMapApprovedTransactions },
+            { tab: 'ProformaInvoices',   mapper: _sheetsMapProformaInvoices },
+            { tab: 'Expenses',           mapper: _sheetsMapExpenses },
+            { tab: 'DirectorExpenses',   mapper: _sheetsMapDirectorExpenses },
+            { tab: 'Staff',              mapper: _sheetsMapStaff },
+            { tab: 'Payslips',           mapper: _sheetsMapPayslips },
+            { tab: 'Attendance',         mapper: _sheetsMapAttendanceFull },
+            { tab: 'WFHLog',             mapper: _sheetsMapWFHLog },
+            { tab: 'WorkLogs',           mapper: _sheetsMapWorkLogs },
+            { tab: 'DailyEntries',       mapper: _sheetsMapDailyEntries },
+            { tab: 'Calibrations',       mapper: _sheetsMapCalibrations },
+            { tab: 'ProjectExpenses',    mapper: _sheetsMapProjectExpenses },
+            { tab: 'FieldExpenses',      mapper: _sheetsMapFieldExpenses },
+            { tab: 'FundRequests',       mapper: _sheetsMapFundRequests },
+            { tab: 'StaffDocuments',     mapper: _sheetsMapStaffDocuments },
+            { tab: 'WageRevisions',      mapper: _sheetsMapWageRevisions }
         ];
 
         async function _saveSheetsId() {
