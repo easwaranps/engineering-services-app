@@ -4739,6 +4739,19 @@
                 expenses        = Array.isArray(expData)     ? expData      : [];
                 bankAccounts    = Array.isArray(bankData)    ? bankData     : getDefaultBankAccounts();
                 staff           = Array.isArray(staffData)   ? staffData    : [];
+                // One-time cleanup: remove phantom blank records that were accidentally
+                // created when the file-picker label click triggered form submission.
+                // These records have no name (the only required field) — they're safe
+                // to silently remove. Any such records will be resaved on next load.
+                const _blankCount = staff.filter(s => !(s.name||'').trim()).length;
+                if (_blankCount > 0) {
+                    staff = staff.filter(s => (s.name||'').trim());
+                    console.log(`🧹 Removed ${_blankCount} blank phantom staff record(s) on load`);
+                    // Save the cleaned array back silently
+                    saveFileToDrive('staff.json', staff).catch(e =>
+                        console.warn('Could not auto-clean phantom staff records:', e.message)
+                    );
+                }
                 projectExpenses = Array.isArray(projExpData) ? projExpData  : [];
                 workLogs        = Array.isArray(workLogData)   ? workLogData   : [];
                 const dirExpData    = await loadFileFromDrive('directorExpenses.json');
@@ -16450,10 +16463,10 @@
                                     <h4 class="text-sm font-bold text-gray-700">📎 Document Attachments</h4>
                                     <p class="text-[11px] text-gray-400">Upload scanned copies of ID proofs, certificates, contracts etc. (max 3MB each)</p>
                                 </div>
-                                <label class="cursor-pointer px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs font-bold shadow-sm flex items-center gap-1">
+                                <label class="cursor-pointer px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs font-bold shadow-sm flex items-center gap-1" onclick="event.preventDefault();document.getElementById('sDocsInput').click()">
                                     <span>+ Add Files</span>
-                                    <input type="file" id="sDocsInput" multiple accept="image/*,application/pdf" class="hidden" onchange="staffDocsAddFiles(this)"/>
                                 </label>
+                                <input type="file" id="sDocsInput" multiple accept="image/*,application/pdf" class="hidden" onchange="staffDocsAddFiles(this)"/>
                             </div>
                             <div id="sDocsList" class="space-y-2">
                                 <p class="text-xs text-gray-400 italic text-center py-3">No documents attached yet. Click <b>+ Add Files</b> to upload.</p>
@@ -19628,6 +19641,14 @@ ${'─'.repeat(50)}
 
         async function saveStaff(e) {
             e.preventDefault();
+            // Guard: reject blank-name submissions — these are accidental triggers
+            // (e.g. file-picker click briefly triggering form submit on some browsers).
+            // A valid staff record always has a name.
+            const nameVal = (document.getElementById('sName')?.value || '').trim();
+            if (!nameVal) {
+                console.warn('saveStaff: blocked blank-name submission (accidental trigger)');
+                return;
+            }
             // ── Level 2 concurrency: pre-save staleness check (existing record only) ──
             if (currentStaff?.staffID) {
                 const path = [{ id: currentStaff.staffID, idKey: 'staffID' }];
