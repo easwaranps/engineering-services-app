@@ -18987,11 +18987,162 @@ ${'─'.repeat(50)}
                         <ul class="text-[10px] text-gray-600 mt-1 ml-4 space-y-0.5">
                             ${l.deductionLog.map(d => `<li>${months[(parseInt(d.month)||1)-1]} ${d.year}: <strong>${fmt(d.amount)}</strong>${d.payslipRef?' · ref '+d.payslipRef:''}</li>`).join('')}
                         </ul>
-                    </details>` : ''}
+                    </details>` : `
+                    <div class="mt-2 p-2 bg-amber-100 border border-amber-300 rounded-lg flex items-center justify-between gap-2 flex-wrap">
+                        <p class="text-[10px] text-amber-800">
+                            <strong>No deduction history recorded.</strong>
+                            If EMIs were already deducted in past payslips (before this loan was entered in the system),
+                            use Backfill to enter how many have been paid — this will update Paid So Far, Balance and EMIs Left.
+                        </p>
+                        <button type="button" onclick="openLoanBackfillModal(${idx})"
+                            class="px-3 py-1.5 bg-amber-600 text-white text-[11px] font-semibold rounded-lg hover:bg-amber-700 whitespace-nowrap">
+                            ⚡ Backfill Past Deductions
+                        </button>
+                    </div>`}
                 </div>
                 `;
             }).join('');
         }
+
+        // ── Loan Backfill Modal ───────────────────────────────────────────
+        // When a loan was entered retrospectively (real deductions already happened
+        // in past payslips before the loan was added to the system), the deductionLog
+        // is empty and Deducted/Paid/Balance/EMIs Left all show wrong values.
+        // This modal lets you specify how many past EMIs were already paid, then
+        // auto-fills the deductionLog by working backward from today's month,
+        // using the loan's firstDeductMonth/Year as the start anchor.
+        function openLoanBackfillModal(idx) {
+            const rows  = window._sLoanRows || [];
+            const l     = rows[idx];
+            if (!l) return;
+            const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            const principal   = parseFloat(l.principal)    || 0;
+            const emi         = parseFloat(l.emi)          || 0;
+            const installments= parseInt(l.installments)   || 0;
+            const firstM      = parseInt(l.firstDeductMonth)|| 1;
+            const firstY      = parseInt(l.firstDeductYear) || new Date().getFullYear();
+
+            // Calculate max months elapsed since first deduction month up to now
+            const now     = new Date();
+            const nowKey  = now.getFullYear() * 12 + (now.getMonth() + 1);
+            const startKey= firstY * 12 + firstM;
+            const elapsed = Math.max(0, nowKey - startKey); // months elapsed since first EMI
+            const maxPast = Math.min(elapsed, installments);
+
+            const modal = document.createElement('div');
+            modal.id = 'loanBackfillModal';
+            modal.className = 'modal show';
+            modal.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg m-4 max-h-[90vh] overflow-y-auto">
+                <div class="bg-gradient-to-r from-amber-500 to-orange-500 p-4 text-white sticky top-0">
+                    <h3 class="text-base font-bold">⚡ Backfill Past Loan Deductions</h3>
+                    <p class="text-amber-100 text-xs mt-0.5">Loan ${l.loanID || '(new)'} — ${months[firstM-1]} ${firstY} onwards · EMI ₹${emi.toLocaleString('en-IN')}</p>
+                </div>
+                <div class="p-4 space-y-4">
+                    <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900">
+                        <p class="font-semibold mb-1">What this does:</p>
+                        <p>Creates deduction log entries for past months at the EMI amount (₹${emi.toLocaleString('en-IN')}),
+                        starting from <strong>${months[firstM-1]} ${firstY}</strong>.
+                        This immediately updates Deducted, Paid So Far, Balance, and EMIs Left in the loan card.
+                        It does NOT touch any payslips — it only updates the loan tracking record.</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold mb-1">How many EMIs have already been paid?</label>
+                        <input type="number" id="bfEMICount" min="1" max="${maxPast}" value="${Math.min(maxPast, installments)}"
+                            class="w-full px-3 py-2 border rounded-lg text-sm" />
+                        <p class="text-xs text-gray-400 mt-1">
+                            Max: ${maxPast} (months elapsed since ${months[firstM-1]} ${firstY}).
+                            Principal ₹${principal.toLocaleString('en-IN')} ÷ EMI ₹${emi.toLocaleString('en-IN')} = ${installments} total EMIs.
+                        </p>
+                    </div>
+                    <div id="bfPreview" class="text-xs text-gray-500"></div>
+                    <div class="flex justify-end gap-3 pt-2 border-t">
+                        <button onclick="document.getElementById('loanBackfillModal').remove()" class="px-4 py-2 border rounded-lg text-sm">Cancel</button>
+                        <button onclick="_confirmLoanBackfill(${idx})" class="px-5 py-2 bg-amber-600 text-white rounded-lg text-sm font-bold hover:bg-amber-700">⚡ Apply Backfill</button>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+
+            // Live preview as user types
+            const updatePreview = () => {
+                const cnt = parseInt(document.getElementById('bfEMICount')?.value) || 0;
+                let m = firstM, y = firstY;
+                const entries = [];
+                for (let i = 0; i < cnt; i++) {
+                    entries.push(`${months[m-1]} ${y}`);
+                    m++; if (m > 12) { m = 1; y++; }
+                }
+                const totalPaid = Math.min(cnt * emi, principal);
+                const bal = Math.max(0, principal - totalPaid);
+                document.getElementById('bfPreview').innerHTML =
+                    `<div class="bg-gray-50 border rounded p-2 space-y-1">
+                        <p><strong>Months covered:</strong> ${entries.slice(0,6).join(', ')}${cnt>6?' ... '+entries[entries.length-1]:''}</p>
+                        <p><strong>Total paid:</strong> ₹${totalPaid.toLocaleString('en-IN')} &nbsp;|&nbsp;
+                           <strong>Remaining balance:</strong> ₹${bal.toLocaleString('en-IN')} &nbsp;|&nbsp;
+                           <strong>EMIs left:</strong> ${Math.max(0, installments - cnt)}</p>
+                     </div>`;
+            };
+            setTimeout(() => {
+                document.getElementById('bfEMICount')?.addEventListener('input', updatePreview);
+                updatePreview();
+            }, 100);
+        }
+
+        function _confirmLoanBackfill(idx) {
+            const rows = window._sLoanRows || [];
+            const l    = rows[idx];
+            if (!l) return;
+            const cnt  = parseInt(document.getElementById('bfEMICount')?.value) || 0;
+            if (cnt < 1) { alert('Enter at least 1 EMI to backfill.'); return; }
+
+            const emi    = parseFloat(l.emi)          || 0;
+            const principal = parseFloat(l.principal) || 0;
+            const firstM = parseInt(l.firstDeductMonth) || 1;
+            const firstY = parseInt(l.firstDeductYear)  || new Date().getFullYear();
+            const months  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+            // Build deduction log entries for each past EMI
+            let m = firstM, y = firstY;
+            const newLog = [];
+            let runningBalance = principal;
+            for (let i = 0; i < cnt; i++) {
+                const deductAmt = i === cnt - 1
+                    ? +Math.min(emi, runningBalance).toFixed(2)   // last entry = actual remaining
+                    : +Math.min(emi, runningBalance).toFixed(2);
+                newLog.push({
+                    month: m, year: y,
+                    amount: deductAmt,
+                    payslipRef: 'backfilled',
+                    note: `Backfilled on ${new Date().toLocaleDateString('en-IN')} — actual deduction from salary`
+                });
+                runningBalance -= deductAmt;
+                m++; if (m > 12) { m = 1; y++; }
+            }
+
+            // Merge with any existing log (preserve any already-recorded future entries)
+            const existing = Array.isArray(l.deductionLog) ? l.deductionLog : [];
+            const existingKeys = new Set(existing.map(d => `${d.month}-${d.year}`));
+            const merged = [...existing];
+            for (const entry of newLog) {
+                if (!existingKeys.has(`${entry.month}-${entry.year}`)) {
+                    merged.push(entry);
+                }
+            }
+            merged.sort((a, b) => (a.year * 12 + a.month) - (b.year * 12 + b.month));
+
+            // Update in-memory loan row
+            rows[idx] = { ...l, deductionLog: merged };
+            window._sLoanRows = rows;
+
+            document.getElementById('loanBackfillModal').remove();
+            renderStaffLoanRows();
+
+            const totalPaid = merged.reduce((s, d) => s + (parseFloat(d.amount) || 0), 0);
+            const bal = Math.max(0, principal - totalPaid);
+            _showToast(`✓ Backfilled ${cnt} EMI(s) for ${l.loanID || 'loan'} · Paid ₹${totalPaid.toLocaleString('en-IN')} · Balance ₹${bal.toLocaleString('en-IN')}`, '#b45309', 5000);
+        }
+
         function addStaffLoanRow() {
             window._sLoanRows = window._sLoanRows || [];
             // Default EMI = principal/installments; user can override
