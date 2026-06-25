@@ -17081,11 +17081,11 @@
         }
 
         // Called when admin clicks "Apply to Payslip" for a staff member.
-        // Opens the payslip generation modal pre-filled with the incentive amount
-        // and a "Punctuality Incentive" remark in the Additional Allowance field.
-        // Nothing is auto-saved — admin sees the full payslip preview, verifies,
-        // and clicks Generate to confirm. Staff get the amount that month only
-        // when the admin explicitly generates their payslip with it.
+        // Navigates to the Payroll tab, sets the period, selects the staff member,
+        // and pre-fills Additional Allowance with the punctuality incentive amount.
+        // Uses the exact same state (officePayState/techWageState) and functions
+        // (onPaySlipPeriodChange, onPaySlipStaffChange, renderOfficePayCalc) that
+        // the Payroll tab's own dropdowns use — nothing is auto-saved.
         function applyPunctualityIncentive(staffID, staffName, amount, month, year) {
             const MNs = ['January','February','March','April','May','June',
                          'July','August','September','October','November','December'];
@@ -17093,47 +17093,49 @@
             const st = (staff||[]).find(s => s.staffID === staffID);
             if (!st) { alert('Staff not found: ' + staffName); return; }
 
-            // Check if a payslip already exists for this month (avoid double-applying)
-            const existing = (payslips||[]).find(p =>
-                p.staffID === staffID &&
-                +p.periodMonth === month && +p.periodYear === year
-            );
-            if (existing && (existing.addlAllow > 0 || existing.addlAllowRemark)) {
-                if (!confirm(`A payslip for ${staffName} (${monthLabel}) already exists with an Additional Allowance of ₹${existing.addlAllow||0}.\n\nDo you want to open it and update the allowance to ₹${amount} (Punctuality Incentive)?\n\nOK → open payslip modal\nCancel → leave as-is`)) return;
-            }
+            const isTech = st.staffType === 'Technician';
 
-            // Switch to the Payroll tab and open the payslip generation modal
-            // for this staff member with the incentive pre-filled
+            // Step 1 — navigate to Payroll tab
             switchView('payroll');
+
             setTimeout(() => {
-                // Try to trigger the staff payslip generation UI
-                const staffType = st.staffType || 'office';
-                if (staffType === 'office' || staffType === 'Office') {
-                    // Office staff payslip modal
-                    if (typeof openOfficePayModal === 'function') {
-                        openOfficePayModal(staffID);
-                        setTimeout(() => {
-                            const allowEl  = document.getElementById('opAddlAllow');
-                            const remarkEl = document.getElementById('opAddlAllowRemark');
-                            if (allowEl)  { allowEl.value  = amount; allowEl.dispatchEvent(new Event('input')); }
-                            if (remarkEl) { remarkEl.value = `Punctuality Incentive — ${monthLabel}`; }
-                            _showToast(`✓ Pre-filled ₹${amount} Punctuality Incentive for ${staffName} — verify and Generate to confirm`, '#15803d', 5000);
-                        }, 600);
+                // Step 2 — set the period (same as using the month/year dropdowns)
+                onPaySlipPeriodChange('periodMonth', month);
+                onPaySlipPeriodChange('periodYear',  year);
+
+                // Step 3 — select this staff member (same as choosing from psStaffSel)
+                const sel = document.getElementById('psStaffSel');
+                if (sel) sel.value = staffID;
+                onPaySlipStaffChange(staffID);
+
+                // Step 4 — after the form renders, inject the incentive amount
+                setTimeout(() => {
+                    if (isTech) {
+                        techWageState.addlAllow = amount;
+                        techWageState.addlAllowRemark = `Punctuality Incentive — ${monthLabel}`;
+                        const el = document.getElementById('twAddlAllow');
+                        const rl = document.getElementById('twAddlAllowRemark');
+                        if (el) { el.value = amount; el.dispatchEvent(new Event('input')); }
+                        if (rl) { rl.value = `Punctuality Incentive — ${monthLabel}`; rl.dispatchEvent(new Event('input')); }
+                        if (typeof renderTechWageCalc === 'function') renderTechWageCalc();
+                    } else {
+                        officePayState.addlAllowance       = amount;
+                        officePayState.addlAllowanceRemark = `Punctuality Incentive — ${monthLabel}`;
+                        const el = document.getElementById('opAddlAllowance');
+                        const rl = document.getElementById('opAddlAllowanceRemark');
+                        if (el) { el.value = amount; el.dispatchEvent(new Event('input')); }
+                        if (rl) { rl.value = `Punctuality Incentive — ${monthLabel}`; rl.dispatchEvent(new Event('input')); }
+                        if (typeof renderOfficePayCalc === 'function') renderOfficePayCalc();
                     }
-                } else {
-                    // Technician/field staff payslip modal
-                    if (typeof openTechWageModal === 'function') {
-                        openTechWageModal(staffID);
-                        setTimeout(() => {
-                            const allowEl  = document.getElementById('twAddlAllow');
-                            const remarkEl = document.getElementById('twAddlAllowRemark');
-                            if (allowEl)  { allowEl.value  = amount; allowEl.dispatchEvent(new Event('input')); }
-                            if (remarkEl) { remarkEl.value = `Punctuality Incentive — ${monthLabel}`; }
-                            _showToast(`✓ Pre-filled ₹${amount} Punctuality Incentive for ${staffName} — verify and Generate to confirm`, '#15803d', 5000);
-                        }, 600);
-                    }
-                }
-            }, 400);
+                    _showToast(
+                        `✓ ${staffName}: ₹${amount} Punctuality Incentive pre-filled for ${monthLabel}. Scroll down to review the payslip and click Generate.`,
+                        '#15803d', 6000
+                    );
+                    // Scroll the payroll section into view
+                    document.getElementById('opSection')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    document.getElementById('twSection')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }, 500);
+            }, 350);
         }
 
         function openBulkTimeModal() {
