@@ -4745,66 +4745,37 @@
                 directorExpenses    = Array.isArray(dirExpData)    ? dirExpData    : [];
                 payslips        = Array.isArray(payslipData)   ? payslipData   : [];
                 // Fund Request & Pool data (Field Tech fund tracking system)
-                // Auto-create on first run if missing — main app has folder access so this works
+                // SAFE LOAD: if a file is not found in Drive (null returned), use an empty
+                // array in memory but do NOT auto-create with [] on Drive.
+                // The old pattern of saveFileToDrive(filename, []) on null caused data loss:
+                // if Drive was slow / returned null transiently, the live file got overwritten
+                // with [] and data disappeared (this caused the petty cash loss and the
+                // companyDocuments loss). Files are created naturally on the first real save.
                 let fundReqData   = await loadFileFromDrive('fundRequests.json');
-                if (!fundReqData) {
-                    console.log('📄 Auto-creating fundRequests.json (first run)');
-                    try { await saveFileToDrive('fundRequests.json', []); fundReqData = []; }
-                    catch(e) { console.warn('Could not auto-create fundRequests.json:', e.message); }
-                }
-                fundRequests        = Array.isArray(fundReqData)   ? fundReqData   : [];
+                fundRequests      = Array.isArray(fundReqData)  ? fundReqData  : [];
+
                 let fundPoolData  = await loadFileFromDrive('fundPools.json');
-                if (!fundPoolData) {
-                    console.log('📄 Auto-creating fundPools.json (first run)');
-                    try { await saveFileToDrive('fundPools.json', []); fundPoolData = []; }
-                    catch(e) { console.warn('Could not auto-create fundPools.json:', e.message); }
-                }
-                fundPools           = Array.isArray(fundPoolData)  ? fundPoolData  : [];
+                fundPools         = Array.isArray(fundPoolData) ? fundPoolData : [];
 
                 // Payment Requests (treasury management — monthly disbursement workflow)
-                let payReqData = await loadFileFromDrive('paymentRequests.json');
-                if (!payReqData) {
-                    console.log('📄 Auto-creating paymentRequests.json (first run)');
-                    try { await saveFileToDrive('paymentRequests.json', []); payReqData = []; }
-                    catch(e) { console.warn('Could not auto-create paymentRequests.json:', e.message); }
-                }
-                paymentRequests = Array.isArray(payReqData) ? payReqData : [];
+                let payReqData    = await loadFileFromDrive('paymentRequests.json');
+                paymentRequests   = Array.isArray(payReqData)   ? payReqData   : [];
 
                 // Petty Cash module (Chennai + Mumbai office cash floats)
                 let pcOfficesData = await loadFileFromDrive('pettyCashOffices.json');
-                if (!pcOfficesData) {
-                    try { await saveFileToDrive('pettyCashOffices.json', []); pcOfficesData = []; }
-                    catch(e) { console.warn('Could not auto-create pettyCashOffices.json:', e.message); }
-                }
-                pettyCashOffices = Array.isArray(pcOfficesData) ? pcOfficesData : [];
+                pettyCashOffices  = Array.isArray(pcOfficesData) ? pcOfficesData : [];
 
-                let pcTxnData = await loadFileFromDrive('pettyCashTransactions.json');
-                if (!pcTxnData) {
-                    try { await saveFileToDrive('pettyCashTransactions.json', []); pcTxnData = []; }
-                    catch(e) { console.warn('Could not auto-create pettyCashTransactions.json:', e.message); }
-                }
+                let pcTxnData     = await loadFileFromDrive('pettyCashTransactions.json');
                 pettyCashTransactions = Array.isArray(pcTxnData) ? pcTxnData : [];
 
-                let pcStmtData = await loadFileFromDrive('pettyCashStatements.json');
-                if (!pcStmtData) {
-                    try { await saveFileToDrive('pettyCashStatements.json', []); pcStmtData = []; }
-                    catch(e) { console.warn('Could not auto-create pettyCashStatements.json:', e.message); }
-                }
+                let pcStmtData    = await loadFileFromDrive('pettyCashStatements.json');
                 pettyCashStatements = Array.isArray(pcStmtData) ? pcStmtData : [];
 
-                let gstClData = await loadFileFromDrive('gstCashLedgerSnapshots.json');
-                if (!gstClData) {
-                    try { await saveFileToDrive('gstCashLedgerSnapshots.json', []); gstClData = []; }
-                    catch(e) { console.warn('Could not auto-create gstCashLedgerSnapshots.json:', e.message); }
-                }
+                let gstClData     = await loadFileFromDrive('gstCashLedgerSnapshots.json');
                 gstCashLedgerSnapshots = Array.isArray(gstClData) ? gstClData : [];
 
-                let cdocData = await loadFileFromDrive('companyDocuments.json');
-                if (!cdocData) {
-                    try { await saveFileToDrive('companyDocuments.json', []); cdocData = []; }
-                    catch(e) { console.warn('Could not auto-create companyDocuments.json:', e.message); }
-                }
-                companyDocuments = Array.isArray(cdocData) ? cdocData : [];
+                let cdocData      = await loadFileFromDrive('companyDocuments.json');
+                companyDocuments  = Array.isArray(cdocData) ? cdocData : [];
 
                 console.log('✅ Data loaded — transactions:', transactions.length,
                     '| parties:', parties.length,
