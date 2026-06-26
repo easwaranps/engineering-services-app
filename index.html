@@ -10050,11 +10050,18 @@
             let tdsAmt = 0;
             const tdsOn = document.getElementById('expTDSApplicable')?.checked;
             if (tdsOn) {
-                const taxableRaw = parseFloat(document.getElementById('expTaxableAmt')?.value)||0;
-                // Default taxable = bill (ex-GST) if not overridden
+                const taxableEl = document.getElementById('expTaxableAmt');
+                const taxableRaw = parseFloat(taxableEl?.value)||0;
+                // Auto-fill taxable amount = bill (ex-GST) if the field is empty or zero.
+                // This covers the case where TDS is ticked for the first time on an existing
+                // expense — the fields become visible but expTaxableAmt is empty, so we
+                // auto-populate it with billINR so the user sees a sensible starting value.
                 const taxable = taxableRaw || billINR;
-                if (!taxableRaw && document.getElementById('expTaxableAmt')) {
-                    document.getElementById('expTaxableAmt').value = taxable.toFixed(2);
+                if (!taxableRaw && taxableEl && billINR > 0) {
+                    taxableEl.value = taxable.toFixed(2);
+                    // Do NOT recurse — we've already set the value; the rest of this function
+                    // will use `taxable` correctly. A second call would be a no-op anyway
+                    // since taxableRaw would now be non-zero, but the guard prevents it.
                 }
                 const tdsPctSel = document.getElementById('expTDSPct')?.value;
                 const tdsPct = tdsPctSel === 'Other'
@@ -10106,7 +10113,10 @@
             if (s3)  s3.textContent  = fmt(tdsAmt + totalDeductions);
             if (s5)  s5.textContent  = cn > 0 ? fmt(cn) : '—';
             if (s6)  s6.textContent  = adv > 0 ? fmt(adv) : '—';
-            if (s4)  s4.textContent  = fmt(netPayable);
+            // Net Payable in summary = balance (after all deductions including PF/PT/ESIC/Other),
+            // not the pre-deduction netPayable. Previously this showed netPayable which didn't
+            // reflect the deductions, making the summary inconsistent with the "Balance to Pay" field.
+            if (s4)  s4.textContent  = fmt(balance);
         }
 
         function toggleDeductionFields() {
