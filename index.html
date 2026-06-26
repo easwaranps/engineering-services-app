@@ -12932,8 +12932,17 @@
             // Calendar days in the wage month — per ESIC portal specification
             const calDays = new Date(year, month, 0).getDate();
 
-            const header = ['IP Number', 'IP Name', 'No. of Days',
-                            'Total Monthly Wages', 'Reason for 0 Wages', 'Last Working Day'];
+            // Column headers must EXACTLY match the ESIC portal upload template.
+            // The portal validates header text and rejects files with mismatched headers.
+            // These are copied verbatim from the ESIC portal sample template.
+            const header = [
+                'IP Number   (10 Digits)',
+                'IP Name  ( Only alphabets and space )',
+                'No of Days for which wages paid/payable during the month',
+                'Total Monthly Wages',
+                'Reason Code for Zero workings days(numeric only; provide 0 for all other reasons- Click on the link for reference)',
+                'Last Working Day  ( Format DD/MM/YYYY  or DD-MM-YYYY)'
+            ];
             const dataRows = [];
 
             rows.forEach(r => {
@@ -12953,7 +12962,7 @@
                 xmlns="http://www.w3.org/TR/REC-html40">
             <head><meta charset="UTF-8">
             <!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets>
-            <x:ExcelWorksheet><x:Name>Monthly Contribution</x:Name>
+            <x:ExcelWorksheet><x:Name>Sheet1</x:Name>
             <x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>
             </x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
             <style>
