@@ -21773,6 +21773,13 @@ Automated WFH alert — ${company} Attendance System.`;
                                     <td class="px-3 py-2 text-xs" style="max-width:160px;${d.tallyUpdated?'color:#0d9488;font-weight:600':''}" title="${d.description||''}">
                                         <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.description||'—'}</div>
                                         ${d.tallyUpdated?`<span style="font-size:10px;background:#ccfbf1;color:#0d9488;padding:1px 6px;border-radius:4px">✓ Tally${d.tallyVoucherNo?' #'+d.tallyVoucherNo:''}</span>`:''}
+                                        ${d.billStatus === 'available' || (!d.billStatus && (d.attachments||[]).length > 0)
+                                            ? `<span style="font-size:10px;background:#f0fdf4;color:#15803d;padding:1px 6px;border-radius:4px;border:1px solid #bbf7d0">✅ Bill${d.billRemark?' · '+d.billRemark:''}</span>`
+                                            : d.billStatus === 'no_bill'
+                                            ? `<span style="font-size:10px;background:#fff7f7;color:#dc2626;padding:1px 6px;border-radius:4px;border:1px solid #fca5a5" title="${d.billRemark||''}">❌ No Bill${d.billRemark?' · '+d.billRemark:''}</span>`
+                                            : d.billStatus === 'pending'
+                                            ? `<span style="font-size:10px;background:#fffbeb;color:#b45309;padding:1px 6px;border-radius:4px;border:1px solid #fcd34d" title="${d.billRemark||''}">⏳ Bill Pending${d.billRemark?' · '+d.billRemark:''}</span>`
+                                            : ''}
                                     </td>
                                     <td class="px-3 py-2 text-xs ${d.projectNo?'text-blue-600 font-medium':''}">${d.projectNo||'—'}</td>
                                     <td class="px-3 py-2 text-xs">
