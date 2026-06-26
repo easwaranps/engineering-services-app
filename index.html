@@ -8891,7 +8891,7 @@
         function expSummaryCards(list) {
             const total   = list.reduce((s,e) => s + (parseFloat(e.billAmtINR)||0), 0);
             const paid    = list.filter(e => e.payStatus === 'Paid').reduce((s,e) => s + (parseFloat(e.billAmtINR)||0), 0);
-            const pending = list.filter(e => e.payStatus === 'Pending').reduce((s,e) => s + (parseFloat(e.netPayable)||0), 0);
+            const pending = list.filter(e => e.payStatus === 'Pending').reduce((s,e) => s + (parseFloat(e.balanceAmt ?? e.netPayable)||0), 0);
             const tds     = list.reduce((s,e) => s + (parseFloat(e.tdsAmt)||0), 0);
             const fmt = n => '₹' + n.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
             return [
@@ -8966,7 +8966,7 @@
                     })()}
                 </td>
                 <td class="px-3 py-2${tallyDone?' text-teal-700 font-medium':''}" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${e.description||''}">${e.description||'—'}</td>
-                <td class="px-3 py-2 text-right font-semibold">${fmt(e.netPayable)}</td>
+                <td class="px-3 py-2 text-right font-semibold">${fmt(e.balanceAmt ?? e.netPayable)}</td>
                 <td class="px-3 py-2 text-center"><span class="px-2 py-0.5 rounded-full text-xs ${statusCls}">${e.payStatus}</span></td>
                 <td class="px-3 py-2 text-center whitespace-nowrap">
                     ${tallyDone
@@ -8992,7 +8992,8 @@
                             <p style="font-size:10px;font-weight:700;color:#9a3412;letter-spacing:.05em;margin-bottom:4px">BILL DETAILS</p>
                             <p style="font-size:12px"><span class="text-gray-500">Bill Amt:</span> <strong>${fmt(e.billAmtINR)}</strong></p>
                             <p style="font-size:12px"><span class="text-gray-500">TDS:</span> <strong class="text-yellow-700">${fmt(e.tdsAmt)}</strong></p>
-                            <p style="font-size:12px"><span class="text-gray-500">Net Payable:</span> <strong>${fmt(e.netPayable)}</strong></p>
+                            ${e.totalDeductions>0?`<p style="font-size:12px"><span class="text-gray-500">Deductions:</span> <strong class="text-purple-700">${fmt(e.totalDeductions)}</strong></p>`:''}
+                            <p style="font-size:12px"><span class="text-gray-500">Net Payable:</span> <strong>${fmt(e.balanceAmt ?? e.netPayable)}</strong></p>
                             ${e.billNo?`<p style="font-size:12px"><span class="text-gray-500">Bill No:</span> ${e.billNo}</p>`:''}
                         </div>
                         <!-- Tally info -->
