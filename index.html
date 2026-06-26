@@ -16940,9 +16940,16 @@
 
                 // Build per-staff late summary for the selected month
                 const summaryRows = officeStaff.map(st => {
+                    // Use the PAY PERIOD (26th of previous month → 25th of current month)
+                    // NOT the calendar month (1st → 30th). This matches the actual work period
+                    // used for payslips, leave reports, and the attendance register.
+                    const prevM = shM === 1 ? 12 : shM - 1;
+                    const prevY = shM === 1 ? calYear - 1 : calYear;
+                    const ppStart = `${prevY}-${String(prevM).padStart(2,'0')}-26`;
+                    const ppEnd   = `${calYear}-${String(shM).padStart(2,'0')}-25`;
                     const monthAtt = (st.attendance||[]).filter(a => {
-                        const [ay,am] = (a.date||'').split('-');
-                        return +ay===calYear && +am===shM;
+                        const d = a.date||'';
+                        return d >= ppStart && d <= ppEnd;
                     });
                     const presentDays = monthAtt.filter(a => ['Present','Half Day','OT'].includes(a.status));
                     const wfhDays     = monthAtt.filter(a => a.status === 'WFH');
@@ -18409,27 +18416,33 @@ ${'─'.repeat(50)}
                 };
 
                 const rows = staffToExport.map((s,idx) => {
-                    const att=( s.attendance||[]).find(a=>a.date===dateFilter);
+                    const att=(s.attendance||[]).find(a=>a.date===dateFilter);
                     const status=att?.status||'—';
                     const col=STATUS_COL[status]||[100,100,100];
                     const project=att?.project||att?.vessel||'—';
                     const checkIn=att?.checkIn||'—';
                     const checkOut=att?.checkOut||'—';
-                    const remarks=att?.remarks||'—';
+                    // For WFH: show WFH sessions summary in remarks if available
+                    let remarks=att?.remarks||'';
+                    if (status==='WFH' && att?.wfhSessions?.length) {
+                        const sess = att.wfhSessions.map(s=>s.in+(s.out?'–'+s.out:'')).join(', ');
+                        remarks = remarks ? remarks+' | WFH: '+sess : 'WFH: '+sess;
+                    }
                     return [
                         {content:String(idx+1), styles:{halign:'center',fontSize:8}},
                         {content:s.name, styles:{fontStyle:'bold'}},
                         {content:s.designation||s.staffType||'—', styles:{fontSize:7.5,textColor:[100,100,100]}},
                         {content:status, styles:{fontStyle:'bold',textColor:col,halign:'center'}},
-                        {content:project, styles:{fontSize:7.5}},
+                        {content:project||'—', styles:{fontSize:7.5}},
                         {content:checkIn, styles:{halign:'center',fontSize:8}},
                         {content:checkOut, styles:{halign:'center',fontSize:8}},
-                        {content:remarks, styles:{fontSize:7.5,textColor:[100,100,100]}},
+                        {content:remarks||'—', styles:{fontSize:7.5,textColor:[100,100,100]}},
                     ];
                 });
 
                 // Summary counts
                 const presentC=staffToExport.filter(s=>{const a=(s.attendance||[]).find(x=>x.date===dateFilter);return a&&['Present','OT','Working','Outstation','StandBy','Sailing','Anchorage'].includes(a.status);}).length;
+                const wfhC=staffToExport.filter(s=>{const a=(s.attendance||[]).find(x=>x.date===dateFilter);return a&&a.status==='WFH';}).length;
                 const absentC=staffToExport.filter(s=>{const a=(s.attendance||[]).find(x=>x.date===dateFilter);return !a||a.status==='Absent';}).length;
                 const leaveC=staffToExport.filter(s=>{const a=(s.attendance||[]).find(x=>x.date===dateFilter);return a&&['Leave','Casual Leave','Sick Leave','Earned Leave','Comp Off','Half Day','Half Day-Afternoon'].includes(a.status);}).length;
 
@@ -18441,12 +18454,47 @@ ${'─'.repeat(50)}
                     body:rows,
                     columnStyles:{0:{cellWidth:8},1:{cellWidth:38},2:{cellWidth:34},3:{cellWidth:22,halign:'center'},4:{cellWidth:40},5:{cellWidth:16,halign:'center'},6:{cellWidth:16,halign:'center'},7:{cellWidth:CW-174}}
                 });
-                const finalY=doc.lastAutoTable.finalY+8;
+                let finalY=doc.lastAutoTable.finalY+8;
+
+                // Summary counts line
                 doc.setFontSize(9); doc.setFont('helvetica','bold'); doc.setTextColor(30,64,175);
-                doc.text(`Present: ${presentC}  |  On Leave: ${leaveC}  |  Absent/Not Marked: ${absentC}  |  Total Staff: ${staffToExport.length}`, ML, finalY);
+                doc.text(`Present: ${presentC}  |  WFH: ${wfhC}  |  On Leave: ${leaveC}  |  Absent/Not Marked: ${absentC}  |  Total Staff: ${staffToExport.length}`, ML, finalY);
+                finalY += 10;
+
+                // WFH section at bottom — show WFH staff with their session timings
+                const wfhStaff = staffToExport.filter(s=>{const a=(s.attendance||[]).find(x=>x.date===dateFilter);return a&&a.status==='WFH';});
+                if (wfhStaff.length > 0) {
+                    finalY += 4;
+                    doc.setFillColor(238,242,255); doc.rect(ML, finalY-4, CW, 8, 'F');
+                    doc.setFontSize(8.5); doc.setFont('helvetica','bold'); doc.setTextColor(67,56,202);
+                    doc.text('🏠  WORK FROM HOME — ' + dateFilter, ML+3, finalY+1.5);
+                    finalY += 8;
+                    const wfhRows = wfhStaff.map(s => {
+                        const att=(s.attendance||[]).find(a=>a.date===dateFilter);
+                        const sessions=(att?.wfhSessions||[]);
+                        const totalMins = sessions.reduce((t,x)=>{
+                            if(!x.in||!x.out)return t;
+                            const[ih,im]=x.in.split(':').map(Number);
+                            const[oh,om]=x.out.split(':').map(Number);
+                            const d=(oh*60+om)-(ih*60+im); return t+(d>0?d:0);
+                        }, 0) || (att?.effectiveMins||0);
+                        const sessStr = sessions.length ? sessions.map(x=>`${x.in||'?'}–${x.out||'ongoing'}`).join('  ') : (att?.checkIn?`${att.checkIn} onwards`:'No session log');
+                        const hrStr = totalMins>0 ? Math.floor(totalMins/60)+'h '+(totalMins%60)+'m' : '—';
+                        return [s.name, s.designation||s.staffType||'—', sessStr, hrStr, att?.remarks||'—'];
+                    });
+                    doc.autoTable({
+                        startY:finalY, margin:{left:ML,right:MR}, theme:'grid',
+                        styles:{fontSize:8,cellPadding:2,valign:'middle'},
+                        headStyles:{fillColor:[67,56,202],textColor:[255,255,255],fontStyle:'bold',fontSize:7.5},
+                        head:[['Staff Name','Designation','WFH Session(s)','Effective Hrs','Remarks']],
+                        body:wfhRows,
+                        columnStyles:{0:{cellWidth:40},1:{cellWidth:35},2:{cellWidth:60},3:{cellWidth:20,halign:'center'},4:{cellWidth:CW-155}}
+                    });
+                    finalY = doc.lastAutoTable.finalY + 10;
+                }
 
                 // Signature line for management
-                const sigY=finalY+16;
+                const sigY = Math.min(finalY + 6, 265);
                 doc.setDrawColor(150,150,150); doc.setLineWidth(0.3);
                 doc.line(ML, sigY, ML+60, sigY);
                 doc.line(PW-MR-60, sigY, PW-MR, sigY);
@@ -22074,6 +22122,26 @@ Automated WFH alert — ${company} Attendance System.`;
                         </div>
                     </div>
 
+                    <!-- Bill / Receipt Status -->
+                    <div class="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                        <p class="text-xs font-bold text-amber-800 mb-3">🧾 BILL / RECEIPT STATUS</p>
+                        <div class="flex gap-3 flex-wrap mb-3">
+                            <label class="flex items-center gap-2 cursor-pointer px-3 py-2 rounded-lg border-2 ${exp?.billStatus==='available'?'border-green-400 bg-green-50':'border-gray-200 bg-white'} text-sm font-semibold">
+                                <input type="radio" name="deBillStatus" value="available" ${exp?.billStatus==='available'?'checked':''} class="accent-green-600"/> ✅ Bill Available
+                            </label>
+                            <label class="flex items-center gap-2 cursor-pointer px-3 py-2 rounded-lg border-2 ${exp?.billStatus==='no_bill'?'border-red-400 bg-red-50':'border-gray-200 bg-white'} text-sm font-semibold">
+                                <input type="radio" name="deBillStatus" value="no_bill" ${exp?.billStatus==='no_bill'?'checked':''} class="accent-red-600"/> ❌ No Bill
+                            </label>
+                            <label class="flex items-center gap-2 cursor-pointer px-3 py-2 rounded-lg border-2 ${(!exp?.billStatus||exp?.billStatus==='pending')?'border-amber-400 bg-amber-50':'border-gray-200 bg-white'} text-sm font-semibold">
+                                <input type="radio" name="deBillStatus" value="pending" ${(!exp?.billStatus||exp?.billStatus==='pending')?'checked':''} class="accent-amber-600"/> ⏳ Pending
+                            </label>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Bill Remark <span class="text-gray-400 font-normal">(e.g. "Original with accounts", "Digital receipt", "Lost — cash paid")</span></label>
+                            <input type="text" id="deBillRemark" value="${exp?.billRemark||''}" placeholder="Optional — note about the bill/receipt" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                    </div>
+
                     <!-- Notes -->
                     <div>
                         <label class="block text-xs font-semibold text-gray-600 mb-1">Notes / Remarks</label>
@@ -22394,6 +22462,8 @@ Automated WFH alert — ${company} Attendance System.`;
                     reimbursedDate: document.getElementById('deReimbDate')?.value||'',
                     linkedExpID:    document.getElementById('deLinkedExp')?.value||'',
                     notes:          document.getElementById('deNotes').value,
+                    billStatus:     document.querySelector('input[name="deBillStatus"]:checked')?.value || 'pending',
+                    billRemark:     (document.getElementById('deBillRemark')?.value || '').trim(),
                     attachments,
                     createdAt:      _currentDirExp?.createdAt || new Date().toISOString(),
                     // Preserve Tally & verification state across edits — without this,
