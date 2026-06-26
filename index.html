@@ -15193,13 +15193,17 @@
                     <span class="item-total font-bold text-sm">0.00</span>
                 </td>
                 <td class="border px-2 py-2 text-center align-top">
+                    <button type="button" onclick="insertLineItemAbove('${id}')"
+                        class="text-blue-600 hover:text-blue-800 text-xs font-medium block w-full mb-1"
+                        title="Insert a blank row above this row">+ Insert</button>
                     <button type="button" onclick="removeLineItem('${id}')" 
-                        class="text-red-600 hover:text-red-800 text-sm font-medium">Remove</button>
+                        class="text-red-600 hover:text-red-800 text-xs font-medium block w-full">Remove</button>
                 </td>
             `;
             
             document.getElementById('lineItems').appendChild(tr);
             document.getElementById('totalSection').classList.remove('hidden');
+            renumberLineItems();
 
             // Show Part No cell if current category is PO, Quotation, or Delivery Note
             const _curCat = document.getElementById('txnCategory')?.value || '';
@@ -15226,7 +15230,132 @@
             if (document.getElementById('lineItems').children.length === 0) {
                 document.getElementById('totalSection').classList.add('hidden');
             }
+            renumberLineItems();
             updateTotals();
+        }
+
+        // Renumber the S.No column of every row in the line items table
+        // so sequential row numbers are always correct after insert/delete/reorder.
+        // The S.No is always the first <td> in each row.
+        function renumberLineItems() {
+            const rows = document.getElementById('lineItems')?.children;
+            if (!rows) return;
+            Array.from(rows).forEach((tr, idx) => {
+                const snoTd = tr.querySelector('td:first-child');
+                if (snoTd) snoTd.textContent = idx + 1;
+            });
+        }
+
+        // Insert a blank line item row immediately ABOVE the row with the given id.
+        // After inserting, renumber all rows so the S.No column stays sequential.
+        function insertLineItemAbove(afterId) {
+            lineItemCounter++;
+            const newId = `item-${lineItemCounter}`;
+            const refRow = document.getElementById(`line-${afterId}`);
+            if (!refRow) { addLineItem(); return; }
+
+            // Determine GST mode
+            const partyName = document.getElementById('txnParty')?.value || '';
+            const party = parties.find(p => p.partyName === partyName);
+            const useIGST = shouldUseIGST(settings.gstNumber, party?.gstNumber);
+            const defaultSGST = useIGST ? 0 : 9;
+            const defaultCGST = useIGST ? 0 : 9;
+            const defaultIGST = useIGST ? 18 : 0;
+
+            const _curCat = document.getElementById('txnCategory')?.value || '';
+
+            const tr = document.createElement('tr');
+            tr.id = `line-${newId}`;
+            tr.className = 'hover:bg-gray-50';
+            tr.innerHTML = `
+                <td class="border px-2 py-2 text-center align-top">?</td>
+                <td class="border px-2 py-2 align-top">
+                    <textarea placeholder="Description (press Enter for new line)"
+                        class="item-desc w-full px-2 py-1 border rounded text-sm resize-y"
+                        style="min-height:38px; height:38px;" rows="2" required></textarea>
+                </td>
+                <td class="td-partno border px-2 py-2 align-top hidden">
+                    <input type="text" placeholder="Part No" value=""
+                        class="item-partno w-full px-2 py-1 border rounded text-sm" />
+                </td>
+                <td class="td-hsn border px-2 py-2 align-top">
+                    <input type="text" placeholder="HSN" value=""
+                        class="item-hsn w-full px-2 py-1 border rounded text-sm" />
+                </td>
+                <td class="border px-2 py-2 align-top">
+                    <input type="number" placeholder="0" value="1"
+                        class="item-qty w-full px-2 py-1 border rounded text-sm" min="0" step="0.01" required />
+                </td>
+                <td class="border px-2 py-2 align-top">
+                    <select class="item-uom w-full px-2 py-1 border rounded text-sm">
+                        <option value="NOS">NOS</option><option value="PCS">PCS</option>
+                        <option value="KG">KG</option><option value="MTR">MTR</option>
+                        <option value="LTR">LTR</option><option value="BOX">BOX</option>
+                        <option value="SET">SET</option><option value="PKT">PKT</option>
+                        <option value="HRS">HRS</option><option value="DAY">DAY</option>
+                        <option value="JOB">JOB</option>
+                    </select>
+                </td>
+                <td class="td-rate border px-2 py-2 align-top">
+                    <input type="text" inputmode="decimal" placeholder="0.00"
+                        value="0.00" data-formula="" data-computed="0"
+                        class="item-rate w-full px-2 py-1 border rounded text-sm font-mono"
+                        onfocus="_rateFormulaFocus(this)" onblur="_rateFormulaBlur(this)" required />
+                </td>
+                <td class="td-discount border px-2 py-2 align-top">
+                    <input type="number" placeholder="0" value="0"
+                        class="item-discount w-full px-2 py-1 border rounded text-sm" min="0" max="100" step="0.01" />
+                </td>
+                <td class="td-taxable border px-2 py-2 text-right align-top">
+                    <span class="item-taxable font-medium text-sm">0.00</span>
+                </td>
+                <td class="td-sgst border px-2 py-2 align-top">
+                    <input type="number" placeholder="0" value="${defaultSGST}"
+                        class="item-sgst w-full px-2 py-1 border rounded text-sm" min="0" max="100" step="0.01" ${useIGST?'readonly style="background:#f3f4f6"':''} />
+                </td>
+                <td class="td-cgst border px-2 py-2 align-top">
+                    <input type="number" placeholder="0" value="${defaultCGST}"
+                        class="item-cgst w-full px-2 py-1 border rounded text-sm" min="0" max="100" step="0.01" ${useIGST?'readonly style="background:#f3f4f6"':''} />
+                </td>
+                <td class="td-igst border px-2 py-2 align-top">
+                    <input type="number" placeholder="0" value="${defaultIGST}"
+                        class="item-igst w-full px-2 py-1 border rounded text-sm" min="0" max="100" step="0.01" ${!useIGST?'readonly style="background:#f3f4f6"':''} />
+                </td>
+                <td class="td-total border px-2 py-2 text-right align-top">
+                    <span class="item-total font-bold text-sm">0.00</span>
+                </td>
+                <td class="border px-2 py-2 text-center align-top">
+                    <button type="button" onclick="insertLineItemAbove('${newId}')"
+                        class="text-blue-600 hover:text-blue-800 text-xs font-medium block w-full mb-1"
+                        title="Insert a blank row above this row">+ Insert</button>
+                    <button type="button" onclick="removeLineItem('${newId}')"
+                        class="text-red-600 hover:text-red-800 text-xs font-medium block w-full">Remove</button>
+                </td>`;
+
+            // Apply category-specific visibility
+            if (_curCat === 'PO' || _curCat === 'QUOTATION' || _curCat === 'DELIVERY_NOTE') {
+                tr.querySelector('.td-partno')?.classList.remove('hidden');
+            }
+            if (_curCat === 'DELIVERY_NOTE') {
+                ['td-hsn','td-rate','td-discount','td-taxable','td-sgst','td-cgst','td-igst','td-total'].forEach(c => {
+                    tr.querySelector('.'+c)?.classList.add('hidden');
+                });
+            }
+
+            // Wire input events
+            tr.querySelectorAll('input, select').forEach(inp => {
+                inp.addEventListener('input', updateTotals);
+                inp.addEventListener('change', updateTotals);
+            });
+
+            // Insert ABOVE the reference row, then renumber
+            refRow.parentNode.insertBefore(tr, refRow);
+            document.getElementById('totalSection')?.classList.remove('hidden');
+            renumberLineItems();
+            updateTotals();
+
+            // Focus the description field of the new row
+            tr.querySelector('.item-desc')?.focus();
         }
 
         // ════════════════════════════════════════════════════════════════
