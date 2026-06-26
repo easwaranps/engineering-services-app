@@ -316,6 +316,26 @@
                 <input type="text" id="eiVendor" class="field-input" placeholder="Restaurant name, transport provider, etc."/>
             </div>
 
+            <!-- Bill Status — available or no bill, with remark -->
+            <div style="background:#f8fafc;border:1px solid var(--border);border-radius:10px;padding:10px 14px">
+                <p class="field-label" style="margin-bottom:8px">🧾 BILL / RECEIPT STATUS</p>
+                <div style="display:flex;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 12px;border-radius:8px;border:1.5px solid #86efac;background:#f0fdf4;font-size:12px;font-weight:600;color:#15803d">
+                        <input type="radio" name="eiBillStatus" id="eiBillStatusYes" value="available" style="accent-color:#16a34a"/>
+                        ✅ Bill Available
+                    </label>
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 12px;border-radius:8px;border:1.5px solid #fca5a5;background:#fff7f7;font-size:12px;font-weight:600;color:#dc2626">
+                        <input type="radio" name="eiBillStatus" id="eiBillStatusNo" value="no_bill" style="accent-color:#dc2626"/>
+                        ❌ No Bill
+                    </label>
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 12px;border-radius:8px;border:1.5px solid #d1d5db;background:#f9fafb;font-size:12px;font-weight:600;color:#6b7280">
+                        <input type="radio" name="eiBillStatus" id="eiBillStatusPending" value="pending" style="accent-color:#6b7280" checked/>
+                        ⏳ Pending
+                    </label>
+                </div>
+                <input type="text" id="eiBillRemark" placeholder="Bill remark — e.g. 'Receipt with manager', 'Will collect later', 'Cash receipt'" class="field-input" style="font-size:12px;padding:7px 10px"/>
+            </div>
+
             <!-- Multiple bill attachments -->
             <div style="background:#f8fafc;border:1px solid var(--border);border-radius:10px;padding:10px 14px">
                 <p class="field-label" style="margin-bottom:6px">📎 BILLS / RECEIPTS <span style="font-weight:400;text-transform:none;font-size:11px;color:var(--muted)">(tap to add one or more)</span></p>
@@ -2146,6 +2166,13 @@
                         const attCount=(it.billAttachments||[]).length+(it.billData?1:0);
                         // Pool lock: greys out Edit/Del and shows a small 🔒 chip on the row
                         const _poolLocked = _isPoolClosed(it.poolID);
+                        // Bill status badge
+                        const billSt = it.billStatus || (attCount > 0 ? 'available' : 'pending');
+                        const billBadge = billSt === 'available'
+                            ? `<span style="font-size:10px;background:#f0fdf4;color:#15803d;padding:1px 6px;border-radius:4px;border:1px solid #86efac">✅ Bill</span>`
+                            : billSt === 'no_bill'
+                            ? `<span style="font-size:10px;background:#fff7f7;color:#dc2626;padding:1px 6px;border-radius:4px;border:1px solid #fca5a5">❌ No Bill${it.billRemark?' · '+it.billRemark:''}</span>`
+                            : `<span style="font-size:10px;background:#fafafa;color:#9ca3af;padding:1px 6px;border-radius:4px;border:1px solid #e5e7eb">⏳ Bill Pending${it.billRemark?' · '+it.billRemark:''}</span>`;
                         return `
                         <div style="padding:10px 14px;border-top:1px solid var(--border);${_poolLocked?'background:#fafafa':''}">
                             <div style="display:flex;justify-content:space-between;align-items:flex-start">
@@ -2153,6 +2180,7 @@
                                     <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px">
                                         <span class="badge" style="background:#f0fdf4;color:#0d7c66;border:1px solid #bbf7d0">${it.category}</span>
                                         <span style="font-size:13px;font-weight:600;color:var(--text)">${it.description}</span>
+                                        ${billBadge}
                                         ${_poolLocked?`<span title="Pool ${it.poolID} is Closed — entry is read-only" style="font-size:10px;background:#f3f4f6;color:#6b7280;padding:1px 6px;border-radius:4px;border:1px solid #d1d5db">🔒 Locked</span>`:''}
                                     </div>
                                     <p style="font-size:11px;color:var(--muted)">${it.date}${it.payMode?' · '+it.payMode:''}${it.vendor?' · '+it.vendor:''}${techNames?' · 👷 '+techNames:''}</p>
@@ -2933,6 +2961,12 @@
         document.getElementById('eiAmt').value     = item?.amount  || '';
         document.getElementById('eiPayMode').value = item?.payMode || 'Cash';
         document.getElementById('eiVendor').value  = item?.vendor  || '';
+        // Bill status radio + remark
+        const billStatusVal = item?.billStatus || 'pending';
+        const billStatusEl = document.querySelector(`input[name="eiBillStatus"][value="${billStatusVal}"]`);
+        if (billStatusEl) billStatusEl.checked = true;
+        else document.getElementById('eiBillStatusPending').checked = true;
+        document.getElementById('eiBillRemark').value = item?.billRemark || '';
         if (item?.technicians?.length) _eiStaffRows = item.technicians.map(t=>({name:t.name,staffID:t.staffID||''}));
         else _eiStaffRows = [{name:'',staffID:''}];
         if (item?.billAttachments) _eiBillAttachments = [...item.billAttachments];
@@ -3125,6 +3159,8 @@
             technicians:     techs,
             staffName:       techs.map(t=>t.name).join(', '),
             billAttachments: [..._eiBillAttachments],
+            billStatus:      document.querySelector('input[name="eiBillStatus"]:checked')?.value || 'pending',
+            billRemark:      (document.getElementById('eiBillRemark')?.value || '').trim(),
             // Phase C: pool allocation fields
             poolID:          newPoolID,
             paidByStaffID:   paidByStaffID,
