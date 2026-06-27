@@ -23170,6 +23170,7 @@ Automated WFH alert — ${company} Attendance System.`;
             // which can diverge from the real outstanding when payments span months.
             // Instead compute directly from the actual unreimbursed expense records.
             const periodStart = monthYM + '-01';
+            const openBalAmt     = parseFloat(dirKey==='dir1' ? settings.director1OpeningBalance : settings.director2OpeningBalance) || 0;
             const openBalSettled = !!(dirKey==='dir1' ? settings.director1OpeningSettled : settings.director2OpeningSettled);
             const openingFromSettings = openBalSettled ? 0 : openBalAmt;
 
