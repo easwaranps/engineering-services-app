@@ -23174,6 +23174,20 @@ Automated WFH alert — ${company} Attendance System.`;
             const openBalSettled = !!(dirKey==='dir1' ? settings.director1OpeningSettled : settings.director2OpeningSettled);
             const openingFromSettings = openBalSettled ? 0 : openBalAmt;
 
+            // If the opening balance is marked settled but the user suspects it was done
+            // accidentally, show a reset notice in the modal so they can fix it inline.
+            const openingResetNotice = (openBalSettled && openBalAmt > 0)
+                ? `<div class="bg-amber-50 border border-amber-300 rounded-xl p-3 flex items-center justify-between gap-3">
+                    <div class="text-xs text-amber-800">
+                        <strong>⚠ Opening Balance (₹${openBalAmt.toLocaleString('en-IN',{minimumFractionDigits:2})}) is marked as Settled</strong> — 
+                        it is not included in the Total Due. If this was settled in error, reset it to include it again.
+                    </div>
+                    <button onclick="_resetOpeningSettled('${dirKey}')" 
+                        class="px-3 py-1.5 bg-amber-600 text-white text-xs font-bold rounded-lg hover:bg-amber-700 whitespace-nowrap">
+                        ↩ Reset Opening BF
+                    </button>
+                   </div>` : '';
+
             const allUnpaid = (directorExpenses||[]).filter(d =>
                 d.director === dirKey && !d.reimbursed
             ).sort((a,b) => (a.expDate||'').localeCompare(b.expDate||'') || (a.deID||'').localeCompare(b.deID||''));
@@ -23246,6 +23260,7 @@ Automated WFH alert — ${company} Attendance System.`;
                             </div>
                         </div>
                     </div>
+                    ${openingResetNotice}
 
                     <!-- Settlement result preview (updates live as amount changes) -->
                     <div class="grid grid-cols-3 gap-3" id="dsResultCards">
@@ -23779,6 +23794,32 @@ Automated WFH alert — ${company} Attendance System.`;
             document.body.appendChild(modal);
         }
 
+        // Reset the Opening Balance settled flag for a director.
+        // Called from the "↩ Reset Opening BF" button shown in the settle modal
+        // when the opening balance is marked settled but should not be.
+        async function _resetOpeningSettled(dirKey) {
+            const dirs = getDirNames();
+            const dirName = dirKey === 'dir1' ? dirs[0] : dirs[1];
+            const prefix  = dirKey === 'dir1' ? 'director1Opening' : 'director2Opening';
+            const openAmt = parseFloat(settings[prefix+'Balance']) || 0;
+            if (!confirm(`Reset Opening Balance settlement for ${dirName}?\n\nThis will mark ₹${openAmt.toLocaleString('en-IN',{minimumFractionDigits:2})} as unsettled again and it will reappear as Brought Forward in the settle modal.\n\nProceed?`)) return;
+            settings[prefix+'Settled']      = false;
+            settings[prefix+'SettledDate']  = '';
+            settings[prefix+'SettledAmt']   = 0;
+            settings[prefix+'SettledRef']   = '';
+            settings[prefix+'SettledMode']  = '';
+            settings[prefix+'SettledNotes'] = '';
+            settings[prefix+'SettledAt']    = '';
+            try {
+                await saveData('settings', settings);
+                closeDirSettleModal();
+                renderView();
+                _showToast(`↩ Opening Balance (₹${openAmt.toLocaleString('en-IN',{minimumFractionDigits:2})}) for ${dirName} reset to Unsettled — reopen the Settle modal to see it in Brought Forward.`, '#b45309', 5000);
+            } catch(err) {
+                alert('Save failed: ' + err.message);
+            }
+        }
+
         async function _confirmUndoSettle(dirKey) {
             const dirs = getDirNames();
             const dirName = dirKey === 'dir1' ? dirs[0] : dirs[1];
@@ -23819,7 +23860,6 @@ Automated WFH alert — ${company} Attendance System.`;
             const undoIDs = new Set(toUndo.map(d => d.deID));
             directorExpenses = directorExpenses.map(d => {
                 if (!undoIDs.has(d.deID)) return d;
-                // Keep all original expense data, just clear the reimbursement fields
                 const cleared = { ...d };
                 delete cleared.reimbursed;
                 delete cleared.reimbursedDate;
@@ -23833,11 +23873,39 @@ Automated WFH alert — ${company} Attendance System.`;
                 return cleared;
             });
 
+            // Also ask whether to reset the Opening Balance settled flag.
+            // If the undo batch included a date matching when the opening was settled,
+            // the opening balance should also be un-settled so it reappears in the settle modal.
+            const openingFieldPrefix = dirKey === 'dir1' ? 'director1Opening' : 'director2Opening';
+            const openSettledDate = settings[openingFieldPrefix+'SettledDate'] || '';
+            const openIsSettled   = !!settings[openingFieldPrefix+'Settled'];
+            let resetOpening = false;
+            if (openIsSettled) {
+                resetOpening = confirm(
+                    `The Opening Balance for ${dirName} is currently marked as settled` +
+                    (openSettledDate ? ` (on ${openSettledDate})` : '') + '.\n\n' +
+                    `Do you also want to un-settle the Opening Balance so it reappears as Brought Forward in the settle modal?\n\n` +
+                    `OK → Yes, reset opening balance to unsettled\n` +
+                    `Cancel → Leave opening balance as settled`
+                );
+                if (resetOpening) {
+                    settings[openingFieldPrefix+'Settled']      = false;
+                    settings[openingFieldPrefix+'SettledDate']  = '';
+                    settings[openingFieldPrefix+'SettledAmt']   = 0;
+                    settings[openingFieldPrefix+'SettledRef']   = '';
+                    settings[openingFieldPrefix+'SettledMode']  = '';
+                    settings[openingFieldPrefix+'SettledNotes'] = '';
+                    settings[openingFieldPrefix+'SettledAt']    = '';
+                }
+            }
+
             try {
-                await saveData('directorExpenses', directorExpenses);
+                const saves = [saveData('directorExpenses', directorExpenses)];
+                if (resetOpening) saves.push(saveData('settings', settings));
+                await Promise.all(saves);
                 document.getElementById('undoSettleModal').remove();
                 renderView();
-                _showToast(`↩ Undone: ${toUndo.length} settlement(s) for ${dirName} reversed. Expenses are now Pending again.`, '#dc2626', 6000);
+                _showToast(`↩ Undone: ${toUndo.length} settlement(s) for ${dirName} reversed. Expenses are now Pending again.${resetOpening?' Opening balance also reset.':''}`, '#dc2626', 6000);
             } catch(err) {
                 alert('Save failed: ' + err.message);
             }
