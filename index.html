@@ -21770,6 +21770,7 @@ Automated WFH alert — ${company} Attendance System.`;
                                 <div class="flex gap-1">
                                     <button onclick="openDirLedgerModal('${k}','${filterMonth}')" class="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 font-medium" title="View running ledger">📒 Ledger</button>
                                     <button onclick="openDirSettleModal('${k}','${filterMonth}')" class="text-xs px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-md hover:bg-emerald-200 font-medium" title="Settle this month's outstanding (FIFO)" ${led.unpaidCount===0?'disabled style=\"opacity:0.4;cursor:not-allowed\"':''}>💰 Settle Month</button>
+                                    <button onclick="openUndoSettleModal('${k}')" class="text-xs px-2 py-0.5 bg-red-100 text-red-700 rounded-md hover:bg-red-200 font-medium" title="Reverse a previously confirmed settlement">↩ Undo Settlement</button>
                                     <button onclick="openDirSettlementHistory('${k}')" class="text-xs px-2 py-0.5 bg-purple-100 text-purple-700 rounded-md hover:bg-purple-200 font-medium" title="See all past settlements">📜 Settlements</button>
                                     <button onclick="dirExpStatementPDF('${k}','${filterMonth}')" class="text-xs px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded-md hover:bg-indigo-200 font-medium" title="Reimbursement Statement PDF">📄 Statement</button>
                                 </div>
@@ -23167,9 +23168,20 @@ Automated WFH alert — ${company} Attendance System.`;
             const openBalDate   = (dirKey==='dir1' ? settings.director1OpeningDate : settings.director2OpeningDate) || '';
             const openingAvailable = openBalAmt > 0 && !openBalSettled;
 
-            // Default to PICK mode (selectedIDs initially empty — user opts in)
-            // Stash state for live preview
-            window._dsState = { dirKey, monthYM, mode: 'pick', selectedIDs: new Set(), settleOpening: false, openBalAmt };
+            // Find last settlement details for this director
+            const allSettlements = (directorExpenses||[]).filter(d =>
+                d.director === dirKey && d.reimbursed && d.reimbursedDate
+            ).sort((a,b) => (b.reimbursedDate||'').localeCompare(a.reimbursedDate||''));
+            const lastSettlement = allSettlements[0];
+            const lastSettledDate = lastSettlement?.reimbursedDate || '';
+            const lastSettledAmt  = lastSettlement
+                ? (directorExpenses||[]).filter(d =>
+                    d.director===dirKey && d.reimbursed && d.reimbursedDate === lastSettledDate
+                  ).reduce((s,d) => s + (parseFloat(d.reimbursedAmt||d.amount)||0), 0)
+                : 0;
+
+            // Total outstanding = opening BF + all unpaid expenses (the true amount due)
+            const totalDue = led.opening + unpaid.reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
 
             document.getElementById('dirSettleModal').innerHTML = `
             <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl m-4 max-h-[92vh] overflow-y-auto">
@@ -23181,22 +23193,54 @@ Automated WFH alert — ${company} Attendance System.`;
                     <button onclick="closeDirSettleModal()" class="text-white text-2xl font-bold leading-none">✕</button>
                 </div>
                 <div class="p-5 space-y-4">
-                    <!-- Summary -->
-                    <div class="grid grid-cols-3 gap-3">
-                        <div class="bg-rose-50 border border-rose-200 rounded-xl p-3">
-                            <div class="text-xs text-rose-500 uppercase font-semibold">Outstanding</div>
-                            <div class="text-2xl font-bold text-rose-700">${fmt(totalOutstanding)}</div>
-                            <div class="text-xs text-gray-500 mt-1">${unpaid.length} unpaid entries</div>
+
+                    <!-- Enhanced summary: Last settlement → BF → This period bills → Total Due -->
+                    <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-2">
+                        <p class="text-xs font-bold text-blue-800 uppercase tracking-wide mb-2">Reimbursement Summary</p>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                            <div class="bg-white rounded-lg border border-gray-200 p-3">
+                                <div class="text-[10px] text-gray-400 uppercase font-bold mb-1">Last Settlement</div>
+                                ${lastSettledDate
+                                    ? `<div class="text-sm font-bold text-teal-700">${fmt(lastSettledAmt)}</div>
+                                       <div class="text-[10px] text-gray-500 mt-0.5">Paid on ${lastSettledDate}</div>`
+                                    : `<div class="text-sm font-bold text-gray-400">—</div>
+                                       <div class="text-[10px] text-gray-400">No prior settlement</div>`
+                                }
+                            </div>
+                            <div class="bg-white rounded-lg border border-amber-200 p-3">
+                                <div class="text-[10px] text-amber-600 uppercase font-bold mb-1">Brought Forward</div>
+                                <div class="text-sm font-bold text-amber-700">${fmt(led.opening)}</div>
+                                <div class="text-[10px] text-gray-400 mt-0.5">From prior period</div>
+                            </div>
+                            <div class="bg-white rounded-lg border border-rose-200 p-3">
+                                <div class="text-[10px] text-rose-500 uppercase font-bold mb-1">Bills This Period</div>
+                                <div class="text-sm font-bold text-rose-700">${fmt(unpaid.reduce((s,d)=>s+(parseFloat(d.amount)||0),0))}</div>
+                                <div class="text-[10px] text-gray-400 mt-0.5">${unpaid.length} unpaid entries</div>
+                            </div>
+                            <div class="bg-rose-50 rounded-lg border border-rose-300 p-3">
+                                <div class="text-[10px] text-rose-700 uppercase font-bold mb-1">Total Due</div>
+                                <div class="text-lg font-bold text-rose-800">${fmt(totalDue)}</div>
+                                <div class="text-[10px] text-gray-500 mt-0.5">BF + all unpaid bills</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Settlement result preview (updates live as amount changes) -->
+                    <div class="grid grid-cols-3 gap-3" id="dsResultCards">
+                        <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+                            <div class="text-[10px] text-emerald-600 uppercase font-bold">Settling Now</div>
+                            <div class="text-xl font-bold text-emerald-700" id="dsCardAmount">₹0.00</div>
+                            <div class="text-[10px] text-gray-400 mt-1">Amount being paid</div>
                         </div>
                         <div class="bg-gray-50 border border-gray-200 rounded-xl p-3">
-                            <div class="text-xs text-gray-500 uppercase font-semibold">Opening BF</div>
-                            <div class="text-2xl font-bold text-gray-700">${fmt(led.opening)}</div>
-                            <div class="text-xs text-gray-500 mt-1">Carried forward</div>
+                            <div class="text-[10px] text-gray-500 uppercase font-bold">Already Reimb</div>
+                            <div class="text-xl font-bold text-gray-700">${fmt(led.monthReimb)}</div>
+                            <div class="text-[10px] text-gray-400 mt-1">This month</div>
                         </div>
-                        <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
-                            <div class="text-xs text-emerald-500 uppercase font-semibold">Already Reimb</div>
-                            <div class="text-2xl font-bold text-emerald-700">${fmt(led.monthReimb)}</div>
-                            <div class="text-xs text-gray-500 mt-1">This month</div>
+                        <div class="bg-amber-50 border border-amber-300 rounded-xl p-3">
+                            <div class="text-[10px] text-amber-600 uppercase font-bold">Balance CF →</div>
+                            <div class="text-xl font-bold text-amber-700" id="dsCardBalance">${fmt(totalDue)}</div>
+                            <div class="text-[10px] text-gray-400 mt-1">Carried to next month</div>
                         </div>
                     </div>
 
@@ -23289,6 +23333,8 @@ Automated WFH alert — ${company} Attendance System.`;
                 </div>
             </div>`;
             document.getElementById('dirSettleModal').classList.add('show');
+            // Initialize settlement state for live preview — totalDue used by Balance CF card
+            window._dsState = { dirKey, monthYM, mode: 'pick', selectedIDs: new Set(), settleOpening: false, openBalAmt, totalDue };
             dirSettlePreview();
         }
         function closeDirSettleModal() {
@@ -23413,13 +23459,20 @@ Automated WFH alert — ${company} Attendance System.`;
         // Live FIFO preview as user changes amount
         function dirSettlePreview() {
             if (!window._dsState) return;
-            const { dirKey, mode, selectedIDs, settleOpening, openBalAmt } = window._dsState;
+            const { dirKey, mode, selectedIDs, settleOpening, openBalAmt, totalDue } = window._dsState;
             const through = document.getElementById('dsThrough').value;
             const settleAmt = parseFloat(document.getElementById('dsAmount').value) || 0;
             const fmt = n => '₹'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
             const unpaid = (directorExpenses||[]).filter(d =>
                 d.director===dirKey && !d.reimbursed && (d.expDate||'') <= through
             ).sort((a,b)=>(a.expDate||'').localeCompare(b.expDate||'') || (a.deID||'').localeCompare(b.deID||''));
+
+            // Update the live "Settling Now" and "Balance CF" summary cards
+            const balanceAfter = Math.max(0, (totalDue||0) - settleAmt);
+            const cardAmt = document.getElementById('dsCardAmount');
+            const cardBal = document.getElementById('dsCardBalance');
+            if (cardAmt) cardAmt.textContent = fmt(settleAmt);
+            if (cardBal) { cardBal.textContent = fmt(balanceAfter); cardBal.style.color = balanceAfter > 0 ? '#b45309' : '#15803d'; }
 
             const body = document.getElementById('dsPreviewBody');
             const sum  = document.getElementById('dsPreviewSummary');
@@ -23586,6 +23639,181 @@ Automated WFH alert — ${company} Attendance System.`;
                 ${unallocated > 0.01 ? `<div class="bg-orange-50 border-t border-orange-200 px-3 py-2 text-xs text-orange-700"><b>⚠ Unallocated ${fmt(unallocated)}</b> — amount exceeds outstanding. Reduce reimbursement amount to match a whole number of entries.</div>` : ''}`;
         }
         // Confirm settlement: marks selected expenses as reimbursed
+        // ════════════════════════════════════════════════════════════════
+        // UNDO SETTLEMENT
+        // Allows reversing a previously confirmed reimbursement batch.
+        // Groups settled expenses by (reimbursedDate + reimbursedRef) to
+        // show discrete settlement events the admin can select and reverse.
+        // Clearing reimbursed=true restores the expense to "Pending" so it
+        // re-appears in the next settlement cycle as outstanding.
+        // ════════════════════════════════════════════════════════════════
+        function openUndoSettleModal(dirKey) {
+            const dirs = getDirNames();
+            const dirName = dirKey === 'dir1' ? dirs[0] : dirs[1];
+            const fmt = n => '₹'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
+
+            // Find all settled expenses for this director
+            const settled = (directorExpenses||[]).filter(d =>
+                d.director === dirKey && d.reimbursed && d.reimbursedDate
+            );
+
+            if (!settled.length) {
+                alert('No settled reimbursements found for ' + dirName + '.\n\nNothing to undo.');
+                return;
+            }
+
+            // Group into batches by (reimbursedDate + reimbursedRef)
+            // so each modal row = one settlement event, not one expense
+            const batches = {};
+            settled.forEach(d => {
+                const key = (d.reimbursedDate||'unknown') + '||' + (d.reimbursedRef||'');
+                if (!batches[key]) batches[key] = {
+                    date: d.reimbursedDate||'',
+                    ref:  d.reimbursedRef||'—',
+                    mode: d.reimbursedMode||'',
+                    notes: d.reimbursedNotes||'',
+                    items: [],
+                    total: 0
+                };
+                batches[key].items.push(d);
+                batches[key].total += parseFloat(d.reimbursedAmt||d.amount)||0;
+            });
+            const batchList = Object.entries(batches)
+                .sort((a,b) => b[1].date.localeCompare(a[1].date)); // newest first
+
+            const rows = batchList.map(([key, b]) => `
+                <div class="border border-gray-200 rounded-xl p-4 hover:border-red-300 hover:bg-red-50 transition-colors">
+                    <div class="flex items-start justify-between gap-3">
+                        <label class="flex items-start gap-3 cursor-pointer flex-1">
+                            <input type="checkbox" name="undoBatch" value="${key.replace(/"/g,'&quot;')}"
+                                class="w-4 h-4 mt-0.5 accent-red-600 cursor-pointer"/>
+                            <div class="flex-1">
+                                <div class="flex items-center gap-2 flex-wrap mb-1">
+                                    <span class="text-sm font-bold text-gray-800">${b.date}</span>
+                                    <span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">${b.mode||'—'}</span>
+                                    <span class="text-xs text-gray-400">Ref: ${b.ref}</span>
+                                </div>
+                                <div class="text-xs text-gray-500 mb-1">${b.items.length} expense(s) settled${b.notes?' · '+b.notes:''}</div>
+                                <div class="text-xs text-gray-400">
+                                    ${b.items.slice(0,3).map(d=>`${d.expDate}: ${d.description||d.category}`).join(' · ')}
+                                    ${b.items.length > 3 ? ` · +${b.items.length-3} more` : ''}
+                                </div>
+                            </div>
+                        </label>
+                        <div class="text-right flex-shrink-0">
+                            <div class="text-base font-bold text-emerald-700">${fmt(b.total)}</div>
+                            <div class="text-[10px] text-gray-400">${b.items.length} entries</div>
+                        </div>
+                    </div>
+                </div>`).join('');
+
+            const modal = document.createElement('div');
+            modal.id = 'undoSettleModal';
+            modal.className = 'modal show';
+            modal.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl m-4 max-h-[90vh] overflow-y-auto">
+                <div class="bg-gradient-to-r from-red-600 to-rose-600 p-5 text-white flex justify-between items-center sticky top-0">
+                    <div>
+                        <h2 class="text-lg font-bold">↩ Undo Settlement — ${dirName}</h2>
+                        <p class="text-xs opacity-80 mt-0.5">Select settlement batch(es) to reverse · expenses will return to Pending</p>
+                    </div>
+                    <button onclick="document.getElementById('undoSettleModal').remove()" class="text-white text-2xl font-bold leading-none">✕</button>
+                </div>
+                <div class="p-5 space-y-4">
+                    <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
+                        <strong>⚠ Important:</strong> Undoing a settlement marks those expenses as unpaid again.
+                        They will reappear as Outstanding in the next settlement cycle.
+                        This does NOT delete any linked expense bills in the Expenses & Bills tab —
+                        only the reimbursement flag on the Director Expense records is cleared.
+                    </div>
+                    <div class="space-y-3">
+                        <div class="flex items-center justify-between">
+                            <p class="text-sm font-semibold text-gray-700">${batchList.length} settlement batch(es) found — newest first</p>
+                            <label class="flex items-center gap-2 text-xs text-gray-500 cursor-pointer">
+                                <input type="checkbox" id="undoSelectAll" onchange="
+                                    document.querySelectorAll('input[name=undoBatch]').forEach(cb=>cb.checked=this.checked);
+                                " class="w-3 h-3 accent-red-600"/> Select all
+                            </label>
+                        </div>
+                        ${rows}
+                    </div>
+                    <div class="flex justify-end gap-3 pt-2 border-t">
+                        <button onclick="document.getElementById('undoSettleModal').remove()"
+                            class="px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+                        <button onclick="_confirmUndoSettle('${dirKey}')"
+                            class="px-5 py-2 bg-red-600 text-white rounded-lg text-sm font-bold hover:bg-red-700">
+                            ↩ Undo Selected Settlement(s)
+                        </button>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+        }
+
+        async function _confirmUndoSettle(dirKey) {
+            const dirs = getDirNames();
+            const dirName = dirKey === 'dir1' ? dirs[0] : dirs[1];
+            const fmt = n => '₹'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
+
+            const selected = [...document.querySelectorAll('input[name=undoBatch]:checked')]
+                .map(cb => cb.value);
+
+            if (!selected.length) {
+                alert('No settlement batch selected.\n\nTick the checkbox next to the batch(es) you want to undo.');
+                return;
+            }
+
+            // Build a set of (date||ref) keys to undo
+            const toUndoKeys = new Set(selected);
+
+            // Find all expenses that belong to these batches
+            const toUndo = (directorExpenses||[]).filter(d => {
+                if (!d.reimbursed || d.director !== dirKey) return false;
+                const key = (d.reimbursedDate||'unknown') + '||' + (d.reimbursedRef||'');
+                return toUndoKeys.has(key);
+            });
+
+            if (!toUndo.length) { alert('No matching expenses found.'); return; }
+
+            const totalUndo = toUndo.reduce((s,d)=>s+(parseFloat(d.reimbursedAmt||d.amount)||0),0);
+            const batchDates = [...new Set(toUndo.map(d=>d.reimbursedDate))].sort().join(', ');
+
+            if (!confirm(
+                `Undo ${toUndo.length} settled expense(s) for ${dirName}?\n\n` +
+                `Settlement date(s): ${batchDates}\n` +
+                `Total being reversed: ${fmt(totalUndo)}\n\n` +
+                `These expenses will return to Pending status and appear as Outstanding in the next settlement.\n\n` +
+                `Proceed?`
+            )) return;
+
+            // Clear reimbursement fields — restore to pending state
+            const undoIDs = new Set(toUndo.map(d => d.deID));
+            directorExpenses = directorExpenses.map(d => {
+                if (!undoIDs.has(d.deID)) return d;
+                // Keep all original expense data, just clear the reimbursement fields
+                const cleared = { ...d };
+                delete cleared.reimbursed;
+                delete cleared.reimbursedDate;
+                delete cleared.reimbursedAmt;
+                delete cleared.reimbursedRef;
+                delete cleared.reimbursedMode;
+                delete cleared.reimbursedCardIssuer;
+                delete cleared.reimbursedCardLast4;
+                delete cleared.reimbursedNotes;
+                cleared.reimbursed = false;
+                return cleared;
+            });
+
+            try {
+                await saveData('directorExpenses', directorExpenses);
+                document.getElementById('undoSettleModal').remove();
+                renderView();
+                _showToast(`↩ Undone: ${toUndo.length} settlement(s) for ${dirName} reversed. Expenses are now Pending again.`, '#dc2626', 6000);
+            } catch(err) {
+                alert('Save failed: ' + err.message);
+            }
+        }
+
         async function confirmDirSettle(e, dirKey, monthYM) {
             e.preventDefault();
             if (window._dsSaving) return;
