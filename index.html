@@ -23143,16 +23143,6 @@ Automated WFH alert — ${company} Attendance System.`;
             const lastDay = new Date(yr, mo, 0).getDate();
             const defaultCutoffDay = Math.min(25, lastDay);
             const settleThrough = monthYM + '-' + String(defaultCutoffDay).padStart(2,'0');
-            // List unpaid expenses up through settle date (FIFO order)
-            const unpaid = (directorExpenses||[]).filter(d =>
-                d.director===dirKey && !d.reimbursed && (d.expDate||'') <= settleThrough
-            ).sort((a,b) => (a.expDate||'').localeCompare(b.expDate||'') || (a.deID||'').localeCompare(b.deID||''));
-            const totalOutstanding = unpaid.reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
-
-            if (unpaid.length === 0) {
-                alert('No outstanding expenses to settle for '+dirName+' up through '+settleThrough+'.');
-                return;
-            }
 
             const today = new Date().toISOString().split('T')[0];
             // If settling a PAST month, default Payment Date to the last day of that month
@@ -23161,12 +23151,6 @@ Automated WFH alert — ${company} Attendance System.`;
             //  paid today (because cash moved today), they can edit the field.
             const currentMonthYM = new Date().toISOString().substring(0,7);
             const defaultPayDate = (monthYM < currentMonthYM) ? settleThrough : today;
-
-            // Detect opening balance settlement availability
-            const openBalAmt    = parseFloat(dirKey==='dir1' ? settings.director1OpeningBalance : settings.director2OpeningBalance) || 0;
-            const openBalSettled = !!(dirKey==='dir1' ? settings.director1OpeningSettled : settings.director2OpeningSettled);
-            const openBalDate   = (dirKey==='dir1' ? settings.director1OpeningDate : settings.director2OpeningDate) || '';
-            const openingAvailable = openBalAmt > 0 && !openBalSettled;
 
             // Find last settlement details for this director
             const allSettlements = (directorExpenses||[]).filter(d =>
@@ -23180,8 +23164,45 @@ Automated WFH alert — ${company} Attendance System.`;
                   ).reduce((s,d) => s + (parseFloat(d.reimbursedAmt||d.amount)||0), 0)
                 : 0;
 
-            // Total outstanding = opening BF + all unpaid expenses (the true amount due)
-            const totalDue = led.opening + unpaid.reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
+            // ── Correct BF / Total Due computation ──────────────────────────
+            // DO NOT use computeDirectorLedger(monthYM) here — that function's
+            // "opening" figure is calendar-month-bound (debit-credit before monthYM-01)
+            // which can diverge from the real outstanding when payments span months.
+            // Instead compute directly from the actual unreimbursed expense records.
+            const periodStart = monthYM + '-01';
+            const openBalSettled = !!(dirKey==='dir1' ? settings.director1OpeningSettled : settings.director2OpeningSettled);
+            const openingFromSettings = openBalSettled ? 0 : openBalAmt;
+
+            const allUnpaid = (directorExpenses||[]).filter(d =>
+                d.director === dirKey && !d.reimbursed
+            ).sort((a,b) => (a.expDate||'').localeCompare(b.expDate||'') || (a.deID||'').localeCompare(b.deID||''));
+
+            const unpaidBefore = allUnpaid.filter(d => (d.expDate||'') < periodStart);
+            const unpaidBefore_amt = unpaidBefore.reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
+            const bfAmt = openingFromSettings + unpaidBefore_amt; // true Brought Forward
+
+            const unpaid = allUnpaid.filter(d =>
+                (d.expDate||'') >= periodStart && (d.expDate||'') <= settleThrough
+            );
+            const thisPeriodAmt = unpaid.reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
+
+            // Also include pre-period unpaid in the total pool for picking
+            const allUnpaidToSettle = allUnpaid.filter(d => (d.expDate||'') <= settleThrough);
+            const totalOutstanding = allUnpaidToSettle.reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
+            const totalDue = openingFromSettings + totalOutstanding;
+
+            if (allUnpaidToSettle.length === 0 && openingFromSettings === 0) {
+                alert('No outstanding expenses to settle for '+dirName+' up through '+settleThrough+'.');
+                return;
+            }
+
+            // Already reimbursed this display-month
+            const [yr2,mo2] = monthYM.split('-').map(Number);
+            const periodEnd2 = monthYM+'-'+String(new Date(yr2,mo2,0).getDate()).padStart(2,'0');
+            const alreadyReimb = (directorExpenses||[]).filter(d =>
+                d.director===dirKey && d.reimbursed &&
+                (d.reimbursedDate||'') >= periodStart && (d.reimbursedDate||'') <= periodEnd2
+            ).reduce((s,d)=>s+(parseFloat(d.reimbursedAmt||d.amount)||0),0);
 
             document.getElementById('dirSettleModal').innerHTML = `
             <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl m-4 max-h-[92vh] overflow-y-auto">
@@ -23209,13 +23230,13 @@ Automated WFH alert — ${company} Attendance System.`;
                             </div>
                             <div class="bg-white rounded-lg border border-amber-200 p-3">
                                 <div class="text-[10px] text-amber-600 uppercase font-bold mb-1">Brought Forward</div>
-                                <div class="text-sm font-bold text-amber-700">${fmt(led.opening)}</div>
-                                <div class="text-[10px] text-gray-400 mt-0.5">From prior period</div>
+                                <div class="text-sm font-bold text-amber-700">${fmt(bfAmt)}</div>
+                                <div class="text-[10px] text-gray-400 mt-0.5">${openingFromSettings>0?`Incl. ₹${openingFromSettings.toLocaleString('en-IN',{minimumFractionDigits:2})} settings BF · `:''} ${unpaidBefore.length} prior entries</div>
                             </div>
                             <div class="bg-white rounded-lg border border-rose-200 p-3">
                                 <div class="text-[10px] text-rose-500 uppercase font-bold mb-1">Bills This Period</div>
-                                <div class="text-sm font-bold text-rose-700">${fmt(unpaid.reduce((s,d)=>s+(parseFloat(d.amount)||0),0))}</div>
-                                <div class="text-[10px] text-gray-400 mt-0.5">${unpaid.length} unpaid entries</div>
+                                <div class="text-sm font-bold text-rose-700">${fmt(thisPeriodAmt)}</div>
+                                <div class="text-[10px] text-gray-400 mt-0.5">${unpaid.length} entries (${periodStart} – ${settleThrough})</div>
                             </div>
                             <div class="bg-rose-50 rounded-lg border border-rose-300 p-3">
                                 <div class="text-[10px] text-rose-700 uppercase font-bold mb-1">Total Due</div>
@@ -23234,8 +23255,8 @@ Automated WFH alert — ${company} Attendance System.`;
                         </div>
                         <div class="bg-gray-50 border border-gray-200 rounded-xl p-3">
                             <div class="text-[10px] text-gray-500 uppercase font-bold">Already Reimb</div>
-                            <div class="text-xl font-bold text-gray-700">${fmt(led.monthReimb)}</div>
-                            <div class="text-[10px] text-gray-400 mt-1">This month</div>
+                            <div class="text-xl font-bold text-gray-700">${fmt(alreadyReimb)}</div>
+                            <div class="text-[10px] text-gray-400 mt-1">This period</div>
                         </div>
                         <div class="bg-amber-50 border border-amber-300 rounded-xl p-3">
                             <div class="text-[10px] text-amber-600 uppercase font-bold">Balance CF →</div>
@@ -23333,8 +23354,10 @@ Automated WFH alert — ${company} Attendance System.`;
                 </div>
             </div>`;
             document.getElementById('dirSettleModal').classList.add('show');
-            // Initialize settlement state for live preview — totalDue used by Balance CF card
-            window._dsState = { dirKey, monthYM, mode: 'pick', selectedIDs: new Set(), settleOpening: false, openBalAmt, totalDue };
+            // Initialize settlement state for live preview
+            // allUnpaidToSettle includes BOTH prior-period unpaid (BF) and this-period bills
+            // so the pick list shows everything outstanding, not just current month
+            window._dsState = { dirKey, monthYM, mode: 'pick', selectedIDs: new Set(), settleOpening: false, openBalAmt: openingFromSettings, totalDue, allUnpaidToSettle };
             dirSettlePreview();
         }
         function closeDirSettleModal() {
@@ -23441,11 +23464,13 @@ Automated WFH alert — ${company} Attendance System.`;
                 d.director===dirKey && !d.reimbursed && (d.expDate||'') <= through
             );
             const totalOutstanding = unpaid.reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
+            const openingFromSettings = parseFloat(window._dsState?.openBalAmt)||0;
+            const newTotalDue = openingFromSettings + totalOutstanding;
+            // Update totalDue in state so Balance CF card reflects the new through date
+            if (window._dsState) window._dsState.totalDue = newTotalDue;
             if (mode === 'fifo') {
-                // In FIFO mode, default amount is full outstanding
                 amtField.value = totalOutstanding.toFixed(2);
             } else {
-                // In pick mode, prune any selectedIDs that fell outside the new through-date filter
                 const validIDs = new Set(unpaid.map(d => d.deID));
                 if (window._dsState?.selectedIDs) {
                     Array.from(window._dsState.selectedIDs).forEach(id => {
@@ -23463,6 +23488,9 @@ Automated WFH alert — ${company} Attendance System.`;
             const through = document.getElementById('dsThrough').value;
             const settleAmt = parseFloat(document.getElementById('dsAmount').value) || 0;
             const fmt = n => '₹'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
+
+            // Use ALL unreimbursed expenses up to the settle-through date
+            // (includes both BF expenses from prior periods AND current-period bills)
             const unpaid = (directorExpenses||[]).filter(d =>
                 d.director===dirKey && !d.reimbursed && (d.expDate||'') <= through
             ).sort((a,b)=>(a.expDate||'').localeCompare(b.expDate||'') || (a.deID||'').localeCompare(b.deID||''));
