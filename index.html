@@ -23232,16 +23232,16 @@ Automated WFH alert — ${company} Attendance System.`;
                             <div class="bg-white rounded-lg border border-amber-200 p-3">
                                 <div class="text-[10px] text-amber-600 uppercase font-bold mb-1">Brought Forward</div>
                                 <div class="text-sm font-bold text-amber-700">${fmt(bfAmt)}</div>
-                                <div class="text-[10px] text-gray-400 mt-0.5">${openingFromSettings>0?`Incl. ₹${openingFromSettings.toLocaleString('en-IN',{minimumFractionDigits:2})} settings BF · `:''} ${unpaidBefore.length} prior entries</div>
+                                <div class="text-[10px] text-gray-400 mt-0.5">${openingFromSettings>0?`Incl. ${fmt(openingFromSettings)} settings BF · `:''}${bfExpenses.length} prior entry(ies)</div>
                             </div>
                             <div class="bg-white rounded-lg border border-rose-200 p-3">
                                 <div class="text-[10px] text-rose-500 uppercase font-bold mb-1">Bills This Period</div>
-                                <div class="text-sm font-bold text-rose-700">${fmt(thisPeriodAmt)}</div>
-                                <div class="text-[10px] text-gray-400 mt-0.5">${unpaid.length} entries (${periodStart} – ${settleThrough})</div>
+                                <div class="text-sm font-bold text-rose-700" id="dsBillsThisPeriod">${fmt(thisPeriodAmt)}</div>
+                                <div class="text-[10px] text-gray-400 mt-0.5" id="dsBillsPeriodLabel">${periodUnpaid.length} entries · ${periodFrom} – <span id="dsBillsPeriodEnd">${settleThrough}</span></div>
                             </div>
                             <div class="bg-rose-50 rounded-lg border border-rose-300 p-3">
                                 <div class="text-[10px] text-rose-700 uppercase font-bold mb-1">Total Due</div>
-                                <div class="text-lg font-bold text-rose-800">${fmt(totalDue)}</div>
+                                <div class="text-base font-bold text-rose-800" id="dsTotalDue">${fmt(totalDue)}</div>
                                 <div class="text-[10px] text-gray-500 mt-0.5">BF + all unpaid bills</div>
                             </div>
                         </div>
@@ -23556,7 +23556,7 @@ Automated WFH alert — ${company} Attendance System.`;
                     </table>
                 </div>` : '';
 
-            if (!unpaid.length && !openingAvailable) {
+            if (!allUpToThrough.length && !openingAvailable) {
                 body.innerHTML = '<div class="p-4 text-center text-xs text-gray-400">No unpaid entries up to selected date.</div>';
                 sum.textContent = '—';
                 return;
@@ -23646,9 +23646,9 @@ Automated WFH alert — ${company} Attendance System.`;
             const settledCount = allocs.filter(a => a.allocated > 0).length;
             const totalAllocated = allocs.reduce((s,a)=>s+a.allocated,0);
             const unallocated = settleAmt - totalAllocated;
-            const carryForward = unpaid.reduce((s,d)=>s+(parseFloat(d.amount)||0),0) - totalAllocated;
+            const carryForward = allUpToThrough.reduce((s,d)=>s+(parseFloat(d.amount)||0),0) - totalAllocated;
 
-            sum.textContent = `Settling ${settledCount} of ${unpaid.length} entries · ${fmt(totalAllocated)} allocated · ${fmt(carryForward)} carry forward`;
+            sum.textContent = `Settling ${settledCount} of ${allUpToThrough.length} entries · ${fmt(totalAllocated)} allocated · ${fmt(carryForward)} carry forward`;
             sum.className = carryForward > 0 ? 'text-amber-600' : 'text-emerald-600';
 
             body.innerHTML = openingHTML + `
