@@ -23561,7 +23561,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 </div>` : '';
 
             if (!allUpToThrough.length && !openingAvailable) {
-                body.innerHTML = '<div class="p-4 text-center text-xs text-gray-400">No unpaid entries up to selected date.</div>';
+                body.innerHTML = '<div class="p-4 text-center text-xs text-gray-400">No allUpToThrough entries up to selected date.</div>';
                 sum.textContent = '—';
                 return;
             }
@@ -23569,7 +23569,7 @@ Automated WFH alert — ${company} Attendance System.`;
             // ════ PICK MODE — group by payment account, checkboxes ════
             if (mode === 'pick') {
                 const groups = {};
-                unpaid.forEach(d => {
+                allUpToThrough.forEach(d => {
                     const k = _deAccountKey(d);
                     if (!groups[k]) groups[k] = { account: k, items: [], total: 0 };
                     groups[k].items.push(d);
@@ -23577,10 +23577,10 @@ Automated WFH alert — ${company} Attendance System.`;
                 });
                 const groupList = Object.values(groups).sort((a,b) => a.account.localeCompare(b.account));
 
-                const totalSelected = unpaid.filter(d => selectedIDs.has(d.deID))
+                const totalSelected = allUpToThrough.filter(d => selectedIDs.has(d.deID))
                     .reduce((s,d) => s + (parseFloat(d.amount)||0), 0)
                     + (settleOpening ? openBalAmt : 0);
-                const selectedCount = unpaid.filter(d => selectedIDs.has(d.deID)).length + (settleOpening ? 1 : 0);
+                const selectedCount = allUpToThrough.filter(d => selectedIDs.has(d.deID)).length + (settleOpening ? 1 : 0);
                 sum.textContent = `${selectedCount} selected · ${fmt(totalSelected)}`;
                 sum.className = selectedCount > 0 ? 'text-emerald-600 font-bold' : 'text-gray-400';
 
@@ -23640,7 +23640,7 @@ Automated WFH alert — ${company} Attendance System.`;
             // ════ FIFO MODE — auto allocate ════
             // FIFO allocation
             let remaining = settleAmt;
-            const allocs = unpaid.map(d => {
+            const allocs = allUpToThrough.map(d => {
                 const amt = parseFloat(d.amount) || 0;
                 let allocated = 0;
                 if (remaining >= amt) { allocated = amt; remaining -= amt; }
