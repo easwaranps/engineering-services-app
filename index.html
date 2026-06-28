@@ -23385,15 +23385,14 @@ Automated WFH alert — ${company} Attendance System.`;
             const amtHint  = document.getElementById('dsAmtHint');
             const titleEl  = document.getElementById('dsPreviewTitle');
             if (mode === 'pick') {
-                amtField.readOnly = true;
-                amtField.classList.add('bg-gray-50');
-                amtHint.textContent = 'Auto-summed from selected expenses below';
+                amtField.readOnly = false;
+                amtField.classList.remove('bg-gray-50');
+                amtHint.textContent = 'Enter actual amount being paid — Balance CF = Bills Selected − This Amount';
                 titleEl.textContent = '📋 Pick Expenses to Settle';
-                // Recompute amount from current selection
             } else {
                 amtField.readOnly = false;
                 amtField.classList.remove('bg-gray-50');
-                amtHint.textContent = 'Editable — FIFO will allocate to oldest fitting expenses';
+                amtHint.textContent = 'Enter amount being paid — FIFO will show which bills are covered';
                 titleEl.textContent = '📋 FIFO Settlement Preview';
                 window._dsState.selectedIDs = new Set(); // reset selection in FIFO mode
                 // Set amount to total outstanding by default
@@ -23499,7 +23498,6 @@ Automated WFH alert — ${company} Attendance System.`;
             if (!window._dsState) return;
             const { dirKey, mode, selectedIDs, settleOpening, openBalAmt } = window._dsState;
             const through   = document.getElementById('dsThrough').value;
-            const settleAmt = parseFloat(document.getElementById('dsAmount').value) || 0;
             const fmt = n => '₹'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
             const periodFrom = window._dsState.periodFrom || '2000-01-01';
 
@@ -23509,58 +23507,54 @@ Automated WFH alert — ${company} Attendance System.`;
 
             const allUpToThrough = allUnpaid.filter(d => (d.expDate||'') <= through);
 
-            // ── Bills This Period = sum of SELECTED bills in the pick list ──
-            // In pick mode: reflects the user's checkbox selection.
-            // In FIFO mode: reflects what the FIFO algorithm would settle
-            //   (all bills up to the through date, up to the entered amount).
+            // Bills This Period = sum of selected bills (pick mode) or FIFO-covered bills
             let selectedBillsAmt = 0;
             if (mode === 'pick') {
                 selectedBillsAmt = allUpToThrough
                     .filter(d => selectedIDs.has(d.deID))
                     .reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
             } else {
-                // FIFO: tally up bills that would be fully covered
-                let remaining = settleAmt;
-                for (const d of allUpToThrough) {
-                    const amt = parseFloat(d.amount)||0;
-                    if (remaining + 0.01 >= amt) { selectedBillsAmt += amt; remaining -= amt; }
-                    else break;
-                }
+                // FIFO: show total of all unpaid bills up to through date
+                selectedBillsAmt = allUpToThrough.reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
             }
 
-            // Total Due = BF + selected bills (+ opening BF if ticked)
-            const openingPart  = settleOpening ? (openBalAmt||0) : 0;
-            const newTotalDue  = (openBalAmt||0) + allUpToThrough.reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
-            const selectedTotal = openingPart + selectedBillsAmt;
+            // Opening balance contribution
+            const openingPart = settleOpening ? (openBalAmt||0) : 0;
 
-            // Update Bills This Period card → selected bills sum
+            // Total Due = BF (settings opening) + Bills This Period (selected/FIFO)
+            // This is what needs to be paid to clear the selection
+            const totalDueForSelection = (openBalAmt||0) + selectedBillsAmt;
+
+            // Also compute the grand total (all unpaid up to through) for the Total Due card
+            const grandTotalDue = (openBalAmt||0) + allUpToThrough.reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
+
+            // Settling Now = whatever is in the Reimbursement Amount field (always)
+            // User enters this independently — it is the actual cash being paid
+            const settleAmt = parseFloat(document.getElementById('dsAmount')?.value) || 0;
+
+            // Balance CF = Reimbursement Amount - Total Due (BF + Bills This Period)
+            // Positive = still owe more (underpaid)
+            // Zero = exactly settled
+            // Negative = overpaid (credit to next month)
+            // Note: here "Total Due" = BF + selected/FIFO bills, not grand total
+            const balanceCF = totalDueForSelection - settleAmt;
+
+            // Update cards
             const billsEl    = document.getElementById('dsBillsThisPeriod');
             const billsEndEl = document.getElementById('dsBillsPeriodEnd');
             const totalDueEl = document.getElementById('dsTotalDue');
-            if (billsEl)    billsEl.textContent    = fmt(selectedBillsAmt);
-            if (billsEndEl) billsEndEl.textContent  = through;
-            if (totalDueEl) totalDueEl.textContent  = fmt(newTotalDue);
-            if (window._dsState) window._dsState.totalDue = newTotalDue;
+            if (billsEl)    billsEl.textContent   = fmt(selectedBillsAmt);
+            if (billsEndEl) billsEndEl.textContent = through;
+            if (totalDueEl) totalDueEl.textContent = fmt(grandTotalDue);
+            if (window._dsState) window._dsState.totalDue = grandTotalDue;
 
-            // In pick mode: auto-fill Reimbursement Amount = selected bills total
-            // (the amount field is readOnly in pick mode — user can't override it)
-            // In FIFO mode: amount field is editable — user types what they're paying
-            if (mode === 'pick') {
-                const amtEl = document.getElementById('dsAmount');
-                if (amtEl) amtEl.value = selectedTotal.toFixed(2);
-            }
-
-            // Settling Now = Reimbursement Amount field (what you're actually paying)
-            const currentSettleAmt = parseFloat(document.getElementById('dsAmount')?.value) || 0;
-
-            // Balance CF = BF + selected bills − amount being paid
-            const balanceAfter = (openBalAmt||0) + selectedBillsAmt - currentSettleAmt;
             const cardAmt = document.getElementById('dsCardAmount');
             const cardBal = document.getElementById('dsCardBalance');
-            if (cardAmt) cardAmt.textContent = fmt(currentSettleAmt);
+            if (cardAmt) cardAmt.textContent = fmt(settleAmt);
             if (cardBal) {
-                cardBal.textContent = fmt(balanceAfter);
-                cardBal.style.color = balanceAfter > 0.01 ? '#b45309' : balanceAfter < -0.01 ? '#1d4ed8' : '#15803d';
+                cardBal.textContent = fmt(balanceCF);
+                // Positive = underpaid (amber), Zero = exact (green), Negative = credit BF (blue)
+                cardBal.style.color = balanceCF > 0.01 ? '#b45309' : balanceCF < -0.01 ? '#1d4ed8' : '#15803d';
             }
 
             const body = document.getElementById('dsPreviewBody');
