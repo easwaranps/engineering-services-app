@@ -23289,7 +23289,10 @@ Automated WFH alert — ${company} Attendance System.`;
                             </div>
                             <div>
                                 <label class="block text-xs font-semibold text-gray-600 mb-1">Reimbursement Amount <span class="text-red-500">*</span></label>
-                                <input type="number" id="dsAmount" value="0.00" min="0" step="0.01" required onchange="dirSettlePreview()" oninput="dirSettlePreview()" class="w-full px-3 py-2 border rounded-lg text-sm font-bold text-emerald-700"/>
+                                <input type="number" id="dsAmount" value="0.00" min="0" step="0.01" required
+                                    onchange="window._dsAmountManuallyEdited=true; dirSettlePreview()"
+                                    oninput="window._dsAmountManuallyEdited=true; dirSettlePreview()"
+                                    class="w-full px-3 py-2 border rounded-lg text-sm font-bold text-emerald-700"/>
                                 <p class="text-[11px] text-gray-400 mt-1" id="dsAmtHint">Auto-summed from selection (Pick mode) · editable in FIFO mode</p>
                             </div>
                         </div>
@@ -23356,7 +23359,8 @@ Automated WFH alert — ${company} Attendance System.`;
                 </div>
             </div>`;
             document.getElementById('dirSettleModal').classList.add('show');
-            window._dsSaving = false;  // Reset in case it got stuck from a previous attempt
+            window._dsSaving = false;
+            window._dsAmountManuallyEdited = false;  // reset so auto-fill works on first open
             window._dsState = {
                 dirKey, monthYM,
                 mode: 'pick',
@@ -23493,41 +23497,69 @@ Automated WFH alert — ${company} Attendance System.`;
         // Live FIFO preview as user changes amount
         function dirSettlePreview() {
             if (!window._dsState) return;
-            const { dirKey, mode, selectedIDs, settleOpening, openBalAmt, totalDue } = window._dsState;
-            const through = document.getElementById('dsThrough').value;
+            const { dirKey, mode, selectedIDs, settleOpening, openBalAmt } = window._dsState;
+            const through   = document.getElementById('dsThrough').value;
             const settleAmt = parseFloat(document.getElementById('dsAmount').value) || 0;
             const fmt = n => '₹'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
-
-            // Recompute Bills This Period and Total Due based on current through date
             const periodFrom = window._dsState.periodFrom || '2000-01-01';
+
             const allUnpaid = (directorExpenses||[]).filter(d =>
                 d.director===dirKey && !d.reimbursed
             ).sort((a,b)=>(a.expDate||'').localeCompare(b.expDate||'')||(a.deID||'').localeCompare(b.deID||''));
 
-            const periodUnpaid  = allUnpaid.filter(d =>
-                (d.expDate||'') >= periodFrom && (d.expDate||'') <= through
-            );
-            const thisPeriodAmt = periodUnpaid.reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
             const allUpToThrough = allUnpaid.filter(d => (d.expDate||'') <= through);
-            const newTotalDue = (openBalAmt||0) + allUpToThrough.reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
 
-            // Update Bills This Period card
-            const billsEl = document.getElementById('dsBillsThisPeriod');
+            // ── Bills This Period = sum of SELECTED bills in the pick list ──
+            // In pick mode: reflects the user's checkbox selection.
+            // In FIFO mode: reflects what the FIFO algorithm would settle
+            //   (all bills up to the through date, up to the entered amount).
+            let selectedBillsAmt = 0;
+            if (mode === 'pick') {
+                selectedBillsAmt = allUpToThrough
+                    .filter(d => selectedIDs.has(d.deID))
+                    .reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
+            } else {
+                // FIFO: tally up bills that would be fully covered
+                let remaining = settleAmt;
+                for (const d of allUpToThrough) {
+                    const amt = parseFloat(d.amount)||0;
+                    if (remaining + 0.01 >= amt) { selectedBillsAmt += amt; remaining -= amt; }
+                    else break;
+                }
+            }
+
+            // Total Due = BF + selected bills (+ opening BF if ticked)
+            const openingPart  = settleOpening ? (openBalAmt||0) : 0;
+            const newTotalDue  = (openBalAmt||0) + allUpToThrough.reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
+            const selectedTotal = openingPart + selectedBillsAmt;
+
+            // Update Bills This Period card → selected bills sum
+            const billsEl    = document.getElementById('dsBillsThisPeriod');
             const billsEndEl = document.getElementById('dsBillsPeriodEnd');
             const totalDueEl = document.getElementById('dsTotalDue');
-            if (billsEl) billsEl.textContent = fmt(thisPeriodAmt);
-            if (billsEndEl) billsEndEl.textContent = through;
-            if (totalDueEl) totalDueEl.textContent = fmt(newTotalDue);
+            if (billsEl)    billsEl.textContent    = fmt(selectedBillsAmt);
+            if (billsEndEl) billsEndEl.textContent  = through;
+            if (totalDueEl) totalDueEl.textContent  = fmt(newTotalDue);
             if (window._dsState) window._dsState.totalDue = newTotalDue;
 
-            // Balance CF = Total Due − Settling Now (can be negative = overpayment/credit)
-            const balanceAfter = newTotalDue - settleAmt;
+            // In pick mode: auto-fill Reimbursement Amount = selected bills total
+            // (the amount field is readOnly in pick mode — user can't override it)
+            // In FIFO mode: amount field is editable — user types what they're paying
+            if (mode === 'pick') {
+                const amtEl = document.getElementById('dsAmount');
+                if (amtEl) amtEl.value = selectedTotal.toFixed(2);
+            }
+
+            // Settling Now = Reimbursement Amount field (what you're actually paying)
+            const currentSettleAmt = parseFloat(document.getElementById('dsAmount')?.value) || 0;
+
+            // Balance CF = BF + selected bills − amount being paid
+            const balanceAfter = (openBalAmt||0) + selectedBillsAmt - currentSettleAmt;
             const cardAmt = document.getElementById('dsCardAmount');
             const cardBal = document.getElementById('dsCardBalance');
-            if (cardAmt) cardAmt.textContent = fmt(settleAmt);
+            if (cardAmt) cardAmt.textContent = fmt(currentSettleAmt);
             if (cardBal) {
                 cardBal.textContent = fmt(balanceAfter);
-                // Positive = still owed (amber), Zero = fully settled (green), Negative = credit (blue)
                 cardBal.style.color = balanceAfter > 0.01 ? '#b45309' : balanceAfter < -0.01 ? '#1d4ed8' : '#15803d';
             }
 
