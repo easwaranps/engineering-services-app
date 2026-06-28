@@ -23356,6 +23356,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 </div>
             </div>`;
             document.getElementById('dirSettleModal').classList.add('show');
+            window._dsSaving = false;  // Reset in case it got stuck from a previous attempt
             window._dsState = {
                 dirKey, monthYM,
                 mode: 'pick',
@@ -24034,7 +24035,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 if (settleOpening && openBalAmt > 0) saves.push(saveData('settings', settings));
                 await Promise.all(saves);
                 closeDirSettleModal();
-                if (typeof showToast === 'function') showToast('✓ Settled '+toSettle.length+' entries'+(settleOpening?' + opening balance':'')+' — ₹'+totalSettled.toLocaleString('en-IN',{minimumFractionDigits:2})+(carry>0?' (CF: ₹'+carry.toLocaleString('en-IN',{minimumFractionDigits:2})+')':''), 4500);
+                _showToast('✓ Settled '+toSettle.length+' entries'+(settleOpening?' + opening balance':'')+' — ₹'+totalSettled.toLocaleString('en-IN',{minimumFractionDigits:2})+(carry>0?' (CF: ₹'+carry.toLocaleString('en-IN',{minimumFractionDigits:2})+')':''), '#15803d', 4500);
                 renderView();
             } catch(err) {
                 alert('Settlement failed: '+err.message);
