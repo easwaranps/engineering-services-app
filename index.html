@@ -23128,98 +23128,84 @@ Automated WFH alert — ${company} Attendance System.`;
         function openDirSettleModal(dirKey, monthYM) {
             const dirs = getDirNames();
             const dirName = dirKey === 'dir1' ? dirs[0] : dirs[1];
-            const led = computeDirectorLedger(dirKey, monthYM);
             const fmt = n => '₹'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
-            // Default: settle through the 25th of the month (not month-end).
-            // Matches the real-world cycle: expenses booked up to the 25th get
-            // paid out together around month-end; anything booked after the
-            // 25th rolls forward as next month's opening balance. The 25th is
-            // a DEFAULT, not a hard rule — "Settle Through Date" below remains
-            // fully editable for months where the cutoff shifts slightly.
-            // (Clamped to the month's actual last day for short months, though
-            // this only matters for February in leap-year edge cases since the
-            // 25th always exists in every month — kept for safety.)
             const [yr,mo] = monthYM.split('-').map(Number);
             const lastDay = new Date(yr, mo, 0).getDate();
             const defaultCutoffDay = Math.min(25, lastDay);
             const settleThrough = monthYM + '-' + String(defaultCutoffDay).padStart(2,'0');
-
             const today = new Date().toISOString().split('T')[0];
-            // If settling a PAST month, default Payment Date to the last day of that month
-            // (so the credit lands inside the period the user is settling, matching their
-            //  intuition that "settle April → April REIMB column updates"). If they actually
-            //  paid today (because cash moved today), they can edit the field.
             const currentMonthYM = new Date().toISOString().substring(0,7);
             const defaultPayDate = (monthYM < currentMonthYM) ? settleThrough : today;
 
-            // Find last settlement details for this director
-            const allSettlements = (directorExpenses||[]).filter(d =>
-                d.director === dirKey && d.reimbursed && d.reimbursedDate
-            ).sort((a,b) => (b.reimbursedDate||'').localeCompare(a.reimbursedDate||''));
-            const lastSettlement = allSettlements[0];
-            const lastSettledDate = lastSettlement?.reimbursedDate || '';
-            const lastSettledAmt  = lastSettlement
-                ? (directorExpenses||[]).filter(d =>
-                    d.director===dirKey && d.reimbursed && d.reimbursedDate === lastSettledDate
-                  ).reduce((s,d) => s + (parseFloat(d.reimbursedAmt||d.amount)||0), 0)
-                : 0;
-
-            // ── Correct BF / Total Due computation ──────────────────────────
-            // DO NOT use computeDirectorLedger(monthYM) here — that function's
-            // "opening" figure is calendar-month-bound (debit-credit before monthYM-01)
-            // which can diverge from the real outstanding when payments span months.
-            // Instead compute directly from the actual unreimbursed expense records.
-            const periodStart = monthYM + '-01';
+            // Opening balance from settings
             const openBalAmt     = parseFloat(dirKey==='dir1' ? settings.director1OpeningBalance : settings.director2OpeningBalance) || 0;
             const openBalSettled = !!(dirKey==='dir1' ? settings.director1OpeningSettled : settings.director2OpeningSettled);
+            const openBalDate    = (dirKey==='dir1' ? settings.director1OpeningDate : settings.director2OpeningDate) || '';
             const openingFromSettings = openBalSettled ? 0 : openBalAmt;
 
-            // If the opening balance is marked settled but the user suspects it was done
-            // accidentally, show a reset notice in the modal so they can fix it inline.
-            const openingResetNotice = (openBalSettled && openBalAmt > 0)
-                ? `<div class="bg-amber-50 border border-amber-300 rounded-xl p-3 flex items-center justify-between gap-3">
-                    <div class="text-xs text-amber-800">
-                        <strong>⚠ Opening Balance (₹${openBalAmt.toLocaleString('en-IN',{minimumFractionDigits:2})}) is marked as Settled</strong> — 
-                        it is not included in the Total Due. If this was settled in error, reset it to include it again.
-                    </div>
-                    <button onclick="_resetOpeningSettled('${dirKey}')" 
-                        class="px-3 py-1.5 bg-amber-600 text-white text-xs font-bold rounded-lg hover:bg-amber-700 whitespace-nowrap">
-                        ↩ Reset Opening BF
-                    </button>
-                   </div>` : '';
+            // Last settlement details
+            const allSettled = (directorExpenses||[]).filter(d =>
+                d.director===dirKey && d.reimbursed && d.reimbursedDate
+            ).sort((a,b) => (b.reimbursedDate||'').localeCompare(a.reimbursedDate||''));
+            const lastSettledDate = allSettled[0]?.reimbursedDate || '';
+            const lastSettledAmt  = lastSettledDate
+                ? (directorExpenses||[]).filter(d =>
+                    d.director===dirKey && d.reimbursed && d.reimbursedDate===lastSettledDate
+                  ).reduce((s,d)=>s+(parseFloat(d.reimbursedAmt||d.amount)||0),0)
+                : 0;
 
+            // Period start = day after last settlement (or opening balance date if no prior settlement)
+            const periodFrom = lastSettledDate
+                ? (() => { const d=new Date(lastSettledDate+'T00:00:00'); d.setDate(d.getDate()+1); return d.toISOString().split('T')[0]; })()
+                : (openBalDate || '2000-01-01');
+
+            // All unreimbursed expenses
             const allUnpaid = (directorExpenses||[]).filter(d =>
-                d.director === dirKey && !d.reimbursed
-            ).sort((a,b) => (a.expDate||'').localeCompare(b.expDate||'') || (a.deID||'').localeCompare(b.deID||''));
+                d.director===dirKey && !d.reimbursed
+            ).sort((a,b)=>(a.expDate||'').localeCompare(b.expDate||'')||(a.deID||'').localeCompare(b.deID||''));
 
-            const unpaidBefore = allUnpaid.filter(d => (d.expDate||'') < periodStart);
-            const unpaidBefore_amt = unpaidBefore.reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
-            const bfAmt = openingFromSettings + unpaidBefore_amt; // true Brought Forward
+            // BF = settings opening (if unsettled) + expenses before periodFrom
+            const bfExpenses = allUnpaid.filter(d => (d.expDate||'') < periodFrom);
+            const bfExpAmt   = bfExpenses.reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
+            const bfAmt      = openingFromSettings + bfExpAmt;
 
-            const unpaid = allUnpaid.filter(d =>
-                (d.expDate||'') >= periodStart && (d.expDate||'') <= settleThrough
+            // Bills This Period = unpaid FROM periodFrom TO settleThrough
+            const periodUnpaid  = allUnpaid.filter(d =>
+                (d.expDate||'') >= periodFrom && (d.expDate||'') <= settleThrough
             );
-            const thisPeriodAmt = unpaid.reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
+            const thisPeriodAmt = periodUnpaid.reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
 
-            // Also include pre-period unpaid in the total pool for picking
+            // All unpaid up to settleThrough = what can be settled this cycle
             const allUnpaidToSettle = allUnpaid.filter(d => (d.expDate||'') <= settleThrough);
-            const totalOutstanding = allUnpaidToSettle.reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
-            const totalDue = openingFromSettings + totalOutstanding;
+            const totalOutstanding  = allUnpaidToSettle.reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
+            const totalDue          = openingFromSettings + totalOutstanding;
 
             if (allUnpaidToSettle.length === 0 && openingFromSettings === 0) {
                 alert('No outstanding expenses to settle for '+dirName+' up through '+settleThrough+'.');
                 return;
             }
 
-            // Already reimbursed this display-month
+            // Already reimbursed this display month
             const [yr2,mo2] = monthYM.split('-').map(Number);
             const periodEnd2 = monthYM+'-'+String(new Date(yr2,mo2,0).getDate()).padStart(2,'0');
             const alreadyReimb = (directorExpenses||[]).filter(d =>
                 d.director===dirKey && d.reimbursed &&
-                (d.reimbursedDate||'') >= periodStart && (d.reimbursedDate||'') <= periodEnd2
+                (d.reimbursedDate||'') >= monthYM+'-01' && (d.reimbursedDate||'') <= periodEnd2
             ).reduce((s,d)=>s+(parseFloat(d.reimbursedAmt||d.amount)||0),0);
 
-            document.getElementById('dirSettleModal').innerHTML = `
+            const openingResetNotice = (openBalSettled && openBalAmt > 0)
+                ? `<div class="bg-amber-50 border border-amber-300 rounded-xl p-3 flex items-center justify-between gap-3 mb-2">
+                    <div class="text-xs text-amber-800">
+                        <strong>⚠ Opening Balance (${fmt(openBalAmt)}) is marked as Settled</strong> —
+                        not included in BF. Reset if settled in error.
+                    </div>
+                    <button onclick="_resetOpeningSettled('${dirKey}')"
+                        class="px-3 py-1.5 bg-amber-600 text-white text-xs font-bold rounded-lg hover:bg-amber-700 whitespace-nowrap">
+                        ↩ Reset Opening BF
+                    </button>
+                   </div>` : '';
+
+                        document.getElementById('dirSettleModal').innerHTML = `
             <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl m-4 max-h-[92vh] overflow-y-auto">
                 <div class="bg-gradient-to-r from-emerald-600 to-teal-600 p-5 text-white flex justify-between items-center sticky top-0 z-10">
                     <div>
@@ -23370,10 +23356,16 @@ Automated WFH alert — ${company} Attendance System.`;
                 </div>
             </div>`;
             document.getElementById('dirSettleModal').classList.add('show');
-            // Initialize settlement state for live preview
-            // allUnpaidToSettle includes BOTH prior-period unpaid (BF) and this-period bills
-            // so the pick list shows everything outstanding, not just current month
-            window._dsState = { dirKey, monthYM, mode: 'pick', selectedIDs: new Set(), settleOpening: false, openBalAmt: openingFromSettings, totalDue, allUnpaidToSettle };
+            window._dsState = {
+                dirKey, monthYM,
+                mode: 'pick',
+                selectedIDs: new Set(),
+                settleOpening: false,
+                openBalAmt: openingFromSettings,  // settings BF (0 if already settled)
+                totalDue,
+                periodFrom,                        // start of "Bills This Period"
+                allUnpaidToSettle
+            };
             dirSettlePreview();
         }
         function closeDirSettleModal() {
@@ -23505,14 +23497,30 @@ Automated WFH alert — ${company} Attendance System.`;
             const settleAmt = parseFloat(document.getElementById('dsAmount').value) || 0;
             const fmt = n => '₹'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
 
-            // Use ALL unreimbursed expenses up to the settle-through date
-            // (includes both BF expenses from prior periods AND current-period bills)
-            const unpaid = (directorExpenses||[]).filter(d =>
-                d.director===dirKey && !d.reimbursed && (d.expDate||'') <= through
-            ).sort((a,b)=>(a.expDate||'').localeCompare(b.expDate||'') || (a.deID||'').localeCompare(b.deID||''));
+            // Recompute Bills This Period and Total Due based on current through date
+            const periodFrom = window._dsState.periodFrom || '2000-01-01';
+            const allUnpaid = (directorExpenses||[]).filter(d =>
+                d.director===dirKey && !d.reimbursed
+            ).sort((a,b)=>(a.expDate||'').localeCompare(b.expDate||'')||(a.deID||'').localeCompare(b.deID||''));
 
-            // Update the live "Settling Now" and "Balance CF" summary cards
-            const balanceAfter = Math.max(0, (totalDue||0) - settleAmt);
+            const periodUnpaid  = allUnpaid.filter(d =>
+                (d.expDate||'') >= periodFrom && (d.expDate||'') <= through
+            );
+            const thisPeriodAmt = periodUnpaid.reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
+            const allUpToThrough = allUnpaid.filter(d => (d.expDate||'') <= through);
+            const newTotalDue = (openBalAmt||0) + allUpToThrough.reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
+
+            // Update Bills This Period card
+            const billsEl = document.getElementById('dsBillsThisPeriod');
+            const billsEndEl = document.getElementById('dsBillsPeriodEnd');
+            const totalDueEl = document.getElementById('dsTotalDue');
+            if (billsEl) billsEl.textContent = fmt(thisPeriodAmt);
+            if (billsEndEl) billsEndEl.textContent = through;
+            if (totalDueEl) totalDueEl.textContent = fmt(newTotalDue);
+            if (window._dsState) window._dsState.totalDue = newTotalDue;
+
+            // Update Settling Now and Balance CF cards
+            const balanceAfter = Math.max(0, newTotalDue - settleAmt);
             const cardAmt = document.getElementById('dsCardAmount');
             const cardBal = document.getElementById('dsCardBalance');
             if (cardAmt) cardAmt.textContent = fmt(settleAmt);
