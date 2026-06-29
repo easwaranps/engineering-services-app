@@ -23530,8 +23530,8 @@ Automated WFH alert — ${company} Attendance System.`;
             // This is what needs to be paid to clear the selection
             const totalDueForSelection = (openBalAmt||0) + selectedBillsAmt;
 
-            // Also compute the grand total (all unpaid up to through) for the Total Due card
-            const grandTotalDue = (openBalAmt||0) + allUpToThrough.reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
+            // Total Due = BF + selected bills (what you're committing to settle)
+            const grandTotalDue = (openBalAmt||0) + selectedBillsAmt;
 
             // Settling Now = whatever is in the Reimbursement Amount field (always)
             // User enters this independently — it is the actual cash being paid
