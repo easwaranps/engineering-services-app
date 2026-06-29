@@ -22715,8 +22715,10 @@ Automated WFH alert — ${company} Attendance System.`;
 
                 if (y > 230) { doc.addPage(); y=15; }
                 // Director header bar
-                doc.setFillColor(di===0?[254,205,211]:[199,210,254]); doc.rect(ML,y,CW,7,'F');
-                doc.setFontSize(10); doc.setFont('helvetica','bold'); doc.setTextColor(di===0?[157,23,77]:[67,56,202]);
+                if (di===0) { doc.setFillColor(254,205,211); } else { doc.setFillColor(199,210,254); }
+                doc.rect(ML,y,CW,7,'F');
+                doc.setFontSize(10); doc.setFont('helvetica','bold');
+                if (di===0) { doc.setTextColor(157,23,77); } else { doc.setTextColor(67,56,202); }
                 doc.text(dirName.toUpperCase(), ML+3, y+5);
                 doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(100,100,100);
                 doc.text('Total: '+fmt(total)+'   Reimbursed: '+fmt(reimb)+'   Pending: '+fmt(pending), PW-MR, y+5, {align:'right'});
@@ -22725,10 +22727,11 @@ Automated WFH alert — ${company} Attendance System.`;
                 // Category breakdown
                 const byCat = {};
                 rows.forEach(r=>{ byCat[r.category||'Other'] = (byCat[r.category||'Other']||0) + (parseFloat(r.amount)||0); });
+                const headFill = di===0 ? [157,23,77] : [67,56,202];
                 doc.autoTable({
                     startY: y, margin:{left:ML,right:MR}, theme:'grid',
                     styles:{fontSize:8, cellPadding:2.5},
-                    headStyles:{fillColor:di===0?[157,23,77]:[67,56,202], textColor:[255,255,255], fontStyle:'bold'},
+                    headStyles:{fillColor:headFill, textColor:[255,255,255], fontStyle:'bold'},
                     head:[['#','Date','Category','Description','Vendor','Project','Mode','Amount','Reimb.','Status']],
                     body: rows.map((r,i)=>[
                         String(i+1),
@@ -23507,10 +23510,12 @@ Automated WFH alert — ${company} Attendance System.`;
 
             const allUpToThrough = allUnpaid.filter(d => (d.expDate||'') <= through);
 
-            // Bills This Period = sum of selected bills (pick mode) or FIFO-covered bills
+            // Bills This Period = sum of ALL selected bills in pick mode
+            // (not filtered by allUpToThrough — user may have selected bills
+            //  from before or after the period boundary by choosing dates)
             let selectedBillsAmt = 0;
             if (mode === 'pick') {
-                selectedBillsAmt = allUpToThrough
+                selectedBillsAmt = allUnpaid
                     .filter(d => selectedIDs.has(d.deID))
                     .reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
             } else {
