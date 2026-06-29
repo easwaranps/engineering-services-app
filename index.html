@@ -4638,6 +4638,9 @@
         function _startAutoRefresh() {
             if (_autoRefreshTimer) clearInterval(_autoRefreshTimer);
             _autoRefreshTimer = setInterval(() => {
+                // Do not auto-refresh while the Director Expense settle modal is open —
+                // the refresh would reset _dsState and lose the user's bill selection.
+                if (document.getElementById('dirSettleModal')?.classList.contains('show')) return;
                 if (document.visibilityState === 'visible' && accessToken) {
                     console.log('⏰ Auto-refresh from Drive…');
                     refreshDataFromDrive().catch(()=>{});
@@ -4646,6 +4649,7 @@
         }
         // Also refresh when tab becomes visible after being hidden
         document.addEventListener('visibilitychange', () => {
+            if (document.getElementById('dirSettleModal')?.classList.contains('show')) return;
             if (document.visibilityState === 'visible' && accessToken) {
                 console.log('👁 Tab visible — refreshing data…');
                 refreshDataFromDrive().catch(()=>{});
@@ -23168,9 +23172,13 @@ Automated WFH alert — ${company} Attendance System.`;
             ).sort((a,b)=>(a.expDate||'').localeCompare(b.expDate||'')||(a.deID||'').localeCompare(b.deID||''));
 
             // BF = settings opening (if unsettled) + expenses before periodFrom
-            const bfExpenses = allUnpaid.filter(d => (d.expDate||'') < periodFrom);
-            const bfExpAmt   = bfExpenses.reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
-            const bfAmt      = openingFromSettings + bfExpAmt;
+            // MINUS any accumulated credit balance from prior overpayments
+            const creditKey    = dirKey === 'dir1' ? 'director1CreditBalance' : 'director2CreditBalance';
+            const creditBalance = parseFloat(settings[creditKey]) || 0;  // positive = credit reduces BF
+            const bfExpenses    = allUnpaid.filter(d => (d.expDate||'') < periodFrom);
+            const bfExpAmt      = bfExpenses.reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
+            const bfRaw         = openingFromSettings + bfExpAmt;
+            const bfAmt         = +(bfRaw - creditBalance).toFixed(2);  // net BF after credit
 
             // Bills This Period = unpaid FROM periodFrom TO settleThrough
             const periodUnpaid  = allUnpaid.filter(d =>
@@ -23235,7 +23243,7 @@ Automated WFH alert — ${company} Attendance System.`;
                             <div class="bg-white rounded-lg border border-amber-200 p-3">
                                 <div class="text-[10px] text-amber-600 uppercase font-bold mb-1">Brought Forward</div>
                                 <div class="text-sm font-bold text-amber-700">${fmt(bfAmt)}</div>
-                                <div class="text-[10px] text-gray-400 mt-0.5">${openingFromSettings>0?`Incl. ${fmt(openingFromSettings)} settings BF · `:''}${bfExpenses.length} prior entry(ies)</div>
+                                <div class="text-[10px] text-gray-400 mt-0.5">${openingFromSettings>0?`Incl. ${fmt(openingFromSettings)} settings BF · `:''}${bfExpenses.length} prior entry(ies)${creditBalance>0?' · less ₹'+creditBalance.toLocaleString('en-IN',{minimumFractionDigits:2})+' credit':''}</div>
                             </div>
                             <div class="bg-white rounded-lg border border-rose-200 p-3">
                                 <div class="text-[10px] text-rose-500 uppercase font-bold mb-1">Bills This Period</div>
@@ -23510,6 +23518,10 @@ Automated WFH alert — ${company} Attendance System.`;
 
             const allUpToThrough = allUnpaid.filter(d => (d.expDate||'') <= through);
 
+            // Apply credit balance to reduce BF in live preview
+            const creditKey     = dirKey === 'dir1' ? 'director1CreditBalance' : 'director2CreditBalance';
+            const creditBalance  = parseFloat(settings?.[creditKey]) || 0;
+
             // Bills This Period = sum of ALL selected bills in pick mode
             // (not filtered by allUpToThrough — user may have selected bills
             //  from before or after the period boundary by choosing dates)
@@ -23526,23 +23538,16 @@ Automated WFH alert — ${company} Attendance System.`;
             // Opening balance contribution
             const openingPart = settleOpening ? (openBalAmt||0) : 0;
 
-            // Total Due = BF (settings opening) + Bills This Period (selected/FIFO)
-            // This is what needs to be paid to clear the selection
-            const totalDueForSelection = (openBalAmt||0) + selectedBillsAmt;
+            // Total Due = net BF (after credit) + selected bills
+            const netBF         = Math.max(0, (openBalAmt||0) - creditBalance);
+            const grandTotalDue = netBF + selectedBillsAmt;
 
-            // Total Due = BF + selected bills (what you're committing to settle)
-            const grandTotalDue = (openBalAmt||0) + selectedBillsAmt;
-
-            // Settling Now = whatever is in the Reimbursement Amount field (always)
-            // User enters this independently — it is the actual cash being paid
+            // Settling Now = Reimbursement Amount field
             const settleAmt = parseFloat(document.getElementById('dsAmount')?.value) || 0;
 
-            // Balance CF = Reimbursement Amount - Total Due (BF + Bills This Period)
-            // Positive = still owe more (underpaid)
-            // Zero = exactly settled
-            // Negative = overpaid (credit to next month)
-            // Note: here "Total Due" = BF + selected/FIFO bills, not grand total
-            const balanceCF = totalDueForSelection - settleAmt;
+            // Balance CF = Total Due − Settling Now
+            // Positive = still owed, Zero = exact, Negative = credit to next month
+            const balanceCF = grandTotalDue - settleAmt;
 
             // Update cards
             const billsEl    = document.getElementById('dsBillsThisPeriod');
@@ -23974,24 +23979,30 @@ Automated WFH alert — ${company} Attendance System.`;
             const mode     = window._dsState?.mode || 'fifo';
 
             const unpaid = (directorExpenses||[]).filter(d =>
-                d.director===dirKey && !d.reimbursed && (d.expDate||'') <= through
+                d.director===dirKey && !d.reimbursed
             ).sort((a,b)=>(a.expDate||'').localeCompare(b.expDate||'') || (a.deID||'').localeCompare(b.deID||''));
+
+            // For FIFO filtering (needs through date boundary)
+            const unpaidToThrough = unpaid.filter(d => (d.expDate||'') <= through);
 
             let toSettle = [];
             const settleOpeningSelected = !!window._dsState?.settleOpening;
             const openBalAmtSelected   = parseFloat(window._dsState?.openBalAmt)||0;
             if (mode === 'pick') {
-                // Use the user's selection
-                const set = window._dsState.selectedIDs || new Set();
+                // Use ALL selected bills — don't restrict to through-date boundary here
+                // since the user explicitly ticked them in the pick list
+                const set = window._dsState?.selectedIDs || new Set();
                 toSettle = unpaid.filter(d => set.has(d.deID));
+                console.log('Pick mode: selectedIDs=', set.size, 'toSettle=', toSettle.length,
+                    'all deIDs sample:', [...set].slice(0,3));
                 if (!toSettle.length && !(settleOpeningSelected && openBalAmtSelected > 0)) {
-                    alert('No expenses selected. Tick the checkboxes next to expenses you want to settle (you can also include the Opening Balance row at the top).');
+                    alert('No expenses selected.\n\nThis can happen if the page auto-refreshed after you made your selection — your picks were lost.\n\nPlease scroll down, re-tick the bills, and click Confirm Settlement again.');
                     window._dsSaving = false; return;
                 }
             } else {
                 // FIFO allocation — only fully settle entries whose amount fits
                 let remaining = settleAmt;
-                for (const d of unpaid) {
+                for (const d of unpaidToThrough) {
                     const amt = parseFloat(d.amount)||0;
                     if (remaining + 0.01 >= amt) { toSettle.push(d); remaining -= amt; }
                     else break;
@@ -24003,7 +24014,7 @@ Automated WFH alert — ${company} Attendance System.`;
             }
             const totalSettled = toSettle.reduce((s,d)=>s+(parseFloat(d.amount)||0),0)
                                + (settleOpeningSelected ? openBalAmtSelected : 0);
-            const carry = unpaid.reduce((s,d)=>s+(parseFloat(d.amount)||0),0) - toSettle.reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
+            const carry = unpaidToThrough.reduce((s,d)=>s+(parseFloat(d.amount)||0),0) - toSettle.reduce((s,d)=>s+(parseFloat(d.amount)||0),0);
 
             // Group settled by paymentAccount for display in confirmation
             const accountGroups = {};
@@ -24026,7 +24037,23 @@ Automated WFH alert — ${company} Attendance System.`;
                 +'• Date: '+payDate+'\n\nProceed?')) {
                 window._dsSaving = false; return;
             }
-            // Apply changes
+            // Compute overpayment (settleAmt > totalSettled bills = credit for next month)
+            // The existing credit balance from prior overpayments first offsets the BF.
+            // Net credit = prior credit already reduces BF, so only track new delta here.
+            const creditKey     = dirKey === 'dir1' ? 'director1CreditBalance' : 'director2CreditBalance';
+            const prevCredit    = parseFloat(settings[creditKey]) || 0;
+            const billsSettledTotal = toSettle.reduce((s,d)=>s+(parseFloat(d.amount)||0),0)
+                                    + (settleOpeningSelected ? openBalAmtSelected : 0);
+            // Net BF available this settlement = remaining unpaid before period - prior credit
+            // overpayment = amount paid - bills selected (this session's delta)
+            const overpayment   = settleAmt - billsSettledTotal;
+            // New accumulated credit = prior credit ALREADY applied to BF, now updated with this settlement's delta
+            // After this settlement, the credit resets because it was baked into bfAmt already;
+            // only the NEW delta from this payment carries forward.
+            const newCredit = +(overpayment).toFixed(2);  // prior credit consumed; this overpayment is new credit
+            settings[creditKey] = newCredit;
+
+            // Apply settled flags to expense records
             const settledIDs = new Set(toSettle.map(d=>d.deID));
             directorExpenses = directorExpenses.map(d => {
                 if (settledIDs.has(d.deID)) {
@@ -24036,8 +24063,6 @@ Automated WFH alert — ${company} Attendance System.`;
                         reimbursedAmt: parseFloat(d.amount)||0,
                         reimbursedRef: refNo,
                         reimbursedMode: payMode,
-                        // Card-specific fields — only populated when the reimbursement
-                        // was made via Credit/Debit Card. Empty strings for other modes.
                         reimbursedCardIssuer: reimbCardIssuer,
                         reimbursedCardLast4:  reimbCardLast4,
                         reimbursedNotes: notes,
@@ -24046,12 +24071,11 @@ Automated WFH alert — ${company} Attendance System.`;
                 return d;
             });
 
-            // Opening balance settlement — handled via settings flags
-            // (the ledger compute generates a synthetic credit transaction for it)
+            // Opening balance settlement
             const settleOpening = !!window._dsState?.settleOpening;
             const openBalAmt    = parseFloat(window._dsState?.openBalAmt)||0;
+            const openingFieldPrefix = dirKey === 'dir1' ? 'director1Opening' : 'director2Opening';
             if (settleOpening && openBalAmt > 0) {
-                const openingFieldPrefix = dirKey === 'dir1' ? 'director1Opening' : 'director2Opening';
                 settings[openingFieldPrefix+'Settled']       = true;
                 settings[openingFieldPrefix+'SettledDate']   = payDate;
                 settings[openingFieldPrefix+'SettledAmt']    = openBalAmt;
@@ -24061,12 +24085,27 @@ Automated WFH alert — ${company} Attendance System.`;
                 settings[openingFieldPrefix+'SettledAt']     = new Date().toISOString();
             }
 
+            // Log per-settlement for audit
+            const creditLogKey = dirKey === 'dir1' ? 'director1CreditLog' : 'director2CreditLog';
+            const creditLog = settings[creditLogKey] || [];
+            creditLog.push({
+                date: payDate, ref: refNo, settledAmt: settleAmt,
+                billsTotal: billsSettledTotal, overpayment, runningCredit: newCredit
+            });
+            settings[creditLogKey] = creditLog;
+
             try {
-                const saves = [saveData('directorExpenses', directorExpenses)];
-                if (settleOpening && openBalAmt > 0) saves.push(saveData('settings', settings));
-                await Promise.all(saves);
+                await Promise.all([
+                    saveData('directorExpenses', directorExpenses),
+                    saveData('settings', settings)
+                ]);
                 closeDirSettleModal();
-                _showToast('✓ Settled '+toSettle.length+' entries'+(settleOpening?' + opening balance':'')+' — ₹'+totalSettled.toLocaleString('en-IN',{minimumFractionDigits:2})+(carry>0?' (CF: ₹'+carry.toLocaleString('en-IN',{minimumFractionDigits:2})+')':''), '#15803d', 4500);
+                const creditNote = overpayment > 0.01
+                    ? ` · ₹${overpayment.toLocaleString('en-IN',{minimumFractionDigits:2})} credit to next month`
+                    : overpayment < -0.01
+                    ? ` · ₹${Math.abs(overpayment).toLocaleString('en-IN',{minimumFractionDigits:2})} underpaid (carry forward)`
+                    : '';
+                _showToast('✓ Settled '+toSettle.length+' entries — ₹'+settleAmt.toLocaleString('en-IN',{minimumFractionDigits:2})+creditNote, '#15803d', 5000);
                 renderView();
             } catch(err) {
                 alert('Settlement failed: '+err.message);
