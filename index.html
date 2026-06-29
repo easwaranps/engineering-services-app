@@ -23948,13 +23948,33 @@ Automated WFH alert — ${company} Attendance System.`;
                 }
             }
 
+            // Always reset the credit balance when undoing — the credit was generated
+            // by the overpayment in the settlement being reversed. Keeping it after
+            // undo would incorrectly reduce the BF in the next settlement attempt.
+            const creditKey = dirKey === 'dir1' ? 'director1CreditBalance' : 'director2CreditBalance';
+            const creditLogKey = dirKey === 'dir1' ? 'director1CreditLog' : 'director2CreditLog';
+            const hadCredit = (parseFloat(settings[creditKey]) || 0) !== 0;
+            settings[creditKey] = 0;
+            // Remove the log entries that corresponded to the undone batches
+            if (settings[creditLogKey]) {
+                settings[creditLogKey] = (settings[creditLogKey] || []).filter(
+                    e => !selected.some(bKey => bKey.startsWith(e.date))
+                );
+            }
+
             try {
-                const saves = [saveData('directorExpenses', directorExpenses)];
-                if (resetOpening) saves.push(saveData('settings', settings));
-                await Promise.all(saves);
+                await Promise.all([
+                    saveData('directorExpenses', directorExpenses),
+                    saveData('settings', settings)   // always save — credit balance always reset on undo
+                ]);
                 document.getElementById('undoSettleModal').remove();
                 renderView();
-                _showToast(`↩ Undone: ${toUndo.length} settlement(s) for ${dirName} reversed. Expenses are now Pending again.${resetOpening?' Opening balance also reset.':''}`, '#dc2626', 6000);
+                _showToast(
+                    `↩ Undone: ${toUndo.length} settlement(s) for ${dirName} reversed. Expenses are now Pending again.` +
+                    (resetOpening ? ' Opening balance also reset.' : '') +
+                    (hadCredit ? ' Credit balance cleared — BF restored.' : ''),
+                    '#dc2626', 6000
+                );
             } catch(err) {
                 alert('Save failed: ' + err.message);
             }
