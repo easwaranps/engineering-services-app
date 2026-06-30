@@ -812,36 +812,81 @@
     <!-- Ad-hoc Payment Request Modal -->
     <div id="adhocPRModal" class="modal">
         <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[92vh] overflow-y-auto m-4">
-            <div class="bg-gradient-to-r from-orange-500 to-amber-500 p-5 text-white flex justify-between items-center sticky top-0 z-10">
+            <div class="bg-gradient-to-r from-emerald-600 to-teal-600 p-5 text-white flex justify-between items-center sticky top-0 z-10">
                 <div>
-                    <h3 class="text-lg font-bold">⚡ Ad-hoc Payment Request</h3>
-                    <p class="text-orange-100 text-xs mt-1">Pick specific pending bills for off-cycle payment. Reason / justification required.</p>
+                    <h3 class="text-lg font-bold" id="prModalTitle">💼 Payment Request</h3>
+                    <p class="text-emerald-100 text-xs mt-1" id="prModalSubtitle">Auto-aggregate a monthly cycle, or hand-pick specific bills — both in one request.</p>
                 </div>
                 <button onclick="closeAdHocPRModal()" class="text-white text-2xl hover:bg-white hover:bg-opacity-20 rounded-full w-9 h-9 flex items-center justify-center">×</button>
             </div>
             <div class="p-5 space-y-4">
-                <!-- Top form fields -->
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+
+                <!-- Revision banner (shown only when revising an existing PR) -->
+                <div id="prRevisionBanner" class="hidden bg-amber-50 border border-amber-300 rounded-xl p-3 text-xs text-amber-800">
+                    🔄 <strong>Revising <span id="prRevisionOf"></span></strong> — this will create a new request linked to the original. The original will be marked Superseded.
+                </div>
+
+                <!-- Mode + period -->
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1">Period (for auto-aggregation)</label>
+                        <div class="flex gap-1">
+                            <select id="prPeriodMonth" class="flex-1 px-2 py-2 border rounded-lg text-sm">
+                                ${['','January','February','March','April','May','June','July','August','September','October','November','December']
+                                    .map((m,i)=>i?`<option value="${i}">${m}</option>`:'').join('')}
+                            </select>
+                            <select id="prPeriodYear" class="w-20 px-2 py-2 border rounded-lg text-sm"></select>
+                        </div>
+                        <button type="button" onclick="_prRunAutoAggregate()" class="mt-1 text-[11px] text-emerald-700 underline hover:text-emerald-900">↻ Pull bills for this period</button>
+                    </div>
                     <div>
                         <label class="block text-xs font-semibold text-gray-700 mb-1">Disbursement Date *</label>
-                        <input type="date" id="adhocDisbDate" required
-                            class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        <input type="date" id="adhocDisbDate" required class="w-full px-3 py-2 border rounded-lg text-sm"/>
                         <p class="text-[10px] text-gray-400 mt-1">When the transfer is planned</p>
                     </div>
                     <div class="md:col-span-2">
-                        <label class="block text-xs font-semibold text-gray-700 mb-1">Reason / Justification *
-                            <span class="text-red-500">required</span></label>
-                        <input type="text" id="adhocReason" required maxlength="200"
-                            placeholder="e.g. Urgent vendor payment to avoid service disconnection; advance payment per agreement..."
+                        <label class="block text-xs font-semibold text-gray-700 mb-1">Reason / Remarks <span class="text-gray-400 font-normal">(required if no period selected)</span></label>
+                        <input type="text" id="adhocReason" maxlength="200"
+                            placeholder="e.g. Monthly cycle for June 2026; or urgent vendor payment..."
                             class="w-full px-3 py-2 border rounded-lg text-sm"/>
-                        <p class="text-[10px] text-gray-400 mt-1">Audit trail — explains why this is being paid outside the monthly cycle</p>
                     </div>
                 </div>
 
-                <!-- Bills picker -->
+                <!-- Options -->
+                <div class="flex flex-wrap gap-4 items-center bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5">
+                    <label class="flex items-center gap-2 text-xs font-semibold text-gray-700 cursor-pointer">
+                        <input type="checkbox" id="prIncludeDirectorExp" class="w-4 h-4 accent-purple-600"/>
+                        Include unsettled Director Expenses
+                    </label>
+                    <span class="text-[10px] text-gray-400">Off by default — director reimbursements are normally handled via Settle Reimbursement</span>
+                </div>
+
+                <!-- Bank balance / minimum buffer -->
+                <div class="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                    <p class="text-xs font-bold text-blue-800 uppercase tracking-wide mb-2">💰 Bank Balance Check</p>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Available Balance on Account</label>
+                            <input type="number" id="prBankBalance" min="0" step="0.01" placeholder="0.00"
+                                oninput="_prUpdateBalanceCheck()" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">Minimum Balance to Maintain</label>
+                            <input type="number" id="prMinBalance" value="10000" min="0" step="0.01"
+                                oninput="_prUpdateBalanceCheck()" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                        <div class="bg-white rounded-lg border border-blue-200 p-2.5">
+                            <div class="text-[10px] text-gray-400 uppercase font-bold">Available for Payment</div>
+                            <div class="text-base font-bold" id="prAvailableForPayment">₹0.00</div>
+                        </div>
+                    </div>
+                    <p class="text-[11px] mt-2" id="prBalanceWarning"></p>
+                </div>
+
+                <!-- Bills picker (manual additions / shows auto-aggregated items too) -->
                 <div class="border border-gray-200 rounded-xl overflow-hidden">
                     <div class="bg-gray-50 px-4 py-2.5 flex flex-wrap gap-2 items-center border-b">
-                        <span class="text-sm font-bold text-gray-700">📋 Pick pending bills</span>
+                        <span class="text-sm font-bold text-gray-700">📋 Items in this Request</span>
                         <input type="text" id="adhocSearchQ" placeholder="🔍 Search vendor / description / bill no"
                             oninput="_adhocRenderBills()"
                             class="flex-1 min-w-48 px-3 py-1.5 border rounded text-sm"/>
@@ -866,19 +911,19 @@
                 </div>
 
                 <!-- Live total -->
-                <div class="bg-orange-50 border border-orange-200 rounded-xl p-4 flex justify-between items-center">
+                <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex justify-between items-center">
                     <div>
-                        <p class="text-xs text-orange-700 font-semibold uppercase">Selected for Ad-hoc PR</p>
-                        <p class="text-[10px] text-orange-600" id="adhocSelectedCount">0 items</p>
+                        <p class="text-xs text-emerald-700 font-semibold uppercase">Selected for this Request</p>
+                        <p class="text-[10px] text-emerald-600" id="adhocSelectedCount">0 items</p>
                     </div>
-                    <p class="text-2xl font-bold text-orange-700" id="adhocTotalAmount">₹0.00</p>
+                    <p class="text-2xl font-bold text-emerald-700" id="adhocTotalAmount">₹0.00</p>
                 </div>
 
                 <!-- Footer actions -->
                 <div class="flex justify-end gap-3 pt-2">
                     <button onclick="closeAdHocPRModal()" class="px-5 py-2 border border-gray-300 text-gray-600 rounded-xl hover:bg-gray-50">Cancel</button>
-                    <button onclick="saveAdHocPR()" class="px-6 py-2 bg-orange-600 text-white rounded-xl hover:bg-orange-700 font-semibold">
-                        ⚡ Create Ad-hoc PR (Draft)
+                    <button onclick="saveAdHocPR()" id="prSaveBtn" class="px-6 py-2 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 font-semibold">
+                        💼 Create Payment Request (Draft)
                     </button>
                 </div>
             </div>
@@ -8371,11 +8416,20 @@
                                 doc.text('File: ' + (att.name||'attachment'), ML, appendixY+18);
                             }
                         } else if (imgData && imgData.startsWith('data:application/pdf')) {
-                            doc.setFontSize(10); doc.setTextColor(100,116,139);
-                            doc.text('[PDF attachment] ' + (att.name || 'document.pdf'), ML, appendixY+8);
+                            // PDF attachments cannot be embedded as images in jsPDF (it only
+                            // supports raster formats). Show a clear visual marker instead of
+                            // leaving blank space, so the reader knows a document exists here
+                            // and isn't confused by a missing/broken page.
+                            doc.setDrawColor(191,219,254); doc.setFillColor(239,246,255);
+                            doc.rect(ML, appendixY, CW, 50, 'FD');
+                            doc.setFontSize(20); doc.setTextColor(29,78,216);
+                            doc.text('📄', ML+CW/2, appendixY+22, {align:'center'});
+                            doc.setFontSize(11); doc.setFont('helvetica','bold'); doc.setTextColor(29,78,216);
+                            doc.text('PDF Document', ML+CW/2, appendixY+32, {align:'center'});
+                            doc.setFontSize(9); doc.setFont('helvetica','normal'); doc.setTextColor(100,116,139);
+                            doc.text((att.name || 'document.pdf'), ML+CW/2, appendixY+40, {align:'center'});
                             doc.setFontSize(8); doc.setTextColor(148,163,184);
-                            doc.text('PDF embedding not supported. Open the original file from Drive.', ML, appendixY+15);
-                            if (att.driveFileId) doc.text('Drive ID: ' + att.driveFileId, ML, appendixY+22);
+                            doc.text('PDF cannot be embedded inline — open the original from the app to view/download.', ML+CW/2, appendixY+47, {align:'center'});
                         } else {
                             doc.setFontSize(10); doc.setTextColor(220,38,38);
                             doc.text('⚠ Attachment data not available offline', ML, appendixY+8);
@@ -26955,17 +27009,132 @@ Automated WFH alert — ${company} Attendance System.`;
         // Selected expense IDs (set, persisted across modal re-renders)
         window._adhocSelected = window._adhocSelected || new Set();
 
-        function openAdHocPRModal() {
-            window._adhocSelected = new Set();   // fresh start each open
-            // Default disbursement date = today
-            const today = new Date().toISOString().split('T')[0];
-            document.getElementById('adhocDisbDate').value = today;
+        // ══════════════════════════════════════════════════════════════════
+        // UNIFIED PAYMENT REQUEST MODAL
+        // ──────────────────────────────────────────────────────────────────
+        // Replaces the old separate "Monthly Request" and "Ad-hoc Request"
+        // buttons with a single "Payment Request" flow that can:
+        //   • Auto-aggregate bills/salary/TDS/GST for a chosen period
+        //   • Let the user hand-pick/add specific bills on top
+        //   • Optionally include unsettled Director Expenses (off by default)
+        //   • Capture available bank balance vs minimum buffer
+        //   • Support "Revise" — create a new linked request superseding an old one
+        // ══════════════════════════════════════════════════════════════════
+        window._adhocSelected = window._adhocSelected || new Set();
+        window._prAutoItems = [];      // items pulled by auto-aggregate (period-based)
+        window._prManualItems = [];    // items added by hand-picking bills
+        window._prRevisingID = null;   // set when this is a revision of an existing PR
+
+        function openPaymentRequestModal(revisePrID = null) {
+            window._adhocSelected = new Set();
+            window._prAutoItems = [];
+            window._prManualItems = [];
+            window._prRevisingID = revisePrID;
+
+            const today = new Date();
+            document.getElementById('adhocDisbDate').value = today.toISOString().split('T')[0];
             document.getElementById('adhocReason').value = '';
             document.getElementById('adhocSearchQ').value = '';
             document.getElementById('adhocFilterType').value = '';
+            document.getElementById('prIncludeDirectorExp').checked = false;
+            document.getElementById('prBankBalance').value = '';
+            document.getElementById('prMinBalance').value = settings?.prDefaultMinBalance || 10000;
+
+            // Period selector defaults to current month
+            const yearSel = document.getElementById('prPeriodYear');
+            const curYear = today.getFullYear();
+            yearSel.innerHTML = [curYear-1, curYear, curYear+1].map(y=>`<option value="${y}" ${y===curYear?'selected':''}>${y}</option>`).join('');
+            document.getElementById('prPeriodMonth').value = today.getMonth()+1;
+
+            const titleEl = document.getElementById('prModalTitle');
+            const subEl   = document.getElementById('prModalSubtitle');
+            const banner  = document.getElementById('prRevisionBanner');
+            const saveBtn = document.getElementById('prSaveBtn');
+
+            if (revisePrID) {
+                const orig = (paymentRequests||[]).find(r => r.prID === revisePrID);
+                if (!orig) { alert('Original request not found.'); return; }
+                titleEl.textContent = '🔄 Revise Payment Request';
+                subEl.textContent = 'Creates a new request linked to ' + revisePrID + ' — the original will be marked Superseded.';
+                banner.classList.remove('hidden');
+                document.getElementById('prRevisionOf').textContent = revisePrID;
+                saveBtn.textContent = '🔄 Create Revision (Draft)';
+                // Pre-fill from original
+                document.getElementById('adhocDisbDate').value = orig.disbursementDate || today.toISOString().split('T')[0];
+                document.getElementById('adhocReason').value = 'Revision of ' + revisePrID + (orig.reason ? ' — ' + orig.reason : '');
+                if (orig.periodMonth) document.getElementById('prPeriodMonth').value = orig.periodMonth;
+                if (orig.periodYear)  yearSel.value = orig.periodYear;
+                document.getElementById('prBankBalance').value = orig.bankBalance || '';
+                document.getElementById('prMinBalance').value  = orig.minBalance || 10000;
+                // Carry over items as manual items (editable from here)
+                window._prManualItems = (orig.items||[]).map(it => ({...it}));
+                window._adhocSelected = new Set(window._prManualItems.map(it => it.sourceID).filter(Boolean));
+            } else {
+                titleEl.textContent = '💼 Payment Request';
+                subEl.textContent = 'Auto-aggregate a monthly cycle, or hand-pick specific bills — both in one request.';
+                banner.classList.add('hidden');
+                saveBtn.textContent = '💼 Create Payment Request (Draft)';
+            }
+
             _adhocRenderBills();
+            _prUpdateBalanceCheck();
             document.getElementById('adhocPRModal').classList.add('show');
         }
+
+        // Pull auto-aggregated items (bills/salary/TDS/GST, + director expenses if checked)
+        // for the selected period and merge them into the picker as pre-checked items.
+        function _prRunAutoAggregate() {
+            const month = parseInt(document.getElementById('prPeriodMonth').value);
+            const year  = parseInt(document.getElementById('prPeriodYear').value);
+            if (!month || !year) { alert('Pick a period first.'); return; }
+
+            const periodEnd = `${year}-${String(month).padStart(2,'0')}-30`;
+            const includeDirector = document.getElementById('prIncludeDirectorExp')?.checked;
+
+            let items = [
+                ..._prCollectPendingBills(periodEnd),
+                ..._prCollectPettyCashReplenishments()
+            ];
+            if (includeDirector) {
+                items = items.concat(_prCollectUnsettledDirectorExpenses(periodEnd));
+            }
+
+            window._prAutoItems = items;
+            // Pre-select all auto-aggregated bill items in the picker
+            items.forEach(it => { if (it.sourceID) window._adhocSelected.add(it.sourceID); });
+
+            if (!document.getElementById('adhocReason').value.trim()) {
+                document.getElementById('adhocReason').value = 'Monthly cycle — ' + _prMonthLabel(month, year);
+            }
+
+            _adhocRenderBills();
+            _showToast(`✓ Pulled ${items.length} item(s) for ${_prMonthLabel(month, year)}`, '#15803d', 3500);
+        }
+
+        function _prUpdateBalanceCheck() {
+            const bal = parseFloat(document.getElementById('prBankBalance')?.value) || 0;
+            const minBal = parseFloat(document.getElementById('prMinBalance')?.value) || 0;
+            const available = Math.max(0, bal - minBal);
+            const fmt = n => '₹'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
+            const el = document.getElementById('prAvailableForPayment');
+            const warnEl = document.getElementById('prBalanceWarning');
+            if (el) {
+                el.textContent = fmt(available);
+                el.style.color = available > 0 ? '#1d4ed8' : '#dc2626';
+            }
+            const totalSelected = parseFloat(document.getElementById('adhocTotalAmount')?.textContent?.replace(/[₹,]/g,'')) || 0;
+            if (warnEl) {
+                if (bal === 0) {
+                    warnEl.textContent = '';
+                } else if (totalSelected > available) {
+                    warnEl.innerHTML = `⚠ <strong style="color:#dc2626">Selected total (${fmt(totalSelected)}) exceeds available balance (${fmt(available)})</strong> — consider deferring some items or topping up the account.`;
+                } else {
+                    warnEl.innerHTML = `✓ <span style="color:#15803d">Sufficient balance — ${fmt(available - totalSelected)} will remain after this payment (above the ₹${minBal.toLocaleString('en-IN')} minimum).</span>`;
+                }
+            }
+        }
+
+        function openAdHocPRModal() { openPaymentRequestModal(); }   // legacy alias, kept for safety
         function closeAdHocPRModal() {
             document.getElementById('adhocPRModal').classList.remove('show');
             window._adhocSelected = new Set();
@@ -27074,6 +27243,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 </tbody>
             </table>`;
             _adhocUpdateTotal();
+            _prUpdateBalanceCheck();
         }
 
         function _adhocToggleBill(expID) {
@@ -27101,6 +27271,14 @@ Automated WFH alert — ${company} Attendance System.`;
                 const e = (expenses || []).find(x => x.expID === expID);
                 if (e) { total += parseFloat(e.netPayable) || 0; count++; }
             });
+            // Add non-bill auto-aggregated items (director expenses, petty cash —
+            // these aren't in expenses[] so aren't covered by the selection above)
+            (window._prAutoItems||[]).forEach(it => {
+                if (it.sourceType !== 'expense') {
+                    total += parseFloat(it.amount) || 0;
+                    count++;
+                }
+            });
             const totalEl = document.getElementById('adhocTotalAmount');
             const countEl = document.getElementById('adhocSelectedCount');
             if (totalEl) totalEl.textContent = fmt(total);
@@ -27112,15 +27290,11 @@ Automated WFH alert — ${company} Attendance System.`;
             const reason   = document.getElementById('adhocReason').value.trim();
             if (!disbDate) { alert('Please pick a disbursement date.'); return; }
             if (!reason) {
-                alert('Reason / justification is required for ad-hoc payment requests.\n\nThis is the audit trail — please explain why this payment is being made outside the monthly cycle.');
+                alert('Please enter a reason / remarks for this Payment Request.');
                 document.getElementById('adhocReason').focus();
                 return;
             }
-            if (window._adhocSelected.size === 0) {
-                alert('Please pick at least one pending bill to include in this ad-hoc request.');
-                return;
-            }
-            // Build the items from selected expenses (same shape as monthly _prCollectPendingBills)
+            // Build bill items from selected expenses (manual picker)
             const items = [];
             window._adhocSelected.forEach(expID => {
                 const e = (expenses || []).find(x => x.expID === expID);
@@ -27153,21 +27327,37 @@ Automated WFH alert — ${company} Attendance System.`;
                     }
                 });
             });
+            // Add non-bill auto-aggregated items (director expenses, petty cash) —
+            // these were pulled via "↻ Pull bills for this period" and aren't part
+            // of the manual expense picker, so add them directly here.
+            (window._prAutoItems||[]).forEach(it => {
+                if (it.sourceType !== 'expense') items.push({...it});
+            });
+
+            if (items.length === 0) {
+                alert('Please pick at least one bill, or click "↻ Pull bills for this period" to auto-aggregate.');
+                return;
+            }
+
             const totalGenerated = +(items.reduce((s, it) => s + (parseFloat(it.amount) || 0), 0)).toFixed(2);
 
-            // Derive period from disbursement date for sorting in list view (uses disb date's
-            // month/year — gives ad-hoc PRs a sensible sort position next to monthly ones).
+            const month = parseInt(document.getElementById('prPeriodMonth')?.value) || 0;
+            const year  = parseInt(document.getElementById('prPeriodYear')?.value)  || 0;
             const dD = new Date(disbDate);
-            const periodMonth = dD.getMonth() + 1;
-            const periodYear  = dD.getFullYear();
+            const periodMonth = month || (dD.getMonth() + 1);
+            const periodYear  = year  || dD.getFullYear();
+            const periodLabel = month && year ? _prMonthLabel(month, year) : `Ad-hoc · ${disbDate}`;
+
+            const bankBalance = parseFloat(document.getElementById('prBankBalance')?.value) || 0;
+            const minBalance  = parseFloat(document.getElementById('prMinBalance')?.value)  || 10000;
+
+            const revisingID = window._prRevisingID;
 
             const pr = {
                 prID:             generatePaymentRequestID(),
-                prType:           'AdHoc',
-                periodMonth,
-                periodYear,
-                periodLabel:      `Ad-hoc · ${disbDate}`,
-                reason,                         // justification text
+                prType:           month && year ? 'Monthly' : 'AdHoc',
+                periodMonth, periodYear, periodLabel,
+                reason,
                 disbursementDate: disbDate,
                 status:           'Draft',
                 generatedBy:      (typeof currentUser !== 'undefined' && currentUser?.name) || 'User',
@@ -27175,8 +27365,13 @@ Automated WFH alert — ${company} Attendance System.`;
                 approvedBy:       '', approvedAt: '',
                 disbursedAt:      '', transferRef: '',
                 fromBankAccountId:'', toBankAccountId: '',
+                bankBalance, minBalance,
+                availableForPayment: +Math.max(0, bankBalance - minBalance).toFixed(2),
+                revisionOf:        revisingID || '',
+                revisionNote:      revisingID ? ('Revises ' + revisingID) : '',
+                reconciliation:    [],   // {date, fundReceived, fundDisbursed, remark, by}
                 items,
-                salaryGaps:       [],           // not relevant for ad-hoc
+                salaryGaps:       [],
                 totalGenerated,
                 totalApproved:    0,
                 totalDeferred:    0,
@@ -27185,21 +27380,34 @@ Automated WFH alert — ${company} Attendance System.`;
             };
             _stampRecord && _stampRecord(pr);
             paymentRequests.push(pr);
+
+            // If revising, mark the original as Superseded
+            if (revisingID) {
+                const origIdx = paymentRequests.findIndex(r => r.prID === revisingID);
+                if (origIdx >= 0) {
+                    paymentRequests[origIdx].status = 'Superseded';
+                    paymentRequests[origIdx].supersededBy = pr.prID;
+                    paymentRequests[origIdx].supersededAt = new Date().toISOString();
+                }
+            }
+
             try {
                 await saveData('paymentRequests', paymentRequests);
                 const fmt = n => '₹' + Math.max(0, +n || 0).toLocaleString('en-IN', {minimumFractionDigits:2,maximumFractionDigits:2});
-                alert(`⚡ Ad-hoc Payment Request ${pr.prID} created (Draft)\n\n` +
-                      `Items: ${items.length}\n` +
-                      `Total: ${fmt(totalGenerated)}\n` +
-                      `Disbursement: ${disbDate}\n` +
-                      `Reason: ${reason}\n\n` +
-                      `Open it to review and approve.`);
+                _showToast(
+                    `✓ ${revisingID ? 'Revision' : 'Payment Request'} ${pr.prID} created (Draft) — ${items.length} items, ${fmt(totalGenerated)}`,
+                    '#15803d', 5000
+                );
                 closeAdHocPRModal();
                 renderView();
             } catch (e) {
-                console.error('Ad-hoc PR save failed:', e);
-                alert('Could not save Ad-hoc PR: ' + e.message);
+                console.error('Payment Request save failed:', e);
+                alert('Could not save Payment Request: ' + e.message);
                 paymentRequests.pop();
+                if (revisingID) {
+                    const origIdx = paymentRequests.findIndex(r => r.prID === revisingID);
+                    if (origIdx >= 0) { paymentRequests[origIdx].status = 'Draft'; delete paymentRequests[origIdx].supersededBy; }
+                }
             }
         }
 
@@ -31924,11 +32132,12 @@ Automated WFH alert — ${company} Attendance System.`;
             const currentMonthLabel = _prMonthLabel(today.getMonth()+1, today.getFullYear());
 
             const statusColor = (s) => ({
-                'Draft':     'bg-yellow-100 text-yellow-700',
-                'Approved':  'bg-blue-100 text-blue-700',
-                'Disbursed': 'bg-purple-100 text-purple-700',
-                'Closed':    'bg-green-100 text-green-700',
-                'Cancelled': 'bg-gray-100 text-gray-500'
+                'Draft':      'bg-yellow-100 text-yellow-700',
+                'Approved':   'bg-blue-100 text-blue-700',
+                'Disbursed':  'bg-purple-100 text-purple-700',
+                'Closed':     'bg-green-100 text-green-700',
+                'Cancelled':  'bg-gray-100 text-gray-500',
+                'Superseded': 'bg-slate-200 text-slate-600'
             })[s] || 'bg-gray-100 text-gray-700';
 
             // Summary stats across ALL requests (not filtered)
@@ -31950,11 +32159,8 @@ Automated WFH alert — ${company} Attendance System.`;
                         <p class="text-sm text-gray-500">Monthly cycle + on-demand ad-hoc requests for management approval</p>
                     </div>
                     <div class="flex gap-2">
-                        <button onclick="generatePaymentRequest()" class="px-5 py-2.5 bg-emerald-600 text-white rounded-lg font-semibold hover:bg-emerald-700 shadow-sm">
-                            + Monthly Request
-                        </button>
-                        <button onclick="openAdHocPRModal()" class="px-5 py-2.5 bg-orange-500 text-white rounded-lg font-semibold hover:bg-orange-600 shadow-sm" title="Create a payment request for a specific bill outside the monthly cycle">
-                            ⚡ Ad-hoc Request
+                        <button onclick="openPaymentRequestModal()" class="px-5 py-2.5 bg-emerald-600 text-white rounded-lg font-semibold hover:bg-emerald-700 shadow-sm">
+                            + Payment Request
                         </button>
                         <button onclick="openPRNumberingModal()" class="px-3 py-2.5 bg-gray-100 text-gray-600 rounded-lg font-semibold hover:bg-gray-200 shadow-sm text-sm" title="Set the starting number if requests were made outside this app">
                             🔢 Numbering
@@ -32055,7 +32261,11 @@ Automated WFH alert — ${company} Attendance System.`;
                                         : (r.periodLabel || '—');
                                     return `
                                 <tr class="border-b hover:bg-gray-50">
-                                    <td class="px-4 py-3 font-mono text-sm font-semibold ${isAdHoc?'text-orange-700':'text-emerald-700'}">${r.prID}</td>
+                                    <td class="px-4 py-3 font-mono text-sm font-semibold ${isAdHoc?'text-orange-700':'text-emerald-700'}">
+                                        ${r.prID}
+                                        ${r.supersededBy ? `<div class="text-[10px] text-slate-400 font-sans font-normal">→ revised as ${r.supersededBy}</div>` : ''}
+                                        ${r.revisionOf ? `<div class="text-[10px] text-amber-500 font-sans font-normal">🔄 rev. of ${r.revisionOf}</div>` : ''}
+                                    </td>
                                     <td class="px-4 py-3 text-center">${typeBadge}</td>
                                     <td class="px-4 py-3 text-sm">${periodOrReason}</td>
                                     <td class="px-4 py-3 text-sm text-gray-600">${r.disbursementDate}</td>
@@ -32154,7 +32364,7 @@ Automated WFH alert — ${company} Attendance System.`;
         // screen. Pulls attachments from the original source record
         // (Expenses & Bills, or consolidated Director Expense items).
         // ════════════════════════════════════════════════════════════════
-        function _prViewAttachments(itemID, sourceType) {
+        async function _prViewAttachments(itemID, sourceType) {
             const pr = paymentRequests.find(r => r.prID === window._currentPR);
             if (!pr) return;
             const it = (pr.items||[]).find(i => i.itemID === itemID);
@@ -32173,7 +32383,6 @@ Automated WFH alert — ${company} Attendance System.`;
                     titleInfo = `${srcExp.companyName||srcExp.staffName||srcExp.vendor||''} — ${srcExp.description||srcExp.billType||''} — ${srcExp.billDate||''}`;
                 }
             } else if (it.sourceSnapshot?.deIDs?.length) {
-                // Consolidated director expense — gather attachments from all linked entries
                 const linkedExps = (directorExpenses||[]).filter(d => it.sourceSnapshot.deIDs.includes(d.deID));
                 linkedExps.forEach(d => {
                     (d.attachments||[]).forEach(a => attachments.push({ ...a, _expDate: d.expDate, _desc: d.description }));
@@ -32184,6 +32393,33 @@ Automated WFH alert — ${company} Attendance System.`;
                 alert('No attachments found for this item.');
                 return;
             }
+
+            // Show a loading modal immediately, then fetch any Drive-only attachments
+            // (those with driveFileId but no inline .data) so they display instantly
+            // once fetched, rather than the user clicking and seeing nothing.
+            const loadingModal = document.createElement('div');
+            loadingModal.id = 'prAttachmentModal';
+            loadingModal.className = 'modal show';
+            loadingModal.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm m-4 p-8 text-center">
+                <div class="animate-spin h-8 w-8 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-3"></div>
+                <p class="text-sm text-gray-600">Loading ${attachments.length} attachment(s)…</p>
+            </div>`;
+            document.body.appendChild(loadingModal);
+
+            // Fetch Drive-stored attachments that don't have inline data yet
+            for (const a of attachments) {
+                if (!a.data && a.driveFileId) {
+                    try {
+                        const r = await fetch(`https://www.googleapis.com/drive/v3/files/${a.driveFileId}?alt=media`, { headers: { Authorization: `Bearer ${accessToken}` } });
+                        if (r.ok) {
+                            const blob = await r.blob();
+                            a.data = await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(blob); });
+                        }
+                    } catch(e) { console.warn('Could not fetch attachment', a.driveFileId, e); }
+                }
+            }
+            document.getElementById('prAttachmentModal')?.remove();
 
             const modal = document.createElement('div');
             modal.id = 'prAttachmentModal';
@@ -32201,13 +32437,14 @@ Automated WFH alert — ${company} Attendance System.`;
                     ${attachments.map((a,idx) => `
                         <div class="border border-gray-200 rounded-xl overflow-hidden">
                             ${a._expDate ? `<div class="px-3 py-1.5 bg-gray-50 text-xs text-gray-500 border-b">${a._expDate}${a._desc?' · '+a._desc:''}</div>` : ''}
-                            ${(a.type === 'pdf' || (a.name||'').toLowerCase().endsWith('.pdf'))
-                                ? `<div class="p-4 text-center">
-                                     <div class="text-4xl mb-2">📄</div>
-                                     <p class="text-xs text-gray-500 mb-2">${(a.name||'PDF document').replace(/</g,'&lt;')}</p>
+                            ${(a.type === 'pdf' || (a.name||'').toLowerCase().endsWith('.pdf') || (a.data||'').startsWith('data:application/pdf'))
+                                ? `<div style="height:400px">
+                                     <embed src="${a.data}" type="application/pdf" width="100%" height="100%" style="border:none"/>
+                                   </div>
+                                   <div class="p-2 text-center">
                                      <a href="${a.data}" download="${a.name||'bill.pdf'}" target="_blank"
-                                        class="inline-block px-3 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700">
-                                        Open / Download PDF
+                                        class="inline-block px-3 py-1 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700">
+                                        Open in New Tab / Download
                                      </a>
                                    </div>`
                                 : `<img src="${a.data}" alt="${(a.name||'Bill attachment').replace(/"/g,'&quot;')}"
@@ -32310,6 +32547,37 @@ Automated WFH alert — ${company} Attendance System.`;
             _renderPaymentRequestDetail(pr);
         }
 
+        // Add a fund reconciliation entry — records actual fund received from
+        // bank/management approval vs. amount disbursed for this Payment Request,
+        // with remarks. Useful when the approved amount is paid in tranches or
+        // when the bank releases a different amount than originally requested.
+        async function _prAddReconciliation(prID) {
+            const pr = (paymentRequests||[]).find(r => r.prID === prID);
+            if (!pr) return;
+            const received  = parseFloat(document.getElementById('prReconReceived')?.value) || 0;
+            const disbursed = parseFloat(document.getElementById('prReconDisbursed')?.value) || 0;
+            const remark     = (document.getElementById('prReconRemark')?.value || '').trim();
+            if (received === 0 && disbursed === 0) {
+                alert('Enter at least Fund Received or Fund Disbursed amount.');
+                return;
+            }
+            pr.reconciliation = pr.reconciliation || [];
+            pr.reconciliation.push({
+                date: new Date().toISOString(),
+                fundReceived: received,
+                fundDisbursed: disbursed,
+                remark,
+                by: (typeof currentUser !== 'undefined' && currentUser?.name) || 'User'
+            });
+            try {
+                await saveData('paymentRequests', paymentRequests);
+                _renderPaymentRequestDetail(pr);
+                _showToast('✓ Reconciliation entry added', '#6d28d9', 3500);
+            } catch(err) {
+                alert('Save failed: ' + err.message);
+            }
+        }
+
         function _renderPaymentRequestDetail(pr) {
             const fmt = n => '₹' + Math.max(0, +n || 0).toLocaleString('en-IN', {minimumFractionDigits:2,maximumFractionDigits:2});
 
@@ -32350,7 +32618,9 @@ Automated WFH alert — ${company} Attendance System.`;
                     </div>
                     <div style="display:flex;align-items:center;gap:12px">
                         ${isAdHoc ? '<span style="padding:3px 10px;background:rgba(255,255,255,0.25);color:#fff;border-radius:10px;font-size:11px;font-weight:700">⚡ Ad-hoc</span>' : ''}
+                        ${pr.revisionOf ? `<span style="padding:3px 10px;background:rgba(255,255,255,0.25);color:#fff;border-radius:10px;font-size:11px;font-weight:700" title="${pr.revisionNote||''}">🔄 Rev. of ${pr.revisionOf}</span>` : ''}
                         <span style="padding:4px 12px;background:rgba(255,255,255,0.2);color:#fff;border-radius:12px;font-size:12px;font-weight:600">${pr.status}</span>
+                        ${pr.status !== 'Superseded' && pr.status !== 'Closed' ? `<button onclick="closePaymentRequestDetail();openPaymentRequestModal('${pr.prID}')" style="padding:4px 10px;background:rgba(255,255,255,0.2);color:#fff;border:none;border-radius:8px;font-size:11px;font-weight:600;cursor:pointer" title="Create a revised version of this request">🔄 Revise</button>` : ''}
                         <button onclick="closePaymentRequestDetail()" style="color:#fff;font-size:24px;background:none;border:none;cursor:pointer">✕</button>
                     </div>
                 </div>
@@ -32398,6 +32668,54 @@ Automated WFH alert — ${company} Attendance System.`;
                     </div>` : isClosed ? `
                     <div style="background:#dcfce7;border:1px solid #86efac;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#166534">
                         ✓ <strong>Closed</strong> — all approved items have been marked paid.
+                    </div>` : ''}
+
+                    ${(pr.bankBalance > 0) ? `
+                    <!-- Bank Balance Summary -->
+                    <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:12px 14px;margin-bottom:14px">
+                        <p style="font-size:11px;font-weight:700;color:#1e40af;margin-bottom:6px;text-transform:uppercase">💰 Bank Balance at Request Time</p>
+                        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;font-size:12px">
+                            <div><span style="color:#6b7280">Available Balance:</span> <strong>${fmt(pr.bankBalance)}</strong></div>
+                            <div><span style="color:#6b7280">Min. Buffer:</span> <strong>${fmt(pr.minBalance)}</strong></div>
+                            <div><span style="color:#1d4ed8">Available for Payment:</span> <strong style="color:#1d4ed8">${fmt(pr.availableForPayment)}</strong></div>
+                        </div>
+                    </div>` : ''}
+
+                    ${(isApproved || isDisbursed) ? `
+                    <!-- Fund Reconciliation -->
+                    <div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;padding:12px 14px;margin-bottom:14px">
+                        <p style="font-size:11px;font-weight:700;color:#5b21b6;margin-bottom:8px;text-transform:uppercase">🔁 Fund Reconciliation</p>
+                        <div style="display:grid;grid-template-columns:repeat(2,1fr) 2fr auto;gap:8px;align-items:end;margin-bottom:8px">
+                            <div>
+                                <label style="font-size:10px;color:#6b7280;display:block;margin-bottom:2px">Fund Received (₹)</label>
+                                <input type="number" id="prReconReceived" step="0.01" placeholder="0.00" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px"/>
+                            </div>
+                            <div>
+                                <label style="font-size:10px;color:#6b7280;display:block;margin-bottom:2px">Fund Disbursed (₹)</label>
+                                <input type="number" id="prReconDisbursed" step="0.01" placeholder="0.00" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px"/>
+                            </div>
+                            <div>
+                                <label style="font-size:10px;color:#6b7280;display:block;margin-bottom:2px">Remarks</label>
+                                <input type="text" id="prReconRemark" placeholder="e.g. Partial transfer from current account" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px"/>
+                            </div>
+                            <button onclick="_prAddReconciliation('${pr.prID}')" style="padding:6px 14px;background:#6d28d9;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">+ Add</button>
+                        </div>
+                        ${(pr.reconciliation||[]).length ? `
+                        <table style="width:100%;font-size:11px;border-collapse:collapse">
+                            <thead><tr style="color:#6b7280;text-align:left">
+                                <th style="padding:4px">Date</th><th style="padding:4px">Received</th><th style="padding:4px">Disbursed</th><th style="padding:4px">Remark</th><th style="padding:4px">By</th>
+                            </tr></thead>
+                            <tbody>
+                                ${pr.reconciliation.map(r => `
+                                <tr style="border-top:1px solid #ede9fe">
+                                    <td style="padding:4px">${(r.date||'').substring(0,10)}</td>
+                                    <td style="padding:4px;color:#15803d">${r.fundReceived?fmt(r.fundReceived):'—'}</td>
+                                    <td style="padding:4px;color:#b45309">${r.fundDisbursed?fmt(r.fundDisbursed):'—'}</td>
+                                    <td style="padding:4px">${(r.remark||'').replace(/</g,'&lt;')}</td>
+                                    <td style="padding:4px;color:#9ca3af">${r.by||''}</td>
+                                </tr>`).join('')}
+                            </tbody>
+                        </table>` : `<p style="font-size:11px;color:#9ca3af">No reconciliation entries yet.</p>`}
                     </div>` : ''}
 
                     ${(pr.salaryGaps && pr.salaryGaps.length > 0) ? `
