@@ -27148,14 +27148,18 @@ Automated WFH alert — ${company} Attendance System.`;
             const qLow = (document.getElementById('adhocSearchQ').value || '').toLowerCase().trim();
             const typeFilter = document.getElementById('adhocFilterType').value || '';
 
-            // Bills already on an active (non-Cancelled, non-Closed) PR shouldn't be eligible —
-            // they'd double-process if approved/paid via this ad-hoc.
-            const billsLockedByPR = new Set();
+            // Bills already on an active (non-Cancelled, non-Closed/Superseded) PR
+            // shouldn't be eligible — they'd double-process if approved/paid via
+            // this one. EXCEPTION: when revising a PR (window._prRevisingID set),
+            // that PR's own items don't count as "locked" — they're meant to be
+            // edited/carried into the revision.
+            const billsLockedByPR = new Map();  // expID → prID that holds it
             (paymentRequests || []).forEach(pr => {
-                if (pr.status === 'Cancelled' || pr.status === 'Closed') return;
+                if (pr.status === 'Cancelled' || pr.status === 'Closed' || pr.status === 'Superseded') return;
+                if (window._prRevisingID && pr.prID === window._prRevisingID) return;  // don't lock the PR being revised
                 (pr.items || []).forEach(it => {
                     if (it.sourceType === 'expense' && !it.paid) {
-                        billsLockedByPR.add(it.sourceID);
+                        billsLockedByPR.set(it.sourceID, pr.prID);
                     }
                 });
             });
@@ -27182,18 +27186,32 @@ Automated WFH alert — ${company} Attendance System.`;
             // Stats line
             const statsEl = document.getElementById('adhocPickStats');
             if (statsEl) {
-                const lockedNote = billsLockedByPR.size > 0
-                    ? ` · ${billsLockedByPR.size} hidden (on another PR)`
-                    : '';
-                statsEl.textContent = `${pending.length} pending bill${pending.length===1?'':'s'}${lockedNote}`;
+                if (billsLockedByPR.size > 0) {
+                    // Group locked bills by which PR holds them, for a clear breakdown
+                    const byPR = {};
+                    billsLockedByPR.forEach((prID) => { byPR[prID] = (byPR[prID]||0) + 1; });
+                    const breakdown = Object.entries(byPR).map(([prID,n]) =>
+                        `<a href="javascript:void(0)" onclick="closeAdHocPRModal();openPaymentRequestDetail('${prID}')" style="color:#0891b2;text-decoration:underline">${prID}</a> (${n})`
+                    ).join(', ');
+                    statsEl.innerHTML = `${pending.length} pending bill${pending.length===1?'':'s'} · ${billsLockedByPR.size} on other PRs: ${breakdown}`;
+                } else {
+                    statsEl.textContent = `${pending.length} pending bill${pending.length===1?'':'s'}`;
+                }
             }
 
             if (pending.length === 0) {
-                body.innerHTML = `
+                const allLocked = billsLockedByPR.size > 0;
+                body.innerHTML = allLocked ? `
+                <div class="p-8 text-center text-gray-500">
+                    <div class="text-4xl mb-2">🔒</div>
+                    <p class="text-sm font-semibold">All ${billsLockedByPR.size} pending bills are already on another active Payment Request.</p>
+                    <p class="text-[11px] mt-2 text-gray-400">Open that request above to review/cancel it, or wait until it's Closed — then its bills become available again here.<br>
+                    If that PR was a duplicate or test, you can <strong>Cancel</strong> it from the Payment Requests list (only Draft requests can be cancelled) to release its bills.</p>
+                </div>` : `
                 <div class="p-8 text-center text-gray-400">
                     <div class="text-4xl mb-2">📭</div>
                     <p class="text-sm">No matching pending bills found.</p>
-                    <p class="text-[11px] mt-1">If the bill isn't yet in the system, go to <strong>Expenses & Bills</strong> first to record it, then come back to create the ad-hoc request.</p>
+                    <p class="text-[11px] mt-1">If the bill isn't yet in the system, go to <strong>Expenses & Bills</strong> first to record it, then come back to create the payment request.</p>
                 </div>`;
                 _adhocUpdateTotal();
                 return;
@@ -32723,7 +32741,7 @@ Automated WFH alert — ${company} Attendance System.`;
                         </div>
                     </div>` : ''}
 
-                    ${(isApproved || isDisbursed || isClosed) ? (() => {
+                    ${(pr.status !== 'Cancelled' && pr.status !== 'Superseded') ? (() => {
                         // ── Account Balance Reconciliation — mirrors the Excel ledger format ──
                         // Row 1: Carried Forward (from previous PR's closing balance, after min. buffer)
                         // Row 2: This PR's Source of Fund (received) vs Use of Fund (actually disbursed)
