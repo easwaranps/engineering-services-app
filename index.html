@@ -19085,6 +19085,9 @@ ${'─'.repeat(50)}
                 <div class="px-4 py-3 border-b border-gray-100 flex justify-between items-center">
                     <div><div class="font-semibold text-gray-700 text-sm">🧾 Payslip Records (${payslips.length})</div>
                     <div class="text-xs text-gray-400">Approved payslips are locked. Go to Settings to unlock editing.</div></div>
+                    <button onclick="cleanupDuplicatePayslips()" class="px-3 py-1.5 bg-amber-100 text-amber-700 rounded-lg text-xs font-semibold hover:bg-amber-200" title="Find and remove duplicate payslip records (keeps the latest per staff/period)">
+                        🧹 Remove Duplicates
+                    </button>
                 </div>
                 ${!payslips.length?'<p class="text-center text-gray-400 py-8 text-sm">No payslip records yet. Generate a payslip below and click "Approve & Save Record".</p>':
                 `<div class="overflow-x-auto"><table class="w-full text-sm"><thead class="bg-teal-50 text-xs text-gray-500 uppercase"><tr>
@@ -20775,11 +20778,91 @@ Automated WFH alert — ${company} Attendance System.`;
             document.getElementById('payslipApproveModal').classList.add('show');
         }
         function closePayslipApproveModal(){document.getElementById('payslipApproveModal').classList.remove('show');_pendingPayslip=null;}
+        // ════════════════════════════════════════════════════════════════
+        // ONE-TIME CLEANUP: remove duplicate payslip records
+        // Fixes existing duplicates created by the double-click bug in
+        // confirmApprovePayslip (now fixed). Keeps the LATEST record per
+        // staff+period+type (by createdAt), removes the rest.
+        // Run from console: cleanupDuplicatePayslips()
+        // ════════════════════════════════════════════════════════════════
+        async function cleanupDuplicatePayslips() {
+            const groups = {};
+            (payslips||[]).forEach(p => {
+                const key = `${p.staffID}|${p.periodMonth}|${p.periodYear}|${p.type}`;
+                if (!groups[key]) groups[key] = [];
+                groups[key].push(p);
+            });
+
+            const toKeep = [];
+            let duplicatesRemoved = 0;
+            const dupSummary = [];
+
+            Object.entries(groups).forEach(([key, group]) => {
+                if (group.length > 1) {
+                    // Keep the one with the latest createdAt (or last in array if no createdAt)
+                    group.sort((a,b) => (a.createdAt||'').localeCompare(b.createdAt||''));
+                    const keep = group[group.length - 1];
+                    toKeep.push(keep);
+                    duplicatesRemoved += group.length - 1;
+                    dupSummary.push(`${keep.staffName||key} — ${keep.periodLabel||''}: kept 1 of ${group.length}`);
+                } else {
+                    toKeep.push(group[0]);
+                }
+            });
+
+            if (duplicatesRemoved === 0) {
+                alert('No duplicate payslips found.');
+                return;
+            }
+
+            if (!confirm(
+                `Found ${duplicatesRemoved} duplicate payslip record(s) across ${dupSummary.length} staff/period combination(s):\n\n` +
+                dupSummary.slice(0,15).join('\n') + (dupSummary.length>15 ? `\n...and ${dupSummary.length-15} more` : '') +
+                `\n\nThis will keep the most recent record for each and delete the duplicates.\n\nProceed?`
+            )) return;
+
+            payslips = toKeep;
+            try {
+                await saveData('payslips', payslips);
+                renderView();
+                _showToast(`✓ Removed ${duplicatesRemoved} duplicate payslip(s)`, '#15803d', 5000);
+            } catch(err) {
+                alert('Save failed: ' + err.message);
+            }
+        }
+
+        let _payslipApproveSaving = false;
         async function confirmApprovePayslip(){
-            if(!_pendingPayslip)return;
-            _pendingPayslip.approved=true;
-            payslips.push(_pendingPayslip);await saveData('payslips',payslips);_pendingPayslip=null;
-            closePayslipApproveModal();renderView();
+            if(!_pendingPayslip) return;
+            if(_payslipApproveSaving) return;   // prevent double-click / re-submit duplicates
+            _payslipApproveSaving = true;
+            try {
+                _pendingPayslip.approved = true;
+                // Check for an existing payslip for this staff + period — if found,
+                // UPDATE it instead of pushing a new record. This is the root fix for
+                // duplicate payslips created by double-clicking Confirm, or by the
+                // modal being re-submitted after a slow save.
+                const existingIdx = payslips.findIndex(p =>
+                    p.staffID === _pendingPayslip.staffID &&
+                    +p.periodMonth === +_pendingPayslip.periodMonth &&
+                    +p.periodYear  === +_pendingPayslip.periodYear &&
+                    p.type === _pendingPayslip.type
+                );
+                if (existingIdx >= 0) {
+                    // Preserve the original psID and createdAt; update everything else
+                    _pendingPayslip.psID      = payslips[existingIdx].psID;
+                    _pendingPayslip.createdAt = payslips[existingIdx].createdAt;
+                    payslips[existingIdx] = _pendingPayslip;
+                } else {
+                    payslips.push(_pendingPayslip);
+                }
+                await saveData('payslips', payslips);
+                _pendingPayslip = null;
+                closePayslipApproveModal();
+                renderView();
+            } finally {
+                _payslipApproveSaving = false;
+            }
         }
         async function approvePayslip(psID){
             const idx=payslips.findIndex(x=>x.psID===psID);if(idx<0)return;payslips[idx].approved=true;
@@ -33391,7 +33474,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 <div id="payslipApproveSummary" class="bg-teal-50 border border-teal-200 rounded-xl p-4 mb-4 text-sm"></div>
                 <div class="flex gap-3 justify-end">
                     <button onclick="closePayslipApproveModal()" class="px-5 py-2 border border-gray-300 rounded-xl text-gray-600 hover:bg-gray-50">Cancel</button>
-                    <button onclick="confirmApprovePayslip()" class="px-6 py-2 bg-teal-600 text-white rounded-xl font-semibold hover:bg-teal-700">✅ Approve & Save</button>
+                    <button onclick="this.disabled=true;this.textContent='Saving…';confirmApprovePayslip()" class="px-6 py-2 bg-teal-600 text-white rounded-xl font-semibold hover:bg-teal-700 disabled:opacity-60 disabled:cursor-not-allowed">✅ Approve & Save</button>
                 </div>
             </div>
         </div>
