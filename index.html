@@ -32055,6 +32055,85 @@ Automated WFH alert — ${company} Attendance System.`;
         // Phase 2: items get interactive Approve/Defer/Reject controls and the
         // totals update live. Once management is done reviewing, "Finalise Approval"
         // transitions Draft → Approved (locks decisions, allows Disbursement next).
+        // ════════════════════════════════════════════════════════════════
+        // VIEW BILL ATTACHMENTS — from Payment Request item
+        // Lets management see the supporting bill/receipt for an item while
+        // deciding Approve/Defer/Reject, without leaving the Payment Request
+        // screen. Pulls attachments from the original source record
+        // (Expenses & Bills, or consolidated Director Expense items).
+        // ════════════════════════════════════════════════════════════════
+        function _prViewAttachments(itemID, sourceType) {
+            const pr = paymentRequests.find(r => r.prID === window._currentPR);
+            if (!pr) return;
+            const it = (pr.items||[]).find(i => i.itemID === itemID);
+            if (!it) return;
+
+            let attachments = [];
+            let titleInfo = it.description || '';
+
+            if (sourceType === 'expense') {
+                const srcExp = (expenses||[]).find(e => e.expID === it.sourceID);
+                if (srcExp) {
+                    attachments = [...(srcExp.billAttachments||[])];
+                    if (srcExp.billData && !attachments.length) {
+                        attachments.push({ name: srcExp.billPhotoName||'attachment', data: srcExp.billData, type: 'image' });
+                    }
+                    titleInfo = `${srcExp.companyName||srcExp.staffName||srcExp.vendor||''} — ${srcExp.description||srcExp.billType||''} — ${srcExp.billDate||''}`;
+                }
+            } else if (it.sourceSnapshot?.deIDs?.length) {
+                // Consolidated director expense — gather attachments from all linked entries
+                const linkedExps = (directorExpenses||[]).filter(d => it.sourceSnapshot.deIDs.includes(d.deID));
+                linkedExps.forEach(d => {
+                    (d.attachments||[]).forEach(a => attachments.push({ ...a, _expDate: d.expDate, _desc: d.description }));
+                });
+            }
+
+            if (!attachments.length) {
+                alert('No attachments found for this item.');
+                return;
+            }
+
+            const modal = document.createElement('div');
+            modal.id = 'prAttachmentModal';
+            modal.className = 'modal show';
+            modal.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl m-4 max-h-[92vh] overflow-y-auto">
+                <div class="bg-gradient-to-r from-blue-600 to-indigo-600 p-4 text-white flex justify-between items-center sticky top-0 z-10">
+                    <div class="min-w-0">
+                        <h3 class="text-base font-bold">📎 Bills / Supporting Documents</h3>
+                        <p class="text-xs opacity-80 mt-0.5 truncate">${titleInfo.replace(/</g,'&lt;')}</p>
+                    </div>
+                    <button onclick="document.getElementById('prAttachmentModal').remove()" class="text-white text-2xl font-bold leading-none flex-shrink-0 ml-3">✕</button>
+                </div>
+                <div class="p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    ${attachments.map((a,idx) => `
+                        <div class="border border-gray-200 rounded-xl overflow-hidden">
+                            ${a._expDate ? `<div class="px-3 py-1.5 bg-gray-50 text-xs text-gray-500 border-b">${a._expDate}${a._desc?' · '+a._desc:''}</div>` : ''}
+                            ${(a.type === 'pdf' || (a.name||'').toLowerCase().endsWith('.pdf'))
+                                ? `<div class="p-4 text-center">
+                                     <div class="text-4xl mb-2">📄</div>
+                                     <p class="text-xs text-gray-500 mb-2">${(a.name||'PDF document').replace(/</g,'&lt;')}</p>
+                                     <a href="${a.data}" download="${a.name||'bill.pdf'}" target="_blank"
+                                        class="inline-block px-3 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700">
+                                        Open / Download PDF
+                                     </a>
+                                   </div>`
+                                : `<img src="${a.data}" alt="${(a.name||'Bill attachment').replace(/"/g,'&quot;')}"
+                                     class="w-full h-auto cursor-zoom-in" style="max-height:400px;object-fit:contain;background:#f9fafb"
+                                     onclick="window.open('${a.data}','_blank')"/>`
+                            }
+                            <div class="px-3 py-1.5 text-[10px] text-gray-400 border-t bg-gray-50">${(a.name||'attachment').replace(/</g,'&lt;')}</div>
+                        </div>
+                    `).join('')}
+                </div>
+                <div class="p-4 pt-0 flex justify-end">
+                    <button onclick="document.getElementById('prAttachmentModal').remove()"
+                        class="px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50">Close</button>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+        }
+
         function openPaymentRequestDetail(prID) {
             const pr = paymentRequests.find(r => r.prID === prID);
             if (!pr) { alert('Payment Request not found'); return; }
@@ -32227,6 +32306,32 @@ Automated WFH alert — ${company} Attendance System.`;
                                             ${it.sourceType === 'directorExpenseConsolidated' && it.sourceSnapshot?.items?.length ? `
                                             <a href="javascript:void(0)" onclick="showDirectorConsolidatedBreakdown('${window._currentPR}','${it.itemID}')"
                                                style="margin-left:6px;color:#0891b2;font-size:11px;text-decoration:underline">view breakdown</a>` : ''}
+                                            ${(() => {
+                                                // Bill/supporting paper indicator — links back to the source expense record.
+                                                // For single bill items: check expenses[] by sourceID.
+                                                // For consolidated director expense items: check all underlying deIDs.
+                                                let attCount = 0, billStatus = '';
+                                                if (it.sourceType === 'expense') {
+                                                    const srcExp = (expenses||[]).find(e => e.expID === it.sourceID);
+                                                    if (srcExp) {
+                                                        attCount = (srcExp.billAttachments||[]).length + (srcExp.billData ? 1 : 0);
+                                                        billStatus = srcExp.billStatus || (attCount>0 ? 'available' : 'pending');
+                                                    }
+                                                } else if (it.sourceSnapshot?.deIDs?.length) {
+                                                    const linkedExps = (directorExpenses||[]).filter(d => it.sourceSnapshot.deIDs.includes(d.deID));
+                                                    attCount = linkedExps.reduce((s,d)=>s+((d.attachments||[]).length),0);
+                                                }
+                                                if (attCount > 0) {
+                                                    return `<button onclick="_prViewAttachments('${it.itemID}','${it.sourceType}')"
+                                                        style="margin-left:6px;padding:1px 7px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;font-size:10px;color:#1d4ed8;cursor:pointer;font-weight:600">
+                                                        📎 ${attCount}</button>`;
+                                                } else if (billStatus === 'no_bill') {
+                                                    return `<span style="margin-left:6px;font-size:10px;background:#fff7f7;color:#dc2626;padding:1px 6px;border-radius:10px;border:1px solid #fca5a5">❌ No Bill</span>`;
+                                                } else if (it.sourceType === 'expense') {
+                                                    return `<span style="margin-left:6px;font-size:10px;color:#9ca3af">No attachment</span>`;
+                                                }
+                                                return '';
+                                            })()}
                                         </td>
                                         <td style="padding:7px 10px;color:#4b5563">${(it.payee||'').replace(/</g,'&lt;')}</td>
                                         <td style="padding:7px 10px;color:#6b7280;font-size:11px">${it.dueDate||'—'}</td>
