@@ -26685,7 +26685,12 @@ Automated WFH alert — ${company} Attendance System.`;
                         sourceType:    'expense',
                         description:   `${payeeName} — ${desc}`.trim(),
                         payee:         payeeName,
-                        amount:        +((parseFloat(e.netPayable) || 0).toFixed(2)),
+                        // Use balanceAmt (Net Payable AFTER PF/PT/ESIC/Other deductions) —
+                        // NOT netPayable (which is only Bill+GST-TDS-CreditNote-Advance,
+                        // before those further deductions). balanceAmt is the actual amount
+                        // that needs to be paid out, matching what Expenses & Bills displays.
+                        // Falls back to netPayable for older records that predate balanceAmt.
+                        amount:        +((parseFloat(e.balanceAmt ?? e.netPayable) || 0).toFixed(2)),
                         dueDate:       e.billDate || '',
                         decision:      'Pending',
                         decisionRemark:'',
@@ -26695,7 +26700,7 @@ Automated WFH alert — ${company} Attendance System.`;
                         sourceSnapshot:{
                             expID: e.expID, billNo: e.billNo, billDate: e.billDate, voucherNo: e.voucherNo,
                             billType: e.billType, staffID: e.staffID || '', staffName: e.staffName || '',
-                            billAmtINR: e.billAmtINR, netPayable: e.netPayable,
+                            billAmtINR: e.billAmtINR, netPayable: e.netPayable, balanceAmt: e.balanceAmt,
                             tdsAmt: e.tdsAmt || 0, vendorPAN: e.vendorPAN || ''
                         }
                     };
@@ -27243,7 +27248,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 <tbody>
                     ${pending.map(e => {
                         const checked = window._adhocSelected.has(e.expID);
-                        const amt = parseFloat(e.netPayable) || 0;
+                        const amt = parseFloat(e.balanceAmt ?? e.netPayable) || 0;
                         const payee = e.companyName || e.staffName || e.vendor || '—';
                         const desc = e.description || e.billType || '';
                         return `
@@ -27291,7 +27296,7 @@ Automated WFH alert — ${company} Attendance System.`;
             let total = 0, count = 0;
             window._adhocSelected.forEach(expID => {
                 const e = (expenses || []).find(x => x.expID === expID);
-                if (e) { total += parseFloat(e.netPayable) || 0; count++; }
+                if (e) { total += parseFloat(e.balanceAmt ?? e.netPayable) || 0; count++; }
             });
             // Add non-bill auto-aggregated items (director expenses, petty cash —
             // these aren't in expenses[] so aren't covered by the selection above)
@@ -27334,7 +27339,9 @@ Automated WFH alert — ${company} Attendance System.`;
                     sourceType:    'expense',
                     description:   `${payeeName} — ${desc}`.trim(),
                     payee:         payeeName,
-                    amount:        +((parseFloat(e.netPayable) || 0).toFixed(2)),
+                    // balanceAmt = Net Payable after PF/PT/ESIC/Other deductions — the
+                    // actual payable amount. Falls back to netPayable for older records.
+                    amount:        +((parseFloat(e.balanceAmt ?? e.netPayable) || 0).toFixed(2)),
                     dueDate:       e.billDate || '',
                     decision:      'Pending',
                     decisionRemark:'',
@@ -27344,7 +27351,7 @@ Automated WFH alert — ${company} Attendance System.`;
                     sourceSnapshot:{
                         expID: e.expID, billNo: e.billNo, billDate: e.billDate, voucherNo: e.voucherNo,
                         billType: e.billType, staffID: e.staffID || '', staffName: e.staffName || '',
-                        billAmtINR: e.billAmtINR, netPayable: e.netPayable,
+                        billAmtINR: e.billAmtINR, netPayable: e.netPayable, balanceAmt: e.balanceAmt,
                         tdsAmt: e.tdsAmt || 0, vendorPAN: e.vendorPAN || ''
                     }
                 });
@@ -32646,6 +32653,69 @@ Automated WFH alert — ${company} Attendance System.`;
             }
         }
 
+        // ════════════════════════════════════════════════════════════════
+        // REFRESH AMOUNTS — one-time fix for Payment Requests created before
+        // the balanceAmt fix. Re-pulls each bill item's amount from its source
+        // expense record (using balanceAmt, the correct post-deduction figure)
+        // and updates the item + recomputes the request's totals.
+        // Safe to run on Draft/Approved/Disbursed requests; does nothing to
+        // items already marked Paid (those are historical and shouldn't change).
+        // ════════════════════════════════════════════════════════════════
+        async function _prRefreshAmounts(prID) {
+            const pr = (paymentRequests||[]).find(r => r.prID === prID);
+            if (!pr) return;
+
+            const fmt = n => '₹'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
+            const changes = [];
+
+            (pr.items||[]).forEach(it => {
+                if (it.sourceType !== 'expense' || it.paid) return;  // skip non-bill items and already-paid items
+                const e = (expenses||[]).find(x => x.expID === it.sourceID);
+                if (!e) return;
+                const correctAmt = +((parseFloat(e.balanceAmt ?? e.netPayable) || 0).toFixed(2));
+                const oldAmt = parseFloat(it.amount) || 0;
+                if (Math.abs(correctAmt - oldAmt) > 0.01) {
+                    changes.push({ desc: it.description, oldAmt, newAmt: correctAmt });
+                    it.amount = correctAmt;
+                    if (it.sourceSnapshot) {
+                        it.sourceSnapshot.netPayable = e.netPayable;
+                        it.sourceSnapshot.balanceAmt = e.balanceAmt;
+                    }
+                }
+            });
+
+            if (!changes.length) {
+                alert('No changes needed — all item amounts already match their source bills.');
+                return;
+            }
+
+            const diffList = changes.slice(0,10).map(c =>
+                `${c.desc}: ${fmt(c.oldAmt)} → ${fmt(c.newAmt)} (${c.newAmt > c.oldAmt ? '+' : ''}${fmt(c.newAmt-c.oldAmt)})`
+            ).join('\n');
+            const totalDiff = changes.reduce((s,c)=>s+(c.newAmt-c.oldAmt),0);
+
+            if (!confirm(
+                `Found ${changes.length} item(s) with outdated amounts:\n\n${diffList}` +
+                (changes.length>10 ? `\n...and ${changes.length-10} more` : '') +
+                `\n\nNet change to request total: ${totalDiff>=0?'+':''}${fmt(totalDiff)}\n\n` +
+                `This updates the amounts to match what's currently in Expenses & Bills. Proceed?`
+            )) return;
+
+            // Recompute roll-up totals
+            pr.totalGenerated = +(pr.items.reduce((s,it)=>s+(parseFloat(it.amount)||0),0)).toFixed(2);
+            pr.totalApproved  = +(pr.items.filter(it=>it.decision==='Approved').reduce((s,it)=>s+(parseFloat(it.amount)||0),0)).toFixed(2);
+            pr.totalDeferred  = +(pr.items.filter(it=>it.decision==='Deferred').reduce((s,it)=>s+(parseFloat(it.amount)||0),0)).toFixed(2);
+            pr.totalRejected  = +(pr.items.filter(it=>it.decision==='Rejected').reduce((s,it)=>s+(parseFloat(it.amount)||0),0)).toFixed(2);
+
+            try {
+                await saveData('paymentRequests', paymentRequests);
+                _renderPaymentRequestDetail(pr);
+                _showToast(`✓ Refreshed ${changes.length} item amount(s) — request total updated by ${totalDiff>=0?'+':''}${fmt(totalDiff)}`, '#15803d', 6000);
+            } catch(err) {
+                alert('Save failed: ' + err.message);
+            }
+        }
+
         function _renderPaymentRequestDetail(pr) {
             const fmt = n => '₹' + Math.max(0, +n || 0).toLocaleString('en-IN', {minimumFractionDigits:2,maximumFractionDigits:2});
 
@@ -32689,6 +32759,7 @@ Automated WFH alert — ${company} Attendance System.`;
                         ${pr.revisionOf ? `<span style="padding:3px 10px;background:rgba(255,255,255,0.25);color:#fff;border-radius:10px;font-size:11px;font-weight:700" title="${pr.revisionNote||''}">🔄 Rev. of ${pr.revisionOf}</span>` : ''}
                         <span style="padding:4px 12px;background:rgba(255,255,255,0.2);color:#fff;border-radius:12px;font-size:12px;font-weight:600">${pr.status}</span>
                         ${pr.status !== 'Superseded' && pr.status !== 'Closed' ? `<button onclick="closePaymentRequestDetail();openPaymentRequestModal('${pr.prID}')" style="padding:4px 10px;background:rgba(255,255,255,0.2);color:#fff;border:none;border-radius:8px;font-size:11px;font-weight:600;cursor:pointer" title="Create a revised version of this request">🔄 Revise</button>` : ''}
+                        ${pr.status !== 'Closed' ? `<button onclick="_prRefreshAmounts('${pr.prID}')" style="padding:4px 10px;background:rgba(255,255,255,0.2);color:#fff;border:none;border-radius:8px;font-size:11px;font-weight:600;cursor:pointer" title="Re-sync each bill item's amount with its current value in Expenses & Bills (fixes old records affected by a deduction calculation bug)">🔄 Refresh Amounts</button>` : ''}
                         <button onclick="closePaymentRequestDetail()" style="color:#fff;font-size:24px;background:none;border:none;cursor:pointer">✕</button>
                     </div>
                 </div>
