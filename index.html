@@ -881,7 +881,11 @@
                         </div>
                     </div>
                     <p class="text-[11px] mt-2" id="prBalanceWarning"></p>
+                    <p class="text-[10px] text-blue-500 mt-2 border-t border-blue-100 pt-2">
+                        ℹ️ Fund reconciliation (tracking actual money received/disbursed against this request, with carried-forward balance from the previous request) becomes available once you create this request — open it from the Payment Requests list afterward.
+                    </p>
                 </div>
+
 
                 <!-- Bills picker (manual additions / shows auto-aggregated items too) -->
                 <div class="border border-gray-200 rounded-xl overflow-hidden">
@@ -27418,6 +27422,10 @@ Automated WFH alert — ${company} Attendance System.`;
                 );
                 closeAdHocPRModal();
                 renderView();
+                // Auto-open the newly created request's detail view — this is where
+                // fund reconciliation tracking lives, so jump straight there instead
+                // of leaving the user to find it manually in the list.
+                setTimeout(() => openPaymentRequestDetail(pr.prID), 300);
             } catch (e) {
                 console.error('Payment Request save failed:', e);
                 alert('Could not save Payment Request: ' + e.message);
