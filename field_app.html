@@ -5757,6 +5757,30 @@
                     const blockH = imgH + 3 + (captionLines * 3) + 4;
                     const xPos=ML+col*(imgW+3);
                     if(y+blockH>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=42;col=0;}
+                    // Detect PDF attachments — jsPDF.addImage cannot embed PDFs (only raster
+                    // images). Previously these silently fell through to the catch block and
+                    // showed a generic "[Photo unavailable]" placeholder with no way to find
+                    // the actual file. Now we detect this case explicitly and show a clear
+                    // "📄 PDF document" marker with the filename, so it's obvious the document
+                    // exists and where to find it (open the item in-app to view/download it).
+                    const isPdfAttachment = (typeof src === 'string' && src.startsWith('data:application/pdf'))
+                        || (ph && typeof ph === 'object' && (ph.type === 'pdf' || (ph.name||'').toLowerCase().endsWith('.pdf')));
+                    if (isPdfAttachment) {
+                        doc.setDrawColor(191,219,254); doc.setFillColor(239,246,255);
+                        doc.rect(xPos, y, imgW, imgH, 'FD');
+                        doc.setFontSize(16); doc.setTextColor(29,78,216);
+                        doc.text('📄', xPos+imgW/2, y+imgH/2-4, {align:'center'});
+                        doc.setFontSize(7); doc.setFont('helvetica','bold'); doc.setTextColor(29,78,216);
+                        doc.text('PDF Document', xPos+imgW/2, y+imgH/2+6, {align:'center'});
+                        doc.setFontSize(6); doc.setFont('helvetica','normal'); doc.setTextColor(100,116,139);
+                        const fname = (ph && typeof ph === 'object' && ph.name) ? ph.name : 'attachment.pdf';
+                        const fnameLines = doc.splitTextToSize(fname, imgW-4);
+                        doc.text(fnameLines.slice(0,1), xPos+imgW/2, y+imgH/2+12, {align:'center'});
+                        doc.setFontSize(6.5); doc.setTextColor(100,100,100);
+                        doc.text(dateStr+' · Photo '+(pi+1)+' (open in app to view)', xPos+imgW/2, y+imgH+5, {align:'center'});
+                        col++;if(col===3){col=0;y+=blockH+2;}
+                        continue;
+                    }
                     try{
                         if (!src || (typeof src === 'string' && !src.startsWith('data:'))) {
                             // No usable image data (Drive fetch failed, or non-data URL)
