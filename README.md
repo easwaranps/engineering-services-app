@@ -1,4 +1,4 @@
-# IMSE EMS — Employee Management System
+# IMSE EMS — Engineering Management System
 
 Web applications for IMSE Tech Services Pvt Ltd.
 
