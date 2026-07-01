@@ -27472,6 +27472,13 @@ Automated WFH alert — ${company} Attendance System.`;
                     }
                 });
             }
+
+            if (items.length === 0) {
+                alert('Please pick at least one bill, or click "↻ Pull bills for this period" to auto-aggregate.');
+                return;
+            }
+
+            const totalGenerated = +(items.reduce((s, it) => s + (parseFloat(it.amount) || 0), 0)).toFixed(2);
             const periodLabel = month && year ? _prMonthLabel(month, year) : `Ad-hoc · ${disbDate}`;
 
             const bankBalance = parseFloat(document.getElementById('prBankBalance')?.value) || 0;
