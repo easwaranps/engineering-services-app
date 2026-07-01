@@ -27123,11 +27123,22 @@ Automated WFH alert — ${company} Attendance System.`;
             if (revisePrID) {
                 const orig = (paymentRequests||[]).find(r => r.prID === revisePrID);
                 if (!orig) { alert('Original request not found.'); return; }
+
+                // Use PR###-R1 / R2 / R3 format instead of a new sequential number
+                // so the revision is clearly linked to the original in the ID itself
+                const baseID = (orig.revisionOf || orig.prID).replace(/-R\d+$/, '');
+                const existingRevs = (paymentRequests||[]).filter(r =>
+                    r.prID.startsWith(baseID + '-R') || r.revisionOf === baseID || r.revisionOf === orig.prID
+                ).length;
+                const revisionID = `${baseID}-R${existingRevs + 1}`;
+                window._prRevisionID = revisionID;   // stash for saveAdHocPR to use instead of generating new
+
                 titleEl.textContent = '🔄 Revise Payment Request';
-                subEl.textContent = 'Creates a new request linked to ' + revisePrID + ' — the original will be marked Superseded.';
+                subEl.textContent = 'Creates ' + revisionID + ' linked to ' + revisePrID + ' — the original will be marked Superseded.';
                 banner.classList.remove('hidden');
                 document.getElementById('prRevisionOf').textContent = revisePrID;
-                saveBtn.textContent = '🔄 Create Revision (Draft)';
+                saveBtn.textContent = '🔄 Create ' + revisionID + ' (Draft)';
+
                 // Pre-fill from original
                 document.getElementById('adhocDisbDate').value = orig.disbursementDate || today.toISOString().split('T')[0];
                 document.getElementById('adhocReason').value = 'Revision of ' + revisePrID + (orig.reason ? ' — ' + orig.reason : '');
@@ -27135,10 +27146,22 @@ Automated WFH alert — ${company} Attendance System.`;
                 if (orig.periodYear)  yearSel.value = orig.periodYear;
                 document.getElementById('prBankBalance').value = orig.bankBalance || '';
                 document.getElementById('prMinBalance').value  = orig.minBalance || 10000;
-                // Carry over items as manual items (editable from here)
-                window._prManualItems = (orig.items||[]).map(it => ({...it}));
-                window._adhocSelected = new Set(window._prManualItems.map(it => it.sourceID).filter(Boolean));
+
+                // Carry over all items from original (both expense bills and director expense items)
+                window._prManualItems = (orig.items||[]).map(it => ({...it, decision:'Pending', paid:false}));
+                window._adhocSelected = new Set(window._prManualItems
+                    .filter(it => it.sourceType === 'expense')
+                    .map(it => it.sourceID).filter(Boolean));
+
+                // Auto-tick director expense checkbox if original had director items
+                const hadDirItems = (orig.items||[]).some(it =>
+                    it.sourceType === 'directorExpense' || it.sourceType === 'directorExpenseConsolidated' ||
+                    it.category === 'DIRECTOR_REIMB'
+                );
+                const dirCheckbox = document.getElementById('prIncludeDirectorExp');
+                if (dirCheckbox) dirCheckbox.checked = hadDirItems;
             } else {
+                window._prRevisionID = null;
                 titleEl.textContent = '💼 Payment Request';
                 subEl.textContent = 'Auto-aggregate a monthly cycle, or hand-pick specific bills — both in one request.';
                 banner.classList.add('hidden');
@@ -27441,9 +27464,14 @@ Automated WFH alert — ${company} Attendance System.`;
             const minBalance  = parseFloat(document.getElementById('prMinBalance')?.value)  || 10000;
 
             const revisingID = window._prRevisingID;
+            // Use the pre-computed revision ID (PR###-R1 format) if revising,
+            // otherwise generate the next sequential ID as normal
+            const newPrID = (revisingID && window._prRevisionID)
+                ? window._prRevisionID
+                : generatePaymentRequestID();
 
             const pr = {
-                prID:             generatePaymentRequestID(),
+                prID:             newPrID,
                 prType:           month && year ? 'Monthly' : 'AdHoc',
                 periodMonth, periodYear, periodLabel,
                 reason,
@@ -27458,7 +27486,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 availableForPayment: +Math.max(0, bankBalance - minBalance).toFixed(2),
                 revisionOf:        revisingID || '',
                 revisionNote:      revisingID ? ('Revises ' + revisingID) : '',
-                reconciliation:    [],   // {date, fundReceived, fundDisbursed, remark, by}
+                reconciliation:    [],
                 items,
                 salaryGaps:       [],
                 totalGenerated,
@@ -33612,17 +33640,17 @@ Automated WFH alert — ${company} Attendance System.`;
             // Draft: management hasn't signed off yet. Show ALL non-rejected items
             // (Pending + Approved + Deferred) so they can see the full proposal.
             // Totals use the request's totalGenerated (pre-approval figure).
-            const isDraftPDF = pr.status === 'Draft';
+            // Draft and Superseded both show all items (Superseded = revised before approval,
+            // so items were never formally approved — show them all as "Proposed")
+            const isDraftPDF = pr.status === 'Draft' || pr.status === 'Superseded';
             const headerTitle = isDraftPDF ? 'PAYMENT REQUEST — PROPOSED DISBURSEMENT' : 'BANK TRANSFER AUTHORISATION';
             // Which items to include + which label to use for the amount
-            const includeItem = (it) => isDraftPDF ? (it.decision !== 'Rejected') : (it.decision === 'Approved');
-            // Compute totals LIVE from items (not from stored pr.totalApproved which
-            // can be stale if item amounts were updated after the PR was approved).
-            // This ensures the PDF Grand Total always matches the category breakdown.
-            const liveApproved  = (pr.items||[]).filter(it=>it.decision==='Approved').reduce((s,it)=>s+(parseFloat(it.amount)||0),0);
+            const includeItem = (it) => isDraftPDF ? (it.decision !== 'Rejected') : (it.decision === 'Approved' || it.decision === 'Pending');
+            // Compute totals LIVE from items
+            const liveApproved  = (pr.items||[]).filter(it=>it.decision==='Approved'||it.decision==='Pending').reduce((s,it)=>s+(parseFloat(it.amount)||0),0);
             const liveGenerated = (pr.items||[]).reduce((s,it)=>s+(parseFloat(it.amount)||0),0);
-            const totalForDoc = isDraftPDF ? liveGenerated : liveApproved;
-            const sectionHeader = isDraftPDF ? 'Proposed Items (Draft — pending approval)' : 'Category Breakdown (Approved Items Only)';
+            const totalForDoc   = isDraftPDF ? liveGenerated : liveApproved;
+            const sectionHeader = isDraftPDF ? 'Proposed Items (all items)' : 'Category Breakdown (Approved Items)';
             const itemCountLabel = isDraftPDF ? 'Proposed Amount' : 'Approved Amount';
 
             const doc = new jsPDF('p', 'mm', 'a4');
