@@ -11104,7 +11104,8 @@
                 <div class="flex gap-2 items-center">
                     <select id="taxMonth" onchange="_taxOnPeriodChange()" class="px-3 py-2 border border-gray-200 rounded-lg text-sm font-medium">${monthOpts}</select>
                     <select id="taxYear"  onchange="_taxOnPeriodChange()" class="px-3 py-2 border border-gray-200 rounded-lg text-sm font-medium">${yearOpts}</select>
-                    <button onclick="exportTaxPDF()" class="px-4 py-2 bg-red-600 text-white rounded-xl text-sm font-medium hover:bg-red-700">📄 Export PDF</button>
+                    <button onclick="exportTDSPDF()" class="px-4 py-2 bg-red-700 text-white rounded-xl text-sm font-medium hover:bg-red-800">📄 TDS PDF</button>
+                    <button onclick="exportGSTPDF()" class="px-4 py-2 bg-purple-700 text-white rounded-xl text-sm font-medium hover:bg-purple-800">📄 GST PDF</button>
                 </div>
             </div>
             <div id="taxDashboardBody"></div>`;
@@ -13152,53 +13153,58 @@
         }
 
         // ── TAX COMPLIANCE PDF EXPORT ─────────────────────────────────────
-        async function exportTaxPDF() {
-            // Honour the persisted period selection (same as refreshTax)
-            const sel   = window._taxSelectedPeriod || {};
-            const month = sel.month || parseInt(document.getElementById('taxMonth')?.value || new Date().getMonth()+1);
-            const year  = sel.year  || parseInt(document.getElementById('taxYear')?.value  || new Date().getFullYear());
-            const d     = getTaxPeriodData(month, year);
-
+        // ── Shared loader for jsPDF + autoTable ──────────────────────────
+        async function _ensureJsPDF() {
             if (!window.jspdf) {
                 await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
                 await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
             }
-            const {jsPDF} = window.jspdf;
-            const doc = new jsPDF({orientation:'portrait', unit:'mm', format:'a4'});
+            return window.jspdf.jsPDF;
+        }
+
+        function _taxPeriodHeader(doc, title, subtitle, PW) {
+            doc.setFillColor(15,58,95); doc.rect(0,0,210,38,'F');
+            doc.setFontSize(15);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
+            doc.text(title, PW/2, 12, {align:'center'});
+            doc.setFontSize(9);doc.setFont('helvetica','normal');doc.setTextColor(147,197,253);
+            doc.text(subtitle, PW/2, 20, {align:'center'});
+            doc.setFontSize(8);doc.setTextColor(203,213,225);
+            doc.text('GST: '+(settings.gstNo||'N/A')+'  |  Generated: '+new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}), PW/2, 28, {align:'center'});
+            doc.setFillColor(29,78,216);doc.rect(0,37,210,2,'F');
+        }
+
+        // ── TDS PDF ──────────────────────────────────────────────────────
+        async function exportTDSPDF() {
+            const sel   = window._taxSelectedPeriod || {};
+            const month = sel.month || parseInt(document.getElementById('taxMonth')?.value || new Date().getMonth()+1);
+            const year  = sel.year  || parseInt(document.getElementById('taxYear')?.value  || new Date().getFullYear());
+            const d     = getTaxPeriodData(month, year);
+            const jsPDF = await _ensureJsPDF();
+            const doc   = new jsPDF({orientation:'portrait', unit:'mm', format:'a4'});
             const ML=14, MR=14, CW=182, PW=210;
             const INR = n => 'Rs.'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
             const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-            // Header
-            doc.setFillColor(15,58,95); doc.rect(0,0,210,38,'F');
-            doc.setFontSize(15);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
-            doc.text('TAX COMPLIANCE REPORT',PW/2,12,{align:'center'});
-            doc.setFontSize(9);doc.setFont('helvetica','normal');doc.setTextColor(147,197,253);
-            doc.text((settings.companyName||'IMSE Tech India')+'  |  Period: '+d.monthName+' '+year,PW/2,20,{align:'center'});
-            doc.setFontSize(8);doc.setTextColor(203,213,225);
-            doc.text('GST: '+(settings.gstNo||'N/A')+'  |  Generated: '+new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}),PW/2,28,{align:'center'});
-            doc.setFillColor(29,78,216);doc.rect(0,37,210,2,'F');
+            _taxPeriodHeader(doc, 'TDS COMPLIANCE REPORT',
+                (settings.companyName||'IMSE Tech India')+'  |  Period: '+d.monthName+' '+year, PW);
             let y = 44;
 
-            // Summary
-            doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+            // TDS Summary box
+            doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
                 styles:{fontSize:9,cellPadding:3},
-                headStyles:{fillColor:[30,58,138],textColor:[255,255,255],fontStyle:'bold'},
-                head:[[{content:'TAX SUMMARY — '+d.monthName.toUpperCase()+' '+year,colSpan:2,styles:{halign:'center'}}]],
+                headStyles:{fillColor:[127,29,29],textColor:[255,255,255],fontStyle:'bold'},
+                head:[[{content:'TDS SUMMARY — '+d.monthName.toUpperCase()+' '+year,colSpan:2,styles:{halign:'center'}}]],
                 body:[
-                    ['TDS Deducted (to deposit by 7th '+months[month%12]+')',{content:INR(d.totalTDSDeducted),styles:{fontStyle:'bold',textColor:[220,38,38]}}],
-                    ['TDS Receivable (from clients)',INR(d.totalTDSReceivable)],
-                    ['GST Input Credit (Expenses + Directors)',{content:INR(d.combinedITCTotal),styles:{textColor:[180,83,9]}}],
-                    ['GST Output (from invoices)',{content:INR(d.gstOutput),styles:{textColor:[126,34,206]}}],
-                    [d.netGST>0?'Net GST Payable':'Net GST Credit (Carry Forward)',{content:INR(Math.abs(d.netGST)),styles:{fontStyle:'bold',textColor:d.netGST>0?[126,34,206]:[13,148,136]}}],
+                    ['TDS Deducted (deposit by 7th '+months[month%12]+')',{content:INR(d.totalTDSDeducted),styles:{fontStyle:'bold',textColor:[220,38,38]}}],
+                    ['TDS Receivable (from clients)',{content:INR(d.totalTDSReceivable),styles:{fontStyle:'bold'}}],
+                    ['Net TDS to Deposit',{content:INR(Math.max(0,d.totalTDSDeducted-d.totalTDSReceivable)),styles:{fontStyle:'bold',textColor:[185,28,28]}}],
                 ],
                 columnStyles:{0:{cellWidth:120},1:{cellWidth:62,halign:'right'}}
             });
             y = doc.lastAutoTable.finalY+6;
 
-            // TDS Table
             if (d.tdsExpenses.length) {
-                // Build section grouping for the PDF (same logic as on-screen)
+                // Section breakdown
                 const _pdfBySection = {};
                 d.tdsExpenses.forEach(e => {
                     const sec = e.tdsSection || '— Unspecified —';
@@ -13210,62 +13216,54 @@
                     ...Object.keys(_pdfBySection).filter(s => !_catalogOrder.includes(s)).sort()
                 ];
 
-                // Section breakdown summary table — one row per section with subtotal
-                doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+                doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
                     styles:{fontSize:7.5,cellPadding:2.5},
                     headStyles:{fillColor:[127,29,29],textColor:[255,255,255],fontStyle:'bold'},
                     head:[['TDS SECTION-WISE BREAKDOWN',{content:'',colSpan:4}]],
-                    body:[],columnStyles:{0:{cellWidth:CW}}
+                    body:[], columnStyles:{0:{cellWidth:CW}}
                 });
                 y = doc.lastAutoTable.finalY;
-                doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+                doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
                     styles:{fontSize:8,cellPadding:2.5},
                     headStyles:{fillColor:[185,28,28],textColor:[255,255,255],fontStyle:'bold'},
                     head:[['Old Code','New ITA-2025','Description','Entries','TDS Amount']],
                     body:_orderedSections.map(sec => {
-                        const items   = _pdfBySection[sec];
-                        const subTot  = items.reduce((s,e) => s + (parseFloat(e.tdsAmt)||0), 0);
-                        const meta    = TDS_SECTIONS.find(s => s.oldCode === sec);
-                        const desc    = meta ? (meta.description || sec) : '(unspecified — please assign)';
-                        const newCd   = meta?.newCode || '—';
+                        const items  = _pdfBySection[sec];
+                        const subTot = items.reduce((s,e) => s+(parseFloat(e.tdsAmt)||0), 0);
+                        const meta   = TDS_SECTIONS.find(s => s.oldCode === sec);
                         return [
-                            {content:sec,styles:{fontStyle:'bold'}},
-                            {content:newCd,styles:{fontSize:7}},
-                            desc,
-                            {content:String(items.length),styles:{halign:'center'}},
-                            {content:INR(subTot),styles:{halign:'right',fontStyle:'bold',textColor:[185,28,28]}}
+                            {content:sec, styles:{fontStyle:'bold'}},
+                            {content:meta?.newCode||'—', styles:{fontSize:7}},
+                            meta?(meta.description||sec):'(unspecified)',
+                            {content:String(items.length), styles:{halign:'center'}},
+                            {content:INR(subTot), styles:{halign:'right',fontStyle:'bold',textColor:[185,28,28]}}
                         ];
                     }),
                     foot:[[{content:'TOTAL',colSpan:4,styles:{fontStyle:'bold',halign:'right'}},{content:INR(d.totalTDSDeducted),styles:{fontStyle:'bold',halign:'right',textColor:[185,28,28]}}]],
                     columnStyles:{0:{cellWidth:22},1:{cellWidth:28},2:{cellWidth:CW-22-28-22-32},3:{cellWidth:22,halign:'center'},4:{cellWidth:32,halign:'right'}}
                 });
                 y = doc.lastAutoTable.finalY+4;
-                if(y>240){doc.addPage();y=15;}
+                if (y>240) {doc.addPage(); y=15;}
 
-                doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+                // Detailed entries
+                doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
                     styles:{fontSize:7.5,cellPadding:2.5},
                     headStyles:{fillColor:[185,28,28],textColor:[255,255,255],fontStyle:'bold'},
-                    head:[['TDS DEDUCTED ENTRIES',{content:'',colSpan:8}]],
-                    body:[],columnStyles:{0:{cellWidth:CW}}
+                    head:[['TDS DEDUCTED ENTRIES — DETAILS',{content:'',colSpan:8}]],
+                    body:[], columnStyles:{0:{cellWidth:CW}}
                 });
                 y = doc.lastAutoTable.finalY;
-                doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+                doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
                     styles:{fontSize:7,cellPadding:2},
                     headStyles:{fillColor:[239,68,68],textColor:[255,255,255],fontStyle:'bold'},
-                    head:[['Date','Section','TRACES','Vendor','PAN','Bill No','Taxable','TDS %','TDS Amt','Status']],
+                    head:[['Date','Section','TRACES','Vendor','PAN','Bill No','Taxable','TDS%','TDS Amt','Status']],
                     body:d.tdsExpenses.map(e=>{
-                        // Vendor PAN priority: explicit vendorPAN field > derive from GSTIN chars 3-12 > '—'.
-                        // The derive step covers records saved before the PAN field existed but with a GSTIN.
-                        const pan = (e.vendorPAN || '').trim() ||
-                            ((e.vendorGSTIN && e.vendorGSTIN.length >= 12) ? e.vendorGSTIN.substring(2,12) : '') ||
-                            '—';
+                        const pan=(e.vendorPAN||'').trim()||((e.vendorGSTIN&&e.vendorGSTIN.length>=12)?e.vendorGSTIN.substring(2,12):'')||'—';
                         return [e.billDate||'—',
                             {content:e.tdsSection||'—',styles:{fontStyle:'bold'}},
                             {content:e.tdsTracesCode||'—',styles:{halign:'center'}},
-                            // Vendor cell — SALARY records hold the payee name in `staffName`
-                            // (not companyName), so fall back across the chain used elsewhere.
-                            e.companyName || e.staffName || e.vendor || '—',
-                            {content:pan,styles:{halign:'center',fontStyle:pan!=='—'?'normal':'normal',fontSize:6.5}},
+                            e.companyName||e.staffName||e.vendor||'—',
+                            {content:pan,styles:{halign:'center',fontSize:6.5}},
                             e.voucherNo||e.billNo||'—',
                             {content:INR(e.taxableAmt||e.billAmtINR||0),styles:{halign:'right'}},
                             {content:(e.tdsPct||'—')+'%',styles:{halign:'center'}},
@@ -13276,13 +13274,58 @@
                     foot:[[{content:'TOTAL',colSpan:8,styles:{fontStyle:'bold',halign:'right'}},{content:INR(d.totalTDSDeducted),styles:{fontStyle:'bold',halign:'right',textColor:[185,28,28]}},'']],
                     columnStyles:{0:{cellWidth:16},1:{cellWidth:16},2:{cellWidth:13},3:{cellWidth:26},4:{cellWidth:22},5:{cellWidth:18},6:{cellWidth:20,halign:'right'},7:{cellWidth:11},8:{cellWidth:22},9:{cellWidth:18}}
                 });
-                y = doc.lastAutoTable.finalY+5;
+            } else {
+                if (y>250) {doc.addPage(); y=15;}
+                doc.setFontSize(10); doc.setTextColor(150,150,150);
+                doc.text('No TDS deducted entries for '+d.monthName+' '+year+'.', ML, y+10);
             }
 
-            // GST Input (Expense Bills + Director Expenses ITC)
-            if (d.gstInputExps.length || d.dirITCTotal > 0) {
-                if(y>220){doc.addPage();y=15;}
-                doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+            // Footer
+            const pc=doc.getNumberOfPages();
+            for(let pg=1;pg<=pc;pg++){
+                doc.setPage(pg);
+                doc.setFontSize(7);doc.setFont('helvetica','italic');doc.setTextColor(150,150,150);
+                doc.text((settings.companyName||'IMSE Tech India')+' — TDS Compliance Report — '+d.monthName+' '+year+' — Page '+pg+' of '+pc, PW/2, 291, {align:'center'});
+            }
+            doc.save('TDS_Report_'+d.monthName+'_'+year+'.pdf');
+        }
+
+        // ── GST PDF ──────────────────────────────────────────────────────
+        async function exportGSTPDF() {
+            const sel   = window._taxSelectedPeriod || {};
+            const month = sel.month || parseInt(document.getElementById('taxMonth')?.value || new Date().getMonth()+1);
+            const year  = sel.year  || parseInt(document.getElementById('taxYear')?.value  || new Date().getFullYear());
+            const d     = getTaxPeriodData(month, year);
+            const jsPDF = await _ensureJsPDF();
+            const doc   = new jsPDF({orientation:'portrait', unit:'mm', format:'a4'});
+            const ML=14, MR=14, CW=182, PW=210;
+            const INR = n => 'Rs.'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
+
+            _taxPeriodHeader(doc, 'GST COMPLIANCE REPORT',
+                (settings.companyName||'IMSE Tech India')+'  |  Period: '+d.monthName+' '+year, PW);
+            let y = 44;
+
+            // GST Summary box
+            doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
+                styles:{fontSize:9,cellPadding:3},
+                headStyles:{fillColor:[30,58,138],textColor:[255,255,255],fontStyle:'bold'},
+                head:[[{content:'GST SUMMARY — '+d.monthName.toUpperCase()+' '+year,colSpan:2,styles:{halign:'center'}}]],
+                body:[
+                    ['GST Input Credit (Expenses + Directors)',{content:INR(d.combinedITCTotal),styles:{textColor:[180,83,9],fontStyle:'bold'}}],
+                    ['GST Output (from invoices)',{content:INR(d.gstOutput),styles:{textColor:[126,34,206],fontStyle:'bold'}}],
+                    [d.netGST>0?'Net GST Payable (GSTR-3B)':'Net GST Credit (Carry Forward)',
+                     {content:INR(Math.abs(d.netGST)),styles:{fontStyle:'bold',textColor:d.netGST>0?[126,34,206]:[13,148,136]}}],
+                ],
+                columnStyles:{0:{cellWidth:120},1:{cellWidth:62,halign:'right'}}
+            });
+            y = doc.lastAutoTable.finalY+6;
+
+            // GST Input
+            if (d.gstInputExps.length || d.dirITCTotal>0) {
+                if (y>220) {doc.addPage(); y=15;}
+                doc.setFontSize(10); doc.setFont('helvetica','bold'); doc.setTextColor(180,83,9);
+                doc.text('GST INPUT CREDIT (Expenses & Director Expenses)', ML, y); y+=4;
+                doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
                     styles:{fontSize:7.5,cellPadding:2.5},
                     headStyles:{fillColor:[180,83,9],textColor:[255,255,255],fontStyle:'bold'},
                     head:[['Date','Vendor','GSTIN','Bill No','Taxable','CGST','SGST','IGST','Total Tax']],
@@ -13290,7 +13333,7 @@
                         ...d.gstInputExps.map(e=>{
                             const tax=(parseFloat(e.cgst)||0)+(parseFloat(e.sgst)||0)+(parseFloat(e.igst)||0);
                             return [e.billDate||'—',
-                                e.companyName || e.staffName || e.vendor || '—',
+                                e.companyName||e.staffName||e.vendor||'—',
                                 {content:e.vendorGSTIN||'—',styles:{fontSize:6.5,halign:'center'}},
                                 e.voucherNo||e.billNo||'—',
                                 {content:INR(e.billAmtINR||0),styles:{halign:'right'}},
@@ -13299,7 +13342,6 @@
                                 {content:INR(e.igst||0),styles:{halign:'right'}},
                                 {content:INR(tax),styles:{halign:'right',fontStyle:'bold',textColor:[180,83,9]}}];
                         }),
-                        // Director Expenses ITC rows
                         ...d.dirITCEligible.map(de=>{
                             const tax=(parseFloat(de.cgstAmt)||parseFloat(de.cgst)||0)+(parseFloat(de.sgstAmt)||parseFloat(de.sgst)||0)+(parseFloat(de.igstAmt)||parseFloat(de.igst)||0);
                             const dirName=de.director==='dir1'?(settings.director1Name||'Director 1'):(settings.director2Name||'Director 2');
@@ -13326,18 +13368,18 @@
 
             // GST Output
             if (d.outInvoices.length) {
-                if(y>220){doc.addPage();y=15;}
-                doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+                if (y>220) {doc.addPage(); y=15;}
+                doc.setFontSize(10); doc.setFont('helvetica','bold'); doc.setTextColor(126,34,206);
+                doc.text('GST OUTPUT (Sales Invoices)', ML, y); y+=4;
+                doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
                     styles:{fontSize:7.5,cellPadding:2.5},
                     headStyles:{fillColor:[126,34,206],textColor:[255,255,255],fontStyle:'bold'},
                     head:[['Date','Client','GSTIN','Invoice No','Taxable','CGST','SGST','IGST','Total Tax']],
                     body:d.outInvoices.map(t=>{
                         const tot=calculateTotals(t.items||[]);
-                        // Look up the party's GSTIN — invoices link to parties by partyName.
-                        // Falls back to a per-transaction gstNumber field if a party-level one isn't found.
-                        const party = (parties||[]).find(p => p.partyName === t.partyName);
-                        const gstin = party?.gstNumber || t.gstNumber || '—';
-                        return [t.txnDate||'—',t.partyName||'—',
+                        const party=(parties||[]).find(p=>p.partyName===t.partyName);
+                        const gstin=party?.gstNumber||t.gstNumber||'—';
+                        return [t.txnDate||'—', t.partyName||'—',
                             {content:gstin,styles:{fontSize:6.5,halign:'center'}},
                             t.txnID||'—',
                             {content:INR(tot.subtotal||0),styles:{halign:'right'}},
@@ -13356,9 +13398,9 @@
                 y = doc.lastAutoTable.finalY+5;
             }
 
-            // Net GST summary
-            if(y>250){doc.addPage();y=15;}
-            doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+            // GST Reconciliation summary
+            if (y>250) {doc.addPage(); y=15;}
+            doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
                 styles:{fontSize:9.5,cellPadding:3.5},
                 headStyles:{fillColor:[30,58,138],textColor:[255,255,255],fontStyle:'bold'},
                 head:[[{content:'GST RECONCILIATION SUMMARY',colSpan:2,styles:{halign:'center'}}]],
@@ -13376,10 +13418,13 @@
             for(let pg=1;pg<=pc;pg++){
                 doc.setPage(pg);
                 doc.setFontSize(7);doc.setFont('helvetica','italic');doc.setTextColor(150,150,150);
-                doc.text((settings.companyName||'IMSE Tech India')+' — Tax Compliance Report — '+d.monthName+' '+year+' — Page '+pg+' of '+pc,PW/2,291,{align:'center'});
+                doc.text((settings.companyName||'IMSE Tech India')+' — GST Compliance Report — '+d.monthName+' '+year+' — Page '+pg+' of '+pc, PW/2, 291, {align:'center'});
             }
-            doc.save('TaxCompliance_'+d.monthName+'_'+year+'.pdf');
+            doc.save('GST_Report_'+d.monthName+'_'+year+'.pdf');
         }
+
+        // ── Legacy combined export (kept as alias for backward compatibility) ──
+        async function exportTaxPDF() { await exportTDSPDF(); await exportGSTPDF(); }
 
 
         // ════════════════════════════════════════════════════════════════════
