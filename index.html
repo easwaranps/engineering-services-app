@@ -33719,17 +33719,28 @@ Automated WFH alert — ${company} Attendance System.`;
             y = doc.lastAutoTable.finalY + 6;
 
             // Transfer instruction box — adapted for Draft state
+            const availableForPayment = parseFloat(pr.availableForPayment) || Math.max(0, (parseFloat(pr.bankBalance)||0) - (parseFloat(pr.minBalance)||10000));
+            const netFundsRequired = Math.max(0, totalForDoc - availableForPayment);
             if (isDraftPDF) {
-                doc.setFillColor(254, 243, 199); // amber-50
-                doc.rect(ML, y, CW, 18, 'F');
+                doc.setFillColor(254, 243, 199);
+                doc.rect(ML, y, CW, availableForPayment > 0 ? 28 : 18, 'F');
                 doc.setTextColor(146, 64, 14); doc.setFontSize(10); doc.setFont(undefined, 'bold');
                 doc.text('DRAFT — PENDING APPROVAL', ML + 4, y + 5);
                 doc.setFontSize(9); doc.setFont(undefined, 'normal'); doc.setTextColor(120, 80, 30);
                 doc.text('No transfer is authorised by this document. For management review only.', ML + 4, y + 10);
                 doc.setFont(undefined, 'bold'); doc.setTextColor(146, 64, 14); doc.setFontSize(11);
-                doc.text('Proposed Amount:', ML + 4, y + 16);
-                doc.setFontSize(13); doc.text('₹' + fmt(totalForDoc), ML + 42, y + 16);
-                y += 23;
+                doc.text('Total Bills + Director:', ML + 4, y + 16);
+                doc.setFontSize(13); doc.text('Rs.' + fmt(totalForDoc), ML + 55, y + 16);
+                if (availableForPayment > 0) {
+                    doc.setFontSize(10); doc.setFont(undefined, 'normal');
+                    doc.text('Less: Available Bank Balance:', ML + 4, y + 23);
+                    doc.setFont(undefined, 'bold');
+                    doc.text('Rs.' + fmt(availableForPayment), ML + 62, y + 23);
+                    doc.text('  =>  Net Funds Required: Rs.' + fmt(netFundsRequired), ML + 80, y + 23);
+                    y += 33;
+                } else {
+                    y += 23;
+                }
             } else {
                 doc.setFillColor(247, 232, 254);
                 doc.rect(ML, y, CW, 28, 'F');
@@ -33742,7 +33753,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 doc.setFont(undefined, 'bold'); doc.text(acctLabel(toAcct), ML + 18, y + 17);
                 doc.setFont(undefined, 'normal'); doc.text('Amount:', ML + 4, y + 23);
                 doc.setFont(undefined, 'bold'); doc.setTextColor(107, 33, 168); doc.setFontSize(13);
-                doc.text('₹' + fmt(totalForDoc), ML + 22, y + 23);
+                doc.text('Rs.' + fmt(totalForDoc), ML + 22, y + 23);
                 doc.setFontSize(10); doc.setTextColor(107, 33, 168);
                 if (pr.transferRef) {
                     doc.setFont(undefined, 'normal');
@@ -33752,23 +33763,35 @@ Automated WFH alert — ${company} Attendance System.`;
                 y += 33;
             }
 
-            // Category-wise summary
+            // Category-wise summary — strip emoji from labels (jsPDF can't render them)
+            const _pdfCatLabel = cat => (PR_CATEGORY_LABEL[cat] || cat).replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27FF}]/gu, '').trim();
             doc.setFontSize(11); doc.setTextColor(13, 78, 99); doc.setFont(undefined, 'bold');
             doc.text(sectionHeader, ML, y); y += 4;
             const byCat = {};
             (pr.items || []).filter(includeItem).forEach(it => {
                 (byCat[it.category] = byCat[it.category] || []).push(it);
             });
+            const liveGrandTotal = (pr.items||[]).filter(includeItem).reduce((s,it)=>s+(parseFloat(it.amount)||0),0);
             const summaryBody = PR_CATEGORIES.map(cat => {
                 const items = byCat[cat] || [];
                 if (items.length === 0) return null;
                 const sub = items.reduce((s, it) => s + (parseFloat(it.amount) || 0), 0);
                 return [
-                    PR_CATEGORY_LABEL[cat],
+                    _pdfCatLabel(cat),
                     { content: String(items.length), styles: { halign: 'center' } },
-                    { content: '₹' + fmt(sub), styles: { halign: 'right', fontStyle: 'bold' } }
+                    { content: 'Rs.' + fmt(sub), styles: { halign: 'right', fontStyle: 'bold' } }
                 ];
             }).filter(Boolean);
+
+            // Add bank balance offset row if available
+            if (availableForPayment > 0) {
+                summaryBody.push([
+                    { content: 'Less: Available Bank Balance (for payment)', styles: { fontStyle: 'italic', textColor: [21,128,61] } },
+                    { content: '', styles: { halign: 'center' } },
+                    { content: '(Rs.' + fmt(availableForPayment) + ')', styles: { halign: 'right', fontStyle: 'bold', textColor: [21,128,61] } }
+                ]);
+            }
+
             doc.autoTable({
                 startY: y, margin: { left: ML, right: MR }, theme: 'grid',
                 styles: { fontSize: 9, cellPadding: 2.5 },
@@ -33776,13 +33799,10 @@ Automated WFH alert — ${company} Attendance System.`;
                 head: [['Category', 'Items', itemCountLabel]],
                 body: summaryBody,
                 foot: [[
-                    { content: 'GRAND TOTAL', styles: { fontStyle: 'bold' } },
+                    { content: availableForPayment > 0 ? 'NET FUNDS REQUIRED' : 'GRAND TOTAL', styles: { fontStyle: 'bold' } },
                     { content: String((pr.items||[]).filter(includeItem).length), styles: { halign: 'center', fontStyle: 'bold' } },
-                    { content: '₹' + fmt(summaryBody.reduce((s,row) => {
-                        // Sum from the category rows (live amounts) not from stored totals
-                        const amtStr = (row[2]?.content || '').replace(/[₹,]/g,'');
-                        return s + (parseFloat(amtStr)||0);
-                    }, 0)), styles: { halign: 'right', fontStyle: 'bold', textColor: isDraftPDF ? [180, 83, 9] : [107, 33, 168] } }
+                    { content: 'Rs.' + fmt(availableForPayment > 0 ? Math.max(0, liveGrandTotal - availableForPayment) : liveGrandTotal),
+                      styles: { halign: 'right', fontStyle: 'bold', textColor: isDraftPDF ? [180, 83, 9] : [107, 33, 168] } }
                 ]],
                 columnStyles: { 0: { cellWidth: 110 }, 1: { cellWidth: 28, halign: 'center' }, 2: { cellWidth: 44, halign: 'right' } }
             });
@@ -33807,7 +33827,7 @@ Automated WFH alert — ${company} Attendance System.`;
                     });
                 }
                 doc.setFontSize(10); doc.setTextColor(13, 78, 99); doc.setFont(undefined, 'bold');
-                doc.text(PR_CATEGORY_LABEL[cat], ML, y); y += 3;
+                doc.text(_pdfCatLabel(cat), ML, y); y += 3;
                 if (cat === 'BILLS') {
                     // Subtotal-by-billType strip just under the heading
                     const sub = {};
@@ -33819,7 +33839,7 @@ Automated WFH alert — ${company} Attendance System.`;
                         startY: y, margin: { left: ML, right: MR }, theme: 'plain',
                         styles: { fontSize: 7, cellPadding: 1.5, textColor: [75, 85, 99] },
                         body: [Object.entries(sub).map(([k, v]) =>
-                            `${_prBillTypeLabel(k).replace(/^[^a-zA-Z]+/,'').trim()}: ₹${fmt(v)}`
+                            `${_prBillTypeLabel(k).replace(/^[^a-zA-Z]+/,'').trim()}: Rs.${fmt(v)}`
                         ).join('  ·  ')].map(s => [s])
                     });
                     y = doc.lastAutoTable.finalY + 1;
@@ -33837,13 +33857,13 @@ Automated WFH alert — ${company} Attendance System.`;
                         it.description || '',
                         it.payee || '',
                         it.dueDate || '—',
-                        { content: '₹' + fmt(it.amount), styles: { halign: 'right' } }
+                        { content: 'Rs.' + fmt(it.amount), styles: { halign: 'right' } }
                     ] : [
                         i + 1,
                         it.description || '',
                         it.payee || '',
                         it.dueDate || '—',
-                        { content: '₹' + fmt(it.amount), styles: { halign: 'right' } }
+                        { content: 'Rs.' + fmt(it.amount), styles: { halign: 'right' } }
                     ]),
                     columnStyles: cat === 'BILLS'
                         ? { 0: { cellWidth: 8 }, 1: { cellWidth: 26 }, 2: { cellWidth: 66 }, 3: { cellWidth: 40 }, 4: { cellWidth: 18 }, 5: { cellWidth: 24, halign: 'right' } }
@@ -33860,12 +33880,12 @@ Automated WFH alert — ${company} Attendance System.`;
                 doc.text('BANK BALANCE DETAILS', ML, y); y += 4;
                 const bankRows = [];
                 if (pr.bankBalance > 0) {
-                    bankRows.push(['Available Balance on Account', {content:'₹'+fmt(pr.bankBalance),styles:{halign:'right'}}]);
-                    bankRows.push(['Minimum Balance to Maintain',  {content:'₹'+fmt(pr.minBalance||10000),styles:{halign:'right'}}]);
-                    bankRows.push(['Available for Payment',        {content:'₹'+fmt(pr.availableForPayment||Math.max(0,pr.bankBalance-(pr.minBalance||10000))),styles:{halign:'right',fontStyle:'bold',textColor:[29,78,216]}}]);
+                    bankRows.push(['Available Balance on Account', {content:'Rs.'+fmt(pr.bankBalance),styles:{halign:'right'}}]);
+                    bankRows.push(['Minimum Balance to Maintain',  {content:'Rs.'+fmt(pr.minBalance||10000),styles:{halign:'right'}}]);
+                    bankRows.push(['Available for Payment',        {content:'Rs.'+fmt(pr.availableForPayment||Math.max(0,pr.bankBalance-(pr.minBalance||10000))),styles:{halign:'right',fontStyle:'bold',textColor:[29,78,216]}}]);
                 }
                 if (pr.carriedForwardAmt > 0) {
-                    bankRows.push(['Carried Forward from Previous PR (entered manually)', {content:'₹'+fmt(pr.carriedForwardAmt),styles:{halign:'right',fontStyle:'bold',textColor:[91,33,182]}}]);
+                    bankRows.push(['Carried Forward from Previous PR (entered manually)', {content:'Rs.'+fmt(pr.carriedForwardAmt),styles:{halign:'right',fontStyle:'bold',textColor:[91,33,182]}}]);
                 }
                 doc.autoTable({
                     startY:y, margin:{left:ML,right:MR}, theme:'grid',
@@ -33896,16 +33916,16 @@ Automated WFH alert — ${company} Attendance System.`;
                 const reconBody = [
                     [
                         `Funds carried forward${carriedFwd.fromPrID?' after '+carriedFwd.fromPrID:''} (incl. min. balance)`,
-                        { content: '₹'+fmt(carriedFwd.amount), styles:{halign:'right'} },
+                        { content: 'Rs.'+fmt(carriedFwd.amount), styles:{halign:'right'} },
                         { content: '—', styles:{halign:'center',textColor:[150,150,150]} },
                         { content: '—', styles:{halign:'center',textColor:[150,150,150]} },
                         { content: carriedFwd.fromPrID?'Carried from previous request':'Opening balance (no prior request)', styles:{fontSize:7.5,textColor:[120,120,120]} }
                     ],
                     [
                         `${pr.prID} — ${pr.periodLabel||pr.reason||''}`,
-                        { content: '₹'+fmt(totalReceived), styles:{halign:'right',textColor:[21,128,61]} },
-                        { content: '₹'+fmt(totalDisbursed), styles:{halign:'right',textColor:[180,83,9]} },
-                        { content: '₹'+fmt(closingBalance), styles:{halign:'right',fontStyle:'bold'} },
+                        { content: 'Rs.'+fmt(totalReceived), styles:{halign:'right',textColor:[21,128,61]} },
+                        { content: 'Rs.'+fmt(totalDisbursed), styles:{halign:'right',textColor:[180,83,9]} },
+                        { content: 'Rs.'+fmt(closingBalance), styles:{halign:'right',fontStyle:'bold'} },
                         { content: recon.map(r=>r.remark).filter(Boolean).join('  |  '), styles:{fontSize:7.5} }
                     ]
                 ];
@@ -33919,7 +33939,7 @@ Automated WFH alert — ${company} Attendance System.`;
                         {content:'TOTAL',styles:{fontStyle:'bold'}},
                         {content:'',styles:{}},
                         {content:'',styles:{}},
-                        {content:'₹'+fmt(closingBalance), styles:{halign:'right',fontStyle:'bold',textColor:[91,33,182]}},
+                        {content:'Rs.'+fmt(closingBalance), styles:{halign:'right',fontStyle:'bold',textColor:[91,33,182]}},
                         {content:'Carries forward to next Payment Request',styles:{fontSize:7.5,textColor:[120,120,120]}}
                     ]],
                     columnStyles:{
