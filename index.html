@@ -11535,6 +11535,7 @@
                     <td class="px-3 py-2 text-xs font-medium">${e.billDate||'—'}</td>
                     <td class="px-3 py-2 text-xs">${sectionCell}</td>
                     <td class="px-3 py-2 text-xs">${e.companyName || e.staffName || e.vendor || '—'}</td>
+                    <td class="px-3 py-2 text-xs text-gray-600">${e.description||'—'}</td>
                     <td class="px-3 py-2 text-xs text-center font-mono">${pan?`<span class="text-gray-700">${pan}</span>`:'<span class="text-gray-300">—</span>'}</td>
                     <td class="px-3 py-2 text-xs">${e.voucherNo||e.billNo||'—'}</td>
                     <td class="px-3 py-2 text-xs text-right">${fmt(e.taxableAmt||e.billAmtINR||0)}</td>
@@ -11652,6 +11653,7 @@
                                 <th class="px-3 py-2 text-left">Bill Date</th>
                                 <th class="px-3 py-2 text-left">Section</th>
                                 <th class="px-3 py-2 text-left">Vendor / Party</th>
+                                <th class="px-3 py-2 text-left">Description</th>
                                 <th class="px-3 py-2 text-center">PAN</th>
                                 <th class="px-3 py-2 text-left">Bill Log Ref No</th>
                                 <th class="px-3 py-2 text-right">Taxable Amt</th>
@@ -11665,7 +11667,7 @@
                         <tbody>${tdsRows}</tbody>
                         <tfoot class="bg-red-100">
                             <tr>
-                                <td colspan="8" class="px-3 py-2 text-xs font-bold text-right text-red-800">TOTAL TDS TO DEPOSIT:</td>
+                                <td colspan="9" class="px-3 py-2 text-xs font-bold text-right text-red-800">TOTAL TDS TO DEPOSIT:</td>
                                 <td class="px-3 py-2 text-sm font-bold text-right text-red-800">${fmt(d.totalTDSDeducted)}</td>
                                 <td colspan="3"></td>
                             </tr>
@@ -13256,13 +13258,14 @@
                 doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
                     styles:{fontSize:7,cellPadding:2},
                     headStyles:{fillColor:[239,68,68],textColor:[255,255,255],fontStyle:'bold'},
-                    head:[['Date','Section','TRACES','Vendor','PAN','Bill No','Taxable','TDS%','TDS Amt','Status']],
+                    head:[['Date','Section','TRACES','Vendor','Description','PAN','Bill No','Taxable','TDS%','TDS Amt','Status']],
                     body:d.tdsExpenses.map(e=>{
                         const pan=(e.vendorPAN||'').trim()||((e.vendorGSTIN&&e.vendorGSTIN.length>=12)?e.vendorGSTIN.substring(2,12):'')||'—';
                         return [e.billDate||'—',
                             {content:e.tdsSection||'—',styles:{fontStyle:'bold'}},
                             {content:e.tdsTracesCode||'—',styles:{halign:'center'}},
                             e.companyName||e.staffName||e.vendor||'—',
+                            {content:e.description||'—',styles:{fontSize:6.5}},
                             {content:pan,styles:{halign:'center',fontSize:6.5}},
                             e.voucherNo||e.billNo||'—',
                             {content:INR(e.taxableAmt||e.billAmtINR||0),styles:{halign:'right'}},
@@ -13271,8 +13274,8 @@
                             {content:e.tdsPaid?'Paid':'Pending',styles:{halign:'center',textColor:e.tdsPaid?[21,128,61]:[220,38,38]}}
                         ];
                     }),
-                    foot:[[{content:'TOTAL',colSpan:8,styles:{fontStyle:'bold',halign:'right'}},{content:INR(d.totalTDSDeducted),styles:{fontStyle:'bold',halign:'right',textColor:[185,28,28]}},'']],
-                    columnStyles:{0:{cellWidth:16},1:{cellWidth:16},2:{cellWidth:13},3:{cellWidth:26},4:{cellWidth:22},5:{cellWidth:18},6:{cellWidth:20,halign:'right'},7:{cellWidth:11},8:{cellWidth:22},9:{cellWidth:18}}
+                    foot:[[{content:'TOTAL',colSpan:9,styles:{fontStyle:'bold',halign:'right'}},{content:INR(d.totalTDSDeducted),styles:{fontStyle:'bold',halign:'right',textColor:[185,28,28]}},'']],
+                    columnStyles:{0:{cellWidth:16},1:{cellWidth:14},2:{cellWidth:12},3:{cellWidth:24},4:{cellWidth:28},5:{cellWidth:20},6:{cellWidth:16},7:{cellWidth:18,halign:'right'},8:{cellWidth:10},9:{cellWidth:20},10:{cellWidth:16}}
                 });
             } else {
                 if (y>250) {doc.addPage(); y=15;}
@@ -13328,7 +13331,7 @@
                 doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
                     styles:{fontSize:7.5,cellPadding:2.5},
                     headStyles:{fillColor:[180,83,9],textColor:[255,255,255],fontStyle:'bold'},
-                    head:[['Date','Vendor','GSTIN','Bill No','Taxable','CGST','SGST','IGST','Total Tax']],
+                    head:[['Date','Vendor','GSTIN','Bill No','Description','Taxable','CGST','SGST','IGST','Total Tax']],
                     body:[
                         ...d.gstInputExps.map(e=>{
                             const tax=(parseFloat(e.cgst)||0)+(parseFloat(e.sgst)||0)+(parseFloat(e.igst)||0);
@@ -13336,6 +13339,7 @@
                                 e.companyName||e.staffName||e.vendor||'—',
                                 {content:e.vendorGSTIN||'—',styles:{fontSize:6.5,halign:'center'}},
                                 e.voucherNo||e.billNo||'—',
+                                {content:e.description||'—',styles:{fontSize:6.5}},
                                 {content:INR(e.billAmtINR||0),styles:{halign:'right'}},
                                 {content:INR(e.cgst||0),styles:{halign:'right'}},
                                 {content:INR(e.sgst||0),styles:{halign:'right'}},
@@ -13349,6 +13353,7 @@
                                 {content:de.vendor||de.description||dirName,styles:{textColor:[99,102,241]}},
                                 {content:de.vendorGSTIN||'—',styles:{fontSize:6.5,halign:'center',textColor:[99,102,241]}},
                                 {content:de.billNo||de.expRef||'Dir-Exp',styles:{textColor:[99,102,241]}},
+                                {content:de.description||de.category||'—',styles:{fontSize:6.5,textColor:[99,102,241]}},
                                 {content:INR(de.amount||0),styles:{halign:'right',textColor:[99,102,241]}},
                                 {content:INR(de.cgstAmt||de.cgst||0),styles:{halign:'right',textColor:[99,102,241]}},
                                 {content:INR(de.sgstAmt||de.sgst||0),styles:{halign:'right',textColor:[99,102,241]}},
@@ -13361,7 +13366,7 @@
                         {content:INR(d.gstInputSGST),styles:{halign:'right',fontStyle:'bold',fillColor:[254,243,199]}},
                         {content:INR(d.gstInputIGST),styles:{halign:'right',fontStyle:'bold',fillColor:[254,243,199]}},
                         {content:INR(d.combinedITCTotal),styles:{halign:'right',fontStyle:'bold',fillColor:[254,243,199],textColor:[180,83,9]}}]],
-                    columnStyles:{0:{cellWidth:16},1:{cellWidth:32},2:{cellWidth:28},3:{cellWidth:20},4:{cellWidth:22},5:{cellWidth:18},6:{cellWidth:18},7:{cellWidth:16},8:{cellWidth:18}}
+                    columnStyles:{0:{cellWidth:14},1:{cellWidth:28},2:{cellWidth:24},3:{cellWidth:16},4:{cellWidth:28},5:{cellWidth:18},6:{cellWidth:16},7:{cellWidth:16},8:{cellWidth:14},9:{cellWidth:16}}
                 });
                 y = doc.lastAutoTable.finalY+5;
             }
