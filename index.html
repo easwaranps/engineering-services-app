@@ -32401,7 +32401,7 @@ Automated WFH alert — ${company} Attendance System.`;
                                         <button onclick="openPaymentRequestDetail('${r.prID}')" class="text-indigo-600 hover:text-indigo-800 text-sm font-medium mr-2">Open</button>
                                         <button onclick="exportPaymentRequestCSV('${r.prID}')" class="text-blue-600 hover:text-blue-800 text-sm font-medium mr-2" title="Export CSV">CSV</button>
                                         ${r.status === 'Draft' ? `<button onclick="cancelPaymentRequest('${r.prID}')" class="text-amber-600 hover:text-amber-800 text-sm font-medium mr-2" title="Mark Cancelled (audit-preserved)">Cancel</button>` : ''}
-                                        ${(r.status === 'Draft' || r.status === 'Cancelled') ? `<button onclick="deletePaymentRequest('${r.prID}')" class="text-red-600 hover:text-red-800 text-sm font-medium" title="Hard delete (cannot be undone)">🗑 Delete</button>` : ''}
+                                        ${(r.status === 'Draft' || r.status === 'Cancelled' || r.status === 'Superseded') ? `<button onclick="deletePaymentRequest('${r.prID}')" class="text-red-600 hover:text-red-800 text-sm font-medium" title="Hard delete (cannot be undone)">🗑 Delete</button>` : ''}
                                     </td>
                                 </tr>`;
                                 }).join('')}
