@@ -157,6 +157,15 @@
             background: var(--slate);
         }
         .photo-add:hover { border-color: var(--teal); color: var(--teal); }
+    /* ── Rich Text Editor ── */
+    .rt-editor { cursor: text; }
+    .rt-editor:empty:before { content: attr(data-placeholder); color: #9ca3af; pointer-events: none; }
+    .rt-editor:focus { outline: none; border-color: #0d9488; box-shadow: 0 0 0 3px rgba(13,148,136,0.15); }
+    .rt-editor ul { list-style-type: disc; padding-left: 1.4em; }
+    .rt-editor ol { list-style-type: decimal; padding-left: 1.4em; }
+    .rt-editor b, .rt-editor strong { font-weight: 700; }
+    .rt-editor i, .rt-editor em { font-style: italic; }
+    .rt-editor u { text-decoration: underline; }
     </style>
 </head>
 <body>
@@ -733,21 +742,69 @@
             <!-- Work Details -->
             <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:12px 14px">
                 <p class="field-label" style="color:#b45309;margin-bottom:8px">🔧 WORK DETAILS</p>
+
+                <!-- Shared rich-text toolbar — floats above whichever field is active -->
+                <div id="rtToolbar" style="display:flex;flex-wrap:wrap;gap:4px;padding:6px 8px;background:#1e293b;border-radius:8px;margin-bottom:10px;position:sticky;top:0;z-index:20">
+                    <!-- Font size -->
+                    <select onchange="rtCmd('fontSize',this.value);this.value=''" style="padding:3px 5px;border-radius:5px;border:none;font-size:11px;background:#334155;color:#fff;cursor:pointer">
+                        <option value="">Size</option>
+                        <option value="1">Small</option>
+                        <option value="3">Normal</option>
+                        <option value="4">Large</option>
+                        <option value="5">Larger</option>
+                        <option value="6">Biggest</option>
+                    </select>
+                    <!-- Style buttons -->
+                    <button type="button" onclick="rtCmd('bold')"         title="Bold"          style="padding:3px 8px;border-radius:5px;border:none;background:#334155;color:#fff;font-weight:700;cursor:pointer;font-size:13px">B</button>
+                    <button type="button" onclick="rtCmd('italic')"       title="Italic"        style="padding:3px 8px;border-radius:5px;border:none;background:#334155;color:#fff;font-style:italic;cursor:pointer;font-size:13px">I</button>
+                    <button type="button" onclick="rtCmd('underline')"    title="Underline"     style="padding:3px 8px;border-radius:5px;border:none;background:#334155;color:#fff;text-decoration:underline;cursor:pointer;font-size:13px">U</button>
+                    <div style="width:1px;background:#475569;margin:0 2px"></div>
+                    <!-- Text colour -->
+                    <button type="button" onclick="rtSetColor('#1e40af')" title="Blue"    style="padding:3px 9px;border-radius:5px;border:none;background:#1e40af;color:#fff;cursor:pointer;font-size:11px;font-weight:700">A</button>
+                    <button type="button" onclick="rtSetColor('#15803d')" title="Green"   style="padding:3px 9px;border-radius:5px;border:none;background:#15803d;color:#fff;cursor:pointer;font-size:11px;font-weight:700">A</button>
+                    <button type="button" onclick="rtSetColor('#b91c1c')" title="Red"     style="padding:3px 9px;border-radius:5px;border:none;background:#b91c1c;color:#fff;cursor:pointer;font-size:11px;font-weight:700">A</button>
+                    <button type="button" onclick="rtSetColor('#b45309')" title="Amber"   style="padding:3px 9px;border-radius:5px;border:none;background:#b45309;color:#fff;cursor:pointer;font-size:11px;font-weight:700">A</button>
+                    <button type="button" onclick="rtSetColor('#111827')" title="Black"   style="padding:3px 9px;border-radius:5px;border:none;background:#e5e7eb;color:#111;cursor:pointer;font-size:11px;font-weight:700">A</button>
+                    <!-- Highlight -->
+                    <button type="button" onclick="rtHighlight('#fef08a')" title="Yellow highlight" style="padding:3px 8px;border-radius:5px;border:none;background:#fef08a;color:#111;cursor:pointer;font-size:12px">▌</button>
+                    <button type="button" onclick="rtHighlight('#bbf7d0')" title="Green highlight"  style="padding:3px 8px;border-radius:5px;border:none;background:#bbf7d0;color:#111;cursor:pointer;font-size:12px">▌</button>
+                    <button type="button" onclick="rtHighlight('#bfdbfe')" title="Blue highlight"   style="padding:3px 8px;border-radius:5px;border:none;background:#bfdbfe;color:#111;cursor:pointer;font-size:12px">▌</button>
+                    <div style="width:1px;background:#475569;margin:0 2px"></div>
+                    <!-- Lists -->
+                    <button type="button" onclick="rtCmd('insertUnorderedList')" title="Bullet list"   style="padding:3px 8px;border-radius:5px;border:none;background:#334155;color:#fff;cursor:pointer;font-size:13px">• ≡</button>
+                    <button type="button" onclick="rtCmd('insertOrderedList')"   title="Numbered list" style="padding:3px 8px;border-radius:5px;border:none;background:#334155;color:#fff;cursor:pointer;font-size:13px">1 ≡</button>
+                    <div style="width:1px;background:#475569;margin:0 2px"></div>
+                    <!-- Clear -->
+                    <button type="button" onclick="rtCmd('removeFormat')" title="Clear formatting" style="padding:3px 8px;border-radius:5px;border:none;background:#7f1d1d;color:#fff;cursor:pointer;font-size:11px">✕ fmt</button>
+                </div>
+
                 <div>
                     <label class="field-label">Details of Work Carried Out <span class="text-red-500">*</span></label>
-                    <textarea id="dayDesc" class="field-input" rows="4" required placeholder="Describe in detail the work performed today..."></textarea>
+                    <div id="dayDesc" contenteditable="true" class="field-input rt-editor"
+                        style="min-height:96px;overflow-y:auto;line-height:1.6;white-space:pre-wrap"
+                        data-placeholder="Describe in detail the work performed today..."
+                        onfocus="_rtActive=this" oninput="_rtMarkDirty(this)"></div>
                 </div>
                 <div class="mt-3">
                     <label class="field-label">Observations / Findings</label>
-                    <textarea id="dayObs" class="field-input" rows="2" placeholder="Issues found, test results, measurements..."></textarea>
+                    <div id="dayObs" contenteditable="true" class="field-input rt-editor"
+                        style="min-height:56px;overflow-y:auto;line-height:1.6;white-space:pre-wrap"
+                        data-placeholder="Issues found, test results, measurements..."
+                        onfocus="_rtActive=this" oninput="_rtMarkDirty(this)"></div>
                 </div>
                 <div class="mt-3">
                     <label class="field-label">Exclusions / Remarks</label>
-                    <textarea id="dayExclusions" class="field-input" rows="2" placeholder="Work excluded, deferred items, scope limits..."></textarea>
+                    <div id="dayExclusions" contenteditable="true" class="field-input rt-editor"
+                        style="min-height:56px;overflow-y:auto;line-height:1.6;white-space:pre-wrap"
+                        data-placeholder="Work excluded, deferred items, scope limits..."
+                        onfocus="_rtActive=this" oninput="_rtMarkDirty(this)"></div>
                 </div>
                 <div class="mt-3">
                     <label class="field-label">Recommendations</label>
-                    <textarea id="dayRec" class="field-input" rows="2" placeholder="Follow-up actions for tomorrow or next visit..."></textarea>
+                    <div id="dayRec" contenteditable="true" class="field-input rt-editor"
+                        style="min-height:56px;overflow-y:auto;line-height:1.6;white-space:pre-wrap"
+                        data-placeholder="Follow-up actions for tomorrow or next visit..."
+                        onfocus="_rtActive=this" oninput="_rtMarkDirty(this)"></div>
                 </div>
             </div>
             <!-- Photos -->
@@ -4869,10 +4926,10 @@
         document.getElementById('dayStartTime').value=entry?.startTime||'';
         document.getElementById('dayEndTime').value=entry?.endTime||'';
         document.getElementById('dayTimeLogRemarks').value=entry?.timeLogRemarks||'';
-        document.getElementById('dayDesc').value=entry?.description||'';
-        document.getElementById('dayObs').value=entry?.observations||'';
-        document.getElementById('dayExclusions').value=entry?.exclusions||'';
-        document.getElementById('dayRec').value=entry?.recommendations||'';
+        document.getElementById('dayDesc').innerHTML = entry?.description||'';
+        document.getElementById('dayObs').innerHTML  = entry?.observations||'';
+        document.getElementById('dayExclusions').innerHTML = entry?.exclusions||'';
+        document.getElementById('dayRec').innerHTML  = entry?.recommendations||'';
         document.getElementById('dayWitnessName').value=entry?.witnessName||'';
         document.getElementById('dayWitnessDesig').value=entry?.witnessDesig||'';
         document.getElementById('dayWitnessRemarks').value=entry?.witnessRemarks||'';
@@ -4911,9 +4968,47 @@
 
     function closeDayModal(){
         document.getElementById('dayModal').classList.remove('show');
+        // Clear all rich-text editor fields
+        ['dayDesc','dayObs','dayExclusions','dayRec'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.innerHTML = '';
+        });
+        window._rtActive = null;
         _editEntryID=null;_dayPhotos=[];_dayStaffRows=[];
         _concurEndEdit();
     }
+
+    // ── Rich-Text Editor Helpers ──────────────────────────────────────
+    // _rtActive tracks which contenteditable field currently has focus,
+    // so toolbar buttons know which field to apply the command to.
+    window._rtActive = null;
+
+    function _rtMarkDirty(el) {
+        // Enforce min-height so the editor doesn't collapse
+        if (el.innerHTML === '<br>' || el.innerHTML === '') el.innerHTML = '';
+    }
+
+    function rtCmd(cmd, val) {
+        // Re-focus the active editor before running the command so
+        // execCommand applies to the correct field (not the button itself)
+        if (window._rtActive) window._rtActive.focus();
+        document.execCommand(cmd, false, val || null);
+    }
+
+    function rtSetColor(color) {
+        if (window._rtActive) window._rtActive.focus();
+        document.execCommand('styleWithCSS', false, true);
+        document.execCommand('foreColor', false, color);
+    }
+
+    function rtHighlight(color) {
+        if (window._rtActive) window._rtActive.focus();
+        document.execCommand('styleWithCSS', false, true);
+        document.execCommand('hiliteColor', false, color);
+    }
+    // ─────────────────────────────────────────────────────────────────
+
+
 
     function editDayEntry(wlID,entryID){openDayModal(wlID,entryID);}
 
@@ -4922,6 +5017,16 @@
         const _g = _guardSubmit(e);
         if (_g.wasBusy) return;
         try {
+        // Validate the rich-text description field (contenteditable, no 'required' attr)
+        const descEl = document.getElementById('dayDesc');
+        if (!descEl.textContent.trim()) {
+            descEl.focus();
+            descEl.style.borderColor = '#dc2626';
+            setTimeout(() => descEl.style.borderColor = '', 2000);
+            alert('Please enter the Details of Work Carried Out.');
+            _g.release();
+            return;
+        }
         const wlID=document.getElementById('dayWlID').value;
         const entryID=document.getElementById('dayEntryID').value;
         // Level 2 concurrency: pre-save staleness check on the dailyEntry record
@@ -4974,10 +5079,10 @@
             endTime:       document.getElementById('dayEndTime').value,
             timeLogRemarks:document.getElementById('dayTimeLogRemarks').value,
             technicians:   techs,
-            description:   document.getElementById('dayDesc').value,
-            observations:  document.getElementById('dayObs').value,
-            exclusions:    document.getElementById('dayExclusions').value,
-            recommendations:document.getElementById('dayRec').value,
+            description:   document.getElementById('dayDesc').innerHTML,
+            observations:  document.getElementById('dayObs').innerHTML,
+            exclusions:    document.getElementById('dayExclusions').innerHTML,
+            recommendations:document.getElementById('dayRec').innerHTML,
             witnessName:   document.getElementById('dayWitnessName').value,
             witnessDesig:  document.getElementById('dayWitnessDesig').value,
             witnessRemarks:document.getElementById('dayWitnessRemarks').value,
@@ -5644,11 +5749,28 @@
             const hdr=dateStr+(d.category?'   |   '+d.category:'');
             doc.text(hdr,ML+3,y+5.5);y+=11;
 
-            // Work sections
-            [{title:'Details of Work Carried Out',text:d.description,col:[29,78,216]},
-             {title:'Observations / Findings',    text:d.observations,col:[3,105,161]},
-             {title:'Exclusions / Remarks',       text:d.exclusions,  col:[180,83,9]},
-             {title:'Recommendations',            text:d.recommendations,col:[21,128,61]}
+            // Work sections — strip HTML tags from rich-text fields before
+            // embedding in PDF (jsPDF renders plain text, not HTML)
+            const _rtToText = html => {
+                if (!html) return '';
+                // Convert block elements to newlines before stripping tags
+                return html
+                    .replace(/<\/p>|<br\s*\/?>/gi, '\n')
+                    .replace(/<\/li>/gi, '\n')
+                    .replace(/<li>/gi, '• ')
+                    .replace(/<[^>]+>/g, '')
+                    .replace(/&nbsp;/g, ' ')
+                    .replace(/&amp;/g, '&')
+                    .replace(/&lt;/g, '<')
+                    .replace(/&gt;/g, '>')
+                    .replace(/\n{3,}/g, '\n\n')
+                    .trim();
+            };
+
+            [{title:'Details of Work Carried Out',text:_rtToText(d.description),col:[29,78,216]},
+             {title:'Observations / Findings',    text:_rtToText(d.observations),col:[3,105,161]},
+             {title:'Exclusions / Remarks',       text:_rtToText(d.exclusions),  col:[180,83,9]},
+             {title:'Recommendations',            text:_rtToText(d.recommendations),col:[21,128,61]}
             ].filter(s=>s.text&&s.text.trim()).forEach(s=>{
                 if(y+16>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=42;}
                 doc.autoTable({startY:y,margin:{top:42,left:ML,right:MR,bottom:SIG_H+FOOTER_SAFETY+2},theme:'grid',
