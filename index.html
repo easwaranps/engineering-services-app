@@ -33720,7 +33720,9 @@ Automated WFH alert — ${company} Attendance System.`;
 
             // Transfer instruction box — adapted for Draft state
             const availableForPayment = parseFloat(pr.availableForPayment) || Math.max(0, (parseFloat(pr.bankBalance)||0) - (parseFloat(pr.minBalance)||10000));
-            const netFundsRequired = Math.max(0, totalForDoc - availableForPayment);
+            // Always compute live from items — totalForDoc/totalGenerated can be stale
+            const liveItemTotal = (pr.items||[]).filter(includeItem).reduce((s,it)=>s+(parseFloat(it.amount)||0),0);
+            const netFundsRequired = Math.max(0, liveItemTotal - availableForPayment);
             if (isDraftPDF) {
                 doc.setFillColor(254, 243, 199);
                 doc.rect(ML, y, CW, availableForPayment > 0 ? 28 : 18, 'F');
@@ -33730,7 +33732,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 doc.text('No transfer is authorised by this document. For management review only.', ML + 4, y + 10);
                 doc.setFont(undefined, 'bold'); doc.setTextColor(146, 64, 14); doc.setFontSize(11);
                 doc.text('Total Bills + Director:', ML + 4, y + 16);
-                doc.setFontSize(13); doc.text('Rs.' + fmt(totalForDoc), ML + 55, y + 16);
+                doc.setFontSize(13); doc.text('Rs.' + fmt(liveItemTotal), ML + 55, y + 16);
                 if (availableForPayment > 0) {
                     doc.setFontSize(10); doc.setFont(undefined, 'normal');
                     doc.text('Less: Available Bank Balance:', ML + 4, y + 23);
@@ -33771,7 +33773,6 @@ Automated WFH alert — ${company} Attendance System.`;
             (pr.items || []).filter(includeItem).forEach(it => {
                 (byCat[it.category] = byCat[it.category] || []).push(it);
             });
-            const liveGrandTotal = (pr.items||[]).filter(includeItem).reduce((s,it)=>s+(parseFloat(it.amount)||0),0);
             const summaryBody = PR_CATEGORIES.map(cat => {
                 const items = byCat[cat] || [];
                 if (items.length === 0) return null;
@@ -33801,7 +33802,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 foot: [[
                     { content: availableForPayment > 0 ? 'NET FUNDS REQUIRED' : 'GRAND TOTAL', styles: { fontStyle: 'bold' } },
                     { content: String((pr.items||[]).filter(includeItem).length), styles: { halign: 'center', fontStyle: 'bold' } },
-                    { content: 'Rs.' + fmt(availableForPayment > 0 ? Math.max(0, liveGrandTotal - availableForPayment) : liveGrandTotal),
+                    { content: 'Rs.' + fmt(availableForPayment > 0 ? Math.max(0, liveItemTotal - availableForPayment) : liveItemTotal),
                       styles: { halign: 'right', fontStyle: 'bold', textColor: isDraftPDF ? [180, 83, 9] : [107, 33, 168] } }
                 ]],
                 columnStyles: { 0: { cellWidth: 110 }, 1: { cellWidth: 28, halign: 'center' }, 2: { cellWidth: 44, halign: 'right' } }
