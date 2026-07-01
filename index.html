@@ -27440,24 +27440,38 @@ Automated WFH alert — ${company} Attendance System.`;
                 });
             });
             // Add non-bill auto-aggregated items (director expenses, petty cash) —
-            // these were pulled via "↻ Pull bills for this period" and aren't part
-            // of the manual expense picker, so add them directly here.
-            (window._prAutoItems||[]).forEach(it => {
-                if (it.sourceType !== 'expense') items.push({...it});
-            });
-
-            if (items.length === 0) {
-                alert('Please pick at least one bill, or click "↻ Pull bills for this period" to auto-aggregate.');
-                return;
-            }
-
-            const totalGenerated = +(items.reduce((s, it) => s + (parseFloat(it.amount) || 0), 0)).toFixed(2);
-
+            // these were pulled via "↻ Pull bills for this period".
+            // Also re-check the director expense checkbox at save time — if ticked but
+            // "Pull bills" wasn't clicked, director items would be silently missing.
+            const includeDirectorAtSave = document.getElementById('prIncludeDirectorExp')?.checked;
             const month = parseInt(document.getElementById('prPeriodMonth')?.value) || 0;
             const year  = parseInt(document.getElementById('prPeriodYear')?.value)  || 0;
             const dD = new Date(disbDate);
             const periodMonth = month || (dD.getMonth() + 1);
             const periodYear  = year  || dD.getFullYear();
+
+            // Build the set of director item sourceIDs already covered by _prAutoItems
+            // to avoid duplicates if "Pull bills" was also clicked
+            const autoNonBillIDs = new Set((window._prAutoItems||[])
+                .filter(it => it.sourceType !== 'expense')
+                .map(it => it.sourceID || it.itemID));
+
+            (window._prAutoItems||[]).forEach(it => {
+                if (it.sourceType !== 'expense') items.push({...it});
+            });
+
+            // If director checkbox is ticked, collect director expenses directly
+            // (covers the case where user ticked checkbox but didn't click Pull bills)
+            if (includeDirectorAtSave) {
+                const periodEnd = `${periodYear}-${String(periodMonth).padStart(2,'0')}-30`;
+                const freshDirItems = _prCollectUnsettledDirectorExpenses(periodEnd);
+                freshDirItems.forEach(it => {
+                    // Only add if not already present from _prAutoItems
+                    if (!autoNonBillIDs.has(it.sourceID || it.itemID)) {
+                        items.push({...it});
+                    }
+                });
+            }
             const periodLabel = month && year ? _prMonthLabel(month, year) : `Ad-hoc · ${disbDate}`;
 
             const bankBalance = parseFloat(document.getElementById('prBankBalance')?.value) || 0;
