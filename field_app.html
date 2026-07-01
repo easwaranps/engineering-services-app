@@ -5750,14 +5750,26 @@
             doc.text(hdr,ML+3,y+5.5);y+=11;
 
             // Work sections — strip HTML tags from rich-text fields before
-            // embedding in PDF (jsPDF renders plain text, not HTML)
+            // embedding in PDF, preserving numbered vs bullet list distinction.
             const _rtToText = html => {
                 if (!html) return '';
-                // Convert block elements to newlines before stripping tags
+                // Process ordered lists (<ol>) — number items sequentially
+                html = html.replace(/<ol[^>]*>([\s\S]*?)<\/ol>/gi, (match, inner) => {
+                    let n = 0;
+                    return inner.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (m, content) => {
+                        n++;
+                        return n + '. ' + content.replace(/<[^>]+>/g, '').trim() + '\n';
+                    });
+                });
+                // Process unordered lists (<ul>) — bullet points
+                html = html.replace(/<ul[^>]*>([\s\S]*?)<\/ul>/gi, (match, inner) => {
+                    return inner.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (m, content) => {
+                        return '• ' + content.replace(/<[^>]+>/g, '').trim() + '\n';
+                    });
+                });
+                // Convert remaining block elements to newlines, then strip tags
                 return html
                     .replace(/<\/p>|<br\s*\/?>/gi, '\n')
-                    .replace(/<\/li>/gi, '\n')
-                    .replace(/<li>/gi, '• ')
                     .replace(/<[^>]+>/g, '')
                     .replace(/&nbsp;/g, ' ')
                     .replace(/&amp;/g, '&')
