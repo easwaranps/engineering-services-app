@@ -33616,7 +33616,12 @@ Automated WFH alert — ${company} Attendance System.`;
             const headerTitle = isDraftPDF ? 'PAYMENT REQUEST — PROPOSED DISBURSEMENT' : 'BANK TRANSFER AUTHORISATION';
             // Which items to include + which label to use for the amount
             const includeItem = (it) => isDraftPDF ? (it.decision !== 'Rejected') : (it.decision === 'Approved');
-            const totalForDoc = isDraftPDF ? (pr.totalGenerated || 0) : (pr.totalApproved || 0);
+            // Compute totals LIVE from items (not from stored pr.totalApproved which
+            // can be stale if item amounts were updated after the PR was approved).
+            // This ensures the PDF Grand Total always matches the category breakdown.
+            const liveApproved  = (pr.items||[]).filter(it=>it.decision==='Approved').reduce((s,it)=>s+(parseFloat(it.amount)||0),0);
+            const liveGenerated = (pr.items||[]).reduce((s,it)=>s+(parseFloat(it.amount)||0),0);
+            const totalForDoc = isDraftPDF ? liveGenerated : liveApproved;
             const sectionHeader = isDraftPDF ? 'Proposed Items (Draft — pending approval)' : 'Category Breakdown (Approved Items Only)';
             const itemCountLabel = isDraftPDF ? 'Proposed Amount' : 'Approved Amount';
 
@@ -33745,7 +33750,11 @@ Automated WFH alert — ${company} Attendance System.`;
                 foot: [[
                     { content: 'GRAND TOTAL', styles: { fontStyle: 'bold' } },
                     { content: String((pr.items||[]).filter(includeItem).length), styles: { halign: 'center', fontStyle: 'bold' } },
-                    { content: '₹' + fmt(totalForDoc), styles: { halign: 'right', fontStyle: 'bold', textColor: isDraftPDF ? [180, 83, 9] : [107, 33, 168] } }
+                    { content: '₹' + fmt(summaryBody.reduce((s,row) => {
+                        // Sum from the category rows (live amounts) not from stored totals
+                        const amtStr = (row[2]?.content || '').replace(/[₹,]/g,'');
+                        return s + (parseFloat(amtStr)||0);
+                    }, 0)), styles: { halign: 'right', fontStyle: 'bold', textColor: isDraftPDF ? [180, 83, 9] : [107, 33, 168] } }
                 ]],
                 columnStyles: { 0: { cellWidth: 110 }, 1: { cellWidth: 28, halign: 'center' }, 2: { cellWidth: 44, halign: 'right' } }
             });
@@ -33815,9 +33824,34 @@ Automated WFH alert — ${company} Attendance System.`;
                 y = doc.lastAutoTable.finalY + 4;
             });
 
-            // ── Account Balance Reconciliation (if entries exist) ──
+            // ── Bank Balance Summary (if captured at request time) ──
+            const hasBankBalance = pr.bankBalance > 0 || pr.carriedForwardAmt > 0;
+            if (hasBankBalance) {
+                if (y > 220) { doc.addPage(); y = 15; }
+                doc.setFontSize(9); doc.setTextColor(30,64,175); doc.setFont(undefined,'bold');
+                doc.text('BANK BALANCE DETAILS', ML, y); y += 4;
+                const bankRows = [];
+                if (pr.bankBalance > 0) {
+                    bankRows.push(['Available Balance on Account', {content:'₹'+fmt(pr.bankBalance),styles:{halign:'right'}}]);
+                    bankRows.push(['Minimum Balance to Maintain',  {content:'₹'+fmt(pr.minBalance||10000),styles:{halign:'right'}}]);
+                    bankRows.push(['Available for Payment',        {content:'₹'+fmt(pr.availableForPayment||Math.max(0,pr.bankBalance-(pr.minBalance||10000))),styles:{halign:'right',fontStyle:'bold',textColor:[29,78,216]}}]);
+                }
+                if (pr.carriedForwardAmt > 0) {
+                    bankRows.push(['Carried Forward from Previous PR (entered manually)', {content:'₹'+fmt(pr.carriedForwardAmt),styles:{halign:'right',fontStyle:'bold',textColor:[91,33,182]}}]);
+                }
+                doc.autoTable({
+                    startY:y, margin:{left:ML,right:MR}, theme:'grid',
+                    styles:{fontSize:8.5,cellPadding:2.5},
+                    headStyles:{fillColor:[30,64,175],textColor:[255,255,255],fontStyle:'bold',fontSize:8},
+                    body:bankRows,
+                    columnStyles:{0:{cellWidth:120},1:{cellWidth:CW-120,halign:'right'}}
+                });
+                y = doc.lastAutoTable.finalY + 5;
+            }
+
+            // ── Account Balance Reconciliation (if entries exist or carried forward set) ──
             const recon = pr.reconciliation || [];
-            if (recon.length > 0 || pr.bankBalance > 0) {
+            if (recon.length > 0 || pr.bankBalance > 0 || parseFloat(pr.carriedForwardAmt) > 0) {
                 if (y > 220) { doc.addPage(); y = 15; }
                 y += 4;
                 doc.setFontSize(10); doc.setTextColor(91, 33, 182); doc.setFont(undefined, 'bold');
