@@ -32595,6 +32595,27 @@ Automated WFH alert — ${company} Attendance System.`;
             _renderPaymentRequestDetail(pr);
         }
 
+        // Save a manually-entered carried-forward balance for a Payment Request.
+        // Used when prior PRs exist outside the app (no in-app chain to auto-compute from).
+        // Debounced 800ms so it saves after the user finishes typing, not on every keystroke.
+        let _prCarryFwdTimer = null;
+        function _prSaveCarryFwd(prID, value) {
+            clearTimeout(_prCarryFwdTimer);
+            _prCarryFwdTimer = setTimeout(async () => {
+                const pr = (paymentRequests||[]).find(r => r.prID === prID);
+                if (!pr) return;
+                pr.carriedForwardAmt = parseFloat(value) || 0;
+                try {
+                    await saveData('paymentRequests', paymentRequests);
+                    _showToast('✓ Carried forward balance saved — closing balance updated', '#5b21b6', 3000);
+                    // Re-render to update closing balance and TOTAL row
+                    _renderPaymentRequestDetail(pr);
+                } catch(err) {
+                    console.error('_prSaveCarryFwd failed:', err);
+                }
+            }, 800);
+        }
+
         // Find the closing balance of the most recent PRIOR Payment Request
         // (by disbursement date, excluding the current one and any Cancelled/
         // Superseded requests) — this becomes "Funds Carried Forward" for the
@@ -32863,7 +32884,13 @@ Automated WFH alert — ${company} Attendance System.`;
                         // Row 2: This PR's Source of Fund (received) vs Use of Fund (actually disbursed)
                         // Balance = Carried Forward + Source - Use (running balance, carries to next PR)
                         // Remarks: itemized over/under-payment notes per bill, entered as separate lines
-                        const carriedFwd = _prGetCarriedForward(pr.prID);
+                        // Use manually entered carried-forward if no prior in-app PR found
+                        // (covers cases like PR2627007 where PR001-006 were made outside the app)
+                        const autoCarry = _prGetCarriedForward(pr.prID);
+                        const manualCarry = parseFloat(pr.carriedForwardAmt) || 0;
+                        const carriedFwd = autoCarry.fromPrID
+                            ? autoCarry
+                            : { amount: manualCarry, fromPrID: '', manual: true };
                         const recon = pr.reconciliation || [];
                         const totalReceived  = recon.reduce((s,r)=>s+(parseFloat(r.fundReceived)||0),0);
                         const totalDisbursed = recon.reduce((s,r)=>s+(parseFloat(r.fundDisbursed)||0),0);
@@ -32886,10 +32913,24 @@ Automated WFH alert — ${company} Attendance System.`;
                             <tbody>
                                 <tr>
                                     <td style="padding:6px;border:1px solid #ede9fe">Funds carried forward${carriedFwd.fromPrID ? ' after '+carriedFwd.fromPrID : ''} (incl. min. balance)</td>
-                                    <td style="padding:6px;border:1px solid #ede9fe;text-align:right">${fmt(carriedFwd.amount)}</td>
+                                    <td style="padding:6px;border:1px solid #ede9fe;text-align:right">
+                                        ${carriedFwd.fromPrID
+                                            ? fmt(carriedFwd.amount)
+                                            : `<div style="display:flex;align-items:center;gap:4px;justify-content:flex-end">
+                                                <input type="number" id="prCarryFwdInput" value="${carriedFwd.amount||''}" step="0.01" min="0"
+                                                    placeholder="0.00"
+                                                    style="width:90px;padding:3px 6px;border:1px solid #c4b5fd;border-radius:4px;font-size:11px;text-align:right"
+                                                    oninput="_prSaveCarryFwd('${pr.prID}', this.value)"/>
+                                               </div>`
+                                        }
+                                    </td>
                                     <td style="padding:6px;border:1px solid #ede9fe;text-align:right">—</td>
                                     <td style="padding:6px;border:1px solid #ede9fe;text-align:right">—</td>
-                                    <td style="padding:6px;border:1px solid #ede9fe;color:#9ca3af">${carriedFwd.fromPrID ? 'Carried from previous request closing balance' : 'Opening balance (no prior request)'}</td>
+                                    <td style="padding:6px;border:1px solid #ede9fe;color:#9ca3af">
+                                        ${carriedFwd.fromPrID
+                                            ? 'Carried from previous request closing balance'
+                                            : '<span style="color:#7c3aed;font-size:10px">✏️ Enter the carried-forward balance from the last payment request made outside the app (e.g. PR2627006 closing balance)</span>'}
+                                    </td>
                                 </tr>
                                 <tr>
                                     <td style="padding:6px;border:1px solid #ede9fe">${pr.prID} — ${pr.periodLabel||pr.reason||''}</td>
@@ -32897,7 +32938,22 @@ Automated WFH alert — ${company} Attendance System.`;
                                     <td style="padding:6px;border:1px solid #ede9fe;text-align:right;color:#b45309">${fmt(totalDisbursed)}</td>
                                     <td style="padding:6px;border:1px solid #ede9fe;text-align:right">${fmt(closingBalance)}</td>
                                     <td style="padding:6px;border:1px solid #ede9fe">
-                                        ${recon.length ? recon.map(r => `<div style="margin-bottom:2px">${(r.remark||'').replace(/</g,'&lt;')}${r.remark && (r.fundReceived||r.fundDisbursed) ? ' <span style="color:#9ca3af">('+(r.fundReceived?'+'+fmt(r.fundReceived):'')+(r.fundDisbursed?' -'+fmt(r.fundDisbursed):'')+')</span>':''}</div>`).join('') : '<span style="color:#9ca3af">No entries yet</span>'}
+                                        ${recon.length ? recon.map((r,ri) => `
+                                        <div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:4px;padding-bottom:4px;border-bottom:1px dashed #ede9fe">
+                                            <div style="flex:1;font-size:11px">
+                                                <span>${(r.remark||'').replace(/</g,'&lt;')}</span>
+                                                ${(r.fundReceived||r.fundDisbursed) ? `<span style="color:#9ca3af;font-size:10px;margin-left:4px">(${r.fundReceived?'+'+fmt(r.fundReceived):''}${r.fundDisbursed?' −'+fmt(r.fundDisbursed):''})</span>` : ''}
+                                                <span style="color:#c4b5fd;font-size:9px;margin-left:4px">${(r.date||'').substring(0,10)}${r.by?' · '+r.by:''}</span>
+                                            </div>
+                                            <div style="display:flex;gap:4px;flex-shrink:0">
+                                                <button onclick="_prEditReconciliation('${pr.prID}',${ri})"
+                                                    style="padding:2px 6px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:4px;color:#2563eb;cursor:pointer;font-size:10px;white-space:nowrap"
+                                                    title="Edit this entry">✏️ Edit</button>
+                                                <button onclick="_prDeleteReconciliation('${pr.prID}',${ri})"
+                                                    style="padding:2px 6px;background:#fff7f7;border:1px solid #fca5a5;border-radius:4px;color:#dc2626;cursor:pointer;font-size:10px;white-space:nowrap"
+                                                    title="Delete this entry">✕ Del</button>
+                                            </div>
+                                        </div>`).join('') : '<span style="color:#9ca3af;font-size:11px">No entries yet — use "+ Add Line" below</span>'}
                                     </td>
                                 </tr>
                                 <tr style="background:#faf5ff;font-weight:700">
@@ -32929,30 +32985,6 @@ Automated WFH alert — ${company} Attendance System.`;
                                 <button onclick="_prAddReconciliation('${pr.prID}')" style="padding:6px 14px;background:#6d28d9;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">+ Add Line</button>
                             </div>
                         </div>
-
-                        ${recon.length ? `
-                        <details style="margin-top:8px">
-                            <summary style="font-size:10px;color:#7c3aed;cursor:pointer">View entry log (${recon.length})</summary>
-                            <table style="width:100%;font-size:10px;border-collapse:collapse;margin-top:6px">
-                                <thead><tr style="color:#6b7280;text-align:left">
-                                    <th style="padding:3px">Date</th><th style="padding:3px">Received</th><th style="padding:3px">Disbursed</th><th style="padding:3px">Remark</th><th style="padding:3px">By</th><th></th>
-                                </tr></thead>
-                                <tbody>
-                                    ${recon.map((r,ri) => `
-                                    <tr style="border-top:1px solid #ede9fe">
-                                        <td style="padding:3px">${(r.date||'').substring(0,10)}</td>
-                                        <td style="padding:3px;color:#15803d">${r.fundReceived?fmt(r.fundReceived):'—'}</td>
-                                        <td style="padding:3px;color:#b45309">${r.fundDisbursed?fmt(r.fundDisbursed):'—'}</td>
-                                        <td style="padding:3px">${(r.remark||'').replace(/</g,'&lt;')}</td>
-                                        <td style="padding:3px;color:#9ca3af">${r.by||''}</td>
-                                        <td style="padding:3px;white-space:nowrap">
-                                            <button onclick="_prEditReconciliation('${pr.prID}',${ri})" style="color:#2563eb;background:none;border:none;cursor:pointer;font-size:10px;margin-right:4px" title="Edit this entry">✏️</button>
-                                            <button onclick="_prDeleteReconciliation('${pr.prID}',${ri})" style="color:#dc2626;background:none;border:none;cursor:pointer;font-size:10px" title="Delete this entry">✕</button>
-                                        </td>
-                                    </tr>`).join('')}
-                                </tbody>
-                            </table>
-                        </details>` : ''}
                     </div>`; })() : ''}
 
                     ${(pr.salaryGaps && pr.salaryGaps.length > 0) ? `
@@ -33746,7 +33778,10 @@ Automated WFH alert — ${company} Attendance System.`;
                 doc.setFontSize(10); doc.setTextColor(91, 33, 182); doc.setFont(undefined, 'bold');
                 doc.text('ACCOUNT BALANCE RECONCILIATION', ML, y); y += 4;
 
-                const carriedFwd = _prGetCarriedForward(pr.prID);
+                const autoCarryFwd = _prGetCarriedForward(pr.prID);
+                const carriedFwd = autoCarryFwd.fromPrID
+                    ? autoCarryFwd
+                    : { amount: parseFloat(pr.carriedForwardAmt)||0, fromPrID: '' };
                 const totalReceived  = recon.reduce((s,r)=>s+(parseFloat(r.fundReceived)||0),0);
                 const totalDisbursed = recon.reduce((s,r)=>s+(parseFloat(r.fundDisbursed)||0),0);
                 const closingBalance = +(carriedFwd.amount + totalReceived - totalDisbursed).toFixed(2);
