@@ -2373,10 +2373,14 @@
         const s = (staffList||[]).find(x => x.staffID === sid);
         const bd = s?.bankDetails || {};
         const box = document.getElementById('frBankPreview');
-        if (bd.accountNumber && bd.ifsc) {
+        if (bd.accountNumber) {
+            // Show whatever bank details exist — IFSC may be missing
             box.style.display = 'block';
-            box.innerHTML = `🏦 <b>Disbursement will go to:</b> ${bd.bankName||'(bank)'}${bd.branch?' · '+bd.branch:''}<br>` +
-                            `<span style="font-family:monospace">A/c: ****${String(bd.accountNumber).slice(-4)} · IFSC: ${bd.ifsc}</span>`;
+            box.style.background = bd.ifsc ? '#f0fdf4' : '#fffbeb';
+            box.style.borderColor = bd.ifsc ? '#86efac' : '#fde68a';
+            box.style.color = bd.ifsc ? '#15803d' : '#92400e';
+            box.innerHTML = `🏦 <b>Disbursement account on file:</b> ${bd.bankName||'(bank)'}${bd.branch?' · '+bd.branch:''}<br>` +
+                            `<span style="font-family:monospace">A/c: ****${String(bd.accountNumber).slice(-4)}${bd.ifsc?' · IFSC: '+bd.ifsc:' <span style="color:#dc2626">· IFSC missing — office must update before disbursement</span>'}</span>`;
         } else {
             box.style.display = 'block';
             box.style.background = '#fef2f2';
