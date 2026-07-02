@@ -8694,10 +8694,12 @@
                                <option value="Paid">Paid</option>`}
                            </select>
                            <button onclick='editTransaction(${tJson})' class="text-indigo-600 hover:text-indigo-800 mr-1 text-xs font-medium" title="Edit (admin override)">Edit</button>
+                           ${t.txnCategory === 'INVOICE' ? `<button onclick="openInvoicePaymentsModal('${t.txnID}')" class="text-indigo-600 hover:text-indigo-800 text-xs font-medium mr-1" title="Edit payment records">💳 Payments</button>` : ''}
                            <button onclick="duplicateTransaction('${t.txnID}')" class="text-teal-600 hover:text-teal-800 text-xs font-medium mr-1" title="Create a new transaction as a copy of this one">📋 Copy</button>
                            <button onclick='requestUnlockDelete(${tJson})' class="text-orange-500 hover:text-red-700 text-xs font-medium" title="Delete with Admin PIN">🔓 Del</button>`
                             : /* Locked + Settings says no override — show lock indicator + Copy only (safe action) */ `
                            <span class="text-xs text-gray-500 italic mr-1" title="Record is finalised (${t.status}) — Edit/Delete locked. Enable 'Allow Finalised Transaction Override' in Settings to unlock.">🔒 ${t.status}</span>
+                           ${t.txnCategory === 'INVOICE' ? `<button onclick="openInvoicePaymentsModal('${t.txnID}')" class="text-indigo-600 hover:text-indigo-800 text-xs font-medium mr-1" title="${(t.paymentsReceived||[]).length===0?'⚠ No payment date recorded — click to add':'Edit payment records'}">💳 ${(t.paymentsReceived||[]).length===0?'<span style=color:#dc2626>Add Payment</span>':'Payments'}</button>` : ''}
                            <button onclick="duplicateTransaction('${t.txnID}')" class="text-teal-600 hover:text-teal-800 text-xs font-medium" title="Create a new transaction as a copy of this one">📋 Copy</button>`)
                         : `${t.txnCategory === 'PROFORMA_INVOICE' && t.status === 'Approved' && !t.convertedToInvoice
                             ? `<button onclick='convertToInvoice(${tJson})' class="text-green-700 hover:text-green-900 mr-2 text-xs font-bold bg-green-50 px-2 py-1 rounded border border-green-300" title="Convert to Final Invoice">✓ Convert to Invoice</button>`
@@ -8714,6 +8716,124 @@
                     }
                 </td>
             </tr>`;
+        }
+
+        // ── Edit Payment Records on a Locked (Paid) Invoice ─────────────
+        // Allows adding/editing the paymentsReceived array even when the invoice
+        // is locked (Paid status). This is specifically for cases where the invoice
+        // was marked Paid but the payment date was accidentally skipped.
+        function openInvoicePaymentsModal(txnID) {
+            const txn = (transactions||[]).find(t => t.txnID === txnID);
+            if (!txn) return;
+            const tot = calculateTotals(txn.items||[]);
+            const grandTotal = parseFloat(tot.total)||0;
+            const tdsFromClient = parseFloat(txn.tdsFromClient)||0;
+            const netExpected = +(grandTotal - tdsFromClient).toFixed(2);
+            const fmt = n => '₹'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
+            const payments = txn.paymentsReceived||[];
+            const totalReceived = payments.reduce((s,p)=>s+(parseFloat(p.amount)||0),0);
+
+            const modal = document.createElement('div');
+            modal.id = 'invPayModal'; modal.className = 'modal show';
+            modal.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-xl m-4 max-h-[90vh] overflow-y-auto">
+                <div class="bg-gradient-to-r from-indigo-600 to-purple-600 p-5 text-white flex justify-between items-center">
+                    <div>
+                        <h3 class="text-base font-bold">💳 Payment Records — ${txnID}</h3>
+                        <p class="text-xs opacity-80">${txn.partyName} · Invoice total: ${fmt(grandTotal)}${tdsFromClient>0?' (TDS: '+fmt(tdsFromClient)+')':''}</p>
+                    </div>
+                    <button onclick="document.getElementById('invPayModal').remove()" class="text-white text-2xl font-bold">✕</button>
+                </div>
+                <div class="p-5 space-y-4">
+                    ${payments.length===0 ? `
+                    <div class="bg-amber-50 border border-amber-300 rounded-xl p-3 text-xs text-amber-800">
+                        ⚠ <strong>No payment date was recorded</strong> when this invoice was marked Paid. Add the payment details below — this is needed for the Tax tab to attribute GST/TDS to the correct month, and to clear it from the AR Dashboard.
+                    </div>` : ''}
+
+                    <!-- Existing payments -->
+                    <div id="invPayList">
+                        ${payments.map((p,pi)=>`
+                        <div class="border border-gray-200 rounded-xl p-3 flex justify-between items-start">
+                            <div class="text-sm">
+                                <div class="font-semibold">${fmt(p.amount)} · ${p.date||'No date'}</div>
+                                <div class="text-xs text-gray-500">${p.mode||'—'} ${p.refNo?'· Ref: '+p.refNo:''}</div>
+                                <div class="text-xs text-gray-400">${p.remarks||''}</div>
+                            </div>
+                            <button onclick="_deleteInvPayment('${txnID}',${pi})" class="text-red-400 hover:text-red-600 text-xs ml-2">✕</button>
+                        </div>`).join('')}
+                    </div>
+
+                    <!-- Add payment -->
+                    <div class="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                        <p class="text-xs font-bold text-blue-700 uppercase mb-3">+ Add Payment</p>
+                        <div class="grid grid-cols-2 gap-3 mb-3">
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Payment Date *</label>
+                                <input type="date" id="invPayDate" class="w-full px-3 py-2 border rounded-lg text-sm" value="${txn.txnDate||''}"/>
+                            </div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Amount Received (₹) *</label>
+                                <input type="number" id="invPayAmt" step="0.01" value="${netExpected}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3 mb-3">
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Payment Mode</label>
+                                <select id="invPayMode" class="w-full px-3 py-2 border rounded-lg text-sm">
+                                    <option>Bank Transfer (NEFT/RTGS/IMPS)</option>
+                                    <option>Cheque</option><option>Cash</option><option>UPI</option><option>Other</option>
+                                </select>
+                            </div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Reference / UTR No.</label>
+                                <input type="text" id="invPayRef" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="UTR / Cheque No."/>
+                            </div>
+                        </div>
+                        <div><label class="block text-xs font-semibold text-gray-600 mb-1">Remarks</label>
+                            <input type="text" id="invPayRemark" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="e.g. TDS deducted by client, balance received"/>
+                        </div>
+                    </div>
+
+                    <div class="bg-gray-50 rounded-xl p-3 text-xs text-gray-600">
+                        Invoice total: <strong>${fmt(grandTotal)}</strong> · 
+                        Recorded: <strong class="${totalReceived>0?'text-green-600':'text-red-600'}">${fmt(totalReceived)}</strong> · 
+                        Outstanding: <strong class="${(grandTotal-totalReceived)>0.01?'text-red-600':'text-green-600'}">${fmt(Math.max(0,grandTotal-totalReceived))}</strong>
+                    </div>
+
+                    <div class="flex justify-end gap-3">
+                        <button onclick="document.getElementById('invPayModal').remove()" class="px-4 py-2 border border-gray-300 text-gray-600 rounded-lg text-sm">Cancel</button>
+                        <button onclick="_addInvPayment('${txnID}')" class="px-5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700">+ Save Payment</button>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+        }
+
+        async function _addInvPayment(txnID) {
+            const txn = (transactions||[]).find(t => t.txnID === txnID);
+            if (!txn) return;
+            const date   = document.getElementById('invPayDate')?.value;
+            const amount = parseFloat(document.getElementById('invPayAmt')?.value)||0;
+            const mode   = document.getElementById('invPayMode')?.value;
+            const refNo  = document.getElementById('invPayRef')?.value.trim();
+            const remarks= document.getElementById('invPayRemark')?.value.trim();
+            if (!date || !amount) { alert('Please enter payment date and amount.'); return; }
+            txn.paymentsReceived = txn.paymentsReceived || [];
+            txn.paymentsReceived.push({ date, amount, mode, refNo, remarks });
+            try {
+                await saveData('transactions', transactions);
+                document.getElementById('invPayModal').remove();
+                renderView();
+                _showToast('✓ Payment recorded for '+txnID+' — AR Dashboard updated', '#15803d', 4000);
+            } catch(err) { alert('Save failed: '+err.message); }
+        }
+
+        async function _deleteInvPayment(txnID, idx) {
+            if (!confirm('Remove this payment record?')) return;
+            const txn = (transactions||[]).find(t => t.txnID === txnID);
+            if (!txn?.paymentsReceived) return;
+            txn.paymentsReceived.splice(idx, 1);
+            try {
+                await saveData('transactions', transactions);
+                document.getElementById('invPayModal').remove();
+                renderView();
+            } catch(err) { alert('Save failed: '+err.message); }
         }
 
         async function changeLockedTxnStatus(txnID, newStatus) {
