@@ -13228,21 +13228,23 @@
                 doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
                     styles:{fontSize:8,cellPadding:2.5},
                     headStyles:{fillColor:[185,28,28],textColor:[255,255,255],fontStyle:'bold'},
-                    head:[['Old Code','New ITA-2025','Description','Entries','TDS Amount']],
+                    head:[['Section Code','Description','Entries','TDS Amount']],
                     body:_orderedSections.map(sec => {
                         const items  = _pdfBySection[sec];
                         const subTot = items.reduce((s,e) => s+(parseFloat(e.tdsAmt)||0), 0);
                         const meta   = TDS_SECTIONS.find(s => s.oldCode === sec);
+                        const secLabel = meta
+                            ? (meta.newCode + (meta.tracesCode ? '-' + meta.tracesCode : ''))
+                            : sec;
                         return [
-                            {content:sec, styles:{fontStyle:'bold'}},
-                            {content:meta?.newCode||'—', styles:{fontSize:7}},
+                            {content:secLabel, styles:{fontStyle:'bold'}},
                             meta?(meta.description||sec):'(unspecified)',
                             {content:String(items.length), styles:{halign:'center'}},
                             {content:INR(subTot), styles:{halign:'right',fontStyle:'bold',textColor:[185,28,28]}}
                         ];
                     }),
-                    foot:[[{content:'TOTAL',colSpan:4,styles:{fontStyle:'bold',halign:'right'}},{content:INR(d.totalTDSDeducted),styles:{fontStyle:'bold',halign:'right',textColor:[185,28,28]}}]],
-                    columnStyles:{0:{cellWidth:22},1:{cellWidth:28},2:{cellWidth:CW-22-28-22-32},3:{cellWidth:22,halign:'center'},4:{cellWidth:32,halign:'right'}}
+                    foot:[[{content:'TOTAL',colSpan:3,styles:{fontStyle:'bold',halign:'right'}},{content:INR(d.totalTDSDeducted),styles:{fontStyle:'bold',halign:'right',textColor:[185,28,28]}}]],
+                    columnStyles:{0:{cellWidth:32},1:{cellWidth:CW-32-22-32},2:{cellWidth:22,halign:'center'},3:{cellWidth:32,halign:'right'}}
                 });
                 y = doc.lastAutoTable.finalY+4;
                 if (y>240) {doc.addPage(); y=15;}
@@ -13258,12 +13260,19 @@
                 doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
                     styles:{fontSize:7,cellPadding:2},
                     headStyles:{fillColor:[239,68,68],textColor:[255,255,255],fontStyle:'bold'},
-                    head:[['Date','Section','TRACES','Vendor','Description','PAN','Bill No','Taxable','TDS%','TDS Amt','Status']],
+                    head:[['Date','Section','Vendor','Description','PAN','Bill No','Taxable','TDS%','TDS Amt','Status']],
                     body:d.tdsExpenses.map(e=>{
                         const pan=(e.vendorPAN||'').trim()||((e.vendorGSTIN&&e.vendorGSTIN.length>=12)?e.vendorGSTIN.substring(2,12):'')||'—';
+                        // Section column: newCode-tracesCode format (e.g. "393(1)-1023", "392-1002")
+                        // Falls back to old code (194C etc.) for legacy records without new codes
+                        const meta = TDS_SECTIONS.find(s => s.id === e.tdsSectionID) ||
+                                     TDS_SECTIONS.find(s => s.oldCode === e.tdsSection && s.tracesCode === e.tdsTracesCode) ||
+                                     TDS_SECTIONS.find(s => s.oldCode === e.tdsSection);
+                        const sectionLabel = meta
+                            ? (meta.newCode + (meta.tracesCode ? '-' + meta.tracesCode : ''))
+                            : (e.tdsSection || '—');
                         return [e.billDate||'—',
-                            {content:e.tdsSection||'—',styles:{fontStyle:'bold'}},
-                            {content:e.tdsTracesCode||'—',styles:{halign:'center'}},
+                            {content:sectionLabel,styles:{fontStyle:'bold',fontSize:7.5}},
                             e.companyName||e.staffName||e.vendor||'—',
                             {content:e.description||'—',styles:{fontSize:6.5}},
                             {content:pan,styles:{halign:'center',fontSize:6.5}},
@@ -13274,8 +13283,8 @@
                             {content:e.tdsPaid?'Paid':'Pending',styles:{halign:'center',textColor:e.tdsPaid?[21,128,61]:[220,38,38]}}
                         ];
                     }),
-                    foot:[[{content:'TOTAL',colSpan:9,styles:{fontStyle:'bold',halign:'right'}},{content:INR(d.totalTDSDeducted),styles:{fontStyle:'bold',halign:'right',textColor:[185,28,28]}},'']],
-                    columnStyles:{0:{cellWidth:16},1:{cellWidth:14},2:{cellWidth:12},3:{cellWidth:24},4:{cellWidth:28},5:{cellWidth:20},6:{cellWidth:16},7:{cellWidth:18,halign:'right'},8:{cellWidth:10},9:{cellWidth:20},10:{cellWidth:16}}
+                    foot:[[{content:'TOTAL',colSpan:8,styles:{fontStyle:'bold',halign:'right'}},{content:INR(d.totalTDSDeducted),styles:{fontStyle:'bold',halign:'right',textColor:[185,28,28]}},'']],
+                    columnStyles:{0:{cellWidth:16},1:{cellWidth:20},2:{cellWidth:26},3:{cellWidth:28},4:{cellWidth:20},5:{cellWidth:16},6:{cellWidth:18,halign:'right'},7:{cellWidth:10},8:{cellWidth:20},9:{cellWidth:16}}
                 });
             } else {
                 if (y>250) {doc.addPage(); y=15;}
