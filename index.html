@@ -2235,12 +2235,12 @@
             INTERNET:      '🌐 Internet',
             INSURANCE:     '🛡 Insurance',
             FUEL:          '⛽ Fuel',
-            MATERIAL:      '📦 Material',
-            SERVICE:       '🔨 Service',
+            MATERIAL:      '📦 Material — Supplier/Subcontractor',
+            SERVICE:       '🔨 Service — Supplier/Subcontractor',
             STATIONERY:    '✏️ Stationery',
             TRAVEL:        '✈️ Travel',
             PROFESSIONAL:  '👔 Professional',
-            CONTRACTOR:    '🛠 Contractor'
+            CONTRACTOR:    '🛠 Contractor — Supplier/Subcontractor'
         };
         // Get label for any billType (falls back to the raw type or "Other")
         function _prBillTypeLabel(bt) {
@@ -2900,13 +2900,15 @@
             // Wage structure summary
             const sC={Wage:'#1d4ed8',Allowance:'#0e7490',Threshold:'#15803d',Deduct:'#dc2626',OT:'#7c3aed'};
             const sB={Wage:'transparent',Allowance:'#ecfeff',Threshold:'#f0fdf4',Deduct:'#fff5f5',OT:'#f5f3ff'};
-            // Attendance grid
+            // Attendance grid — VIEW ONLY in payslip tab (cannot edit from here;
+            // edit attendance via the Attendance tab to prevent accidental changes
+            // while scrolling through the payslip calculation)
             const grid=dates.map((date,idx)=>{const t=s.att[idx],tp=ATT_TYPES[t]||ATT_TYPES[''],isWE=date.getDay()===0||date.getDay()===6,bg=t?tp.bg:isWE?'#f3f4f6':'#fff',bord=t?tp.color+'88':isWE?'#d1d5db':'#e5e7eb',dayN=date.toLocaleDateString('en-IN',{day:'2-digit'}),dayW=date.toLocaleDateString('en-IN',{weekday:'narrow'});const otH=s.otHours?.[idx]||0;const isEngaged=ENGAGED_TYPES.includes(t);
             return `<div class="att-day-cell">
-                <button class="att-day-btn" onclick="cycleAttDay(${idx})" style="background:${bg};border-color:${bord}">
+                <div class="att-day-btn" style="background:${bg};border-color:${bord};cursor:default;pointer-events:none">
                     <div style="font-size:10px;color:#9ca3af;line-height:1">${dayN}<span style="opacity:.7">${dayW}</span></div>
                     <div style="font-size:11px;font-weight:${t?700:400};color:${t?tp.text:'#9ca3af'};margin-top:2px;line-height:1">${t?tp.short:'—'}</div>
-                </button>
+                </div>
                 ${isEngaged
                     ? `<input type="number" min="0" max="16" step="0.5" value="${otH||''}" placeholder="OT h"
                         title="OT hours beyond 22:00 on this ${t} day ${dayN}"
@@ -3040,7 +3042,7 @@
             <!-- Attendance grid -->
             <div class="bg-white border border-gray-200 rounded-xl p-4 mb-3">
                 <div class="flex justify-between items-center mb-3 flex-wrap gap-2">
-                    <div class="text-sm font-semibold text-gray-700">Attendance (click to cycle)</div>
+                    <div class="text-sm font-semibold text-gray-700">Attendance <span class="text-xs font-normal text-gray-400">(view only — edit in Attendance tab)</span></div>
                     <div class="flex gap-2">
                         <button onclick="fillAttDays('Working')" style="font-size:11px;padding:3px 8px;color:#14532d;background:#dcfce7;border:1px solid #15803d44;border-radius:6px">All Working</button>
                         <button onclick="fillAttDays('StandBy')" style="font-size:11px;padding:3px 8px;color:#78350f;background:#fef3c7;border:1px solid #b4530944;border-radius:6px">All StandBy</button>
@@ -32778,7 +32780,7 @@ Automated WFH alert — ${company} Attendance System.`;
                                     <th class="px-4 py-2 text-left">Period / Reason</th>
                                     <th class="px-4 py-2 text-left">Disbursement Date</th>
                                     <th class="px-4 py-2 text-center">Items</th>
-                                    <th class="px-4 py-2 text-right">Generated</th>
+                                    <th class="px-4 py-2 text-right">Net Required</th>
                                     <th class="px-4 py-2 text-right">Approved</th>
                                     <th class="px-4 py-2 text-right">Paid</th>
                                     <th class="px-4 py-2 text-center">Status</th>
@@ -32805,7 +32807,14 @@ Automated WFH alert — ${company} Attendance System.`;
                                     <td class="px-4 py-3 text-sm">${periodOrReason}</td>
                                     <td class="px-4 py-3 text-sm text-gray-600">${r.disbursementDate}</td>
                                     <td class="px-4 py-3 text-sm text-center">${(r.items||[]).length}</td>
-                                    <td class="px-4 py-3 text-sm text-right">${fmt(r.totalGenerated)}</td>
+                                    <td class="px-4 py-3 text-sm text-right">${(() => {
+                                        // Show live Net Funds Required = sum of items − available bank balance
+                                        // This is always accurate even if the stored totalGenerated is stale.
+                                        const liveTotal = (r.items||[]).reduce((s,it)=>s+(parseFloat(it.amount)||0),0);
+                                        const avail = parseFloat(r.availableForPayment) || Math.max(0,(parseFloat(r.bankBalance)||0)-(parseFloat(r.minBalance)||10000));
+                                        const net = avail > 0 ? Math.max(0, liveTotal - avail) : liveTotal;
+                                        return `<span title="Live: Items ${fmt(liveTotal)}${avail>0?' less bank balance '+fmt(avail):''}">${fmt(net)}</span>`;
+                                    })()}</td>
                                     <td class="px-4 py-3 text-sm text-right ${r.totalApproved > 0 ? 'font-bold text-blue-700' : 'text-gray-400'}">${fmt(r.totalApproved||0)}</td>
                                     <td class="px-4 py-3 text-sm text-right ${r.totalPaid > 0 ? 'font-bold text-green-700' : 'text-gray-400'}">${fmt(r.totalPaid||0)}</td>
                                     <td class="px-4 py-3 text-center">
@@ -34139,23 +34148,28 @@ Automated WFH alert — ${company} Attendance System.`;
             const netFundsRequired = Math.max(0, liveItemTotal - availableForPayment);
             if (isDraftPDF) {
                 doc.setFillColor(254, 243, 199);
-                doc.rect(ML, y, CW, availableForPayment > 0 ? 28 : 18, 'F');
+                doc.rect(ML, y, CW, availableForPayment > 0 ? 36 : 20, 'F');
                 doc.setTextColor(146, 64, 14); doc.setFontSize(10); doc.setFont(undefined, 'bold');
                 doc.text('DRAFT — PENDING APPROVAL', ML + 4, y + 5);
-                doc.setFontSize(9); doc.setFont(undefined, 'normal'); doc.setTextColor(120, 80, 30);
+                doc.setFontSize(8.5); doc.setFont(undefined, 'normal'); doc.setTextColor(120, 80, 30);
                 doc.text('No transfer is authorised by this document. For management review only.', ML + 4, y + 10);
-                doc.setFont(undefined, 'bold'); doc.setTextColor(146, 64, 14); doc.setFontSize(11);
-                doc.text('Total Bills + Director:', ML + 4, y + 16);
-                doc.setFontSize(13); doc.text('Rs.' + fmt(liveItemTotal), ML + 55, y + 16);
+                // Row 1: Total Bills + Director (normal size, same line)
+                doc.setFontSize(9); doc.setFont(undefined, 'normal'); doc.setTextColor(146, 64, 14);
+                doc.text('Total Bills + Director:', ML + 4, y + 17);
+                doc.setFont(undefined, 'bold');
+                doc.text('Rs.' + fmt(liveItemTotal), ML + 50, y + 17);
                 if (availableForPayment > 0) {
-                    doc.setFontSize(10); doc.setFont(undefined, 'normal');
-                    doc.text('Less: Available Bank Balance:', ML + 4, y + 23);
+                    // Row 2: Less: Available Bank Balance (normal size, same line)
+                    doc.setFontSize(9); doc.setFont(undefined, 'normal');
+                    doc.text('Less: Available Bank Balance:', ML + 4, y + 24);
                     doc.setFont(undefined, 'bold');
-                    doc.text('Rs.' + fmt(availableForPayment), ML + 62, y + 23);
-                    doc.text('  =>  Net Funds Required: Rs.' + fmt(netFundsRequired), ML + 80, y + 23);
-                    y += 33;
+                    doc.text('Rs.' + fmt(availableForPayment), ML + 58, y + 24);
+                    // Row 3: Net Funds Required — larger, prominent, on its own line
+                    doc.setFontSize(12); doc.setFont(undefined, 'bold'); doc.setTextColor(127, 29, 29);
+                    doc.text('Net Funds Required: Rs.' + fmt(netFundsRequired), ML + 4, y + 33);
+                    y += 41;
                 } else {
-                    y += 23;
+                    y += 24;
                 }
             } else {
                 doc.setFillColor(247, 232, 254);
@@ -34179,51 +34193,15 @@ Automated WFH alert — ${company} Attendance System.`;
                 y += 33;
             }
 
-            // Category-wise summary — strip emoji from labels (jsPDF can't render them)
+            // Category-wise setup — strip emoji from labels (jsPDF can't render them)
             const _pdfCatLabel = cat => (PR_CATEGORY_LABEL[cat] || cat).replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27FF}]/gu, '').trim();
-            doc.setFontSize(11); doc.setTextColor(13, 78, 99); doc.setFont(undefined, 'bold');
-            doc.text(sectionHeader, ML, y); y += 4;
             const byCat = {};
             (pr.items || []).filter(includeItem).forEach(it => {
                 (byCat[it.category] = byCat[it.category] || []).push(it);
             });
-            const summaryBody = PR_CATEGORIES.map(cat => {
-                const items = byCat[cat] || [];
-                if (items.length === 0) return null;
-                const sub = items.reduce((s, it) => s + (parseFloat(it.amount) || 0), 0);
-                return [
-                    _pdfCatLabel(cat),
-                    { content: String(items.length), styles: { halign: 'center' } },
-                    { content: 'Rs.' + fmt(sub), styles: { halign: 'right', fontStyle: 'bold' } }
-                ];
-            }).filter(Boolean);
 
-            // Add bank balance offset row if available
-            if (availableForPayment > 0) {
-                summaryBody.push([
-                    { content: 'Less: Available Bank Balance (for payment)', styles: { fontStyle: 'italic', textColor: [21,128,61] } },
-                    { content: '', styles: { halign: 'center' } },
-                    { content: '(Rs.' + fmt(availableForPayment) + ')', styles: { halign: 'right', fontStyle: 'bold', textColor: [21,128,61] } }
-                ]);
-            }
-
-            doc.autoTable({
-                startY: y, margin: { left: ML, right: MR }, theme: 'grid',
-                styles: { fontSize: 9, cellPadding: 2.5 },
-                headStyles: { fillColor: [13, 78, 99], textColor: [255, 255, 255], fontStyle: 'bold' },
-                head: [['Category', 'Items', itemCountLabel]],
-                body: summaryBody,
-                foot: [[
-                    { content: availableForPayment > 0 ? 'NET FUNDS REQUIRED' : 'GRAND TOTAL', styles: { fontStyle: 'bold' } },
-                    { content: String((pr.items||[]).filter(includeItem).length), styles: { halign: 'center', fontStyle: 'bold' } },
-                    { content: 'Rs.' + fmt(availableForPayment > 0 ? Math.max(0, liveItemTotal - availableForPayment) : liveItemTotal),
-                      styles: { halign: 'right', fontStyle: 'bold', textColor: isDraftPDF ? [180, 83, 9] : [107, 33, 168] } }
-                ]],
-                columnStyles: { 0: { cellWidth: 110 }, 1: { cellWidth: 28, halign: 'center' }, 2: { cellWidth: 44, halign: 'right' } }
-            });
-            y = doc.lastAutoTable.finalY + 6;
-
-            // Detailed items per category (new page if needed)
+            // ── ORDER: Detailed items first, then summary, then bank balance ──
+            // Detailed items per category
             PR_CATEGORIES.forEach(cat => {
                 let items = byCat[cat] || [];
                 if (items.length === 0) return;
@@ -34268,7 +34246,8 @@ Automated WFH alert — ${company} Attendance System.`;
                         : [['#', 'Description', 'Payee', 'Due', 'Amount']],
                     body: items.map((it, i) => cat === 'BILLS' ? [
                         i + 1,
-                        { content: _prBillTypeLabel(it.billType).replace(/^[^a-zA-Z]+/,'').trim(), styles: { fontSize: 7 } },
+                        // Issue 5: Type column shows full label e.g. "Supplier/Subcontractor"
+                        { content: _prBillTypeLabel(it.billType||'').replace(/^[^a-zA-Z]+/,'').trim() || it.billType || '—', styles: { fontSize: 7 } },
                         it.description || '',
                         it.payee || '',
                         it.dueDate || '—',
@@ -34287,6 +34266,44 @@ Automated WFH alert — ${company} Attendance System.`;
                 y = doc.lastAutoTable.finalY + 4;
             });
 
+            // Issue 4: Proposed Items summary table — appears AFTER detailed Bills & Director tables
+            if (y > 240) { doc.addPage(); y = 15; }
+            y += 4;
+            doc.setFontSize(11); doc.setTextColor(13, 78, 99); doc.setFont(undefined, 'bold');
+            doc.text(sectionHeader, ML, y); y += 4;
+            const summaryBody = PR_CATEGORIES.map(cat => {
+                const items = byCat[cat] || [];
+                if (items.length === 0) return null;
+                const sub = items.reduce((s, it) => s + (parseFloat(it.amount) || 0), 0);
+                return [
+                    _pdfCatLabel(cat),
+                    { content: String(items.length), styles: { halign: 'center' } },
+                    { content: 'Rs.' + fmt(sub), styles: { halign: 'right', fontStyle: 'bold' } }
+                ];
+            }).filter(Boolean);
+            if (availableForPayment > 0) {
+                summaryBody.push([
+                    { content: 'Less: Balance Available for Payment', styles: { fontStyle: 'italic', textColor: [21,128,61] } },
+                    { content: '', styles: { halign: 'center' } },
+                    { content: '(Rs.' + fmt(availableForPayment) + ')', styles: { halign: 'right', fontStyle: 'bold', textColor: [21,128,61] } }
+                ]);
+            }
+            doc.autoTable({
+                startY: y, margin: { left: ML, right: MR }, theme: 'grid',
+                styles: { fontSize: 9, cellPadding: 2.5 },
+                headStyles: { fillColor: [13, 78, 99], textColor: [255, 255, 255], fontStyle: 'bold' },
+                head: [['Category', 'Items', itemCountLabel]],
+                body: summaryBody,
+                foot: [[
+                    { content: availableForPayment > 0 ? 'NET FUNDS REQUIRED' : 'GRAND TOTAL', styles: { fontStyle: 'bold' } },
+                    { content: String((pr.items||[]).filter(includeItem).length), styles: { halign: 'center', fontStyle: 'bold' } },
+                    { content: 'Rs.' + fmt(availableForPayment > 0 ? Math.max(0, liveItemTotal - availableForPayment) : liveItemTotal),
+                      styles: { halign: 'right', fontStyle: 'bold', textColor: isDraftPDF ? [180, 83, 9] : [107, 33, 168] } }
+                ]],
+                columnStyles: { 0: { cellWidth: 110 }, 1: { cellWidth: 28, halign: 'center' }, 2: { cellWidth: 44, halign: 'right' } }
+            });
+            y = doc.lastAutoTable.finalY + 6;
+
             // ── Bank Balance Summary (if captured at request time) ──
             const hasBankBalance = pr.bankBalance > 0 || pr.carriedForwardAmt > 0;
             if (hasBankBalance) {
@@ -34297,7 +34314,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 if (pr.bankBalance > 0) {
                     bankRows.push(['Available Balance on Account', {content:'Rs.'+fmt(pr.bankBalance),styles:{halign:'right'}}]);
                     bankRows.push(['Minimum Balance to Maintain',  {content:'Rs.'+fmt(pr.minBalance||10000),styles:{halign:'right'}}]);
-                    bankRows.push(['Available for Payment',        {content:'Rs.'+fmt(pr.availableForPayment||Math.max(0,pr.bankBalance-(pr.minBalance||10000))),styles:{halign:'right',fontStyle:'bold',textColor:[29,78,216]}}]);
+                    bankRows.push(['Balance Available for Payment', {content:'Rs.'+fmt(pr.availableForPayment||Math.max(0,pr.bankBalance-(pr.minBalance||10000))),styles:{halign:'right',fontStyle:'bold',textColor:[29,78,216]}}]);
                 }
                 if (pr.carriedForwardAmt > 0) {
                     bankRows.push(['Carried Forward from Previous PR (entered manually)', {content:'Rs.'+fmt(pr.carriedForwardAmt),styles:{halign:'right',fontStyle:'bold',textColor:[91,33,182]}}]);
