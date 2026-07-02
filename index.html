@@ -1551,6 +1551,7 @@
         let appFolderId = null;
         let transactions = [];
         let parties = [];
+        let arInvoices = [];  // Historical + manually-entered AR invoices for follow-up tracking
         let settings = {};
         let expenses = [];        // Expense & Bills module
         let directorExpenses = []; // Director Expenses module
@@ -4848,6 +4849,10 @@
                 let payReqData    = await loadFileFromDrive('paymentRequests.json');
                 paymentRequests   = Array.isArray(payReqData)   ? payReqData   : [];
 
+                // AR Invoices (Accounts Receivable — historical + current unpaid invoice tracking)
+                let arData        = await loadFileFromDrive('arInvoices.json');
+                arInvoices        = Array.isArray(arData)        ? arData        : [];
+
                 // Petty Cash module (Chennai + Mumbai office cash floats)
                 let pcOfficesData = await loadFileFromDrive('pettyCashOffices.json');
                 pettyCashOffices  = Array.isArray(pcOfficesData) ? pcOfficesData : [];
@@ -6951,6 +6956,7 @@
             
             if (currentView === 'dashboard') renderDashboard(content);
             else if (currentView === 'transactions') renderTransactions(content);
+            else if (currentView === 'ar')           renderARDashboard(content);
             else if (currentView === 'expenses') renderExpenses(content);
             else if (currentView === 'staff') renderStaff(content);
             else if (currentView === 'projexp') renderProjectExpenses(content);
@@ -8559,6 +8565,7 @@
                         <button onclick="syncToGoogleSheets()" class="px-4 py-2 bg-green-600 text-white rounded-xl hover:bg-green-700 flex items-center gap-2 text-sm">
                             <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M19,3H5C3.9,3,3,3.9,3,5v14c0,1.1,0.9,2,2,2h14c1.1,0,2-0.9,2-2V5C21,3.9,20.1,3,19,3z M9,17H7v-7h2V17z M13,17h-2V7h2V17z M17,17h-2v-4h2V17z"/></svg>
                             Sync to Sheets</button>
+                        <button onclick="switchView('ar')" class="px-4 py-2 bg-orange-600 text-white rounded-xl hover:bg-orange-700 text-sm">📊 AR Dashboard</button>
                         <button onclick="openTransactionModal()" class="px-4 py-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 text-sm">+ New Transaction</button>
                     </div>
                 </div>
@@ -20917,6 +20924,378 @@ Automated WFH alert — ${company} Attendance System.`;
         // staff+period+type (by createdAt), removes the rest.
         // Run from console: cleanupDuplicatePayslips()
         // ════════════════════════════════════════════════════════════════
+        // ════════════════════════════════════════════════════════════════════
+        // ACCOUNTS RECEIVABLE (AR) DASHBOARD
+        // ════════════════════════════════════════════════════════════════════
+
+        function renderARDashboard(content) {
+            const today = new Date();
+            const fmt = n => '₹'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
+            const ageDays = d => d ? Math.floor((today - new Date(d)) / 86400000) : 0;
+            const ageBucket = d => { const a=ageDays(d); return a<=30?'0-30':a<=60?'31-60':a<=90?'61-90':'90+'; };
+            const bucketColor = b => ({'0-30':'#15803d','31-60':'#b45309','61-90':'#dc2626','90+':'#7f1d1d'})[b]||'#374151';
+
+            const appInvoices = (transactions||[])
+                .filter(t=>t.txnCategory==='INVOICE'&&t.txnDirection==='Outgoing'&&!['Draft','Cancelled'].includes(t.status))
+                .map(t=>{
+                    const tot=calculateTotals(t.items||[]);
+                    const received=(t.paymentsReceived||[]).reduce((s,p)=>s+(parseFloat(p.amount)||0),0);
+                    const balance=Math.max(0,(tot.total||0)-received);
+                    return {arID:'TXN-'+t.txnID,source:'app',txnID:t.txnID,client:t.partyName||'—',invoiceNo:t.txnID,invoiceDate:t.txnDate||'',dueDate:t.dueDate||'',invoiceAmt:tot.total||0,received,balance,description:(t.items||[]).map(i=>i.description||'').filter(Boolean).join('; '),followUps:t.arFollowUps||[]};
+                }).filter(t=>t.balance>0.01);
+
+            const allAR=[...(arInvoices||[]).filter(a=>a.balance>0.01),...appInvoices].sort((a,b)=>(a.dueDate||a.invoiceDate||'').localeCompare(b.dueDate||b.invoiceDate||''));
+            const totalOutstanding=allAR.reduce((s,a)=>s+a.balance,0);
+            const buckets={'0-30':0,'31-60':0,'61-90':0,'90+':0};
+            allAR.forEach(a=>{buckets[ageBucket(a.dueDate||a.invoiceDate)]+=a.balance;});
+            const byClient={};
+            allAR.forEach(a=>{(byClient[a.client]=byClient[a.client]||[]).push(a);});
+
+            content.innerHTML = `
+            <div class="flex justify-between items-center mb-4 flex-wrap gap-3">
+                <div>
+                    <h2 class="text-2xl font-bold text-gray-800">📊 Accounts Receivable Dashboard</h2>
+                    <p class="text-xs text-gray-500 mt-0.5">${allAR.length} outstanding invoice(s) across ${Object.keys(byClient).length} client(s)</p>
+                </div>
+                <div class="flex gap-2 flex-wrap">
+                    <button onclick="switchView('transactions')" class="px-4 py-2 border border-gray-300 text-gray-600 rounded-xl text-sm hover:bg-gray-50">← Transactions</button>
+                    <button onclick="openARInvoiceModal()" class="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm hover:bg-indigo-700">+ Add Historical Invoice</button>
+                    <button onclick="generateARStatementPDF()" class="px-4 py-2 bg-orange-600 text-white rounded-xl text-sm hover:bg-orange-700">📄 AR Statement PDF</button>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+                <div class="bg-gray-800 rounded-xl p-4 text-white">
+                    <div class="text-xs text-gray-400 uppercase font-bold mb-1">Total Outstanding</div>
+                    <div class="text-xl font-bold">${fmt(totalOutstanding)}</div>
+                    <div class="text-xs text-gray-400 mt-1">${allAR.length} invoices</div>
+                </div>
+                ${Object.entries(buckets).map(([b,amt])=>`
+                <div class="bg-white rounded-xl p-4 border-2" style="border-color:${bucketColor(b)}40">
+                    <div class="text-xs font-bold uppercase mb-1" style="color:${bucketColor(b)}">${b} days</div>
+                    <div class="text-lg font-bold text-gray-800">${fmt(amt)}</div>
+                    <div class="text-xs text-gray-400">${allAR.filter(a=>ageBucket(a.dueDate||a.invoiceDate)===b).length} inv.</div>
+                </div>`).join('')}
+            </div>
+
+            <div class="space-y-4">
+                ${Object.entries(byClient).sort((a,b)=>b[1].reduce((s,x)=>s+x.balance,0)-a[1].reduce((s,x)=>s+x.balance,0)).map(([client,invs])=>{
+                    const clientTotal=invs.reduce((s,a)=>s+a.balance,0);
+                    const lastFU=invs.flatMap(a=>a.followUps||[]).sort((a,b)=>(b.date||'').localeCompare(a.date||''))[0];
+                    return `
+                <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div class="flex justify-between items-center px-5 py-3 bg-gray-50 border-b">
+                        <div>
+                            <span class="font-bold text-gray-800">${client}</span>
+                            <span class="ml-2 text-xs text-gray-400">${invs.length} invoice(s)</span>
+                            ${lastFU?`<span class="ml-2 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Last: ${(lastFU.date||'').substring(0,10)} · ${lastFU.mode||''}</span>`:`<span class="ml-2 text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full">No follow-up</span>`}
+                        </div>
+                        <div class="text-right">
+                            <div class="text-base font-bold text-red-700">${fmt(clientTotal)}</div>
+                            <div class="text-xs text-gray-400">outstanding</div>
+                        </div>
+                    </div>
+                    <table class="w-full text-sm">
+                        <thead class="bg-gray-50 text-xs text-gray-500 uppercase">
+                            <tr>
+                                <th class="px-4 py-2 text-left">Invoice No</th>
+                                <th class="px-4 py-2 text-left">Inv Date</th>
+                                <th class="px-4 py-2 text-left">Due Date</th>
+                                <th class="px-4 py-2 text-left">Description</th>
+                                <th class="px-4 py-2 text-right">Invoice Amt</th>
+                                <th class="px-4 py-2 text-right">Received</th>
+                                <th class="px-4 py-2 text-right">Balance</th>
+                                <th class="px-4 py-2 text-center">Age</th>
+                                <th class="px-4 py-2 text-center">Follow-up</th>
+                                <th class="px-4 py-2 text-center">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${invs.map(a=>{
+                                const age=ageDays(a.dueDate||a.invoiceDate);
+                                const bucket=ageBucket(a.dueDate||a.invoiceDate);
+                                const lastF=[...(a.followUps||[])].sort((x,y)=>(y.date||'').localeCompare(x.date||''))[0];
+                                const nextF=[...(a.followUps||[])].filter(f=>f.nextDate).sort((x,y)=>(x.nextDate||'').localeCompare(y.nextDate||''))[0];
+                                return `
+                            <tr class="border-t border-gray-50 hover:bg-gray-50">
+                                <td class="px-4 py-2.5 text-xs font-mono font-semibold ${a.source==='app'?'text-indigo-600':'text-gray-700'}">
+                                    ${a.invoiceNo}
+                                    ${a.source==='app'?'<span class="ml-1 text-[9px] bg-indigo-100 text-indigo-600 px-1 rounded">APP</span>':'<span class="ml-1 text-[9px] bg-amber-100 text-amber-700 px-1 rounded">HIST</span>'}
+                                </td>
+                                <td class="px-4 py-2.5 text-xs text-gray-500">${a.invoiceDate||'—'}</td>
+                                <td class="px-4 py-2.5 text-xs font-semibold ${age>90?'text-red-700':age>60?'text-red-500':age>30?'text-amber-600':'text-gray-500'}">${a.dueDate||'—'}</td>
+                                <td class="px-4 py-2.5 text-xs text-gray-600 max-w-xs" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(a.description||'').replace(/"/g,'')}">${a.description||'—'}</td>
+                                <td class="px-4 py-2.5 text-right text-xs">${fmt(a.invoiceAmt)}</td>
+                                <td class="px-4 py-2.5 text-right text-xs text-green-600">${a.received>0?fmt(a.received):'—'}</td>
+                                <td class="px-4 py-2.5 text-right text-sm font-bold text-red-700">${fmt(a.balance)}</td>
+                                <td class="px-4 py-2.5 text-center">
+                                    <span class="text-xs font-bold px-2 py-0.5 rounded-full" style="background:${bucketColor(bucket)}15;color:${bucketColor(bucket)}">${age}d</span>
+                                </td>
+                                <td class="px-4 py-2.5 text-center">
+                                    ${lastF?`<div class="text-[10px] text-gray-500">${(lastF.date||'').substring(0,10)}</div><div class="text-[10px] font-semibold text-blue-600">${lastF.mode||''}</div>${nextF?`<div class="text-[9px] text-orange-500">Next: ${(nextF.nextDate||'').substring(0,10)}</div>`:''}`:'<span class="text-[10px] text-red-400">None</span>'}
+                                </td>
+                                <td class="px-4 py-2.5 text-center">
+                                    <div class="flex gap-1 justify-center flex-wrap">
+                                        <button onclick="openARFollowUpModal('${a.arID}','${a.source}')" class="px-2 py-1 bg-blue-100 text-blue-700 rounded text-[10px] font-semibold hover:bg-blue-200">+ Follow-up</button>
+                                        ${a.source==='historical'?`<button onclick="openARInvoiceModal('${a.arID}')" class="px-2 py-1 bg-gray-100 text-gray-600 rounded text-[10px] hover:bg-gray-200">Edit</button>`:''}
+                                    </div>
+                                </td>
+                            </tr>`;
+                            }).join('')}
+                        </tbody>
+                    </table>
+                </div>`;
+                }).join('')}
+                ${allAR.length===0?`<div class="bg-white rounded-2xl p-12 text-center text-gray-400 shadow-sm"><div class="text-5xl mb-3">🎉</div><p class="text-lg font-semibold">No outstanding invoices!</p><p class="text-sm mt-1">Add historical unpaid invoices using "+ Add Historical Invoice"</p></div>`:''}
+            </div>`;
+        }
+
+        function openARInvoiceModal(arID=null) {
+            const ex=arID?(arInvoices||[]).find(a=>a.arID===arID):null;
+            const clientOptions=[...(parties||[]).map(p=>p.partyName),...(arInvoices||[]).map(a=>a.client)].filter((v,i,arr)=>arr.indexOf(v)===i&&v).map(c=>`<option value="${c}">`).join('');
+            const modal=document.createElement('div');
+            modal.id='arInvModal';modal.className='modal show';
+            modal.innerHTML=`
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-xl m-4 max-h-[90vh] overflow-y-auto">
+                <div class="bg-gradient-to-r from-indigo-600 to-purple-600 p-5 text-white flex justify-between items-center">
+                    <h3 class="text-base font-bold">${ex?'Edit':'Add'} Historical Invoice</h3>
+                    <button onclick="document.getElementById('arInvModal').remove()" class="text-white text-2xl font-bold">✕</button>
+                </div>
+                <div class="p-5 space-y-3">
+                    <div class="grid grid-cols-2 gap-3">
+                        <div><label class="block text-xs font-semibold text-gray-700 mb-1">Client *</label>
+                            <input id="arClient" value="${ex?.client||''}" list="arCL" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Client name"/>
+                            <datalist id="arCL">${clientOptions}</datalist>
+                        </div>
+                        <div><label class="block text-xs font-semibold text-gray-700 mb-1">Invoice Number *</label>
+                            <input id="arInvNo" value="${ex?.invoiceNo||''}" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="INV/2024-25/001"/>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div><label class="block text-xs font-semibold text-gray-700 mb-1">Invoice Date *</label>
+                            <input type="date" id="arInvDate" value="${ex?.invoiceDate||''}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                        <div><label class="block text-xs font-semibold text-gray-700 mb-1">Due Date</label>
+                            <input type="date" id="arDueDate" value="${ex?.dueDate||''}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div><label class="block text-xs font-semibold text-gray-700 mb-1">Invoice Amount (₹) *</label>
+                            <input type="number" id="arInvAmt" value="${ex?.invoiceAmt||''}" step="0.01" min="0" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="0.00"/>
+                        </div>
+                        <div><label class="block text-xs font-semibold text-gray-700 mb-1">Amount Received So Far (₹)</label>
+                            <input type="number" id="arReceived" value="${ex?.received||0}" step="0.01" min="0" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="0.00"/>
+                        </div>
+                    </div>
+                    <div><label class="block text-xs font-semibold text-gray-700 mb-1">Description / Work Done</label>
+                        <textarea id="arDesc" class="w-full px-3 py-2 border rounded-lg text-sm" rows="2" placeholder="Brief description of work or service billed...">${ex?.description||''}</textarea>
+                    </div>
+                    <div><label class="block text-xs font-semibold text-gray-700 mb-1">PO / Work Order Reference</label>
+                        <input id="arPORef" value="${ex?.poRef||''}" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="e.g. PO/2024/012"/>
+                    </div>
+                    <div class="flex justify-end gap-3 pt-2 border-t">
+                        <button onclick="document.getElementById('arInvModal').remove()" class="px-4 py-2 border border-gray-300 text-gray-600 rounded-lg text-sm">Cancel</button>
+                        <button onclick="saveARInvoice('${arID||''}')" class="px-5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700">💾 Save Invoice</button>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+        }
+
+        async function saveARInvoice(arID) {
+            const client=document.getElementById('arClient')?.value.trim();
+            const invNo=document.getElementById('arInvNo')?.value.trim();
+            const invDate=document.getElementById('arInvDate')?.value;
+            const dueDate=document.getElementById('arDueDate')?.value;
+            const invAmt=parseFloat(document.getElementById('arInvAmt')?.value)||0;
+            const received=parseFloat(document.getElementById('arReceived')?.value)||0;
+            const desc=document.getElementById('arDesc')?.value.trim();
+            const poRef=document.getElementById('arPORef')?.value.trim();
+            if (!client||!invNo||!invDate||!invAmt){alert('Please fill in Client, Invoice Number, Date, and Amount.');return;}
+            const balance=Math.max(0,invAmt-received);
+            if (arID) {
+                const idx=arInvoices.findIndex(a=>a.arID===arID);
+                if (idx>=0) Object.assign(arInvoices[idx],{client,invoiceNo:invNo,invoiceDate:invDate,dueDate,invoiceAmt:invAmt,received,balance,description:desc,poRef});
+            } else {
+                arInvoices.push({arID:'AR-'+Date.now(),source:'historical',client,invoiceNo:invNo,invoiceDate:invDate,dueDate,invoiceAmt:invAmt,received,balance,description:desc,poRef,followUps:[],createdAt:new Date().toISOString()});
+            }
+            try {
+                await saveData('arInvoices',arInvoices);
+                document.getElementById('arInvModal').remove();
+                renderView();
+                _showToast('✓ Invoice saved to AR tracker','#4f46e5',3500);
+            } catch(err){alert('Save failed: '+err.message);}
+        }
+
+        function openARFollowUpModal(arID,source) {
+            let rec,isApp=source==='app';
+            if (isApp){const txnID=arID.replace('TXN-','');rec=(transactions||[]).find(t=>t.txnID===txnID);if(!rec){alert('Transaction not found.');return;}}
+            else{rec=(arInvoices||[]).find(a=>a.arID===arID);if(!rec){alert('Invoice not found.');return;}}
+            const followUps=(isApp?rec.arFollowUps:rec.followUps)||[];
+            const today=new Date().toISOString().split('T')[0];
+            const modal=document.createElement('div');modal.id='arFUModal';modal.className='modal show';
+            modal.innerHTML=`
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl m-4 max-h-[90vh] overflow-y-auto">
+                <div class="bg-gradient-to-r from-blue-600 to-indigo-600 p-5 text-white flex justify-between items-center">
+                    <div><h3 class="text-base font-bold">📞 Follow-up Log — ${rec.invoiceNo||rec.txnID}</h3>
+                        <p class="text-xs opacity-80">${isApp?rec.partyName:rec.client} · Balance: ₹${(+(rec.balance||0)).toLocaleString('en-IN',{minimumFractionDigits:2})}</p>
+                    </div>
+                    <button onclick="document.getElementById('arFUModal').remove()" class="text-white text-2xl font-bold">✕</button>
+                </div>
+                <div class="p-5 space-y-4">
+                    <div class="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                        <p class="text-xs font-bold text-blue-700 uppercase mb-3">+ Add Follow-up Entry</p>
+                        <div class="grid grid-cols-2 gap-3 mb-3">
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Date *</label>
+                                <input type="date" id="fuDate" value="${today}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                            </div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Mode *</label>
+                                <select id="fuMode" class="w-full px-3 py-2 border rounded-lg text-sm">
+                                    <option>Phone Call</option><option>WhatsApp</option><option>Email</option>
+                                    <option>Meeting</option><option>Letter</option><option>Site Visit</option><option>Other</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3 mb-3">
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Contacted Person</label>
+                                <input id="fuContact" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Name / designation"/>
+                            </div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">Next Follow-up Date</label>
+                                <input type="date" id="fuNextDate" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                            </div>
+                        </div>
+                        <div class="mb-3"><label class="block text-xs font-semibold text-gray-600 mb-1">Response / Remarks *</label>
+                            <textarea id="fuRemark" class="w-full px-3 py-2 border rounded-lg text-sm" rows="2" placeholder="What was discussed, promised payment date, reason for delay..."></textarea>
+                        </div>
+                        <button onclick="_saveARFollowUp('${arID}','${source}')" class="px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 w-full">+ Add to Log</button>
+                    </div>
+                    ${followUps.length?`
+                    <div>
+                        <p class="text-xs font-bold text-gray-600 uppercase mb-2">Follow-up History (${followUps.length})</p>
+                        <div class="space-y-2">
+                            ${[...followUps].sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map((f,fi)=>`
+                            <div class="border border-gray-200 rounded-xl p-3">
+                                <div class="flex justify-between items-start mb-1">
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-xs font-bold text-blue-700">${(f.date||'').substring(0,10)}</span>
+                                        <span class="text-[10px] bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">${f.mode||''}</span>
+                                        ${f.contact?`<span class="text-[10px] text-gray-500">${f.contact}</span>`:''}
+                                    </div>
+                                    <button onclick="_deleteARFollowUp('${arID}','${source}',${fi})" class="text-red-400 hover:text-red-600 text-xs">✕</button>
+                                </div>
+                                <p class="text-xs text-gray-700">${(f.remark||'').replace(/</g,'&lt;')}</p>
+                                ${f.nextDate?`<p class="text-[10px] text-orange-500 mt-1">Next follow-up: ${f.nextDate}</p>`:''}
+                            </div>`).join('')}
+                        </div>
+                    </div>`:`<p class="text-sm text-gray-400 text-center py-4">No follow-up entries yet.</p>`}
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+        }
+
+        async function _saveARFollowUp(arID,source) {
+            const date=document.getElementById('fuDate')?.value;
+            const mode=document.getElementById('fuMode')?.value;
+            const contact=document.getElementById('fuContact')?.value.trim();
+            const nextDate=document.getElementById('fuNextDate')?.value;
+            const remark=document.getElementById('fuRemark')?.value.trim();
+            if (!date||!remark){alert('Date and Remarks are required.');return;}
+            const entry={date,mode,contact,nextDate,remark,by:'User',loggedAt:new Date().toISOString()};
+            if (source==='app'){
+                const txn=(transactions||[]).find(t=>t.txnID===arID.replace('TXN-',''));
+                if (!txn) return;
+                txn.arFollowUps=txn.arFollowUps||[];txn.arFollowUps.push(entry);
+                await saveData('transactions',transactions);
+            } else {
+                const ar=(arInvoices||[]).find(a=>a.arID===arID);
+                if (!ar) return;
+                ar.followUps=ar.followUps||[];ar.followUps.push(entry);
+                await saveData('arInvoices',arInvoices);
+            }
+            document.getElementById('arFUModal').remove();renderView();
+            _showToast('✓ Follow-up logged','#1d4ed8',3000);
+        }
+
+        async function _deleteARFollowUp(arID,source,idx) {
+            if (!confirm('Delete this follow-up entry?')) return;
+            if (source==='app'){const txn=(transactions||[]).find(t=>t.txnID===arID.replace('TXN-',''));if(txn?.arFollowUps){txn.arFollowUps.splice(idx,1);await saveData('transactions',transactions);}}
+            else{const ar=(arInvoices||[]).find(a=>a.arID===arID);if(ar?.followUps){ar.followUps.splice(idx,1);await saveData('arInvoices',arInvoices);}}
+            document.getElementById('arFUModal').remove();renderView();
+        }
+
+        async function generateARStatementPDF() {
+            if (!window.jspdf) {
+                await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+                await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+            }
+            const jsPDF=window.jspdf.jsPDF;
+            const doc=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
+            const today=new Date();const ML=14,MR=14,PW=297,PH=210,CW=269;
+            const fmt=n=>'Rs.'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
+            const ageDays=d=>d?Math.floor((today-new Date(d))/86400000):0;
+            const ageBucket=d=>{const a=ageDays(d);return a<=30?'0-30':a<=60?'31-60':a<=90?'61-90':'90+';};
+
+            const appInvs=(transactions||[]).filter(t=>t.txnCategory==='INVOICE'&&t.txnDirection==='Outgoing'&&!['Draft','Cancelled'].includes(t.status)).map(t=>{const tot=calculateTotals(t.items||[]);const rec=(t.paymentsReceived||[]).reduce((s,p)=>s+(parseFloat(p.amount)||0),0);return{arID:'TXN-'+t.txnID,source:'app',client:t.partyName||'—',invoiceNo:t.txnID,invoiceDate:t.txnDate||'',dueDate:t.dueDate||'',invoiceAmt:tot.total||0,received:rec,balance:Math.max(0,(tot.total||0)-rec),description:(t.items||[]).map(i=>i.description||'').filter(Boolean).join('; '),followUps:t.arFollowUps||[]};}).filter(t=>t.balance>0.01);
+            const allAR=[...(arInvoices||[]).filter(a=>a.balance>0.01),...appInvs].sort((a,b)=>(a.client||'').localeCompare(b.client||''));
+            const totalOut=allAR.reduce((s,a)=>s+a.balance,0);
+            const buckets={'0-30':0,'31-60':0,'61-90':0,'90+':0};
+            allAR.forEach(a=>{buckets[ageBucket(a.dueDate||a.invoiceDate)]+=a.balance;});
+
+            doc.setFillColor(15,58,95);doc.rect(0,0,PW,30,'F');
+            doc.setFontSize(16);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
+            doc.text('ACCOUNTS RECEIVABLE STATEMENT',PW/2,12,{align:'center'});
+            doc.setFontSize(9);doc.setFont('helvetica','normal');doc.setTextColor(147,197,253);
+            doc.text((settings.companyName||'IMSE Tech India')+'  |  As on: '+today.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}),PW/2,20,{align:'center'});
+            doc.setFontSize(11);doc.setFont('helvetica','bold');doc.setTextColor(255,200,100);
+            doc.text('Total Outstanding: '+fmt(totalOut),PW-ML,20,{align:'right'});
+            let y=36;
+
+            doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+                styles:{fontSize:9,cellPadding:2.5},
+                headStyles:{fillColor:[30,64,175],textColor:[255,255,255],fontStyle:'bold'},
+                head:[['AGING SUMMARY','0-30 Days','31-60 Days','61-90 Days','90+ Days','TOTAL']],
+                body:[['Outstanding Amount',
+                    {content:fmt(buckets['0-30']),styles:{textColor:[21,128,61],fontStyle:'bold',halign:'right'}},
+                    {content:fmt(buckets['31-60']),styles:{textColor:[180,83,9],fontStyle:'bold',halign:'right'}},
+                    {content:fmt(buckets['61-90']),styles:{textColor:[220,38,38],fontStyle:'bold',halign:'right'}},
+                    {content:fmt(buckets['90+']),styles:{textColor:[127,29,29],fontStyle:'bold',halign:'right'}},
+                    {content:fmt(totalOut),styles:{fontStyle:'bold',halign:'right'}}]],
+                columnStyles:{0:{cellWidth:50},1:{cellWidth:36,halign:'right'},2:{cellWidth:36,halign:'right'},3:{cellWidth:36,halign:'right'},4:{cellWidth:36,halign:'right'},5:{cellWidth:40,halign:'right'}}
+            });
+            y=doc.lastAutoTable.finalY+6;
+
+            doc.autoTable({startY:y,margin:{left:ML,right:MR},theme:'grid',
+                styles:{fontSize:7.5,cellPadding:2},
+                headStyles:{fillColor:[15,58,95],textColor:[255,255,255],fontStyle:'bold',fontSize:8},
+                head:[['#','Client','Invoice No','Inv Date','Due Date','Description','Inv Amount','Received','Balance Due','Age','Last Follow-up']],
+                body:allAR.map((a,i)=>{
+                    const age=ageDays(a.dueDate||a.invoiceDate);
+                    const lastFU=[...(a.followUps||[])].sort((x,y)=>(y.date||'').localeCompare(x.date||''))[0];
+                    const nextFU=[...(a.followUps||[])].filter(f=>f.nextDate).sort((x,y)=>(x.nextDate||'').localeCompare(y.nextDate||''))[0];
+                    const ac=age>90?[127,29,29]:age>60?[220,38,38]:age>30?[180,83,9]:[21,128,61];
+                    return [{content:String(i+1),styles:{halign:'center'}},
+                        {content:a.client,styles:{fontStyle:'bold'}},a.invoiceNo||'—',a.invoiceDate||'—',
+                        {content:a.dueDate||'—',styles:{textColor:age>30?ac:[0,0,0]}},
+                        {content:(a.description||'—').substring(0,55),styles:{fontSize:7}},
+                        {content:fmt(a.invoiceAmt),styles:{halign:'right'}},
+                        {content:a.received>0?fmt(a.received):'—',styles:{halign:'right',textColor:[21,128,61]}},
+                        {content:fmt(a.balance),styles:{halign:'right',fontStyle:'bold',textColor:ac}},
+                        {content:String(age)+'d',styles:{halign:'center',fontStyle:'bold',textColor:ac}},
+                        {content:lastFU?(lastFU.date||'').substring(0,10)+' ('+lastFU.mode+')'+(nextFU?'\nNext: '+nextFU.nextDate:''):'No follow-up',styles:{fontSize:7,textColor:lastFU?[29,78,216]:[220,38,38]}}];
+                }),
+                foot:[[{content:'TOTAL',colSpan:6,styles:{fontStyle:'bold',halign:'right'}},
+                    {content:fmt(allAR.reduce((s,a)=>s+a.invoiceAmt,0)),styles:{halign:'right',fontStyle:'bold'}},
+                    {content:fmt(allAR.reduce((s,a)=>s+a.received,0)),styles:{halign:'right',fontStyle:'bold',textColor:[21,128,61]}},
+                    {content:fmt(totalOut),styles:{halign:'right',fontStyle:'bold',textColor:[127,29,29]}},'','']],
+                columnStyles:{0:{cellWidth:8},1:{cellWidth:36},2:{cellWidth:28},3:{cellWidth:18},4:{cellWidth:18},5:{cellWidth:55},6:{cellWidth:24,halign:'right'},7:{cellWidth:22,halign:'right'},8:{cellWidth:26,halign:'right'},9:{cellWidth:14,halign:'center'},10:{cellWidth:40}}
+            });
+
+            const pc=doc.getNumberOfPages();
+            for(let pg=1;pg<=pc;pg++){doc.setPage(pg);doc.setFontSize(7);doc.setFont('helvetica','italic');doc.setTextColor(150,150,150);doc.text((settings.companyName||'IMSE Tech India')+' — AR Statement — '+today.toLocaleDateString('en-IN')+' — Page '+pg+' of '+pc,PW/2,PH-5,{align:'center'});}
+            doc.save('AR_Statement_'+today.toISOString().split('T')[0]+'.pdf');
+            _showToast('✓ AR Statement PDF generated','#1d4ed8',3500);
+        }
+
         async function cleanupDuplicatePayslips() {
             const groups = {};
             (payslips||[]).forEach(p => {
