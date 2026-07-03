@@ -11345,6 +11345,7 @@
                     <select id="taxYear"  onchange="_taxOnPeriodChange()" class="px-3 py-2 border border-gray-200 rounded-lg text-sm font-medium">${yearOpts}</select>
                     <button onclick="exportTDSPDF()" class="px-4 py-2 bg-red-700 text-white rounded-xl text-sm font-medium hover:bg-red-800">📄 TDS PDF</button>
                     <button onclick="exportGSTPDF()" class="px-4 py-2 bg-purple-700 text-white rounded-xl text-sm font-medium hover:bg-purple-800">📄 GST PDF</button>
+                    <button onclick="exportGSTCSV()" class="px-4 py-2 bg-green-700 text-white rounded-xl text-sm font-medium hover:bg-green-800">📊 GST CSV</button>
                 </div>
             </div>
             <div id="taxDashboardBody"></div>`;
@@ -13548,8 +13549,8 @@
             const year  = sel.year  || parseInt(document.getElementById('taxYear')?.value  || new Date().getFullYear());
             const d     = getTaxPeriodData(month, year);
             const jsPDF = await _ensureJsPDF();
-            const doc   = new jsPDF({orientation:'portrait', unit:'mm', format:'a4'});
-            const ML=14, MR=14, CW=182, PW=210;
+            const doc   = new jsPDF({orientation:'landscape', unit:'mm', format:'a4'});
+            const ML=14, MR=14, PW=297, PH=210, CW=269;
             const INR = n => 'Rs.'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
 
             _taxPeriodHeader(doc, 'GST COMPLIANCE REPORT',
@@ -13567,7 +13568,7 @@
                     [d.netGST>0?'Expected Net GST Payable (GSTR-3B)':'Net GST Credit (Carry Forward)',
                      {content:INR(Math.abs(d.netGST)),styles:{fontStyle:'bold',textColor:d.netGST>0?[126,34,206]:[13,148,136]}}],
                 ],
-                columnStyles:{0:{cellWidth:120},1:{cellWidth:62,halign:'right'}}
+                columnStyles:{0:{cellWidth:180},1:{cellWidth:89,halign:'right'}}
             });
             y = doc.lastAutoTable.finalY+6;
 
@@ -13635,13 +13636,16 @@
                         // Fix 3: RCM input rows (orange highlight)
                         ...rcmInputRows,
                     ],
-                    // Fix 2: footer fillColor matches header [180,83,9] with white text — fully readable when printed
-                    foot:[[{content:'GST INPUT TOTAL (incl. RCM)',colSpan:5,styles:{fontStyle:'bold',halign:'right',fillColor:[180,83,9],textColor:[255,255,255]}},
-                        {content:INR(totalInputCGST),styles:{halign:'right',fontStyle:'bold',fillColor:[180,83,9],textColor:[255,255,255]}},
-                        {content:INR(totalInputSGST),styles:{halign:'right',fontStyle:'bold',fillColor:[180,83,9],textColor:[255,255,255]}},
-                        {content:INR(totalInputIGST),styles:{halign:'right',fontStyle:'bold',fillColor:[180,83,9],textColor:[255,255,255]}},
-                        {content:INR(totalInputAmt),styles:{halign:'right',fontStyle:'bold',fillColor:[120,55,6],textColor:[255,255,255]}}]],
-                    columnStyles:{0:{cellWidth:14},1:{cellWidth:28},2:{cellWidth:24},3:{cellWidth:16},4:{cellWidth:28},5:{cellWidth:18},6:{cellWidth:16},7:{cellWidth:16},8:{cellWidth:14},9:{cellWidth:16}}
+                    // footStyles sets the base for all foot cells — individual cell styles then override per column
+                    footStyles:{fillColor:[180,83,9],textColor:[255,255,255],fontStyle:'bold'},
+                    foot:[[
+                        {content:'GST INPUT TOTAL (incl. RCM)',colSpan:5,styles:{halign:'right'}},
+                        {content:INR(totalInputCGST),styles:{halign:'right'}},
+                        {content:INR(totalInputSGST),styles:{halign:'right'}},
+                        {content:INR(totalInputIGST),styles:{halign:'right'}},
+                        {content:INR(totalInputAmt),styles:{halign:'right',fillColor:[120,55,6]}}
+                    ]],
+                    columnStyles:{0:{cellWidth:16},1:{cellWidth:34},2:{cellWidth:28},3:{cellWidth:18},4:{cellWidth:36},5:{cellWidth:22},6:{cellWidth:22},7:{cellWidth:22},8:{cellWidth:20},9:{cellWidth:22}}
                 });
                 y = doc.lastAutoTable.finalY+5;
             }
@@ -13695,12 +13699,15 @@
                         // Fix 3: RCM output liability rows (orange — same vendor, different obligation)
                         ...rcmOutputRows,
                     ],
-                    foot:[[{content:'GST OUTPUT TOTAL (incl. RCM)',colSpan:5,styles:{fontStyle:'bold',halign:'right',fillColor:[126,34,206],textColor:[255,255,255]}},
-                        {content:INR(totalOutCGST),styles:{halign:'right',fontStyle:'bold',fillColor:[126,34,206],textColor:[255,255,255]}},
-                        {content:INR(totalOutSGST),styles:{halign:'right',fontStyle:'bold',fillColor:[126,34,206],textColor:[255,255,255]}},
-                        {content:INR(totalOutIGST),styles:{halign:'right',fontStyle:'bold',fillColor:[126,34,206],textColor:[255,255,255]}},
-                        {content:INR(totalOutAmt),styles:{halign:'right',fontStyle:'bold',fillColor:[88,22,162],textColor:[255,255,255]}}]],
-                    columnStyles:{0:{cellWidth:16},1:{cellWidth:32},2:{cellWidth:24},3:{cellWidth:18},4:{cellWidth:20},5:{cellWidth:18},6:{cellWidth:18},7:{cellWidth:16},8:{cellWidth:20}}
+                    footStyles:{fillColor:[126,34,206],textColor:[255,255,255],fontStyle:'bold'},
+                    foot:[[
+                        {content:'GST OUTPUT TOTAL (incl. RCM)',colSpan:5,styles:{halign:'right'}},
+                        {content:INR(totalOutCGST),styles:{halign:'right'}},
+                        {content:INR(totalOutSGST),styles:{halign:'right'}},
+                        {content:INR(totalOutIGST),styles:{halign:'right'}},
+                        {content:INR(totalOutAmt),styles:{halign:'right',fillColor:[88,22,162]}}
+                    ]],
+                    columnStyles:{0:{cellWidth:18},1:{cellWidth:40},2:{cellWidth:28},3:{cellWidth:22},4:{cellWidth:28},5:{cellWidth:24},6:{cellWidth:24},7:{cellWidth:22},8:{cellWidth:23}}
                 });
                 y = doc.lastAutoTable.finalY+5;
             }
@@ -13717,7 +13724,7 @@
                     [{content:d.netGST>0?'Expected Net GST Payable (GSTR-3B)':'Net Input Credit (Carry Forward)',styles:{fontStyle:'bold',fillColor:d.netGST>0?[243,232,255]:[240,253,250]}},
                      {content:INR(Math.abs(d.netGST)),styles:{halign:'right',fontStyle:'bold',textColor:d.netGST>0?[126,34,206]:[13,148,136],fillColor:d.netGST>0?[243,232,255]:[240,253,250]}}],
                 ],
-                columnStyles:{0:{cellWidth:130},1:{cellWidth:52,halign:'right'}}
+                columnStyles:{0:{cellWidth:200},1:{cellWidth:69,halign:'right'}}
             });
 
             // Footer
@@ -13725,9 +13732,137 @@
             for(let pg=1;pg<=pc;pg++){
                 doc.setPage(pg);
                 doc.setFontSize(7);doc.setFont('helvetica','italic');doc.setTextColor(150,150,150);
-                doc.text((settings.companyName||'IMSE Tech India')+' — GST Compliance Report — '+d.monthName+' '+year+' — Page '+pg+' of '+pc, PW/2, 291, {align:'center'});
+                doc.text((settings.companyName||'IMSE Tech India')+' — GST Compliance Report — '+d.monthName+' '+year+' — Page '+pg+' of '+pc, PW/2, PH-5, {align:'center'});
             }
             doc.save('GST_Report_'+d.monthName+'_'+year+'.pdf');
+        }
+
+        // ── GST CSV Export ───────────────────────────────────────────────
+        function exportGSTCSV() {
+            const sel   = window._taxSelectedPeriod || {};
+            const month = sel.month || parseInt(document.getElementById('taxMonth')?.value || new Date().getMonth()+1);
+            const year  = sel.year  || parseInt(document.getElementById('taxYear')?.value  || new Date().getFullYear());
+            const d     = getTaxPeriodData(month, year);
+            const n     = v => (+v||0).toFixed(2);
+
+            const rows = [];
+            const q    = v => '"' + String(v||'').replace(/"/g,'""') + '"';
+
+            // ── SECTION 1: GST SUMMARY ──
+            rows.push(['SECTION','GST SUMMARY — '+d.monthName+' '+year]);
+            rows.push(['Item','Amount (Rs.)']);
+            rows.push(['GST Input Credit (Expenses + Directors + RCM)', n(d.combinedITCTotal)]);
+            rows.push(['GST Output (Invoices + RCM)', n(d.gstOutput)]);
+            rows.push([d.netGST>0?'Expected Net GST Payable (GSTR-3B)':'Net GST Credit (Carry Forward)', n(Math.abs(d.netGST))]);
+            rows.push([]);
+
+            // ── SECTION 2: GST INPUT CREDIT ──
+            rows.push(['SECTION','GST INPUT CREDIT (Expenses & Director Expenses)']);
+            rows.push(['Date','Vendor','GSTIN','Bill No','Description','Type','Taxable (Rs.)','CGST (Rs.)','SGST (Rs.)','IGST (Rs.)','Total GST (Rs.)']);
+
+            // Regular expense input
+            d.gstInputExps.forEach(e => {
+                const tax = (parseFloat(e.cgst)||0)+(parseFloat(e.sgst)||0)+(parseFloat(e.igst)||0);
+                rows.push([
+                    q(e.billDate||''), q(e.companyName||e.staffName||e.vendor||''), q(e.vendorGSTIN||''),
+                    q(e.voucherNo||e.billNo||''), q(e.description||''), 'Regular Input',
+                    n(e.billAmtINR||0), n(e.cgst||0), n(e.sgst||0), n(e.igst||0), n(tax)
+                ]);
+            });
+
+            // Director expense ITC
+            d.dirITCEligible.forEach(de => {
+                const tax = (parseFloat(de.cgstAmt)||parseFloat(de.cgst)||0)+(parseFloat(de.sgstAmt)||parseFloat(de.sgst)||0)+(parseFloat(de.igstAmt)||parseFloat(de.igst)||0);
+                const dirName = de.director==='dir1'?(settings.director1Name||'Director 1'):(settings.director2Name||'Director 2');
+                rows.push([
+                    q(de.expDate||''), q(de.vendor||de.description||dirName), q(de.vendorGSTIN||''),
+                    q(de.billNo||de.expRef||''), q(de.description||de.category||''), 'Director ITC',
+                    n(de.amount||0), n(de.cgstAmt||de.cgst||0), n(de.sgstAmt||de.sgst||0), n(de.igstAmt||de.igst||0), n(parseFloat(de.itcAmt)||tax)
+                ]);
+            });
+
+            // RCM input
+            const rcmExps = d.rcmExps || (expenses||[]).filter(e=>e.rcmApplicable&&(e.billDate||'').startsWith(`${year}-${String(month).padStart(2,'0')}`));
+            rcmExps.forEach(e => {
+                const tax = (parseFloat(e.cgst)||0)+(parseFloat(e.sgst)||0)+(parseFloat(e.igst)||0);
+                rows.push([
+                    q(e.billDate||''), q(e.companyName||e.vendor||''), q(e.vendorGSTIN||''),
+                    q(e.voucherNo||e.billNo||''), q('[RCM] '+(e.description||'')), 'RCM Input',
+                    n(e.billAmtINR||0), n(e.cgst||0), n(e.sgst||0), n(e.igst||0), n(tax)
+                ]);
+            });
+
+            // Input totals
+            const rcmCGST = rcmExps.reduce((s,e)=>s+(parseFloat(e.cgst)||0),0);
+            const rcmSGST = rcmExps.reduce((s,e)=>s+(parseFloat(e.sgst)||0),0);
+            const rcmIGST = rcmExps.reduce((s,e)=>s+(parseFloat(e.igst)||0),0);
+            rows.push([
+                '','','','','','GST INPUT TOTAL (incl. RCM)','',
+                n((d.gstInputCGST||0)+rcmCGST), n((d.gstInputSGST||0)+rcmSGST),
+                n((d.gstInputIGST||0)+rcmIGST),
+                n((d.gstInputCGST||0)+rcmCGST+(d.gstInputSGST||0)+rcmSGST+(d.gstInputIGST||0)+rcmIGST)
+            ]);
+            rows.push([]);
+
+            // ── SECTION 3: GST OUTPUT ──
+            rows.push(['SECTION','GST OUTPUT (Sales Invoices + RCM Liability)']);
+            rows.push(['Date','Client / Vendor','GSTIN','Invoice No','Type','Taxable (Rs.)','CGST (Rs.)','SGST (Rs.)','IGST (Rs.)','Total GST (Rs.)']);
+
+            d.outInvoices.forEach(t => {
+                const tot = calculateTotals(t.items||[]);
+                const party = (parties||[]).find(p=>p.partyName===t.partyName);
+                const gstin = party?.gstNumber||t.gstNumber||'';
+                rows.push([
+                    q(t.txnDate||''), q(t.partyName||''), q(gstin),
+                    q(t.txnID||''), 'Sales Invoice',
+                    n(tot.subtotal||0), n(tot.cgst||0), n(tot.sgst||0), n(tot.igst||0), n(tot.totalTax||0)
+                ]);
+            });
+
+            rcmExps.forEach(e => {
+                const tax = (parseFloat(e.cgst)||0)+(parseFloat(e.sgst)||0)+(parseFloat(e.igst)||0);
+                rows.push([
+                    q(e.billDate||''), q('[RCM Liability] '+(e.companyName||e.vendor||'')), q(e.vendorGSTIN||''),
+                    q(e.voucherNo||e.billNo||''), 'RCM Liability',
+                    n(e.billAmtINR||0), n(e.cgst||0), n(e.sgst||0), n(e.igst||0), n(tax)
+                ]);
+            });
+
+            // Output totals
+            const outCGST = (d.gstOutputCGST||0)+rcmCGST;
+            const outSGST = (d.gstOutputSGST||0)+rcmSGST;
+            const outIGST = (d.gstOutputIGST||0)+rcmIGST;
+            rows.push([
+                '','','','','GST OUTPUT TOTAL (incl. RCM)',
+                '', n(outCGST), n(outSGST), n(outIGST), n(outCGST+outSGST+outIGST)
+            ]);
+            rows.push([]);
+
+            // ── SECTION 4: RECONCILIATION ──
+            rows.push(['SECTION','GST RECONCILIATION SUMMARY']);
+            rows.push(['Item','Amount (Rs.)']);
+            rows.push(['GST Output (Invoices + RCM Liability)', n(d.gstOutput)]);
+            rows.push(['Less: GST Input Credit (Expenses + Directors + RCM)', '('+n(d.gstInputTotal)+')']);
+            rows.push([d.netGST>0?'Expected Net GST Payable (GSTR-3B)':'Net Input Credit (Carry Forward)', n(Math.abs(d.netGST))]);
+
+            // Build CSV string
+            const csv = rows.map(r =>
+                Array.isArray(r) ? r.map(c => {
+                    const s = String(c||'');
+                    // Quote if contains comma, quote or newline; also quote numbers-only cells in non-numeric rows
+                    return (s.includes(',')||s.includes('"')||s.includes('\n')) ? '"'+s.replace(/"/g,'""')+'"' : s;
+                }).join(',') : ''
+            ).join('\r\n');
+
+            // Download
+            const blob = new Blob(['\uFEFF'+csv], {type:'text/csv;charset=utf-8;'});
+            const url  = URL.createObjectURL(blob);
+            const a    = document.createElement('a');
+            a.href = url;
+            a.download = 'GST_Report_'+d.monthName+'_'+year+'.csv';
+            a.click();
+            URL.revokeObjectURL(url);
+            _showToast('✓ GST CSV downloaded — open in Excel to review', '#15803d', 3500);
         }
 
         // ── Legacy combined export (kept as alias for backward compatibility) ──
