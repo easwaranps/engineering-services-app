@@ -1548,6 +1548,15 @@
         let tokenClient;
         let accessToken = null;
         let currentUser  = null; // { email, name, picture } — set after Google sign-in
+        let appUsers     = [];   // [{ userID, name, role, pin (hashed), pinExpiry, pinPeriodDays, active, createdAt }]
+        let auditLog     = [];   // Recent audit entries (last 500) cached in memory; full log in AuditLog.json on Drive
+        let _bmsSession  = null; // { userID, name, role, loginAt } — set after PIN login
+
+        // ── LOGIN GATE TOGGLE ─────────────────────────────────────────────
+        // Set to TRUE when ready to activate PIN-based login for all users.
+        // FALSE = login gate is completely bypassed (app works as before).
+        // Change this one line to switch between modes.
+        const ENABLE_LOGIN = false;
         let appFolderId = null;
         let transactions = [];
         let parties = [];
@@ -4855,6 +4864,14 @@
                 let arData        = await loadFileFromDrive('arInvoices.json');
                 arInvoices        = Array.isArray(arData)        ? arData        : [];
 
+                // App Users (PIN-based identity login — managed by Admin in Settings)
+                let usersData     = await loadFileFromDrive('appUsers.json');
+                appUsers          = Array.isArray(usersData)     ? usersData     : [];
+
+                // Audit Log (recent entries — full log written to AuditLog.json on Drive)
+                let auditData     = await loadFileFromDrive('auditLog.json');
+                auditLog          = Array.isArray(auditData)     ? auditData     : [];
+
                 // Petty Cash module (Chennai + Mumbai office cash floats)
                 let pcOfficesData = await loadFileFromDrive('pettyCashOffices.json');
                 pettyCashOffices  = Array.isArray(pcOfficesData) ? pcOfficesData : [];
@@ -6808,6 +6825,16 @@
                                         <div style="font-size:10px;color:#64748b">${currentUser?.email||''}</div>
                                     </div>
                                 </div>
+                                ${_bmsSession ? `
+                                <div style="display:flex;align-items:center;gap:8px;background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:6px 10px">
+                                    <div>
+                                        <div style="font-size:11px;font-weight:700;color:#15803d">🔐 ${_bmsSession.name}</div>
+                                        <div style="font-size:9px;color:#6b7280">${_bmsSession.role} · <a href="javascript:void(0)" onclick="_logout()" style="color:#dc2626;text-decoration:none">Sign out</a></div>
+                                    </div>
+                                </div>
+                                <button onclick="switchView('auditlog')" class="p-2 hover:bg-gray-100 rounded-lg" title="Audit Log">
+                                    <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+                                </button>` : ''}
                                 <button onclick="handleSignOut()" class="p-2 hover:bg-gray-100 rounded-lg" title="Sign Out">
                                     <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
                                 </button>
@@ -6815,19 +6842,22 @@
                         </div>
                         <div class="flex gap-2">
                             <button onclick="switchView('dashboard')" class="px-4 py-2 rounded-lg ${currentView === 'dashboard' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Dashboard</button>
-                            <button onclick="switchView('transactions')" class="px-4 py-2 rounded-lg ${currentView === 'transactions' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Transactions</button>
-                            <button onclick="switchView('expenses')" class="px-4 py-2 rounded-lg ${currentView === 'expenses' ? 'bg-orange-100 text-orange-700' : 'text-gray-600 hover:bg-gray-100'}">💸 Expenses</button>
-                            <button onclick="switchView('staff')" class="px-4 py-2 rounded-lg ${currentView === 'staff' ? 'bg-teal-100 text-teal-700' : 'text-gray-600 hover:bg-gray-100'}">👥 Staff</button>
-                            <button onclick="switchView('projexp')" class="px-4 py-2 rounded-lg ${currentView === 'projexp' ? 'bg-yellow-100 text-yellow-700' : 'text-gray-600 hover:bg-gray-100'}">🧳 Projects</button>
-                            <button onclick="switchView('funds')" class="px-4 py-2 rounded-lg ${currentView === 'funds' ? 'bg-emerald-100 text-emerald-700' : 'text-gray-600 hover:bg-gray-100'}">💰 Funds${(()=>{const p=fundRequests.filter(r=>r.status==='Pending').length;return p>0?` <span class="ml-1 px-1.5 py-0.5 bg-rose-500 text-white rounded-full text-xs font-bold">${p}</span>`:'';})()}</button>
-                            <button onclick="switchView('payreq')" class="px-4 py-2 rounded-lg ${currentView === 'payreq' ? 'bg-cyan-100 text-cyan-700' : 'text-gray-600 hover:bg-gray-100'}">💼 Pay Requests${(()=>{const p=(paymentRequests||[]).filter(r=>r.status==='Draft').length;return p>0?` <span class="ml-1 px-1.5 py-0.5 bg-amber-500 text-white rounded-full text-xs font-bold">${p}</span>`:'';})()}</button>
-                            <button onclick="switchView('direxp')" class="px-4 py-2 rounded-lg ${currentView === 'direxp' ? 'bg-rose-100 text-rose-700' : 'text-gray-600 hover:bg-gray-100'}">👔 Directors</button>
-                            <button onclick="switchView('pettycash')" class="px-4 py-2 rounded-lg ${currentView === 'pettycash' ? 'bg-amber-100 text-amber-800' : 'text-gray-600 hover:bg-gray-100'}" title="Office petty cash (Chennai / Mumbai)">💵 Petty Cash${(()=>{const u=(pettyCashTransactions||[]).filter(t=>t.txnType==='EXPENSE'&&!t.verified).length;return u>0?` <span class="ml-1 px-1.5 py-0.5 bg-amber-500 text-white rounded-full text-xs font-bold">${u}</span>`:'';})()}</button>
-                            <button onclick="switchView('tax')" class="px-4 py-2 rounded-lg ${currentView === 'tax' ? 'bg-red-100 text-red-700' : 'text-gray-600 hover:bg-gray-100'}">🧾 Tax</button>
-                            <button onclick="switchView('mis')" class="px-4 py-2 rounded-lg ${currentView === 'mis' ? 'bg-green-100 text-green-700' : 'text-gray-600 hover:bg-gray-100'}">📊 MIS Report</button>
-                            <button onclick="switchView('parties')" class="px-4 py-2 rounded-lg ${currentView === 'parties' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Parties</button>
-                            <button onclick="switchView('docs')" class="px-4 py-2 rounded-lg ${currentView === 'docs' ? 'bg-purple-100 text-purple-700' : 'text-gray-600 hover:bg-gray-100'}" title="Company documents, certificates, insurance policies">📄 Documents${(()=>{const c=_countDocsExpiringOrExpired();return c>0?` <span class="ml-1 px-1.5 py-0.5 bg-red-500 text-white rounded-full text-xs font-bold" title="${c} document(s) need attention">${c}</span>`:'';})()}</button>
-                            <button onclick="switchView('settings')" class="px-4 py-2 rounded-lg ${currentView === 'settings' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Settings</button>
+                            ${_canAccess('transactions')?`<button onclick="switchView('transactions')" class="px-4 py-2 rounded-lg ${currentView === 'transactions' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Transactions</button>`:''}
+                            ${_canAccess('expenses')?`<button onclick="switchView('expenses')" class="px-4 py-2 rounded-lg ${currentView === 'expenses' ? 'bg-orange-100 text-orange-700' : 'text-gray-600 hover:bg-gray-100'}">💸 Expenses</button>`:''}
+                            ${_canAccess('staff')?`<button onclick="switchView('staff')" class="px-4 py-2 rounded-lg ${currentView === 'staff' ? 'bg-teal-100 text-teal-700' : 'text-gray-600 hover:bg-gray-100'}">👥 Staff</button>`:''}
+                            ${_canAccess('projexp')?`<button onclick="switchView('projexp')" class="px-4 py-2 rounded-lg ${currentView === 'projexp' ? 'bg-yellow-100 text-yellow-700' : 'text-gray-600 hover:bg-gray-100'}">🧳 Projects</button>`:''}
+                            ${_canAccess('funds')?`<button onclick="switchView('funds')" class="px-4 py-2 rounded-lg ${currentView === 'funds' ? 'bg-emerald-100 text-emerald-700' : 'text-gray-600 hover:bg-gray-100'}">💰 Funds${(()=>{const p=fundRequests.filter(r=>r.status==='Pending').length;return p>0?` <span class="ml-1 px-1.5 py-0.5 bg-rose-500 text-white rounded-full text-xs font-bold">${p}</span>`:'';})()}</button>`:''}
+                            ${_canAccess('payreq')?`<button onclick="switchView('payreq')" class="px-4 py-2 rounded-lg ${currentView === 'payreq' ? 'bg-cyan-100 text-cyan-700' : 'text-gray-600 hover:bg-gray-100'}">💼 Pay Requests${(()=>{const p=(paymentRequests||[]).filter(r=>r.status==='Draft').length;return p>0?` <span class="ml-1 px-1.5 py-0.5 bg-amber-500 text-white rounded-full text-xs font-bold">${p}</span>`:'';})()}</button>`:''}
+                            ${_canAccess('direxp')?`<button onclick="switchView('direxp')" class="px-4 py-2 rounded-lg ${currentView === 'direxp' ? 'bg-rose-100 text-rose-700' : 'text-gray-600 hover:bg-gray-100'}">👔 Directors</button>`:''}
+                            ${_canAccess('pettycash')?`<button onclick="switchView('pettycash')" class="px-4 py-2 rounded-lg ${currentView === 'pettycash' ? 'bg-amber-100 text-amber-800' : 'text-gray-600 hover:bg-gray-100'}" title="Office petty cash (Chennai / Mumbai)">💵 Petty Cash${(()=>{const u=(pettyCashTransactions||[]).filter(t=>t.txnType==='EXPENSE'&&!t.verified).length;return u>0?` <span class="ml-1 px-1.5 py-0.5 bg-amber-500 text-white rounded-full text-xs font-bold">${u}</span>`:'';})()}</button>`:''}
+                            ${_canAccess('tax')?`<button onclick="switchView('tax')" class="px-4 py-2 rounded-lg ${currentView === 'tax' ? 'bg-red-100 text-red-700' : 'text-gray-600 hover:bg-gray-100'}">🧾 Tax</button>`:''}
+                            ${_canAccess('mis')?`<button onclick="switchView('mis')" class="px-4 py-2 rounded-lg ${currentView === 'mis' ? 'bg-green-100 text-green-700' : 'text-gray-600 hover:bg-gray-100'}">📊 MIS Report</button>`:''}
+                            ${_canAccess('parties')?`<button onclick="switchView('parties')" class="px-4 py-2 rounded-lg ${currentView === 'parties' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Parties</button>`:''}
+                            ${_canAccess('docs')?`<button onclick="switchView('docs')" class="px-4 py-2 rounded-lg ${currentView === 'docs' ? 'bg-purple-100 text-purple-700' : 'text-gray-600 hover:bg-gray-100'}" title="Company documents, certificates, insurance policies">📄 Documents${(()=>{const c=_countDocsExpiringOrExpired();return c>0?` <span class="ml-1 px-1.5 py-0.5 bg-red-500 text-white rounded-full text-xs font-bold" title="${c} document(s) need attention">${c}</span>`:'';})()}</button>`:''}
+                            ${_canAccess('settings')||!_bmsSession?`<button onclick="switchView('settings')" class="px-4 py-2 rounded-lg ${currentView === 'settings' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Settings</button>`:''}
+                            ${_canAccess('payroll')?`<button onclick="switchView('payroll')" class="px-4 py-2 rounded-lg ${currentView === 'payroll' ? 'bg-teal-100 text-teal-700' : 'text-gray-600 hover:bg-gray-100'}">💰 Payroll</button>`:''}
+                            ${_canAccess('attendance')?`<button onclick="switchView('attendance')" class="px-4 py-2 rounded-lg ${currentView === 'attendance' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}">📅 Attendance</button>`:''}
+
                         </div>
                     </div>
                 </nav>
@@ -6933,12 +6963,68 @@
             } catch (e) { /* nav not yet mounted — first render will handle it */ }
         }
 
+        // All available modules (view keys) with display labels
+        const ALL_MODULES = [
+            { view:'dashboard',    label:'Dashboard' },
+            { view:'transactions', label:'Transactions' },
+            { view:'ar',           label:'AR Dashboard' },
+            { view:'expenses',     label:'Expenses & Bills' },
+            { view:'projexp',      label:'Projects' },
+            { view:'funds',        label:'Fund Pool' },
+            { view:'payreq',       label:'Payment Requests' },
+            { view:'direxp',       label:'Director Expenses' },
+            { view:'pettycash',    label:'Petty Cash' },
+            { view:'tax',          label:'Tax' },
+            { view:'mis',          label:'MIS Report' },
+            { view:'staff',        label:'Staff' },
+            { view:'attendance',   label:'Attendance' },
+            { view:'payroll',      label:'Payroll' },
+            { view:'parties',      label:'Parties' },
+            { view:'docs',         label:'Documents' },
+            { view:'settings',     label:'Settings' },
+            { view:'auditlog',     label:'Audit Log' },
+        ];
+
+        // Default permissions — used when no customisation saved yet.
+        // Admin always gets '*' (all). These defaults are stored in
+        // settings.rolePermissions and are fully editable by Admin.
+        const DEFAULT_ROLE_PERMS = {
+            'Admin':    ['*'],
+            'Accounts': ['dashboard','transactions','ar','expenses','projexp','payreq','direxp','pettycash','tax','mis','parties','docs','auditlog','settings'],
+            'HR':       ['dashboard','staff','attendance','payroll','mis','docs','auditlog'],
+            'Field':    ['dashboard','docs','auditlog'],
+            'View Only':['dashboard','transactions','ar','expenses','projexp','funds','payreq','direxp','pettycash','tax','mis','staff','attendance','payroll','parties','docs','auditlog']
+        };
+
+        // Build ROLE_ACCESS dynamically from saved settings (or defaults)
+        function _buildRoleAccess() {
+            const perms = settings?.rolePermissions || DEFAULT_ROLE_PERMS;
+            const result = {};
+            Object.entries(perms).forEach(([role, views]) => {
+                result[role] = new Set(views);
+            });
+            return result;
+        }
+
+        function _canAccess(view) {
+            if (!ENABLE_LOGIN || !_bmsSession || appUsers.length === 0) return true;
+            const access = _buildRoleAccess();
+            const a = access[_bmsSession.role] || new Set();
+            return a.has('*') || a.has(view);
+        }
+        function _canWrite() {
+            if (!ENABLE_LOGIN || !_bmsSession || appUsers.length === 0) return true;
+            return _bmsSession.role !== 'View Only';
+        }
+
         function switchView(view) {
+            if (ENABLE_LOGIN && _bmsSession && appUsers.length > 0 && !_canAccess(view)) {
+                _showToast(`🚫 Access restricted — your role (${_bmsSession?.role}) cannot access this module. Contact Admin.`, '#dc2626', 4500);
+                return;
+            }
             currentView = view;
             // Lock settings when navigating away
-            if (view !== 'settings') {
-                settingsUnlocked = false;
-            }
+            if (view !== 'settings') { settingsUnlocked = false; }
             _updateBrowserTabTitle();
             _updateNavBarHighlight();
             renderView();
@@ -6946,19 +7032,43 @@
 
         function renderView() {
             const content = document.getElementById('mainContent');
-            if (!content) {
-                console.error('mainContent element not found');
-                return;
-            }
-            // Keep browser tab title in sync with the current section.
-            // (Belt-and-braces — switchView() also calls this, but renderView is
-            //  invoked from many places after data saves, so doing it here covers all paths.)
+            if (!content) { console.error('mainContent element not found'); return; }
             try { _updateBrowserTabTitle(); } catch (e) {}
             try { _updateNavBarHighlight(); } catch (e) {}
+
+            // ── PIN Login Gate ────────────────────────────────────────────
+            if (ENABLE_LOGIN && !_bmsSession && appUsers.length > 0) {
+                _renderLoginScreen(content);
+                return;
+            }
+
+            // ── Role Access Gate ──────────────────────────────────────────
+            if (ENABLE_LOGIN && _bmsSession && appUsers.length > 0 && !_canAccess(currentView)) {
+                content.innerHTML = `
+                <div style="min-height:60vh;display:flex;align-items:center;justify-content:center">
+                    <div style="text-align:center;max-width:380px">
+                        <div style="font-size:52px;margin-bottom:12px">🚫</div>
+                        <h2 style="font-size:20px;font-weight:800;color:#1e1b4b;margin:0 0 8px">Access Restricted</h2>
+                        <p style="font-size:13px;color:#6b7280;margin:0 0 6px">Your role <strong>${_bmsSession.role}</strong> does not have access to <strong>${currentView}</strong>.</p>
+                        <p style="font-size:12px;color:#9ca3af">Contact your Admin if you need access to this module.</p>
+                        <button onclick="switchView('dashboard')" style="margin-top:20px;padding:10px 24px;background:#4f46e5;color:#fff;border:none;border-radius:10px;font-weight:600;cursor:pointer">← Back to Dashboard</button>
+                    </div>
+                </div>`;
+                return;
+            }
+
+            // ── View Only banner ──────────────────────────────────────────
+            if (ENABLE_LOGIN && _bmsSession?.role === 'View Only' && appUsers.length > 0) {
+                const banner = document.createElement('div');
+                banner.style.cssText = 'background:#fef3c7;border-bottom:2px solid #fbbf24;padding:6px 16px;font-size:11px;color:#92400e;font-weight:600;text-align:center';
+                banner.textContent = '👁 View Only mode — you can browse but cannot save, create, or delete records.';
+                content.prepend?.(banner);
+            }
             
             if (currentView === 'dashboard') renderDashboard(content);
             else if (currentView === 'transactions') renderTransactions(content);
             else if (currentView === 'ar')           renderARDashboard(content);
+            else if (currentView === 'auditlog')     renderAuditLog(content);
             else if (currentView === 'expenses') renderExpenses(content);
             else if (currentView === 'staff') renderStaff(content);
             else if (currentView === 'projexp') renderProjectExpenses(content);
@@ -13446,26 +13556,50 @@
                 (settings.companyName||'IMSE Tech India')+'  |  Period: '+d.monthName+' '+year, PW);
             let y = 44;
 
-            // GST Summary box
+            // Fix 1: "Expected Net GST Payable (GSTR-3B)"
             doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
                 styles:{fontSize:9,cellPadding:3},
                 headStyles:{fillColor:[30,58,138],textColor:[255,255,255],fontStyle:'bold'},
                 head:[[{content:'GST SUMMARY — '+d.monthName.toUpperCase()+' '+year,colSpan:2,styles:{halign:'center'}}]],
                 body:[
-                    ['GST Input Credit (Expenses + Directors)',{content:INR(d.combinedITCTotal),styles:{textColor:[180,83,9],fontStyle:'bold'}}],
-                    ['GST Output (from invoices)',{content:INR(d.gstOutput),styles:{textColor:[126,34,206],fontStyle:'bold'}}],
-                    [d.netGST>0?'Net GST Payable (GSTR-3B)':'Net GST Credit (Carry Forward)',
+                    ['GST Input Credit (Expenses + Directors + RCM)',{content:INR(d.combinedITCTotal),styles:{textColor:[180,83,9],fontStyle:'bold'}}],
+                    ['GST Output (Invoices + RCM)',{content:INR(d.gstOutput),styles:{textColor:[126,34,206],fontStyle:'bold'}}],
+                    [d.netGST>0?'Expected Net GST Payable (GSTR-3B)':'Net GST Credit (Carry Forward)',
                      {content:INR(Math.abs(d.netGST)),styles:{fontStyle:'bold',textColor:d.netGST>0?[126,34,206]:[13,148,136]}}],
                 ],
                 columnStyles:{0:{cellWidth:120},1:{cellWidth:62,halign:'right'}}
             });
             y = doc.lastAutoTable.finalY+6;
 
-            // GST Input
-            if (d.gstInputExps.length || d.dirITCTotal>0) {
+            // GST Input — Fix 2: footer matches header colour [180,83,9]; Fix 3: add RCM rows
+            const rcmExps = d.rcmExps || (expenses||[]).filter(e=>e.rcmApplicable&&(e.billDate||'').startsWith(`${year}-${String(month).padStart(2,'0')}`));
+            if (d.gstInputExps.length || d.dirITCTotal>0 || rcmExps.length>0) {
                 if (y>220) {doc.addPage(); y=15;}
                 doc.setFontSize(10); doc.setFont('helvetica','bold'); doc.setTextColor(180,83,9);
                 doc.text('GST INPUT CREDIT (Expenses & Director Expenses)', ML, y); y+=4;
+
+                const rcmInputRows = rcmExps.map(e=>{
+                    const tax=(parseFloat(e.cgst)||0)+(parseFloat(e.sgst)||0)+(parseFloat(e.igst)||0);
+                    return [{content:e.billDate||'—',styles:{textColor:[234,88,12]}},
+                        {content:e.companyName||e.vendor||'—',styles:{textColor:[234,88,12]}},
+                        {content:e.vendorGSTIN||'—',styles:{fontSize:6.5,halign:'center',textColor:[234,88,12]}},
+                        {content:e.voucherNo||e.billNo||'—',styles:{textColor:[234,88,12]}},
+                        {content:'[RCM] '+(e.description||'—'),styles:{fontSize:6.5,textColor:[234,88,12]}},
+                        {content:INR(e.billAmtINR||0),styles:{halign:'right',textColor:[234,88,12]}},
+                        {content:INR(e.cgst||0),styles:{halign:'right',textColor:[234,88,12]}},
+                        {content:INR(e.sgst||0),styles:{halign:'right',textColor:[234,88,12]}},
+                        {content:INR(e.igst||0),styles:{halign:'right',textColor:[234,88,12]}},
+                        {content:INR(tax),styles:{halign:'right',fontStyle:'bold',textColor:[234,88,12]}}];
+                });
+
+                const rcmInputCGST = rcmExps.reduce((s,e)=>s+(parseFloat(e.cgst)||0),0);
+                const rcmInputSGST = rcmExps.reduce((s,e)=>s+(parseFloat(e.sgst)||0),0);
+                const rcmInputIGST = rcmExps.reduce((s,e)=>s+(parseFloat(e.igst)||0),0);
+                const totalInputCGST = (d.gstInputCGST||0) + rcmInputCGST;
+                const totalInputSGST = (d.gstInputSGST||0) + rcmInputSGST;
+                const totalInputIGST = (d.gstInputIGST||0) + rcmInputIGST;
+                const totalInputAmt  = totalInputCGST + totalInputSGST + totalInputIGST;
+
                 doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
                     styles:{fontSize:7.5,cellPadding:2.5},
                     headStyles:{fillColor:[180,83,9],textColor:[255,255,255],fontStyle:'bold'},
@@ -13498,59 +13632,89 @@
                                 {content:INR(de.igstAmt||de.igst||0),styles:{halign:'right',textColor:[99,102,241]}},
                                 {content:INR(parseFloat(de.itcAmt)||tax),styles:{halign:'right',fontStyle:'bold',textColor:[99,102,241]}}];
                         }),
+                        // Fix 3: RCM input rows (orange highlight)
+                        ...rcmInputRows,
                     ],
-                    foot:[[{content:'GST INPUT TOTAL',colSpan:5,styles:{fontStyle:'bold',halign:'right',fillColor:[254,243,199]}},
-                        {content:INR(d.gstInputCGST),styles:{halign:'right',fontStyle:'bold',fillColor:[254,243,199]}},
-                        {content:INR(d.gstInputSGST),styles:{halign:'right',fontStyle:'bold',fillColor:[254,243,199]}},
-                        {content:INR(d.gstInputIGST),styles:{halign:'right',fontStyle:'bold',fillColor:[254,243,199]}},
-                        {content:INR(d.combinedITCTotal),styles:{halign:'right',fontStyle:'bold',fillColor:[254,243,199],textColor:[180,83,9]}}]],
+                    // Fix 2: footer fillColor matches header [180,83,9] with white text — fully readable when printed
+                    foot:[[{content:'GST INPUT TOTAL (incl. RCM)',colSpan:5,styles:{fontStyle:'bold',halign:'right',fillColor:[180,83,9],textColor:[255,255,255]}},
+                        {content:INR(totalInputCGST),styles:{halign:'right',fontStyle:'bold',fillColor:[180,83,9],textColor:[255,255,255]}},
+                        {content:INR(totalInputSGST),styles:{halign:'right',fontStyle:'bold',fillColor:[180,83,9],textColor:[255,255,255]}},
+                        {content:INR(totalInputIGST),styles:{halign:'right',fontStyle:'bold',fillColor:[180,83,9],textColor:[255,255,255]}},
+                        {content:INR(totalInputAmt),styles:{halign:'right',fontStyle:'bold',fillColor:[120,55,6],textColor:[255,255,255]}}]],
                     columnStyles:{0:{cellWidth:14},1:{cellWidth:28},2:{cellWidth:24},3:{cellWidth:16},4:{cellWidth:28},5:{cellWidth:18},6:{cellWidth:16},7:{cellWidth:16},8:{cellWidth:14},9:{cellWidth:16}}
                 });
                 y = doc.lastAutoTable.finalY+5;
             }
 
-            // GST Output
-            if (d.outInvoices.length) {
+            // GST Output — Fix 3: add RCM output rows
+            const hasOutput = d.outInvoices.length>0 || rcmExps.length>0;
+            if (hasOutput) {
                 if (y>220) {doc.addPage(); y=15;}
                 doc.setFontSize(10); doc.setFont('helvetica','bold'); doc.setTextColor(126,34,206);
-                doc.text('GST OUTPUT (Sales Invoices)', ML, y); y+=4;
+                doc.text('GST OUTPUT (Sales Invoices + RCM Liability)', ML, y); y+=4;
+
+                const rcmOutputRows = rcmExps.map(e=>{
+                    const tax=(parseFloat(e.cgst)||0)+(parseFloat(e.sgst)||0)+(parseFloat(e.igst)||0);
+                    return [{content:e.billDate||'—',styles:{textColor:[234,88,12]}},
+                        {content:'[RCM Liability] '+(e.companyName||e.vendor||'—'),styles:{textColor:[234,88,12]}},
+                        {content:e.vendorGSTIN||'—',styles:{fontSize:6.5,halign:'center',textColor:[234,88,12]}},
+                        {content:e.voucherNo||e.billNo||'—',styles:{textColor:[234,88,12]}},
+                        {content:INR(e.billAmtINR||0),styles:{halign:'right',textColor:[234,88,12]}},
+                        {content:INR(e.cgst||0),styles:{halign:'right',textColor:[234,88,12]}},
+                        {content:INR(e.sgst||0),styles:{halign:'right',textColor:[234,88,12]}},
+                        {content:INR(e.igst||0),styles:{halign:'right',textColor:[234,88,12]}},
+                        {content:INR(tax),styles:{halign:'right',fontStyle:'bold',textColor:[234,88,12]}}];
+                });
+
+                const rcmOutCGST = rcmExps.reduce((s,e)=>s+(parseFloat(e.cgst)||0),0);
+                const rcmOutSGST = rcmExps.reduce((s,e)=>s+(parseFloat(e.sgst)||0),0);
+                const rcmOutIGST = rcmExps.reduce((s,e)=>s+(parseFloat(e.igst)||0),0);
+                const totalOutCGST = (d.gstOutputCGST||0)+rcmOutCGST;
+                const totalOutSGST = (d.gstOutputSGST||0)+rcmOutSGST;
+                const totalOutIGST = (d.gstOutputIGST||0)+rcmOutIGST;
+                const totalOutAmt  = (d.gstOutput||0)+rcmOutCGST+rcmOutSGST+rcmOutIGST;
+
                 doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
                     styles:{fontSize:7.5,cellPadding:2.5},
                     headStyles:{fillColor:[126,34,206],textColor:[255,255,255],fontStyle:'bold'},
-                    head:[['Date','Client','GSTIN','Invoice No','Taxable','CGST','SGST','IGST','Total Tax']],
-                    body:d.outInvoices.map(t=>{
-                        const tot=calculateTotals(t.items||[]);
-                        const party=(parties||[]).find(p=>p.partyName===t.partyName);
-                        const gstin=party?.gstNumber||t.gstNumber||'—';
-                        return [t.txnDate||'—', t.partyName||'—',
-                            {content:gstin,styles:{fontSize:6.5,halign:'center'}},
-                            t.txnID||'—',
-                            {content:INR(tot.subtotal||0),styles:{halign:'right'}},
-                            {content:INR(tot.cgst||0),styles:{halign:'right'}},
-                            {content:INR(tot.sgst||0),styles:{halign:'right'}},
-                            {content:INR(tot.igst||0),styles:{halign:'right'}},
-                            {content:INR(tot.totalTax||0),styles:{halign:'right',fontStyle:'bold',textColor:[126,34,206]}}];
-                    }),
-                    foot:[[{content:'GST OUTPUT TOTAL',colSpan:5,styles:{fontStyle:'bold',halign:'right',fillColor:[126,34,206],textColor:[255,255,255]}},
-                        {content:INR(d.gstOutputCGST),styles:{halign:'right',fontStyle:'bold',fillColor:[126,34,206],textColor:[255,255,255]}},
-                        {content:INR(d.gstOutputSGST),styles:{halign:'right',fontStyle:'bold',fillColor:[126,34,206],textColor:[255,255,255]}},
-                        {content:INR(d.gstOutputIGST),styles:{halign:'right',fontStyle:'bold',fillColor:[126,34,206],textColor:[255,255,255]}},
-                        {content:INR(d.gstOutput),styles:{halign:'right',fontStyle:'bold',fillColor:[88,22,162],textColor:[255,255,255]}}]],
-                    columnStyles:{0:{cellWidth:16},1:{cellWidth:32},2:{cellWidth:28},3:{cellWidth:20},4:{cellWidth:22},5:{cellWidth:18},6:{cellWidth:18},7:{cellWidth:16},8:{cellWidth:18}}
+                    head:[['Date','Client / Vendor','GSTIN','Invoice No','Taxable','CGST','SGST','IGST','Total Tax']],
+                    body:[
+                        ...d.outInvoices.map(t=>{
+                            const tot=calculateTotals(t.items||[]);
+                            const party=(parties||[]).find(p=>p.partyName===t.partyName);
+                            const gstin=party?.gstNumber||t.gstNumber||'—';
+                            return [t.txnDate||'—', t.partyName||'—',
+                                {content:gstin,styles:{fontSize:6.5,halign:'center'}},
+                                t.txnID||'—',
+                                {content:INR(tot.subtotal||0),styles:{halign:'right'}},
+                                {content:INR(tot.cgst||0),styles:{halign:'right'}},
+                                {content:INR(tot.sgst||0),styles:{halign:'right'}},
+                                {content:INR(tot.igst||0),styles:{halign:'right'}},
+                                {content:INR(tot.totalTax||0),styles:{halign:'right',fontStyle:'bold',textColor:[126,34,206]}}];
+                        }),
+                        // Fix 3: RCM output liability rows (orange — same vendor, different obligation)
+                        ...rcmOutputRows,
+                    ],
+                    foot:[[{content:'GST OUTPUT TOTAL (incl. RCM)',colSpan:5,styles:{fontStyle:'bold',halign:'right',fillColor:[126,34,206],textColor:[255,255,255]}},
+                        {content:INR(totalOutCGST),styles:{halign:'right',fontStyle:'bold',fillColor:[126,34,206],textColor:[255,255,255]}},
+                        {content:INR(totalOutSGST),styles:{halign:'right',fontStyle:'bold',fillColor:[126,34,206],textColor:[255,255,255]}},
+                        {content:INR(totalOutIGST),styles:{halign:'right',fontStyle:'bold',fillColor:[126,34,206],textColor:[255,255,255]}},
+                        {content:INR(totalOutAmt),styles:{halign:'right',fontStyle:'bold',fillColor:[88,22,162],textColor:[255,255,255]}}]],
+                    columnStyles:{0:{cellWidth:16},1:{cellWidth:32},2:{cellWidth:24},3:{cellWidth:18},4:{cellWidth:20},5:{cellWidth:18},6:{cellWidth:18},7:{cellWidth:16},8:{cellWidth:20}}
                 });
                 y = doc.lastAutoTable.finalY+5;
             }
 
-            // GST Reconciliation summary
+            // GST Reconciliation summary (updated to include RCM)
             if (y>250) {doc.addPage(); y=15;}
             doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
                 styles:{fontSize:9.5,cellPadding:3.5},
                 headStyles:{fillColor:[30,58,138],textColor:[255,255,255],fontStyle:'bold'},
                 head:[[{content:'GST RECONCILIATION SUMMARY',colSpan:2,styles:{halign:'center'}}]],
                 body:[
-                    [{content:'GST Output (Invoices)',styles:{fillColor:[243,232,255]}},{content:INR(d.gstOutput),styles:{halign:'right',fillColor:[243,232,255],textColor:[126,34,206],fontStyle:'bold'}}],
-                    [{content:'Less: GST Input Credit (Expenses)',styles:{fillColor:[255,251,235]}},{content:'('+INR(d.gstInputTotal)+')',styles:{halign:'right',fillColor:[255,251,235],textColor:[180,83,9],fontStyle:'bold'}}],
-                    [{content:d.netGST>0?'Net GST Payable (GSTR-3B)':'Net Input Credit (Carry Forward)',styles:{fontStyle:'bold',fillColor:d.netGST>0?[243,232,255]:[240,253,250]}},
+                    [{content:'GST Output (Invoices + RCM Liability)',styles:{fillColor:[243,232,255]}},{content:INR(d.gstOutput),styles:{halign:'right',fillColor:[243,232,255],textColor:[126,34,206],fontStyle:'bold'}}],
+                    [{content:'Less: GST Input Credit (Expenses + Directors + RCM)',styles:{fillColor:[255,251,235]}},{content:'('+INR(d.gstInputTotal)+')',styles:{halign:'right',fillColor:[255,251,235],textColor:[180,83,9],fontStyle:'bold'}}],
+                    [{content:d.netGST>0?'Expected Net GST Payable (GSTR-3B)':'Net Input Credit (Carry Forward)',styles:{fontStyle:'bold',fillColor:d.netGST>0?[243,232,255]:[240,253,250]}},
                      {content:INR(Math.abs(d.netGST)),styles:{halign:'right',fontStyle:'bold',textColor:d.netGST>0?[126,34,206]:[13,148,136],fillColor:d.netGST>0?[243,232,255]:[240,253,250]}}],
                 ],
                 columnStyles:{0:{cellWidth:130},1:{cellWidth:52,halign:'right'}}
@@ -14340,6 +14504,133 @@
                             <button type="submit" class="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Save Settings</button>
                         </div>
                     </form>
+                </div>
+
+                <!-- ══ User Management — PIN Login System ══ -->
+                <div class="bg-gradient-to-br from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-2xl shadow-lg p-6 mt-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <div>
+                            <h3 class="text-xl font-bold text-indigo-900">👥 User Management — PIN Login</h3>
+                            <p class="text-xs text-indigo-700 mt-0.5">Manage who can log in to the app. Each user gets a 6-digit PIN. PINs expire after the set period and must be renewed.</p>
+                        </div>
+                        <button onclick="openUserModal()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700">+ Add User</button>
+                    </div>
+
+                    <!-- Role Permissions Matrix -->
+                    <div class="bg-white rounded-xl border border-indigo-200 p-4 mb-4">
+                        <div class="flex justify-between items-center mb-3">
+                            <div>
+                                <p class="text-sm font-bold text-indigo-800">🔐 Role Permissions</p>
+                                <p class="text-xs text-gray-500 mt-0.5">Tick which modules each role can access. Admin always has full access.</p>
+                            </div>
+                            <button onclick="_saveRolePermissions()" class="px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">Save Permissions</button>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="text-xs w-full" id="rolePermMatrix">
+                                <thead>
+                                    <tr class="text-indigo-700 font-bold">
+                                        <th class="text-left py-1.5 pr-3 font-semibold text-gray-600 whitespace-nowrap">Module</th>
+                                        <th class="px-3 py-1.5 text-center text-purple-700">Admin</th>
+                                        <th class="px-3 py-1.5 text-center text-blue-700">Accounts</th>
+                                        <th class="px-3 py-1.5 text-center text-teal-700">HR</th>
+                                        <th class="px-3 py-1.5 text-center text-orange-700">Field</th>
+                                        <th class="px-3 py-1.5 text-center text-gray-600">View Only</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${ALL_MODULES.map(m => {
+                                        const perms = settings?.rolePermissions || DEFAULT_ROLE_PERMS;
+                                        const roles = ['Admin','Accounts','HR','Field','View Only'];
+                                        return `<tr class="border-t border-gray-100 hover:bg-indigo-50">
+                                            <td class="py-1.5 pr-3 font-medium text-gray-700 whitespace-nowrap">${m.label}</td>
+                                            ${roles.map(role => {
+                                                const isAdmin = role === 'Admin';
+                                                const checked = isAdmin || (perms[role]||[]).includes(m.view);
+                                                return `<td class="px-3 py-1.5 text-center">
+                                                    <input type="checkbox" data-role="${role}" data-view="${m.view}"
+                                                        ${checked?'checked':''} ${isAdmin?'disabled':''} class="w-3.5 h-3.5 accent-indigo-600 cursor-pointer"
+                                                        title="${isAdmin?'Admin always has full access':''}"/>
+                                                </td>`;
+                                            }).join('')}
+                                        </tr>`;
+                                    }).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                        <div class="flex items-center gap-4 flex-wrap">
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-700 mb-1">Default PIN Expiry Period (days)</label>
+                                <select id="settPinExpiry" class="px-3 py-2 border rounded-lg text-sm">
+                                    <option value="30" ${settings.pinExpiryDays==30?'selected':''}>30 days (monthly)</option>
+                                    <option value="60" ${settings.pinExpiryDays==60?'selected':''}>60 days</option>
+                                    <option value="90" ${settings.pinExpiryDays==90?'selected':''}>90 days (quarterly)</option>
+                                    <option value="180" ${settings.pinExpiryDays==180?'selected':''}>180 days</option>
+                                    <option value="0" ${settings.pinExpiryDays==0?'selected':''}>Never expire</option>
+                                </select>
+                            </div>
+                            <div class="text-xs text-gray-500 mt-4">Users will be forced to request a new PIN from Admin when their PIN expires.</div>
+                        </div>
+                    </div>
+
+                    <!-- Users table -->
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead class="bg-indigo-100 text-indigo-800 text-xs uppercase">
+                                <tr>
+                                    <th class="px-4 py-2 text-left">Name</th>
+                                    <th class="px-4 py-2 text-left">Role</th>
+                                    <th class="px-4 py-2 text-center">PIN Status</th>
+                                    <th class="px-4 py-2 text-center">PIN Expires</th>
+                                    <th class="px-4 py-2 text-center">Active</th>
+                                    <th class="px-4 py-2 text-center">Last Login</th>
+                                    <th class="px-4 py-2 text-center">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${appUsers.length === 0 ? `
+                                <tr><td colspan="7" class="px-4 py-8 text-center text-gray-400">
+                                    No users yet. Click "+ Add User" to create the Admin user first.
+                                </td></tr>` :
+                                appUsers.map(u => {
+                                    const today = new Date().toISOString().split('T')[0];
+                                    const expired = u.pinExpiry && u.pinExpiry < today;
+                                    const expiresIn = u.pinExpiry ? Math.ceil((new Date(u.pinExpiry)-new Date())/86400000) : null;
+                                    return `
+                                <tr class="border-t border-indigo-100 hover:bg-indigo-50 ${!u.active?'opacity-50':''}">
+                                    <td class="px-4 py-2.5 font-semibold">${u.name} ${u.userID===(_bmsSession?.userID||'')?'<span class="text-xs bg-indigo-100 text-indigo-600 px-1.5 rounded ml-1">You</span>':''}</td>
+                                    <td class="px-4 py-2.5">
+                                        ${_bmsSession?.role === 'Admin' ? `
+                                        <select onchange="_changeUserRole('${u.userID}',this.value)" class="text-xs px-2 py-0.5 border border-gray-200 rounded-lg bg-white cursor-pointer ${u.role==='Admin'?'text-purple-700 font-bold':u.role==='View Only'?'text-gray-500':'text-blue-700'}">
+                                            <option value="Admin"    ${u.role==='Admin'?'selected':''}>Admin</option>
+                                            <option value="Accounts" ${u.role==='Accounts'?'selected':''}>Accounts</option>
+                                            <option value="HR"       ${u.role==='HR'?'selected':''}>HR</option>
+                                            <option value="Field"    ${u.role==='Field'?'selected':''}>Field</option>
+                                            <option value="View Only" ${u.role==='View Only'?'selected':''}>View Only</option>
+                                        </select>` :
+                                        `<span class="text-xs px-2 py-0.5 rounded-full ${u.role==='Admin'?'bg-purple-100 text-purple-700':u.role==='View Only'?'bg-gray-100 text-gray-600':'bg-blue-100 text-blue-700'}">${u.role}</span>`}
+                                    </td>
+                                    <td class="px-4 py-2.5 text-center">
+                                        ${u.pinHash ? (expired
+                                            ? '<span class="text-xs text-red-600 font-semibold">⚠ Expired</span>'
+                                            : '<span class="text-xs text-green-600">✓ Set</span>')
+                                            : '<span class="text-xs text-amber-600">Not set</span>'}
+                                    </td>
+                                    <td class="px-4 py-2.5 text-center text-xs ${expired?'text-red-600 font-semibold':expiresIn&&expiresIn<=7?'text-amber-600':'text-gray-500'}">
+                                        ${u.pinExpiry ? (expired ? 'Expired '+u.pinExpiry : (expiresIn<=7?'⚠ ':'')+u.pinExpiry+' ('+expiresIn+'d)') : '—'}
+                                    </td>
+                                    <td class="px-4 py-2.5 text-center">
+                                        <input type="checkbox" ${u.active?'checked':''} onchange="toggleUserActive('${u.userID}',this.checked)" class="w-4 h-4 accent-indigo-600"/>
+                                    </td>
+                                    <td class="px-4 py-2.5 text-center text-xs text-gray-400">${u.lastLogin?u.lastLogin.substring(0,16).replace('T',' '):'Never'}</td>
+                                    <td class="px-4 py-2.5 text-center">
+                                        <button onclick="openSetPINModal('${u.userID}')" class="px-2 py-1 bg-indigo-100 text-indigo-700 rounded text-xs hover:bg-indigo-200 mr-1">🔑 Set PIN</button>
+                                        <button onclick="openUserModal('${u.userID}')" class="px-2 py-1 bg-gray-100 text-gray-600 rounded text-xs hover:bg-gray-200">Edit</button>
+                                    </td>
+                                </tr>`; }).join('')}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
 
                 <!-- Payslip Records Management -->
@@ -16709,6 +17000,7 @@
                     director2OpeningDate:    document.getElementById('settDir2OpeningDate')?.value || '',
                     director2OpeningNote:    document.getElementById('settDir2OpeningNote')?.value || '',
                     allowedUsers:     settings.allowedUsers || [],  // preserved — managed via addAllowedUser/removeAllowedUser
+                    rolePermissions:  settings.rolePermissions || DEFAULT_ROLE_PERMS,  // preserved — managed via role permissions matrix
                     officeStartTime:  document.getElementById('settOfficeStart')?.value  || settings.officeStartTime  || '09:30',
                     officeEndTime:    document.getElementById('settOfficeEnd')?.value    || settings.officeEndTime    || '18:00',
                     saturdayStart:    document.getElementById('settSatStart')?.value     || settings.saturdayStart    || '09:30',
@@ -16717,6 +17009,7 @@
                     punctualityIncentivePerfect: parseFloat(document.getElementById('settPunctualityPerfect')?.value)||0,
                     punctualityIncentiveGood:    parseFloat(document.getElementById('settPunctualityGood')?.value)||0,
                     wfhBacklogDays:   parseInt(document.getElementById('settWFHBacklog')?.value)||30,
+                    pinExpiryDays:    parseInt(document.getElementById('settPinExpiry')?.value) ?? settings.pinExpiryDays ?? 30,
                     spreadsheetId: settings.spreadsheetId, // Preserve spreadsheet ID
                     logoData: settings.logoData || null,   // Preserve logo
                     // Preserve old bank fields if they exist (for backward compatibility with old PDFs)
@@ -21047,7 +21340,394 @@ Automated WFH alert — ${company} Attendance System.`;
         // Run from console: cleanupDuplicatePayslips()
         // ════════════════════════════════════════════════════════════════
         // ════════════════════════════════════════════════════════════════════
-        // ACCOUNTS RECEIVABLE (AR) DASHBOARD
+        // PIN LOGIN SYSTEM — Identity-based session with 6-digit PIN
+        // PINs are hashed with SHA-256 before storage (never stored as plain text).
+        // Session stored in sessionStorage — clears on browser/tab close.
+        // Audit log written to AuditLog.json on Drive on every save.
+        // ════════════════════════════════════════════════════════════════════
+
+        // ── SHA-256 PIN hashing (Web Crypto API — available in all modern browsers) ──
+        async function _hashPIN(pin) {
+            const encoder = new TextEncoder();
+            // Salt with the app's company name to prevent rainbow table attacks
+            const data = encoder.encode('IMSE_BMS_SALT_' + String(pin));
+            const hashBuf = await crypto.subtle.digest('SHA-256', data);
+            return Array.from(new Uint8Array(hashBuf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+        }
+
+        // ── Restore session from sessionStorage on page reload ──
+        function _restoreSession() {
+            try {
+                const saved = sessionStorage.getItem('_bmsSession');
+                if (saved) {
+                    const s = JSON.parse(saved);
+                    // Verify the user still exists and is active
+                    const user = (appUsers||[]).find(u => u.userID === s.userID && u.active);
+                    if (user) { _bmsSession = s; return true; }
+                }
+            } catch(e) {}
+            return false;
+        }
+
+        // ── Login Screen ──
+        function _renderLoginScreen(content) {
+            const activeUsers = (appUsers||[]).filter(u => u.active);
+            content.innerHTML = `
+            <div style="min-height:80vh;display:flex;align-items:center;justify-content:center">
+                <div style="background:#fff;border-radius:20px;box-shadow:0 8px 40px rgba(79,70,229,0.15);padding:40px;width:100%;max-width:380px">
+                    <div style="text-align:center;margin-bottom:28px">
+                        <div style="font-size:40px;margin-bottom:8px">🔐</div>
+                        <h2 style="font-size:22px;font-weight:800;color:#1e1b4b;margin:0">${settings.companyName||'IMSE EASY BMS'}</h2>
+                        <p style="font-size:12px;color:#6b7280;margin-top:4px">Enter your 6-digit PIN to continue</p>
+                    </div>
+
+                    <div style="margin-bottom:16px">
+                        <label style="display:block;font-size:11px;font-weight:700;color:#374151;text-transform:uppercase;margin-bottom:6px">Who are you?</label>
+                        <select id="loginUserSel" style="width:100%;padding:10px 14px;border:2px solid #e5e7eb;border-radius:10px;font-size:14px;font-weight:600;color:#1f2937;background:#f9fafb" onchange="_loginUserChange()">
+                            <option value="">— Select your name —</option>
+                            ${activeUsers.map(u=>`<option value="${u.userID}">${u.name}</option>`).join('')}
+                        </select>
+                    </div>
+
+                    <div style="margin-bottom:20px">
+                        <label style="display:block;font-size:11px;font-weight:700;color:#374151;text-transform:uppercase;margin-bottom:6px">6-digit PIN</label>
+                        <input type="password" id="loginPIN" maxlength="6" inputmode="numeric" pattern="[0-9]*"
+                            placeholder="• • • • • •"
+                            style="width:100%;padding:12px 14px;border:2px solid #e5e7eb;border-radius:10px;font-size:22px;letter-spacing:8px;text-align:center;box-sizing:border-box;background:#f9fafb;color:#1e1b4b;font-weight:700"
+                            onkeydown="if(event.key==='Enter')_submitLogin()"
+                            oninput="this.value=this.value.replace(/[^0-9]/g,'').substring(0,6)"/>
+                    </div>
+
+                    <div id="loginError" style="display:none;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;font-size:12px;color:#dc2626;margin-bottom:12px;text-align:center"></div>
+
+                    <button onclick="_submitLogin()"
+                        style="width:100%;padding:13px;background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;letter-spacing:0.5px">
+                        Sign In →
+                    </button>
+
+                    <p style="font-size:11px;color:#9ca3af;text-align:center;margin-top:16px">
+                        Forgot your PIN? Contact your Admin to reset it.
+                    </p>
+                </div>
+            </div>`;
+            setTimeout(()=>document.getElementById('loginPIN')?.focus(), 100);
+        }
+
+        function _loginUserChange() {
+            document.getElementById('loginPIN').value = '';
+            document.getElementById('loginError').style.display = 'none';
+        }
+
+        async function _submitLogin() {
+            const userID = document.getElementById('loginUserSel')?.value;
+            const pin    = document.getElementById('loginPIN')?.value.trim();
+            const errEl  = document.getElementById('loginError');
+
+            if (!userID) { errEl.textContent = 'Please select your name.'; errEl.style.display='block'; return; }
+            if (!pin || pin.length !== 6 || !/^\d{6}$/.test(pin)) {
+                errEl.textContent = 'PIN must be exactly 6 digits.'; errEl.style.display='block'; return; }
+
+            const user = (appUsers||[]).find(u => u.userID === userID);
+            if (!user || !user.active) { errEl.textContent = 'Account not found or inactive.'; errEl.style.display='block'; return; }
+            if (!user.pinHash) { errEl.textContent = 'No PIN set for this account. Ask Admin to set your PIN.'; errEl.style.display='block'; return; }
+
+            // Check PIN expiry
+            const today = new Date().toISOString().split('T')[0];
+            if (user.pinExpiry && user.pinExpiry < today) {
+                errEl.textContent = 'Your PIN has expired ('+user.pinExpiry+'). Please ask Admin to set a new PIN for you.';
+                errEl.style.display='block'; return;
+            }
+
+            // Verify PIN hash
+            const hash = await _hashPIN(pin);
+            if (hash !== user.pinHash) {
+                // Track failed attempts
+                user.failedAttempts = (user.failedAttempts||0) + 1;
+                user.lastFailedAt = new Date().toISOString();
+                await saveData('appUsers', appUsers);
+                const remaining = Math.max(0, 5 - user.failedAttempts);
+                errEl.textContent = `Incorrect PIN. ${remaining > 0 ? remaining+' attempts remaining.' : 'Account temporarily locked — contact Admin.'}`;
+                errEl.style.display='block'; return;
+            }
+
+            // Success — create session
+            user.failedAttempts = 0;
+            user.lastLogin = new Date().toISOString();
+            _bmsSession = { userID: user.userID, name: user.name, role: user.role, loginAt: new Date().toISOString() };
+            sessionStorage.setItem('_bmsSession', JSON.stringify(_bmsSession));
+
+            await saveData('appUsers', appUsers);
+            _writeAuditLog('LOGIN', 'Auth', user.userID, 'Logged in successfully');
+            renderView();
+        }
+
+        function _logout() {
+            if (!confirm('Sign out of IMSE EASY BMS?')) return;
+            _writeAuditLog('LOGOUT', 'Auth', _bmsSession?.userID, 'Signed out');
+            _bmsSession = null;
+            sessionStorage.removeItem('_bmsSession');
+            renderView();
+        }
+
+        // ── Audit Log Writer ──
+        async function _writeAuditLog(action, module, recordID, summary, oldVal, newVal) {
+            if (!_bmsSession) return;  // Only log when someone is logged in
+            const entry = {
+                ts:       new Date().toISOString(),
+                user:     _bmsSession.name,
+                userID:   _bmsSession.userID,
+                role:     _bmsSession.role,
+                action,   // CREATE / UPDATE / DELETE / APPROVE / LOGIN / LOGOUT / VIEW
+                module,   // Expenses / Attendance / Payroll / Transactions / etc.
+                recordID: String(recordID||''),
+                summary:  String(summary||''),
+                oldVal:   oldVal ? JSON.stringify(oldVal).substring(0,500) : '',
+                newVal:   newVal ? JSON.stringify(newVal).substring(0,500) : ''
+            };
+            auditLog.unshift(entry);        // newest first
+            if (auditLog.length > 1000) auditLog.length = 1000;  // cap at 1000 in memory
+            try {
+                await saveData('auditLog', auditLog);
+            } catch(e) { console.warn('Audit log write failed:', e); }
+        }
+
+        // Convenience wrapper — called automatically by the saveData override
+        function _auditFromSave(filename, data) {
+            const moduleMap = {
+                expenses: 'Expenses', staff: 'Staff', payslips: 'Payroll',
+                transactions: 'Transactions', paymentRequests: 'PaymentRequests',
+                directorExpenses: 'DirectorExpenses', settings: 'Settings',
+                attendance: 'Attendance', arInvoices: 'AR', appUsers: 'UserMgmt',
+                fundRequests: 'FundRequests', fundPools: 'FundPools',
+                pettyCash: 'PettyCash', workLogs: 'FieldApp'
+            };
+            const module = moduleMap[filename] || filename;
+            const count = Array.isArray(data) ? data.length : 1;
+            _writeAuditLog('SAVE', module, filename, `Saved ${filename} (${count} records)`);
+        }
+
+        // ── User Management CRUD ──
+        function openUserModal(userID = null) {
+            const u = userID ? (appUsers||[]).find(x=>x.userID===userID) : null;
+            const modal = document.createElement('div');
+            modal.id = 'userMgmtModal'; modal.className = 'modal show';
+            modal.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md m-4">
+                <div class="bg-gradient-to-r from-indigo-600 to-purple-600 p-5 text-white flex justify-between items-center">
+                    <h3 class="text-base font-bold">${u?'Edit':'Add'} User</h3>
+                    <button onclick="document.getElementById('userMgmtModal').remove()" class="text-white text-2xl font-bold">✕</button>
+                </div>
+                <div class="p-5 space-y-4">
+                    <div><label class="block text-xs font-semibold text-gray-700 mb-1">Full Name *</label>
+                        <input id="umName" value="${u?.name||''}" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="e.g. NISHA / Mr. G. RAJESH"/>
+                    </div>
+                    <div><label class="block text-xs font-semibold text-gray-700 mb-1">Role *</label>
+                        <select id="umRole" class="w-full px-3 py-2 border rounded-lg text-sm">
+                            <option value="Admin" ${u?.role==='Admin'?'selected':''}>Admin — full access</option>
+                            <option value="Accounts" ${u?.role==='Accounts'?'selected':''}>Accounts — Expenses, Tax, Payment Requests</option>
+                            <option value="HR" ${u?.role==='HR'?'selected':''}>HR — Staff, Attendance, Payroll</option>
+                            <option value="Field" ${u?.role==='Field'?'selected':''}>Field — Field App only</option>
+                            <option value="View Only" ${u?.role==='View Only'?'selected':''}>View Only — read all, no writes</option>
+                        </select>
+                    </div>
+                    <div><label class="block text-xs font-semibold text-gray-700 mb-1">PIN Expiry Override (days) <span class="font-normal text-gray-400">leave blank to use default</span></label>
+                        <input type="number" id="umPinDays" value="${u?.pinExpiryDays||''}" min="0" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="${settings.pinExpiryDays||30}"/>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <input type="checkbox" id="umActive" ${(!u||u.active)?'checked':''} class="w-4 h-4 accent-indigo-600"/>
+                        <label for="umActive" class="text-sm text-gray-700">Account active (user can log in)</label>
+                    </div>
+                    <div class="flex justify-end gap-3 pt-2 border-t">
+                        <button onclick="document.getElementById('userMgmtModal').remove()" class="px-4 py-2 border border-gray-300 text-gray-600 rounded-lg text-sm">Cancel</button>
+                        <button onclick="_saveUser('${userID||''}')" class="px-5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700">Save User</button>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+        }
+
+        async function _saveRolePermissions() {
+            const roles = ['Accounts','HR','Field','View Only'];  // Admin always '*', not in matrix
+            const newPerms = { 'Admin': ['*'] };
+            roles.forEach(role => {
+                const checked = Array.from(document.querySelectorAll(
+                    `#rolePermMatrix input[data-role="${role}"]:checked`
+                )).map(cb => cb.dataset.view);
+                newPerms[role] = checked;
+            });
+            settings.rolePermissions = newPerms;
+            try {
+                await saveData('settings', settings);
+                _showToast('✓ Role permissions saved — takes effect immediately', '#4f46e5', 3500);
+                _writeAuditLog('UPDATE', 'Settings', 'rolePermissions', 'Role permissions matrix updated by Admin');
+                renderView();
+            } catch(err) { alert('Save failed: ' + err.message); }
+        }
+
+        async function _changeUserRole(userID, newRole) {
+            const u = (appUsers||[]).find(x => x.userID === userID);
+            if (!u) return;
+            // Prevent Admin from removing their own Admin role (would lock everyone out)
+            if (u.userID === _bmsSession?.userID && newRole !== 'Admin') {
+                alert("You cannot change your own role away from Admin — this would lock you out of User Management.\n\nAsk another Admin to change your role if needed.");
+                renderView();  // reset the dropdown
+                return;
+            }
+            const oldRole = u.role;
+            u.role = newRole;
+            try {
+                await saveData('appUsers', appUsers);
+                _writeAuditLog('UPDATE', 'UserMgmt', userID, `${u.name} role changed: ${oldRole} → ${newRole}`);
+                _showToast(`✓ ${u.name} role updated to ${newRole}`, '#4f46e5', 3000);
+                renderView();
+            } catch(err) {
+                u.role = oldRole;  // revert on failure
+                alert('Save failed: ' + err.message);
+            }
+        }
+
+        async function _saveUser(userID) {
+            const name = document.getElementById('umName')?.value.trim();
+            const role = document.getElementById('umRole')?.value;
+            const pinDays = parseInt(document.getElementById('umPinDays')?.value) || null;
+            const active = document.getElementById('umActive')?.checked ?? true;
+            if (!name || !role) { alert('Name and Role are required.'); return; }
+            if (userID) {
+                const idx = appUsers.findIndex(u=>u.userID===userID);
+                if (idx>=0) Object.assign(appUsers[idx], {name, role, pinExpiryDays:pinDays, active});
+            } else {
+                appUsers.push({ userID:'USR-'+Date.now(), name, role, pinExpiryDays:pinDays,
+                    active, pinHash:'', pinExpiry:'', failedAttempts:0, lastLogin:'', createdAt:new Date().toISOString() });
+            }
+            await saveData('appUsers', appUsers);
+            document.getElementById('userMgmtModal').remove();
+            renderView();
+            _showToast('✓ User saved', '#4f46e5', 3000);
+        }
+
+        async function toggleUserActive(userID, active) {
+            const u = (appUsers||[]).find(x=>x.userID===userID);
+            if (!u) return;
+            if (!active && u.userID === _bmsSession?.userID) { alert("You can't deactivate your own account."); renderView(); return; }
+            u.active = active;
+            await saveData('appUsers', appUsers);
+            _showToast(`✓ ${u.name} ${active?'activated':'deactivated'}`, '#4f46e5', 2500);
+        }
+
+        function openSetPINModal(userID) {
+            const u = (appUsers||[]).find(x=>x.userID===userID);
+            if (!u) return;
+            const pinDays = u.pinExpiryDays || settings.pinExpiryDays || 30;
+            const expiryDate = pinDays > 0
+                ? new Date(Date.now() + pinDays*86400000).toISOString().split('T')[0]
+                : '';
+            const modal = document.createElement('div');
+            modal.id = 'setPINModal'; modal.className = 'modal show';
+            modal.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm m-4">
+                <div class="bg-gradient-to-r from-indigo-600 to-purple-600 p-5 text-white flex justify-between items-center">
+                    <h3 class="text-base font-bold">🔑 Set PIN — ${u.name}</h3>
+                    <button onclick="document.getElementById('setPINModal').remove()" class="text-white text-2xl font-bold">✕</button>
+                </div>
+                <div class="p-5 space-y-4">
+                    <div class="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-xs text-indigo-800">
+                        Enter a new 6-digit PIN for <strong>${u.name}</strong>. Communicate it to them securely.
+                        The PIN will be stored as a secure hash — not readable by anyone.
+                    </div>
+                    <div><label class="block text-xs font-semibold text-gray-700 mb-1">New 6-digit PIN *</label>
+                        <input type="password" id="newPIN1" maxlength="6" inputmode="numeric" pattern="[0-9]*"
+                            class="w-full px-3 py-2 border rounded-lg text-center font-mono text-lg letter-spacing-4"
+                            placeholder="• • • • • •"
+                            oninput="this.value=this.value.replace(/[^0-9]/g,'').substring(0,6)"/>
+                    </div>
+                    <div><label class="block text-xs font-semibold text-gray-700 mb-1">Confirm PIN *</label>
+                        <input type="password" id="newPIN2" maxlength="6" inputmode="numeric" pattern="[0-9]*"
+                            class="w-full px-3 py-2 border rounded-lg text-center font-mono text-lg"
+                            placeholder="• • • • • •"
+                            oninput="this.value=this.value.replace(/[^0-9]/g,'').substring(0,6)"/>
+                    </div>
+                    <div><label class="block text-xs font-semibold text-gray-700 mb-1">PIN Expiry Date</label>
+                        <input type="date" id="pinExpiry" value="${expiryDate}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        <p class="text-[10px] text-gray-400 mt-1">Auto-set to ${pinDays>0?pinDays+' days from today':'never expire'}. Adjust if needed.</p>
+                    </div>
+                    <div class="flex justify-end gap-3 pt-2 border-t">
+                        <button onclick="document.getElementById('setPINModal').remove()" class="px-4 py-2 border border-gray-300 text-gray-600 rounded-lg text-sm">Cancel</button>
+                        <button onclick="_savePIN('${userID}')" class="px-5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700">Set PIN</button>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+        }
+
+        async function _savePIN(userID) {
+            const pin1 = document.getElementById('newPIN1')?.value;
+            const pin2 = document.getElementById('newPIN2')?.value;
+            const expiry = document.getElementById('pinExpiry')?.value;
+            if (!pin1 || pin1.length !== 6 || !/^\d{6}$/.test(pin1)) { alert('PIN must be exactly 6 digits.'); return; }
+            if (pin1 !== pin2) { alert('PINs do not match.'); return; }
+            const u = (appUsers||[]).find(x=>x.userID===userID);
+            if (!u) return;
+            u.pinHash = await _hashPIN(pin1);
+            u.pinExpiry = expiry || '';
+            u.failedAttempts = 0;
+            u.pinSetAt = new Date().toISOString();
+            u.pinSetBy = _bmsSession?.name || 'Admin';
+            await saveData('appUsers', appUsers);
+            document.getElementById('setPINModal').remove();
+            renderView();
+            _showToast(`✓ PIN set for ${u.name}${expiry?' · Expires '+expiry:''}`, '#15803d', 4000);
+            _writeAuditLog('UPDATE', 'UserMgmt', userID, `PIN set for ${u.name} by ${_bmsSession?.name||'Admin'} · Expires ${expiry||'never'}`);
+        }
+
+        // ── Audit Log Viewer (Admin only) ──
+        function renderAuditLog(content) {
+            const isAdmin = _bmsSession?.role === 'Admin';
+            const entries = isAdmin ? auditLog : auditLog.filter(e=>e.userID===_bmsSession?.userID);
+            const fmt = dt => dt ? dt.substring(0,16).replace('T',' ') : '—';
+            const actionColor = a => ({'CREATE':'#15803d','UPDATE':'#1d4ed8','DELETE':'#dc2626','APPROVE':'#7c3aed','LOGIN':'#0891b2','LOGOUT':'#6b7280','SAVE':'#374151','VIEW':'#9ca3af'})[a]||'#374151';
+
+            content.innerHTML = `
+            <div class="flex justify-between items-center mb-4 flex-wrap gap-3">
+                <div>
+                    <h2 class="text-2xl font-bold text-gray-800">📋 Audit Log</h2>
+                    <p class="text-xs text-gray-500 mt-0.5">${isAdmin?'Full audit trail — all users':'Your activity log'} · ${entries.length} entries (last 1000)</p>
+                </div>
+                <button onclick="switchView('settings')" class="px-4 py-2 border border-gray-300 text-gray-600 rounded-xl text-sm hover:bg-gray-50">← Settings</button>
+            </div>
+            <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                <table class="w-full text-sm">
+                    <thead class="bg-gray-800 text-white text-xs uppercase">
+                        <tr>
+                            <th class="px-4 py-2 text-left">Timestamp</th>
+                            <th class="px-4 py-2 text-left">User</th>
+                            ${isAdmin?'<th class="px-4 py-2 text-left">Role</th>':''}
+                            <th class="px-4 py-2 text-left">Action</th>
+                            <th class="px-4 py-2 text-left">Module</th>
+                            <th class="px-4 py-2 text-left">Summary</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${entries.length===0?`<tr><td colspan="6" class="px-4 py-8 text-center text-gray-400">No audit entries yet.</td></tr>`
+                        :entries.map(e=>`
+                        <tr class="border-t border-gray-50 hover:bg-gray-50">
+                            <td class="px-4 py-2 text-xs text-gray-500 whitespace-nowrap">${fmt(e.ts)}</td>
+                            <td class="px-4 py-2 text-xs font-semibold">${e.user||'—'}</td>
+                            ${isAdmin?`<td class="px-4 py-2"><span class="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600">${e.role||''}</span></td>`:''}
+                            <td class="px-4 py-2"><span class="text-[10px] font-bold px-2 py-0.5 rounded" style="background:${actionColor(e.action)}20;color:${actionColor(e.action)}">${e.action}</span></td>
+                            <td class="px-4 py-2 text-xs text-gray-600">${e.module||'—'}</td>
+                            <td class="px-4 py-2 text-xs text-gray-700">${(e.summary||'').replace(/</g,'&lt;')}</td>
+                        </tr>`).join('')}
+                    </tbody>
+                </table>
+            </div>`;
+        }
+
+        // Restore session on page load (survives F5 but not tab close)
+        (function() {
+            if (ENABLE_LOGIN && appUsers.length > 0) _restoreSession();
+        })();
+
+
         // ════════════════════════════════════════════════════════════════════
 
         function renderARDashboard(content) {
@@ -32935,7 +33615,13 @@ Automated WFH alert — ${company} Attendance System.`;
                                         const net = avail > 0 ? Math.max(0, liveTotal - avail) : liveTotal;
                                         return `<span title="Live: Items ${fmt(liveTotal)}${avail>0?' less bank balance '+fmt(avail):''}">${fmt(net)}</span>`;
                                     })()}</td>
-                                    <td class="px-4 py-3 text-sm text-right ${r.totalApproved > 0 ? 'font-bold text-blue-700' : 'text-gray-400'}">${fmt(r.totalApproved||0)}</td>
+                                    <td class="px-4 py-3 text-sm text-right ${r.totalApproved > 0 ? 'font-bold text-blue-700' : 'text-gray-400'}">${(() => {
+                                        // Live approved = approved items total minus available bank balance
+                                        const liveApproved = (r.items||[]).filter(it=>it.decision==='Approved'||it.decision==='Pending').reduce((s,it)=>s+(parseFloat(it.amount)||0),0);
+                                        const avail = parseFloat(r.availableForPayment) || Math.max(0,(parseFloat(r.bankBalance)||0)-(parseFloat(r.minBalance)||10000));
+                                        const net = avail > 0 ? Math.max(0, liveApproved - avail) : liveApproved;
+                                        return liveApproved > 0 ? fmt(net) : '<span class="text-gray-400">₹0.00</span>';
+                                    })()}</td>
                                     <td class="px-4 py-3 text-sm text-right ${r.totalPaid > 0 ? 'font-bold text-green-700' : 'text-gray-400'}">${fmt(r.totalPaid||0)}</td>
                                     <td class="px-4 py-3 text-center">
                                         <span class="px-2 py-1 rounded-full text-xs font-bold ${statusColor(r.status)}">${r.status}</span>
