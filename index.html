@@ -13559,6 +13559,7 @@
 
             // Fix 1: "Expected Net GST Payable (GSTR-3B)"
             doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
+                tableWidth:CW,
                 styles:{fontSize:9,cellPadding:3},
                 headStyles:{fillColor:[30,58,138],textColor:[255,255,255],fontStyle:'bold'},
                 head:[[{content:'GST SUMMARY — '+d.monthName.toUpperCase()+' '+year,colSpan:2,styles:{halign:'center'}}]],
@@ -13602,6 +13603,7 @@
                 const totalInputAmt  = totalInputCGST + totalInputSGST + totalInputIGST;
 
                 doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
+                    tableWidth:CW, showFoot:'lastPage',
                     styles:{fontSize:7.5,cellPadding:2.5},
                     headStyles:{fillColor:[180,83,9],textColor:[255,255,255],fontStyle:'bold'},
                     head:[['Date','Vendor','GSTIN','Bill No','Description','Taxable','CGST','SGST','IGST','Total Tax']],
@@ -13679,6 +13681,7 @@
                 const totalOutAmt  = (d.gstOutput||0)+rcmOutCGST+rcmOutSGST+rcmOutIGST;
 
                 doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
+                    tableWidth:CW, showFoot:'lastPage',
                     styles:{fontSize:7.5,cellPadding:2.5},
                     headStyles:{fillColor:[126,34,206],textColor:[255,255,255],fontStyle:'bold'},
                     head:[['Date','Client / Vendor','GSTIN','Invoice No','Taxable','CGST','SGST','IGST','Total Tax']],
@@ -13715,6 +13718,7 @@
             // GST Reconciliation summary (updated to include RCM)
             if (y>250) {doc.addPage(); y=15;}
             doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
+                tableWidth:CW,
                 styles:{fontSize:9.5,cellPadding:3.5},
                 headStyles:{fillColor:[30,58,138],textColor:[255,255,255],fontStyle:'bold'},
                 head:[[{content:'GST RECONCILIATION SUMMARY',colSpan:2,styles:{halign:'center'}}]],
