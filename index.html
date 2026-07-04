@@ -1556,7 +1556,7 @@
         // Set to TRUE when ready to activate PIN-based login for all users.
         // FALSE = login gate is completely bypassed (app works as before).
         // Change this one line to switch between modes.
-        const ENABLE_LOGIN = true;
+        const ENABLE_LOGIN = false;
         let appFolderId = null;
         let transactions = [];
         let parties = [];
@@ -6855,9 +6855,6 @@
                             ${_canAccess('parties')?`<button onclick="switchView('parties')" class="px-4 py-2 rounded-lg ${currentView === 'parties' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Parties</button>`:''}
                             ${_canAccess('docs')?`<button onclick="switchView('docs')" class="px-4 py-2 rounded-lg ${currentView === 'docs' ? 'bg-purple-100 text-purple-700' : 'text-gray-600 hover:bg-gray-100'}" title="Company documents, certificates, insurance policies">📄 Documents${(()=>{const c=_countDocsExpiringOrExpired();return c>0?` <span class="ml-1 px-1.5 py-0.5 bg-red-500 text-white rounded-full text-xs font-bold" title="${c} document(s) need attention">${c}</span>`:'';})()}</button>`:''}
                             ${_canAccess('settings')||!_bmsSession?`<button onclick="switchView('settings')" class="px-4 py-2 rounded-lg ${currentView === 'settings' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Settings</button>`:''}
-                            ${_canAccess('payroll')?`<button onclick="switchView('payroll')" class="px-4 py-2 rounded-lg ${currentView === 'payroll' ? 'bg-teal-100 text-teal-700' : 'text-gray-600 hover:bg-gray-100'}">💰 Payroll</button>`:''}
-                            ${_canAccess('attendance')?`<button onclick="switchView('attendance')" class="px-4 py-2 rounded-lg ${currentView === 'attendance' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}">📅 Attendance</button>`:''}
-
                         </div>
                     </div>
                 </nav>
@@ -6976,9 +6973,7 @@
             { view:'pettycash',    label:'Petty Cash' },
             { view:'tax',          label:'Tax' },
             { view:'mis',          label:'MIS Report' },
-            { view:'staff',        label:'Staff' },
-            { view:'attendance',   label:'Attendance' },
-            { view:'payroll',      label:'Payroll' },
+            { view:'staff',        label:'Staff (incl. Attendance, Payroll, Documents)' },
             { view:'parties',      label:'Parties' },
             { view:'docs',         label:'Documents' },
             { view:'settings',     label:'Settings' },
@@ -6991,9 +6986,9 @@
         const DEFAULT_ROLE_PERMS = {
             'Admin':    ['*'],
             'Accounts': ['dashboard','transactions','ar','expenses','projexp','payreq','direxp','pettycash','tax','mis','parties','docs','auditlog','settings'],
-            'HR':       ['dashboard','staff','attendance','payroll','mis','docs','auditlog'],
+            'HR':       ['dashboard','staff','mis','docs','auditlog'],
             'Field':    ['dashboard','docs','auditlog'],
-            'View Only':['dashboard','transactions','ar','expenses','projexp','funds','payreq','direxp','pettycash','tax','mis','staff','attendance','payroll','parties','docs','auditlog']
+            'View Only':['dashboard','transactions','ar','expenses','projexp','funds','payreq','direxp','pettycash','tax','mis','staff','parties','docs','auditlog']
         };
 
         // Build ROLE_ACCESS dynamically from saved settings (or defaults)
@@ -17256,9 +17251,19 @@
                 <button onclick="openStaffModal()" class="px-5 py-2 bg-teal-600 text-white rounded-xl hover:bg-teal-700 font-medium">+ Add Staff</button>
             </div>
 
-            <!-- Sub-tabs -->
+            <!-- Sub-tabs — shown based on role -->
             <div class="flex gap-2 mb-6 border-b border-gray-200 flex-wrap">
-                ${['list','attendance','documents','payslip'].map(t => `
+                ${['list','attendance','documents','payslip'].filter(t => {
+                    // All roles that can access 'staff' see the Staff List
+                    if (t === 'list') return true;
+                    // Attendance and Payslip — HR and Admin only
+                    if (t === 'attendance' || t === 'payslip') {
+                        const role = _bmsSession?.role;
+                        return !ENABLE_LOGIN || !role || role === 'Admin' || role === 'HR' || role === 'View Only';
+                    }
+                    // Documents — all roles that can access staff
+                    return true;
+                }).map(t => `
                 <button onclick="switchStaffTab('${t}')" class="px-4 py-2 text-sm font-medium border-b-2 ${currentStaffSubTab===t ? 'border-teal-600 text-teal-700' : 'border-transparent text-gray-500 hover:text-gray-700'}">
                     ${{list:'👤 Staff List', attendance:'📅 Attendance', documents:'📁 Documents', payslip:'🧾 Pay Slips'}[t]}
                 </button>`).join('')}
