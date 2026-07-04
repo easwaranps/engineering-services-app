@@ -13594,13 +13594,13 @@
                         {content:INR(tax),styles:{halign:'right',fontStyle:'bold',textColor:[234,88,12]}}];
                 });
 
-                const rcmInputCGST = rcmExps.reduce((s,e)=>s+(parseFloat(e.cgst)||0),0);
-                const rcmInputSGST = rcmExps.reduce((s,e)=>s+(parseFloat(e.sgst)||0),0);
-                const rcmInputIGST = rcmExps.reduce((s,e)=>s+(parseFloat(e.igst)||0),0);
-                const totalInputCGST = (d.gstInputCGST||0) + rcmInputCGST;
-                const totalInputSGST = (d.gstInputSGST||0) + rcmInputSGST;
-                const totalInputIGST = (d.gstInputIGST||0) + rcmInputIGST;
+                // d.gstInputCGST/SGST/IGST already include RCM (from getTaxPeriodData gstInputCGSTAll)
+                // Do NOT add rcmExps again — that double-counts
+                const totalInputCGST = d.gstInputCGST || 0;
+                const totalInputSGST = d.gstInputSGST || 0;
+                const totalInputIGST = d.gstInputIGST || 0;
                 const totalInputAmt  = totalInputCGST + totalInputSGST + totalInputIGST;
+
 
                 doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
                     tableWidth:CW, showFoot:'lastPage',
@@ -13672,14 +13672,14 @@
                         {content:INR(tax),styles:{halign:'right',fontStyle:'bold',textColor:[234,88,12]}}];
                 });
 
-                const rcmOutCGST = rcmExps.reduce((s,e)=>s+(parseFloat(e.cgst)||0),0);
-                const rcmOutSGST = rcmExps.reduce((s,e)=>s+(parseFloat(e.sgst)||0),0);
-                const rcmOutIGST = rcmExps.reduce((s,e)=>s+(parseFloat(e.igst)||0),0);
-                const totalOutCGST = (d.gstOutputCGST||0)+rcmOutCGST;
-                const totalOutSGST = (d.gstOutputSGST||0)+rcmOutSGST;
-                const totalOutIGST = (d.gstOutputIGST||0)+rcmOutIGST;
-                const totalOutAmt  = (d.gstOutput||0)+rcmOutCGST+rcmOutSGST+rcmOutIGST;
-
+                // d.gstOutput / gstOutputCGST/SGST/IGST already include RCM
+                // Do NOT add rcmExps again — that double-counts
+                const rcmOutSGST = 0;  // placeholder — not used, totals come from d.*
+                const rcmOutIGST = 0;  // placeholder
+                const totalOutCGST = d.gstOutputCGST || 0;
+                const totalOutSGST = d.gstOutputSGST || 0;
+                const totalOutIGST = d.gstOutputIGST || 0;
+                const totalOutAmt  = d.gstOutput || 0;
                 doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
                     tableWidth:CW, showFoot:'lastPage',
                     styles:{fontSize:7.5,cellPadding:2.5},
@@ -13724,7 +13724,7 @@
                 head:[[{content:'GST RECONCILIATION SUMMARY',colSpan:2,styles:{halign:'center'}}]],
                 body:[
                     [{content:'GST Output (Invoices + RCM Liability)',styles:{fillColor:[243,232,255]}},{content:INR(d.gstOutput),styles:{halign:'right',fillColor:[243,232,255],textColor:[126,34,206],fontStyle:'bold'}}],
-                    [{content:'Less: GST Input Credit (Expenses + Directors + RCM)',styles:{fillColor:[255,251,235]}},{content:'('+INR(d.gstInputTotal)+')',styles:{halign:'right',fillColor:[255,251,235],textColor:[180,83,9],fontStyle:'bold'}}],
+                    [{content:'Less: GST Input Credit (Expenses + Directors + RCM)',styles:{fillColor:[255,251,235]}},{content:'('+INR(d.combinedITCTotal)+')',styles:{halign:'right',fillColor:[255,251,235],textColor:[180,83,9],fontStyle:'bold'}}],
                     [{content:d.netGST>0?'Expected Net GST Payable (GSTR-3B)':'Net Input Credit (Carry Forward)',styles:{fontStyle:'bold',fillColor:d.netGST>0?[243,232,255]:[240,253,250]}},
                      {content:INR(Math.abs(d.netGST)),styles:{halign:'right',fontStyle:'bold',textColor:d.netGST>0?[126,34,206]:[13,148,136],fillColor:d.netGST>0?[243,232,255]:[240,253,250]}}],
                 ],
@@ -13796,15 +13796,12 @@
                 ]);
             });
 
-            // Input totals
-            const rcmCGST = rcmExps.reduce((s,e)=>s+(parseFloat(e.cgst)||0),0);
-            const rcmSGST = rcmExps.reduce((s,e)=>s+(parseFloat(e.sgst)||0),0);
-            const rcmIGST = rcmExps.reduce((s,e)=>s+(parseFloat(e.igst)||0),0);
+            // Input totals — d.gstInputCGST/SGST/IGST already include RCM
             rows.push([
                 '','','','','','GST INPUT TOTAL (incl. RCM)','',
-                n((d.gstInputCGST||0)+rcmCGST), n((d.gstInputSGST||0)+rcmSGST),
-                n((d.gstInputIGST||0)+rcmIGST),
-                n((d.gstInputCGST||0)+rcmCGST+(d.gstInputSGST||0)+rcmSGST+(d.gstInputIGST||0)+rcmIGST)
+                n(d.gstInputCGST||0), n(d.gstInputSGST||0),
+                n(d.gstInputIGST||0),
+                n((d.gstInputCGST||0)+(d.gstInputSGST||0)+(d.gstInputIGST||0))
             ]);
             rows.push([]);
 
@@ -13833,9 +13830,9 @@
             });
 
             // Output totals
-            const outCGST = (d.gstOutputCGST||0)+rcmCGST;
-            const outSGST = (d.gstOutputSGST||0)+rcmSGST;
-            const outIGST = (d.gstOutputIGST||0)+rcmIGST;
+            const outCGST = d.gstOutputCGST || 0;
+            const outSGST = d.gstOutputSGST || 0;
+            const outIGST = d.gstOutputIGST || 0;
             rows.push([
                 '','','','','GST OUTPUT TOTAL (incl. RCM)',
                 '', n(outCGST), n(outSGST), n(outIGST), n(outCGST+outSGST+outIGST)
@@ -13846,7 +13843,7 @@
             rows.push(['SECTION','GST RECONCILIATION SUMMARY']);
             rows.push(['Item','Amount (Rs.)']);
             rows.push(['GST Output (Invoices + RCM Liability)', n(d.gstOutput)]);
-            rows.push(['Less: GST Input Credit (Expenses + Directors + RCM)', '('+n(d.gstInputTotal)+')']);
+            rows.push(['Less: GST Input Credit (Expenses + Directors + RCM)', '('+n(d.combinedITCTotal)+')']);
             rows.push([d.netGST>0?'Expected Net GST Payable (GSTR-3B)':'Net Input Credit (Carry Forward)', n(Math.abs(d.netGST))]);
 
             // Build CSV string
