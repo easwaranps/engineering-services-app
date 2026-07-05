@@ -157,15 +157,6 @@
             background: var(--slate);
         }
         .photo-add:hover { border-color: var(--teal); color: var(--teal); }
-    /* ── Rich Text Editor ── */
-    .rt-editor { cursor: text; }
-    .rt-editor:empty:before { content: attr(data-placeholder); color: #9ca3af; pointer-events: none; }
-    .rt-editor:focus { outline: none; border-color: #0d9488; box-shadow: 0 0 0 3px rgba(13,148,136,0.15); }
-    .rt-editor ul { list-style-type: disc; padding-left: 1.4em; }
-    .rt-editor ol { list-style-type: decimal; padding-left: 1.4em; }
-    .rt-editor b, .rt-editor strong { font-weight: 700; }
-    .rt-editor i, .rt-editor em { font-style: italic; }
-    .rt-editor u { text-decoration: underline; }
     </style>
 </head>
 <body>
@@ -323,26 +314,6 @@
             <div>
                 <label class="field-label">Vendor / Paid To</label>
                 <input type="text" id="eiVendor" class="field-input" placeholder="Restaurant name, transport provider, etc."/>
-            </div>
-
-            <!-- Bill Status — available or no bill, with remark -->
-            <div style="background:#f8fafc;border:1px solid var(--border);border-radius:10px;padding:10px 14px">
-                <p class="field-label" style="margin-bottom:8px">🧾 BILL / RECEIPT STATUS</p>
-                <div style="display:flex;gap:10px;margin-bottom:8px;flex-wrap:wrap">
-                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 12px;border-radius:8px;border:1.5px solid #86efac;background:#f0fdf4;font-size:12px;font-weight:600;color:#15803d">
-                        <input type="radio" name="eiBillStatus" id="eiBillStatusYes" value="available" style="accent-color:#16a34a"/>
-                        ✅ Bill Available
-                    </label>
-                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 12px;border-radius:8px;border:1.5px solid #fca5a5;background:#fff7f7;font-size:12px;font-weight:600;color:#dc2626">
-                        <input type="radio" name="eiBillStatus" id="eiBillStatusNo" value="no_bill" style="accent-color:#dc2626"/>
-                        ❌ No Bill
-                    </label>
-                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 12px;border-radius:8px;border:1.5px solid #d1d5db;background:#f9fafb;font-size:12px;font-weight:600;color:#6b7280">
-                        <input type="radio" name="eiBillStatus" id="eiBillStatusPending" value="pending" style="accent-color:#6b7280" checked/>
-                        ⏳ Pending
-                    </label>
-                </div>
-                <input type="text" id="eiBillRemark" placeholder="Bill remark — e.g. 'Receipt with manager', 'Will collect later', 'Cash receipt'" class="field-input" style="font-size:12px;padding:7px 10px"/>
             </div>
 
             <!-- Multiple bill attachments -->
@@ -742,69 +713,21 @@
             <!-- Work Details -->
             <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:12px 14px">
                 <p class="field-label" style="color:#b45309;margin-bottom:8px">🔧 WORK DETAILS</p>
-
-                <!-- Shared rich-text toolbar — floats above whichever field is active -->
-                <div id="rtToolbar" style="display:flex;flex-wrap:wrap;gap:4px;padding:6px 8px;background:#1e293b;border-radius:8px;margin-bottom:10px;position:sticky;top:0;z-index:20">
-                    <!-- Font size -->
-                    <select onchange="rtCmd('fontSize',this.value);this.value=''" style="padding:3px 5px;border-radius:5px;border:none;font-size:11px;background:#334155;color:#fff;cursor:pointer">
-                        <option value="">Size</option>
-                        <option value="1">Small</option>
-                        <option value="3">Normal</option>
-                        <option value="4">Large</option>
-                        <option value="5">Larger</option>
-                        <option value="6">Biggest</option>
-                    </select>
-                    <!-- Style buttons -->
-                    <button type="button" onclick="rtCmd('bold')"         title="Bold"          style="padding:3px 8px;border-radius:5px;border:none;background:#334155;color:#fff;font-weight:700;cursor:pointer;font-size:13px">B</button>
-                    <button type="button" onclick="rtCmd('italic')"       title="Italic"        style="padding:3px 8px;border-radius:5px;border:none;background:#334155;color:#fff;font-style:italic;cursor:pointer;font-size:13px">I</button>
-                    <button type="button" onclick="rtCmd('underline')"    title="Underline"     style="padding:3px 8px;border-radius:5px;border:none;background:#334155;color:#fff;text-decoration:underline;cursor:pointer;font-size:13px">U</button>
-                    <div style="width:1px;background:#475569;margin:0 2px"></div>
-                    <!-- Text colour -->
-                    <button type="button" onclick="rtSetColor('#1e40af')" title="Blue"    style="padding:3px 9px;border-radius:5px;border:none;background:#1e40af;color:#fff;cursor:pointer;font-size:11px;font-weight:700">A</button>
-                    <button type="button" onclick="rtSetColor('#15803d')" title="Green"   style="padding:3px 9px;border-radius:5px;border:none;background:#15803d;color:#fff;cursor:pointer;font-size:11px;font-weight:700">A</button>
-                    <button type="button" onclick="rtSetColor('#b91c1c')" title="Red"     style="padding:3px 9px;border-radius:5px;border:none;background:#b91c1c;color:#fff;cursor:pointer;font-size:11px;font-weight:700">A</button>
-                    <button type="button" onclick="rtSetColor('#b45309')" title="Amber"   style="padding:3px 9px;border-radius:5px;border:none;background:#b45309;color:#fff;cursor:pointer;font-size:11px;font-weight:700">A</button>
-                    <button type="button" onclick="rtSetColor('#111827')" title="Black"   style="padding:3px 9px;border-radius:5px;border:none;background:#e5e7eb;color:#111;cursor:pointer;font-size:11px;font-weight:700">A</button>
-                    <!-- Highlight -->
-                    <button type="button" onclick="rtHighlight('#fef08a')" title="Yellow highlight" style="padding:3px 8px;border-radius:5px;border:none;background:#fef08a;color:#111;cursor:pointer;font-size:12px">▌</button>
-                    <button type="button" onclick="rtHighlight('#bbf7d0')" title="Green highlight"  style="padding:3px 8px;border-radius:5px;border:none;background:#bbf7d0;color:#111;cursor:pointer;font-size:12px">▌</button>
-                    <button type="button" onclick="rtHighlight('#bfdbfe')" title="Blue highlight"   style="padding:3px 8px;border-radius:5px;border:none;background:#bfdbfe;color:#111;cursor:pointer;font-size:12px">▌</button>
-                    <div style="width:1px;background:#475569;margin:0 2px"></div>
-                    <!-- Lists -->
-                    <button type="button" onclick="rtCmd('insertUnorderedList')" title="Bullet list"   style="padding:3px 8px;border-radius:5px;border:none;background:#334155;color:#fff;cursor:pointer;font-size:13px">• ≡</button>
-                    <button type="button" onclick="rtCmd('insertOrderedList')"   title="Numbered list" style="padding:3px 8px;border-radius:5px;border:none;background:#334155;color:#fff;cursor:pointer;font-size:13px">1 ≡</button>
-                    <div style="width:1px;background:#475569;margin:0 2px"></div>
-                    <!-- Clear -->
-                    <button type="button" onclick="rtCmd('removeFormat')" title="Clear formatting" style="padding:3px 8px;border-radius:5px;border:none;background:#7f1d1d;color:#fff;cursor:pointer;font-size:11px">✕ fmt</button>
-                </div>
-
                 <div>
                     <label class="field-label">Details of Work Carried Out <span class="text-red-500">*</span></label>
-                    <div id="dayDesc" contenteditable="true" class="field-input rt-editor"
-                        style="min-height:96px;overflow-y:auto;line-height:1.6;white-space:pre-wrap"
-                        data-placeholder="Describe in detail the work performed today..."
-                        onfocus="_rtActive=this" oninput="_rtMarkDirty(this)"></div>
+                    <textarea id="dayDesc" class="field-input" rows="4" required placeholder="Describe in detail the work performed today..."></textarea>
                 </div>
                 <div class="mt-3">
                     <label class="field-label">Observations / Findings</label>
-                    <div id="dayObs" contenteditable="true" class="field-input rt-editor"
-                        style="min-height:56px;overflow-y:auto;line-height:1.6;white-space:pre-wrap"
-                        data-placeholder="Issues found, test results, measurements..."
-                        onfocus="_rtActive=this" oninput="_rtMarkDirty(this)"></div>
+                    <textarea id="dayObs" class="field-input" rows="2" placeholder="Issues found, test results, measurements..."></textarea>
                 </div>
                 <div class="mt-3">
                     <label class="field-label">Exclusions / Remarks</label>
-                    <div id="dayExclusions" contenteditable="true" class="field-input rt-editor"
-                        style="min-height:56px;overflow-y:auto;line-height:1.6;white-space:pre-wrap"
-                        data-placeholder="Work excluded, deferred items, scope limits..."
-                        onfocus="_rtActive=this" oninput="_rtMarkDirty(this)"></div>
+                    <textarea id="dayExclusions" class="field-input" rows="2" placeholder="Work excluded, deferred items, scope limits..."></textarea>
                 </div>
                 <div class="mt-3">
                     <label class="field-label">Recommendations</label>
-                    <div id="dayRec" contenteditable="true" class="field-input rt-editor"
-                        style="min-height:56px;overflow-y:auto;line-height:1.6;white-space:pre-wrap"
-                        data-placeholder="Follow-up actions for tomorrow or next visit..."
-                        onfocus="_rtActive=this" oninput="_rtMarkDirty(this)"></div>
+                    <textarea id="dayRec" class="field-input" rows="2" placeholder="Follow-up actions for tomorrow or next visit..."></textarea>
                 </div>
             </div>
             <!-- Photos -->
@@ -814,7 +737,7 @@
                     <button type="button" onclick="document.getElementById('dayPhotoFile').click()" style="font-size:12px;padding:5px 12px;border-radius:8px;background:#e0f2fe;color:#0369a1;border:1px solid #bae6fd;cursor:pointer;font-weight:600">📷 Add Photo</button>
                 </div>
                 <div id="dayPhotoGrid" class="flex flex-wrap gap-2"></div>
-                <input type="file" id="dayPhotoFile" accept="image/*" class="hidden" onchange="handleDayPhoto(this)" multiple/>
+                <input type="file" id="dayPhotoFile" accept="image/*" capture="environment" class="hidden" onchange="handleDayPhoto(this)" multiple/>
             </div>
             <!-- Witness -->
             <div style="background:#fff1f2;border:1px solid #fecdd3;border-radius:12px;padding:12px 14px">
@@ -866,8 +789,6 @@
         staff:           '1JFS8ZZNkCXx8sIx6ssZzCbtbciRUrK3v',
         // Fund tracking files — share with imsetechnician@gmail.com:
         fundRequests:    '1HMZBIrE59L6ZpXBa-94uWPaK2S2GG3N7',  // Editor (tech writes new requests)
-            officeWhatsApp:  '',   // Office WhatsApp number in international format WITHOUT + (e.g. '919876543210')
-                                   // If blank, WhatsApp opens contact picker instead of going directly to this number
         fundPools:       '1x1NniCFB4hba29FxsO9b5rmKoMHE3J8s',  // Viewer (tech reads pool balances)
         // ── Attachments parent folder ─────────────────────────────────
         // Folder where "Attachments/SitePhotos" will be created for photo uploads.
@@ -1949,54 +1870,18 @@
         })() : null;
 
         el.innerHTML = `
-        <!-- Pool status cards (Phase A+B) — matches main app style -->
-        <div class="card mb-3" style="background:linear-gradient(135deg,#0d7c66,#15803d);padding:12px 14px 10px">
-            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:${activePoolCount > 0 ? '10px' : '0'}">
-                <p style="font-size:10px;font-weight:700;color:#bbf7d0;text-transform:uppercase;letter-spacing:.5px">
-                    💰 Active Pool${activePoolCount > 1 ? 's ('+activePoolCount+' available)' : activePoolCount === 1 ? '' : 's'}
-                    ${totalActiveBal > 0 ? `<span style="margin-left:8px;font-size:11px;color:#a7f3d0">· Total available: <b>${fmt(totalActiveBal)}</b></span>` : ''}
-                </p>
+        <!-- Pool status strip (Phase A+B) -->
+        <div class="card mb-3" style="background:linear-gradient(135deg,#0d7c66,#15803d);padding:12px 14px">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+                <div style="flex:1;min-width:200px">
+                    <p style="font-size:10px;font-weight:700;color:#bbf7d0;text-transform:uppercase;letter-spacing:.5px">💰 Active Pool ${activePoolCount > 1 ? '('+activePoolCount+' available)' : ''}</p>
+                    ${activePool
+                        ? `<p style="font-size:14px;font-weight:700;color:#fff;font-family:monospace">${activePool.poolID}</p>
+                           <p style="font-size:13px;color:#fff">Balance: <b>${fmt(activeBal)}</b> ${activeBal < 500 ? '<span style="color:#fde68a;font-size:11px">⚠ low — request fresh fund</span>' : ''}</p>`
+                        : `<p style="font-size:13px;color:#fde68a">⚠ No active pool — request fresh fund to log expenses</p>`}
+                </div>
                 <button onclick="openFundReqModal()" style="padding:8px 16px;border-radius:9px;background:#fff;color:#15803d;border:none;cursor:pointer;font-size:13px;font-weight:700;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.15)">+ Request Fund</button>
             </div>
-            ${activePoolCount === 0
-                ? `<p style="font-size:13px;color:#fde68a;padding-bottom:4px">⚠ No active pool — request fresh fund to log expenses</p>`
-                : (() => {
-                    const activePools = (fundPools||[])
-                        .filter(p => p.status === 'Active')
-                        .sort((a,b) => (a.disbursedDate||'').localeCompare(b.disbursedDate||'') || (a.poolID||'').localeCompare(b.poolID||''));
-                    return activePools.map(pool => {
-                        const pb = _fieldComputePoolBalance(pool);
-                        const pct = pb.disbursed > 0 ? Math.min(100, (pb.spent / pb.disbursed) * 100) : 0;
-                        const barCol = pct > 90 ? '#dc2626' : pct > 70 ? '#d97706' : '#22c55e';
-                        const isLow = pb.balance < 500;
-                        return `
-                        <div style="background:rgba(0,0,0,.18);border-radius:10px;padding:10px 12px;margin-bottom:8px">
-                            <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:4px;margin-bottom:6px">
-                                <div>
-                                    <span style="font-size:13px;font-weight:700;color:#fff;font-family:monospace">${pool.poolID}</span>
-                                    ${pool.requestedByName ? `<span style="margin-left:8px;font-size:12px;font-weight:600;color:#bbf7d0">${pool.requestedByName}</span>` : ''}
-                                    ${pool.projectTag || pool.projectName ? `<span style="margin-left:6px;font-size:10px;background:rgba(255,255,255,.18);color:#d1fae5;padding:1px 7px;border-radius:10px">${pool.projectTag || pool.projectName}</span>` : ''}
-                                </div>
-                                <div style="text-align:right">
-                                    <span style="font-size:14px;font-weight:800;color:#fff">Bal ${fmt(pb.balance)}</span>
-                                    ${isLow ? `<span style="display:block;font-size:10px;color:#fde68a;margin-top:1px">⚠ low — request fresh fund</span>` : ''}
-                                </div>
-                            </div>
-                            <div style="display:flex;justify-content:space-between;font-size:10px;color:#a7f3d0;margin-bottom:4px">
-                                <span>Disb ${pool.disbursedDate || '—'} · ${fmt(pb.disbursed)} from ${pool.bankName||'bank'}</span>
-                                <span>${pb.expenseCount} expense${pb.expenseCount===1?'':'s'}</span>
-                            </div>
-                            <div style="background:rgba(0,0,0,.25);border-radius:4px;height:6px;overflow:hidden">
-                                <div style="height:100%;width:${pct}%;background:${barCol};border-radius:4px;transition:width .3s"></div>
-                            </div>
-                            <div style="display:flex;justify-content:space-between;font-size:10px;color:#a7f3d0;margin-top:3px">
-                                <span>Spent ${fmt(pb.spent)}</span>
-                                <span>Bal ${fmt(pb.balance)}</span>
-                            </div>
-                        </div>`;
-                    }).join('');
-                })()
-            }
             ${reqStatusInfo ? (() => {
                 // Status-aware action buttons:
                 //   Pending          → Edit + Cancel
@@ -2020,11 +1905,12 @@
                         actions = `<button onclick="requestFundCorrection('${lastReq.requestID}')" style="${btnStyle};background:rgba(0,0,0,.08);color:${reqStatusInfo.color}" title="Ask the office to amend this request — direct edit not allowed once processed">📨 Request Correction</button>`;
                     }
                 }
+                // Audit hint: show "edited" badge if editHistory present
                 const editBadge = (lastReq.editHistory && lastReq.editHistory.length)
                     ? `<span style="font-size:9px;color:${reqStatusInfo.color};opacity:.7;margin-left:6px" title="Edited ${lastReq.editHistory.length} time${lastReq.editHistory.length===1?'':'s'}">✎</span>`
                     : '';
                 return `
-                <div style="margin-top:8px;padding:8px 10px;background:${reqStatusInfo.bg};border-radius:8px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+                <div style="margin-top:10px;padding:8px 10px;background:${reqStatusInfo.bg};border-radius:8px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
                     <div style="font-size:12px;color:${reqStatusInfo.color};flex:1;min-width:160px">
                         <b>${reqStatusInfo.icon} Last Request:</b> ${fmt(lastReq.requestedAmount)} · ${reqStatusInfo.label}${editBadge}
                         <div style="font-size:10px;opacity:.85;margin-top:1px">Sent ${lastReq.requestedDate} ${lastReq.requestedTime||''}</div>
@@ -2034,7 +1920,7 @@
             })() : ''}
         </div>
 
-        <!-- Grand summary row -->
+        <!-- Old grand summary (kept for project-level view) -->
         <div class="grid grid-cols-2 gap-3 mb-3">
             <div class="card p-3" style="background:linear-gradient(135deg,#1e3a5f,#1d4ed8)">
                 <p style="font-size:10px;font-weight:600;color:#bfdbfe;margin-bottom:2px">TOTAL FIELD FUNDS</p>
@@ -2082,14 +1968,8 @@
             //      change based on the filter, because that would be misleading
             //      (showing "Spent: ₹93" while a ₹30,000 figure is hidden).
             const _filtered = projectExpenses.map(p => {
-                // Sort items newest-first within each project so the latest
-                // expense appears at the top without scrolling past older entries.
-                const _sortedItems = [...(p.items || [])].sort((a, b) =>
-                    (b.date || '').localeCompare(a.date || '') ||
-                    (b.itemID || '').localeCompare(a.itemID || '')
-                );
                 if (!_peSearchQ) {
-                    return { p, items: _sortedItems, showAllItems: true };
+                    return { p, items: p.items || [], showAllItems: true };
                 }
                 // Step 1: does the query match the project itself entirely?
                 const projHay = [
@@ -2097,7 +1977,7 @@
                     _dateHaystack(p.startDate), _dateHaystack(p.endDate)
                 ].filter(Boolean).join(' ');
                 if (_matchTokens(projHay, _peSearchQ)) {
-                    return { p, items: _sortedItems, showAllItems: true };
+                    return { p, items: p.items || [], showAllItems: true };
                 }
                 // Step 2: filter items by the query. CRITICAL — each item's haystack
                 // also includes the project-level fields. Otherwise a query like
@@ -2105,7 +1985,7 @@
                 // is only at item level, and neither layer alone has both. By folding
                 // project fields into each item's haystack, both tokens can be satisfied
                 // and the user gets the result they expect.
-                const matchingItems = _sortedItems.filter(it => {
+                const matchingItems = (p.items || []).filter(it => {
                     const itHay = [
                         projHay,    // ← project fields prefix so cross-level AND works
                         it.description, it.category, it.vendor, it.payMode, it.staffName,
@@ -2128,7 +2008,7 @@
                     // user has context. If items matched, show only those items.
                     return {
                         p,
-                        items: matchingItems.length > 0 ? matchingItems : _sortedItems,
+                        items: matchingItems.length > 0 ? matchingItems : (p.items || []),
                         showAllItems: matchingItems.length === 0
                     };
                 }
@@ -2225,13 +2105,6 @@
                         const attCount=(it.billAttachments||[]).length+(it.billData?1:0);
                         // Pool lock: greys out Edit/Del and shows a small 🔒 chip on the row
                         const _poolLocked = _isPoolClosed(it.poolID);
-                        // Bill status badge
-                        const billSt = it.billStatus || (attCount > 0 ? 'available' : 'pending');
-                        const billBadge = billSt === 'available'
-                            ? `<span style="font-size:10px;background:#f0fdf4;color:#15803d;padding:1px 6px;border-radius:4px;border:1px solid #86efac">✅ Bill</span>`
-                            : billSt === 'no_bill'
-                            ? `<span style="font-size:10px;background:#fff7f7;color:#dc2626;padding:1px 6px;border-radius:4px;border:1px solid #fca5a5">❌ No Bill${it.billRemark?' · '+it.billRemark:''}</span>`
-                            : `<span style="font-size:10px;background:#fafafa;color:#9ca3af;padding:1px 6px;border-radius:4px;border:1px solid #e5e7eb">⏳ Bill Pending${it.billRemark?' · '+it.billRemark:''}</span>`;
                         return `
                         <div style="padding:10px 14px;border-top:1px solid var(--border);${_poolLocked?'background:#fafafa':''}">
                             <div style="display:flex;justify-content:space-between;align-items:flex-start">
@@ -2239,7 +2112,6 @@
                                     <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px">
                                         <span class="badge" style="background:#f0fdf4;color:#0d7c66;border:1px solid #bbf7d0">${it.category}</span>
                                         <span style="font-size:13px;font-weight:600;color:var(--text)">${it.description}</span>
-                                        ${billBadge}
                                         ${_poolLocked?`<span title="Pool ${it.poolID} is Closed — entry is read-only" style="font-size:10px;background:#f3f4f6;color:#6b7280;padding:1px 6px;border-radius:4px;border:1px solid #d1d5db">🔒 Locked</span>`:''}
                                     </div>
                                     <p style="font-size:11px;color:var(--muted)">${it.date}${it.payMode?' · '+it.payMode:''}${it.vendor?' · '+it.vendor:''}${techNames?' · 👷 '+techNames:''}</p>
@@ -2373,14 +2245,10 @@
         const s = (staffList||[]).find(x => x.staffID === sid);
         const bd = s?.bankDetails || {};
         const box = document.getElementById('frBankPreview');
-        if (bd.accountNumber) {
-            // Show whatever bank details exist — IFSC may be missing
+        if (bd.accountNumber && bd.ifsc) {
             box.style.display = 'block';
-            box.style.background = bd.ifsc ? '#f0fdf4' : '#fffbeb';
-            box.style.borderColor = bd.ifsc ? '#86efac' : '#fde68a';
-            box.style.color = bd.ifsc ? '#15803d' : '#92400e';
-            box.innerHTML = `🏦 <b>Disbursement account on file:</b> ${bd.bankName||'(bank)'}${bd.branch?' · '+bd.branch:''}<br>` +
-                            `<span style="font-family:monospace">A/c: ****${String(bd.accountNumber).slice(-4)}${bd.ifsc?' · IFSC: '+bd.ifsc:' <span style="color:#dc2626">· IFSC missing — office must update before disbursement</span>'}</span>`;
+            box.innerHTML = `🏦 <b>Disbursement will go to:</b> ${bd.bankName||'(bank)'}${bd.branch?' · '+bd.branch:''}<br>` +
+                            `<span style="font-family:monospace">A/c: ****${String(bd.accountNumber).slice(-4)} · IFSC: ${bd.ifsc}</span>`;
         } else {
             box.style.display = 'block';
             box.style.background = '#fef2f2';
@@ -2511,62 +2379,6 @@
             closeFundReqModal();
             renderView();
             showToast(_frMode === 'resubmit' ? '🔄 Request resubmitted to office' : '📤 Fund request submitted to office');
-
-            // ── WhatsApp notification to office ───────────────────────
-            // Build a pre-filled WhatsApp message with full request details
-            // so office is alerted immediately on the technician's mobile.
-            const techName = (currentUser?.name || currentUser?.email || 'Technician').toUpperCase();
-            const waMsg = [
-                `🔔 *FUND REQUEST — ${newReq.requestID}*`,
-                `Technician: ${techName}`,
-                `Project: ${newReq.project || '—'}`,
-                `Amount: ₹${amt.toLocaleString('en-IN', {minimumFractionDigits:2})}`,
-                `Purpose: ${newReq.purpose || '—'}`,
-                `${newReq.notes ? 'Notes: ' + newReq.notes : ''}`,
-                `Submitted: ${now.toLocaleString('en-IN')}`,
-                ``,
-                `Please review and approve in the Field App portal.`
-            ].filter(Boolean).join('\n');
-
-            // Office WhatsApp number from settings (set in field app config)
-            const officeWANumber = SHARED_FILE_IDS.officeWhatsApp || '';  // e.g. '919876543210'
-
-            // Show a modal with the WhatsApp send button + copy option
-            const waModal = document.createElement('div');
-            waModal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
-            waModal.innerHTML = `
-                <div style="background:#fff;border-radius:16px;padding:20px;max-width:400px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
-                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
-                        <div style="width:40px;height:40px;background:#25D366;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:22px">📱</div>
-                        <div>
-                            <div style="font-weight:700;font-size:15px">Fund Request Submitted!</div>
-                            <div style="font-size:11px;color:#6b7280">Alert the office via WhatsApp?</div>
-                        </div>
-                    </div>
-                    <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:10px;margin-bottom:14px;font-size:11px;white-space:pre-wrap;font-family:monospace;color:#166534">${waMsg.replace(/\*/g,'')}</div>
-                    <div style="display:flex;flex-direction:column;gap:8px">
-                        ${officeWANumber
-                            ? `<a href="https://wa.me/${officeWANumber}?text=${encodeURIComponent(waMsg)}" target="_blank"
-                                style="display:block;text-align:center;padding:12px;background:#25D366;color:#fff;border-radius:10px;font-weight:700;font-size:14px;text-decoration:none">
-                                💬 Send via WhatsApp
-                               </a>`
-                            : `<a href="https://wa.me/?text=${encodeURIComponent(waMsg)}" target="_blank"
-                                style="display:block;text-align:center;padding:12px;background:#25D366;color:#fff;border-radius:10px;font-weight:700;font-size:14px;text-decoration:none">
-                                💬 Open WhatsApp (choose contact)
-                               </a>`
-                        }
-                        <button onclick="navigator.clipboard?.writeText(${JSON.stringify(waMsg.replace(/\*/g,''))}).then(()=>showToast('✓ Copied'))"
-                            style="padding:10px;background:#f3f4f6;border:1px solid #d1d5db;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer">
-                            📋 Copy Message
-                        </button>
-                        <button onclick="this.closest('[style*=fixed]').remove()"
-                            style="padding:8px;background:none;border:none;color:#6b7280;font-size:12px;cursor:pointer">
-                            Skip — I'll notify separately
-                        </button>
-                    </div>
-                </div>`;
-            document.body.appendChild(waModal);
-            // ─────────────────────────────────────────────────────────
         } catch(err) {
             // Rollback in-memory if save failed
             fundRequests = fundRequests.filter(r => r.requestID !== newReq.requestID);
@@ -3080,12 +2892,6 @@
         document.getElementById('eiAmt').value     = item?.amount  || '';
         document.getElementById('eiPayMode').value = item?.payMode || 'Cash';
         document.getElementById('eiVendor').value  = item?.vendor  || '';
-        // Bill status radio + remark
-        const billStatusVal = item?.billStatus || 'pending';
-        const billStatusEl = document.querySelector(`input[name="eiBillStatus"][value="${billStatusVal}"]`);
-        if (billStatusEl) billStatusEl.checked = true;
-        else document.getElementById('eiBillStatusPending').checked = true;
-        document.getElementById('eiBillRemark').value = item?.billRemark || '';
         if (item?.technicians?.length) _eiStaffRows = item.technicians.map(t=>({name:t.name,staffID:t.staffID||''}));
         else _eiStaffRows = [{name:'',staffID:''}];
         if (item?.billAttachments) _eiBillAttachments = [...item.billAttachments];
@@ -3278,8 +3084,6 @@
             technicians:     techs,
             staffName:       techs.map(t=>t.name).join(', '),
             billAttachments: [..._eiBillAttachments],
-            billStatus:      document.querySelector('input[name="eiBillStatus"]:checked')?.value || 'pending',
-            billRemark:      (document.getElementById('eiBillRemark')?.value || '').trim(),
             // Phase C: pool allocation fields
             poolID:          newPoolID,
             paidByStaffID:   paidByStaffID,
@@ -4450,6 +4254,151 @@
         showToast('✅ Calibration record saved');
     }
 
+    // ── Copy Calibration Table to Another Daily Entry ─────────────────
+    function openCopyCalibModal(wlID, fromEntryID, calibID) {
+        const wl = workLogs.find(w => w.wlID === wlID);
+        if (!wl) return;
+        const fromEntry = (wl.dailyEntries||[]).find(e => e.entryID === fromEntryID);
+        if (!fromEntry) return;
+        const calib = (fromEntry.calibrations||[]).find(c => c.calibID === calibID);
+        if (!calib) return;
+
+        // All available target entries across all work logs except the source
+        const allEntries = [];
+        workLogs.forEach(w => {
+            (w.dailyEntries||[]).forEach(e => {
+                if (e.entryID !== fromEntryID) {
+                    allEntries.push({
+                        wlID: w.wlID, entryID: e.entryID,
+                        label: (w.projectName||w.vesselName||w.wlID) + ' — ' + (e.date||'unknown date')
+                    });
+                }
+            });
+        });
+        allEntries.sort((a,b) => b.label.localeCompare(a.label));
+
+        const modal = document.createElement('div');
+        modal.id = 'copyCalibModal'; modal.className = 'modal show';
+        modal.innerHTML = `
+        <div style="background:#fff;border-radius:20px;box-shadow:0 8px 40px rgba(0,0,0,0.18);width:100%;max-width:420px;margin:16px auto;overflow:hidden">
+            <div style="background:linear-gradient(135deg,#1d4ed8,#7c3aed);padding:16px 20px;display:flex;justify-content:space-between;align-items:center">
+                <div>
+                    <p style="color:#fff;font-weight:700;font-size:14px">📋 Move / Copy Calibration Table</p>
+                    <p style="color:#bfdbfe;font-size:11px;margin-top:2px">${calib.component||''}${calib.unitNo?' — '+calib.unitNo:''}${calib.customTitle?' · '+calib.customTitle:''}</p>
+                </div>
+                <button onclick="document.getElementById('copyCalibModal').remove()" style="color:#fff;background:none;border:none;font-size:22px;cursor:pointer">✕</button>
+            </div>
+            <div style="padding:16px 20px">
+                <!-- Move or Copy toggle -->
+                <div style="display:flex;gap:8px;margin-bottom:14px">
+                    <button id="btnMoveMode" onclick="_setCalibTransferMode('move')"
+                        style="flex:1;padding:8px;border-radius:10px;border:2px solid #1d4ed8;background:#1d4ed8;color:#fff;font-size:12px;font-weight:700;cursor:pointer">
+                        ↗ Move (remove from this date)
+                    </button>
+                    <button id="btnCopyMode" onclick="_setCalibTransferMode('copy')"
+                        style="flex:1;padding:8px;border-radius:10px;border:2px solid #e5e7eb;background:#f9fafb;color:#374151;font-size:12px;font-weight:600;cursor:pointer">
+                        📋 Copy (keep on both dates)
+                    </button>
+                </div>
+                <p style="font-size:11px;color:#6b7280;margin-bottom:10px" id="calibTransferHint">Table will be <strong>moved</strong> — it will be removed from this date and added to the selected date.</p>
+
+                <p style="font-size:12px;color:#374151;margin-bottom:6px;font-weight:600">Select target date:</p>
+                ${allEntries.length === 0
+                    ? `<div style="text-align:center;padding:20px;color:#9ca3af"><p style="font-size:13px">No other daily entries found.</p><p style="font-size:11px;margin-top:4px">Add entries to other dates first.</p></div>`
+                    : `<div style="max-height:280px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:10px">
+                        ${allEntries.map(e => `
+                        <button onclick="copyCalibToEntry('${wlID}','${calibID}','${fromEntryID}','${e.wlID}','${e.entryID}')"
+                            style="width:100%;text-align:left;padding:10px 14px;border:none;border-bottom:1px solid #f3f4f6;background:#fff;cursor:pointer;font-size:12px;color:#1f2937"
+                            onmouseover="this.style.background='#eff6ff'" onmouseout="this.style.background='#fff'">
+                            📅 ${e.label}
+                        </button>`).join('')}
+                    </div>`}
+                <button onclick="document.getElementById('copyCalibModal').remove()" style="width:100%;margin-top:12px;padding:10px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb;color:#374151;font-size:13px;cursor:pointer">Cancel</button>
+            </div>
+        </div>`;
+        document.body.appendChild(modal);
+    }
+
+    window._calibTransferMode = 'move';  // default to Move
+
+    function _setCalibTransferMode(mode) {
+        window._calibTransferMode = mode;
+        const btnMove = document.getElementById('btnMoveMode');
+        const btnCopy = document.getElementById('btnCopyMode');
+        const hint    = document.getElementById('calibTransferHint');
+        if (mode === 'move') {
+            btnMove.style.background = '#1d4ed8'; btnMove.style.borderColor = '#1d4ed8'; btnMove.style.color = '#fff';
+            btnCopy.style.background = '#f9fafb'; btnCopy.style.borderColor = '#e5e7eb'; btnCopy.style.color = '#374151';
+            hint.innerHTML = 'Table will be <strong>moved</strong> — removed from this date and added to the selected date.';
+        } else {
+            btnCopy.style.background = '#1d4ed8'; btnCopy.style.borderColor = '#1d4ed8'; btnCopy.style.color = '#fff';
+            btnMove.style.background = '#f9fafb'; btnMove.style.borderColor = '#e5e7eb'; btnMove.style.color = '#374151';
+            hint.innerHTML = 'Table will be <strong>copied</strong> — kept on this date AND added to the selected date.';
+        }
+    }
+
+    async function copyCalibToEntry(fromWlID, calibID, fromEntryID, toWlID, toEntryID) {
+        const isMove = window._calibTransferMode === 'move';
+
+        const fromWl = workLogs.find(w => w.wlID === fromWlID);
+        if (!fromWl) return;
+        const fromEntry = (fromWl.dailyEntries||[]).find(e => e.entryID === fromEntryID);
+        if (!fromEntry) return;
+        const sourceCalib = (fromEntry.calibrations||[]).find(c => c.calibID === calibID);
+        if (!sourceCalib) return;
+
+        const toWl = workLogs.find(w => w.wlID === toWlID);
+        if (!toWl) return;
+        const toEntry = (toWl.dailyEntries||[]).find(e => e.entryID === toEntryID);
+        if (!toEntry) return;
+
+        // Confirm move (irreversible from source)
+        if (isMove && !confirm(
+            `Move "${sourceCalib.component||''}${sourceCalib.unitNo?' — '+sourceCalib.unitNo:''}" to ${toEntry.date||'selected entry'}?\n\nIt will be removed from ${fromEntry.date||'this entry'}.`
+        )) return;
+
+        // Deep-copy to target
+        const transferred = JSON.parse(JSON.stringify(sourceCalib));
+        if (!isMove) {
+            transferred.calibID = 'CAL-' + Date.now() + '-' + Math.random().toString(36).slice(2,6);
+            transferred._copiedFrom = calibID;
+        }
+        transferred._transferredAt = new Date().toISOString();
+
+        toEntry.calibrations = toEntry.calibrations || [];
+
+        // Duplicate check
+        const alreadyExists = toEntry.calibrations.some(c =>
+            c.component === transferred.component && c.unitNo === transferred.unitNo &&
+            (c.customTitle||'') === (transferred.customTitle||'')
+        );
+        if (alreadyExists && !confirm(
+            `A calibration for "${transferred.component}${transferred.unitNo?' — '+transferred.unitNo:''}" already exists on ${toEntry.date}.\n\nAdd anyway?`
+        )) return;
+
+        toEntry.calibrations.push(transferred);
+
+        // If Move — remove from source
+        if (isMove) {
+            fromEntry.calibrations = (fromEntry.calibrations||[]).filter(c => c.calibID !== calibID);
+        }
+
+        try {
+            await fieldSaveData('workLogs', workLogs);
+            document.getElementById('copyCalibModal').remove();
+            renderWorkLogs(document.getElementById('wlContent'));
+            showToast(
+                `✓ Calibration table ${isMove ? 'moved to' : 'copied to'} ${toEntry.date||'target entry'}`,
+                '#1d4ed8', 3500
+            );
+        } catch(err) {
+            alert('Transfer failed: ' + err.message);
+            // Rollback
+            toEntry.calibrations = toEntry.calibrations.filter(c => c.calibID !== transferred.calibID);
+            if (isMove) fromEntry.calibrations.push(sourceCalib);
+        }
+    }
+
     async function deleteCalibRecord(wlID, entryID, calibID) {
         if (!confirm('Delete this calibration record?')) return;
         const wlIdx=workLogs.findIndex(x=>x.wlID===wlID);if(wlIdx<0)return;
@@ -4644,6 +4593,7 @@
                                         <div style="display:flex;gap:4px;align-items:center">
                                             <span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;background:${c.overall==='PASS'?'#dcfce7':c.overall==='FAIL'?'#fee2e2':'#fef3c7'};color:${c.overall==='PASS'?'#15803d':c.overall==='FAIL'?'#dc2626':'#b45309'}">${c.overall}</span>
                                             <button onclick="openCalibModal('${w.wlID}','${d.entryID}','${c.calibID}')" style="font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid var(--border);background:#fff;cursor:pointer;color:var(--muted)">✏️</button>
+                                            <button onclick="openCopyCalibModal('${w.wlID}','${d.entryID}','${c.calibID}')" style="font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid #bfdbfe;background:#eff6ff;cursor:pointer;color:#1d4ed8" title="Copy this table to another date">📋</button>
                                             <button onclick="deleteCalibRecord('${w.wlID}','${d.entryID}','${c.calibID}')" style="font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid #fecaca;background:#fff;cursor:pointer;color:#dc2626">✕</button>
                                         </div>
                                     </div>
@@ -4988,10 +4938,10 @@
         document.getElementById('dayStartTime').value=entry?.startTime||'';
         document.getElementById('dayEndTime').value=entry?.endTime||'';
         document.getElementById('dayTimeLogRemarks').value=entry?.timeLogRemarks||'';
-        document.getElementById('dayDesc').innerHTML = entry?.description||'';
-        document.getElementById('dayObs').innerHTML  = entry?.observations||'';
-        document.getElementById('dayExclusions').innerHTML = entry?.exclusions||'';
-        document.getElementById('dayRec').innerHTML  = entry?.recommendations||'';
+        document.getElementById('dayDesc').value=entry?.description||'';
+        document.getElementById('dayObs').value=entry?.observations||'';
+        document.getElementById('dayExclusions').value=entry?.exclusions||'';
+        document.getElementById('dayRec').value=entry?.recommendations||'';
         document.getElementById('dayWitnessName').value=entry?.witnessName||'';
         document.getElementById('dayWitnessDesig').value=entry?.witnessDesig||'';
         document.getElementById('dayWitnessRemarks').value=entry?.witnessRemarks||'';
@@ -5030,47 +4980,9 @@
 
     function closeDayModal(){
         document.getElementById('dayModal').classList.remove('show');
-        // Clear all rich-text editor fields
-        ['dayDesc','dayObs','dayExclusions','dayRec'].forEach(id => {
-            const el = document.getElementById(id);
-            if (el) el.innerHTML = '';
-        });
-        window._rtActive = null;
         _editEntryID=null;_dayPhotos=[];_dayStaffRows=[];
         _concurEndEdit();
     }
-
-    // ── Rich-Text Editor Helpers ──────────────────────────────────────
-    // _rtActive tracks which contenteditable field currently has focus,
-    // so toolbar buttons know which field to apply the command to.
-    window._rtActive = null;
-
-    function _rtMarkDirty(el) {
-        // Enforce min-height so the editor doesn't collapse
-        if (el.innerHTML === '<br>' || el.innerHTML === '') el.innerHTML = '';
-    }
-
-    function rtCmd(cmd, val) {
-        // Re-focus the active editor before running the command so
-        // execCommand applies to the correct field (not the button itself)
-        if (window._rtActive) window._rtActive.focus();
-        document.execCommand(cmd, false, val || null);
-    }
-
-    function rtSetColor(color) {
-        if (window._rtActive) window._rtActive.focus();
-        document.execCommand('styleWithCSS', false, true);
-        document.execCommand('foreColor', false, color);
-    }
-
-    function rtHighlight(color) {
-        if (window._rtActive) window._rtActive.focus();
-        document.execCommand('styleWithCSS', false, true);
-        document.execCommand('hiliteColor', false, color);
-    }
-    // ─────────────────────────────────────────────────────────────────
-
-
 
     function editDayEntry(wlID,entryID){openDayModal(wlID,entryID);}
 
@@ -5079,16 +4991,6 @@
         const _g = _guardSubmit(e);
         if (_g.wasBusy) return;
         try {
-        // Validate the rich-text description field (contenteditable, no 'required' attr)
-        const descEl = document.getElementById('dayDesc');
-        if (!descEl.textContent.trim()) {
-            descEl.focus();
-            descEl.style.borderColor = '#dc2626';
-            setTimeout(() => descEl.style.borderColor = '', 2000);
-            alert('Please enter the Details of Work Carried Out.');
-            _g.release();
-            return;
-        }
         const wlID=document.getElementById('dayWlID').value;
         const entryID=document.getElementById('dayEntryID').value;
         // Level 2 concurrency: pre-save staleness check on the dailyEntry record
@@ -5141,10 +5043,10 @@
             endTime:       document.getElementById('dayEndTime').value,
             timeLogRemarks:document.getElementById('dayTimeLogRemarks').value,
             technicians:   techs,
-            description:   document.getElementById('dayDesc').innerHTML,
-            observations:  document.getElementById('dayObs').innerHTML,
-            exclusions:    document.getElementById('dayExclusions').innerHTML,
-            recommendations:document.getElementById('dayRec').innerHTML,
+            description:   document.getElementById('dayDesc').value,
+            observations:  document.getElementById('dayObs').value,
+            exclusions:    document.getElementById('dayExclusions').value,
+            recommendations:document.getElementById('dayRec').value,
             witnessName:   document.getElementById('dayWitnessName').value,
             witnessDesig:  document.getElementById('dayWitnessDesig').value,
             witnessRemarks:document.getElementById('dayWitnessRemarks').value,
@@ -5811,40 +5713,11 @@
             const hdr=dateStr+(d.category?'   |   '+d.category:'');
             doc.text(hdr,ML+3,y+5.5);y+=11;
 
-            // Work sections — strip HTML tags from rich-text fields before
-            // embedding in PDF, preserving numbered vs bullet list distinction.
-            const _rtToText = html => {
-                if (!html) return '';
-                // Process ordered lists (<ol>) — number items sequentially
-                html = html.replace(/<ol[^>]*>([\s\S]*?)<\/ol>/gi, (match, inner) => {
-                    let n = 0;
-                    return inner.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (m, content) => {
-                        n++;
-                        return n + '. ' + content.replace(/<[^>]+>/g, '').trim() + '\n';
-                    });
-                });
-                // Process unordered lists (<ul>) — bullet points
-                html = html.replace(/<ul[^>]*>([\s\S]*?)<\/ul>/gi, (match, inner) => {
-                    return inner.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (m, content) => {
-                        return '• ' + content.replace(/<[^>]+>/g, '').trim() + '\n';
-                    });
-                });
-                // Convert remaining block elements to newlines, then strip tags
-                return html
-                    .replace(/<\/p>|<br\s*\/?>/gi, '\n')
-                    .replace(/<[^>]+>/g, '')
-                    .replace(/&nbsp;/g, ' ')
-                    .replace(/&amp;/g, '&')
-                    .replace(/&lt;/g, '<')
-                    .replace(/&gt;/g, '>')
-                    .replace(/\n{3,}/g, '\n\n')
-                    .trim();
-            };
-
-            [{title:'Details of Work Carried Out',text:_rtToText(d.description),col:[29,78,216]},
-             {title:'Observations / Findings',    text:_rtToText(d.observations),col:[3,105,161]},
-             {title:'Exclusions / Remarks',       text:_rtToText(d.exclusions),  col:[180,83,9]},
-             {title:'Recommendations',            text:_rtToText(d.recommendations),col:[21,128,61]}
+            // Work sections
+            [{title:'Details of Work Carried Out',text:d.description,col:[29,78,216]},
+             {title:'Observations / Findings',    text:d.observations,col:[3,105,161]},
+             {title:'Exclusions / Remarks',       text:d.exclusions,  col:[180,83,9]},
+             {title:'Recommendations',            text:d.recommendations,col:[21,128,61]}
             ].filter(s=>s.text&&s.text.trim()).forEach(s=>{
                 if(y+16>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=42;}
                 doc.autoTable({startY:y,margin:{top:42,left:ML,right:MR,bottom:SIG_H+FOOTER_SAFETY+2},theme:'grid',
@@ -5953,30 +5826,6 @@
                     const blockH = imgH + 3 + (captionLines * 3) + 4;
                     const xPos=ML+col*(imgW+3);
                     if(y+blockH>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=42;col=0;}
-                    // Detect PDF attachments — jsPDF.addImage cannot embed PDFs (only raster
-                    // images). Previously these silently fell through to the catch block and
-                    // showed a generic "[Photo unavailable]" placeholder with no way to find
-                    // the actual file. Now we detect this case explicitly and show a clear
-                    // "📄 PDF document" marker with the filename, so it's obvious the document
-                    // exists and where to find it (open the item in-app to view/download it).
-                    const isPdfAttachment = (typeof src === 'string' && src.startsWith('data:application/pdf'))
-                        || (ph && typeof ph === 'object' && (ph.type === 'pdf' || (ph.name||'').toLowerCase().endsWith('.pdf')));
-                    if (isPdfAttachment) {
-                        doc.setDrawColor(191,219,254); doc.setFillColor(239,246,255);
-                        doc.rect(xPos, y, imgW, imgH, 'FD');
-                        doc.setFontSize(16); doc.setTextColor(29,78,216);
-                        doc.text('📄', xPos+imgW/2, y+imgH/2-4, {align:'center'});
-                        doc.setFontSize(7); doc.setFont('helvetica','bold'); doc.setTextColor(29,78,216);
-                        doc.text('PDF Document', xPos+imgW/2, y+imgH/2+6, {align:'center'});
-                        doc.setFontSize(6); doc.setFont('helvetica','normal'); doc.setTextColor(100,116,139);
-                        const fname = (ph && typeof ph === 'object' && ph.name) ? ph.name : 'attachment.pdf';
-                        const fnameLines = doc.splitTextToSize(fname, imgW-4);
-                        doc.text(fnameLines.slice(0,1), xPos+imgW/2, y+imgH/2+12, {align:'center'});
-                        doc.setFontSize(6.5); doc.setTextColor(100,100,100);
-                        doc.text(dateStr+' · Photo '+(pi+1)+' (open in app to view)', xPos+imgW/2, y+imgH+5, {align:'center'});
-                        col++;if(col===3){col=0;y+=blockH+2;}
-                        continue;
-                    }
                     try{
                         if (!src || (typeof src === 'string' && !src.startsWith('data:'))) {
                             // No usable image data (Drive fetch failed, or non-data URL)
