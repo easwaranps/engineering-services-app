@@ -5863,6 +5863,92 @@
 
         if(!days.length){doc.setFontSize(11);doc.setTextColor(150,150,150);doc.text('No daily entries recorded yet.',PW/2,140,{align:'center'});}
 
+        // ── CALIBRATION SUMMARY PAGE ─────────────────────────────────────
+        // Collect all calibration records across all days, sorted by date.
+        // Only added when there are calibration records AND this is the full
+        // report (not a single-day per-day PDF).
+        const allCalibRows = [];
+        if (!entryIDFilter) {
+            days.forEach(d => {
+                const dateStr = d.date ? new Date(d.date).toLocaleDateString('en-IN',{day:'2-digit',month:'2-digit',year:'numeric'}) : '—';
+                (d.calibrations||[]).forEach(c => {
+                    // For each calibration, create one summary row per measurement row
+                    // (or one row if no measurement table — just the header info)
+                    if (c._isCustom || (c.rows||[]).length === 0) {
+                        // Custom table or no rows — one summary line
+                        allCalibRows.push({
+                            date: dateStr,
+                            component: (c._isCustom?'[Custom] ':'')+( c.component||'') + (c.unitNo?' — '+c.unitNo:'') + (c.customTitle?' · '+c.customTitle:''),
+                            parameter: '—',
+                            value: '—',
+                            wearLimit: c.wearLimit||'—',
+                            overall: c.overall||'—'
+                        });
+                    } else {
+                        // Standard table — one row per measurement position
+                        c.rows.forEach((r,ri) => {
+                            const position = r[c.rowKeys?.[0]] || ('Row '+(ri+1));
+                            // Collect all measurement values from this row (skip position col and result col)
+                            const measurements = (c.rowKeys||[]).slice(1)
+                                .filter(k => k !== 'result')
+                                .map(k => r[k]||'')
+                                .filter(Boolean)
+                                .join(' | ');
+                            allCalibRows.push({
+                                date: dateStr,
+                                component: (c.component||'') + (c.unitNo?' — '+c.unitNo:'') + (c.customTitle?' · '+c.customTitle:''),
+                                parameter: position,
+                                value: measurements || '—',
+                                wearLimit: ri===0 ? (c.wearLimit||'—') : '',
+                                overall: ri===0 ? (c.overall||'—') : ''
+                            });
+                        });
+                    }
+                });
+            });
+        }
+
+        if (allCalibRows.length > 0) {
+            doc.addPage();
+            drawPageHeader();
+            let sy = 42;
+
+            // Section title
+            doc.setFontSize(11); doc.setFont('helvetica','bold'); doc.setTextColor(15,58,95);
+            doc.text('CALIBRATION SUMMARY — ALL RECORDS', PW/2, sy, {align:'center'});
+            const tw = doc.getTextWidth('CALIBRATION SUMMARY — ALL RECORDS');
+            doc.setDrawColor(15,58,95); doc.setLineWidth(0.4);
+            doc.line(PW/2-tw/2, sy+1.5, PW/2+tw/2, sy+1.5);
+            sy += 7;
+
+            doc.autoTable({
+                startY: sy,
+                margin: {top:42, left:ML, right:MR, bottom:SIG_H+FOOTER_SAFETY+4},
+                theme: 'grid',
+                styles: {fontSize:7.5, cellPadding:2.5, overflow:'linebreak'},
+                headStyles: {fillColor:[15,58,95], textColor:[255,255,255], fontStyle:'bold', fontSize:8},
+                head: [['Date','Component / Equipment','Position / Parameter','Measured Value(s)','Wear Limit','Result']],
+                body: allCalibRows.map(r => [
+                    {content:r.date, styles:{whiteSpace:'nowrap'}},
+                    r.component,
+                    r.parameter,
+                    r.value,
+                    {content:r.wearLimit, styles:{halign:'center', textColor: r.wearLimit&&r.wearLimit!=='—'?[180,83,9]:[150,150,150]}},
+                    {content:r.overall,   styles:{halign:'center', fontStyle:'bold',
+                        textColor: r.overall==='PASS'?[21,128,61]:r.overall==='FAIL'?[220,38,38]:r.overall?[180,83,9]:[150,150,150]}}
+                ]),
+                columnStyles:{
+                    0:{cellWidth:20},
+                    1:{cellWidth:52},
+                    2:{cellWidth:32},
+                    3:{cellWidth:52},
+                    4:{cellWidth:18, halign:'center'},
+                    5:{cellWidth:16, halign:'center'}
+                },
+                didDrawPage: () => { drawPageHeader(); }
+            });
+        }
+
         // Apply header + signature footer on all pages
         const total=doc.getNumberOfPages();
         for(let p=1;p<=total;p++){doc.setPage(p);drawPageHeader();drawSignatureFooter(p,total);}
