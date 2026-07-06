@@ -1346,7 +1346,7 @@
 
                 <div class="flex gap-3 justify-end pt-4 border-t">
                     <button type="button" onclick="closeTransactionModal()" class="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
-                    <button type="submit" class="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Save</button>
+                    <button type="submit" id="txnSaveBtn" class="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Save</button>
                 </div>
 
                 <!-- Supporting Documents Section (Invoice/PO only, Generated/Approved status) -->
@@ -1556,7 +1556,7 @@
         // Set to TRUE when ready to activate PIN-based login for all users.
         // FALSE = login gate is completely bypassed (app works as before).
         // Change this one line to switch between modes.
-        const ENABLE_LOGIN = true;
+        const ENABLE_LOGIN = false;
         let appFolderId = null;
         let transactions = [];
         let parties = [];
@@ -16513,8 +16513,9 @@
                 _stampRecord(txnData);
                 
                 // Hoisted up so the cancellation branch below can re-enable the button.
-                const submitBtn = e.target.querySelector('button[type="submit"]');
-                const originalText = submitBtn.textContent;
+                const submitBtn = document.getElementById('txnSaveBtn') || e.target.querySelector('button[type="submit"]');
+                const originalText = 'Save';  // always reset to 'Save', never inherit stale 'Saving...'
+                if (submitBtn) { submitBtn.textContent = 'Saving...'; submitBtn.disabled = true; }
                 
                 // ── Sequence-conflict resolution + merge-on-save ──
                 // For new transactions, txnID was generated at modal-open via
@@ -16593,9 +16594,6 @@
                     }
                 }
                 
-                submitBtn.textContent = 'Saving...';
-                submitBtn.disabled = true;
-                
                 await saveData('transactions', transactions);
                 
                 submitBtn.textContent = originalText;
@@ -16606,7 +16604,7 @@
                 renderView();
             } catch (error) {
                 console.error('Error in form submission:', error);
-                const submitBtn = e.target.querySelector('button[type="submit"]');
+                const submitBtn = document.getElementById('txnSaveBtn') || e.target.querySelector('button[type="submit"]');
                 if (submitBtn) {
                     submitBtn.textContent = 'Save';
                     submitBtn.disabled = false;
