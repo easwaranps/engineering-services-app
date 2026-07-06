@@ -1969,21 +1969,34 @@
         const activeBal    = activePool ? getPoolRunningBalance(activePool) : 0;
         const lastReq      = getCurrentUserLastRequest();
         const totalActiveBal = (fundPools||[]).filter(p => p.status === 'Active')
-                                .reduce((s,p) => s + getPoolRunningBalance(p), 0);
-        const activePoolCount = (fundPools||[]).filter(p => p.status === 'Active' && _fieldComputePoolBalance(p).balance > 0.01).length;
-        const drainedActiveCount = (fundPools||[]).filter(p => p.status === 'Active' && _fieldComputePoolBalance(p).balance <= 0.01).length;
+                                .reduce((s,p) => { try { return s + (getPoolRunningBalance(p)||0); } catch(e) { return s; } }, 0);
+        const activePoolCount = (fundPools||[]).filter(p => { try { return p.status === 'Active' && (_fieldComputePoolBalance(p)||{balance:0}).balance > 0.01; } catch(e) { return false; } }).length;
+        const drainedActiveCount = (fundPools||[]).filter(p => { try { return p.status === 'Active' && (_fieldComputePoolBalance(p)||{balance:0}).balance <= 0.01; } catch(e) { return false; } }).length;
 
         // Status colors for last request
-        const reqStatusInfo = lastReq ? (() => {
-            const s = lastReq.status;
-            if (s === 'Pending')   return { color: '#92400e', bg: '#fef3c7', icon: '⏳', label: 'Pending — awaiting office' };
-            if (s === 'Approved')  return { color: '#1e40af', bg: '#dbeafe', icon: '✓',  label: 'Approved — awaiting bank transfer' };
-            if (s === 'Disbursed') return { color: '#065f46', bg: '#d1fae5', icon: '💸', label: 'Disbursed — funds received' };
-            if (s === 'Rejected')  return { color: '#991b1b', bg: '#fee2e2', icon: '✕',  label: 'Rejected: '+(lastReq.rejectReason||'No reason') };
-            if (s === 'Cancelled') return { color: '#475569', bg: '#f1f5f9', icon: '⊘',  label: 'Cancelled by you' };
-            return null;
-        })() : null;
 
+        // Pre-compute reqStatusInfo safely outside template literal
+        let reqStatusInfo = null, reqActions = '', editBadge = '';
+        if (lastReq) {
+            try {
+                const s = lastReq.status;
+                const col = s==='Pending'?'#92400e':s==='Approved'?'#1e40af':s==='Disbursed'?'#065f46':s==='Rejected'?'#991b1b':'#475569';
+                const bg  = s==='Pending'?'#fef3c7':s==='Approved'?'#dbeafe':s==='Disbursed'?'#d1fae5':s==='Rejected'?'#fee2e2':'#f1f5f9';
+                const ico = s==='Pending'?'⏳':s==='Approved'?'✓':s==='Disbursed'?'💸':s==='Rejected'?'✕':'⊘';
+                const lbl = s==='Pending'?'Pending — awaiting office':s==='Approved'?'Approved — awaiting bank transfer':s==='Disbursed'?'Disbursed — funds received':s==='Rejected'?'Rejected: '+(lastReq.rejectReason||'No reason'):'Cancelled by you';
+                reqStatusInfo = {color:col,bg,icon:ico,label:lbl};
+                const bs = "padding:4px 10px;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap";
+                if (s==='Pending') {
+                    reqActions = `<button onclick="editFundRequest('${lastReq.requestID}')" style="${bs};background:rgba(0,0,0,.08);color:${col}">✏️ Edit</button><button onclick="cancelFundRequest('${lastReq.requestID}')" style="${bs};background:rgba(0,0,0,.08);color:${col}">Cancel</button>`;
+                } else if (s==='Rejected'||s==='Cancelled') {
+                    reqActions = `<button onclick="resubmitFundRequest('${lastReq.requestID}')" style="${bs};background:#0d7c66;color:#fff">🔄 Resubmit</button>`;
+                } else if (s==='Approved'||s==='Disbursed') {
+                    const pc=(lastReq.correctionRequests||[]).filter(c=>!c.resolvedAt).length;
+                    reqActions = pc>0?`<span style="font-size:10px;padding:2px 8px;background:rgba(0,0,0,.06);border-radius:5px">📨 Correction pending (${pc})</span>`:`<button onclick="requestFundCorrection('${lastReq.requestID}')" style="${bs};background:rgba(0,0,0,.08);color:${col}">📨 Request Correction</button>`;
+                }
+                editBadge = (lastReq.editHistory&&lastReq.editHistory.length)?`<span style="font-size:9px;opacity:.7;margin-left:6px">✎</span>`:'';
+            } catch(e) { console.warn('Fund pool render error:',e); reqStatusInfo=null; }
+        }
         el.innerHTML = `
         <!-- Pool status strip (Phase A+B) -->
         <div class="card mb-3" style="background:linear-gradient(135deg,#0d7c66,#15803d);padding:12px 14px">
@@ -1997,42 +2010,14 @@
                 </div>
                 <button onclick="openFundReqModal()" style="padding:8px 16px;border-radius:9px;background:#fff;color:#15803d;border:none;cursor:pointer;font-size:13px;font-weight:700;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.15)">+ Request Fund</button>
             </div>
-            ${reqStatusInfo ? (() => {
-                // Status-aware action buttons:
-                //   Pending          → Edit + Cancel
-                //   Rejected/Cancelled → Resubmit
-                //   Approved/Disbursed → Request Correction (unless one is pending)
-                const s = lastReq.status;
-                const btnStyle = `padding:4px 10px;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap`;
-                let actions = '';
-                if (s === 'Pending') {
-                    actions = `
-                        <button onclick="editFundRequest('${lastReq.requestID}')" style="${btnStyle};background:rgba(0,0,0,.08);color:${reqStatusInfo.color}" title="Edit date, amount, purpose…">✏️ Edit</button>
-                        <button onclick="cancelFundRequest('${lastReq.requestID}')" style="${btnStyle};background:rgba(0,0,0,.08);color:${reqStatusInfo.color}">Cancel</button>`;
-                } else if (s === 'Rejected' || s === 'Cancelled') {
-                    actions = `<button onclick="resubmitFundRequest('${lastReq.requestID}')" style="${btnStyle};background:#0d7c66;color:#fff" title="Create a corrected new request">🔄 Resubmit</button>`;
-                } else if (s === 'Approved' || s === 'Disbursed') {
-                    // Check whether there's an unresolved correction already
-                    const pendingCR = (lastReq.correctionRequests||[]).filter(c => !c.resolvedAt).length;
-                    if (pendingCR > 0) {
-                        actions = `<span style="font-size:10px;color:${reqStatusInfo.color};padding:2px 8px;background:rgba(0,0,0,.06);border-radius:5px" title="Office is reviewing your correction request">📨 Correction pending (${pendingCR})</span>`;
-                    } else {
-                        actions = `<button onclick="requestFundCorrection('${lastReq.requestID}')" style="${btnStyle};background:rgba(0,0,0,.08);color:${reqStatusInfo.color}" title="Ask the office to amend this request — direct edit not allowed once processed">📨 Request Correction</button>`;
-                    }
-                }
-                // Audit hint: show "edited" badge if editHistory present
-                const editBadge = (lastReq.editHistory && lastReq.editHistory.length)
-                    ? `<span style="font-size:9px;color:${reqStatusInfo.color};opacity:.7;margin-left:6px" title="Edited ${lastReq.editHistory.length} time${lastReq.editHistory.length===1?'':'s'}">✎</span>`
-                    : '';
-                return `
+            ${reqStatusInfo ? `
                 <div style="margin-top:10px;padding:8px 10px;background:${reqStatusInfo.bg};border-radius:8px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
                     <div style="font-size:12px;color:${reqStatusInfo.color};flex:1;min-width:160px">
                         <b>${reqStatusInfo.icon} Last Request:</b> ${fmt(lastReq.requestedAmount)} · ${reqStatusInfo.label}${editBadge}
                         <div style="font-size:10px;opacity:.85;margin-top:1px">Sent ${lastReq.requestedDate} ${lastReq.requestedTime||''}</div>
                     </div>
-                    <div style="display:flex;gap:6px;flex-wrap:wrap">${actions}</div>
-                </div>`;
-            })() : ''}
+                    <div style="display:flex;gap:6px;flex-wrap:wrap">${reqActions}</div>
+                </div>` : ''}
         </div>
 
         <!-- Old grand summary (kept for project-level view) -->
