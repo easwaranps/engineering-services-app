@@ -12959,6 +12959,7 @@
             lines.push(`Generated,${new Date().toISOString().split('T')[0]}`);
             lines.push(`Company,${esc(settings.companyName || '')}`);
             lines.push(`GST Number,${esc(settings.gstNumber || '')}`);
+            lines.push(`TAN Number,${esc(settings.tanNumber || '')}`);
             lines.push('');
             lines.push(`Opening ITC Balance,${fy.openingITC.toFixed(2)}`);
             lines.push(`Opening ITC As Of,${fy.openingITCAsOf || '—'}`);
@@ -13399,14 +13400,14 @@
             return window.jspdf.jsPDF;
         }
 
-        function _taxPeriodHeader(doc, title, subtitle, PW) {
+        function _taxPeriodHeader(doc, title, subtitle, PW, idLine) {
             doc.setFillColor(15,58,95); doc.rect(0,0,210,38,'F');
             doc.setFontSize(15);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
             doc.text(title, PW/2, 12, {align:'center'});
             doc.setFontSize(9);doc.setFont('helvetica','normal');doc.setTextColor(147,197,253);
             doc.text(subtitle, PW/2, 20, {align:'center'});
             doc.setFontSize(8);doc.setTextColor(203,213,225);
-            doc.text('GST: '+(settings.gstNo||'N/A')+'  |  Generated: '+new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}), PW/2, 28, {align:'center'});
+            doc.text((idLine || ('GST: '+(settings.gstNumber||'N/A')))+'  |  Generated: '+new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}), PW/2, 28, {align:'center'});
             doc.setFillColor(29,78,216);doc.rect(0,37,210,2,'F');
         }
 
@@ -13423,7 +13424,8 @@
             const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
             _taxPeriodHeader(doc, 'TDS COMPLIANCE REPORT',
-                (settings.companyName||'IMSE Tech India')+'  |  Period: '+d.monthName+' '+year, PW);
+                (settings.companyName||'IMSE Tech India')+'  |  Period: '+d.monthName+' '+year, PW,
+                'TAN: '+(settings.tanNumber||'N/A')+'  |  GST: '+(settings.gstNumber||'N/A'));
             let y = 44;
 
             // TDS Summary box
@@ -14389,6 +14391,11 @@
                         <div>
                             <label class="block text-sm font-semibold mb-2">GST Number</label>
                             <input type="text" id="companyGST" value="${settings.gstNumber || ''}" class="w-full px-4 py-2 border rounded-lg" />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-semibold mb-2">TAN Number <span class="text-gray-400 font-normal">(Tax Deduction A/c No — printed on TDS PDF)</span></label>
+                            <input type="text" id="companyTAN" value="${settings.tanNumber || ''}" placeholder="e.g. MUMI10986D" maxlength="10"
+                                   oninput="this.value=this.value.toUpperCase()" class="w-full px-4 py-2 border rounded-lg font-mono" />
                         </div>
                         <div>
                             <label class="block text-sm font-semibold mb-2">MSME Registration Number</label>
@@ -17118,6 +17125,7 @@
                     companyName: document.getElementById('companyName').value,
                     iecNumber: document.getElementById('companyIEC')?.value || settings.iecNumber || '',
                     gstNumber: document.getElementById('companyGST').value,
+                    tanNumber: (document.getElementById('companyTAN')?.value || settings.tanNumber || '').toUpperCase().trim(),
                     companyAddress: document.getElementById('companyAddress').value,
                     msmeNumber: document.getElementById('msmeNumber')?.value || settings.msmeNumber || '',
                     director1Name: document.getElementById('settDir1Name')?.value || settings.director1Name || '',
@@ -33196,6 +33204,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 ['Company Name',  s.companyName || ''],
                 ['IEC Number',    s.iecNumber || ''],
                 ['GST Number',    s.gstNumber || ''],
+                ['TAN Number',    s.tanNumber || ''],
                 ['MSME Number',   s.msmeNumber || ''],
                 ['CIN Number',    s.cinNumber || ''],
                 ['PAN Number',    s.panNumber || ''],
