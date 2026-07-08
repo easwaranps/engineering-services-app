@@ -324,6 +324,26 @@
                 <input type="text" id="eiVendor" class="field-input" placeholder="Restaurant name, transport provider, etc."/>
             </div>
 
+            <!-- Bill / Receipt Status -->
+            <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:10px 14px">
+                <p class="field-label" style="color:#92400e;margin-bottom:6px">🧾 BILL / RECEIPT STATUS</p>
+                <div class="flex gap-2 flex-wrap" style="margin-bottom:8px">
+                    <label id="eiBillStatLblA" style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:7px 10px;border-radius:8px;border:2px solid #e5e7eb;background:#fff;font-size:12px;font-weight:600">
+                        <input type="radio" name="eiBillStatus" value="available" onchange="_eiBillStatusStyle()" style="accent-color:#16a34a"/> ✅ Bill Available
+                    </label>
+                    <label id="eiBillStatLblN" style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:7px 10px;border-radius:8px;border:2px solid #e5e7eb;background:#fff;font-size:12px;font-weight:600">
+                        <input type="radio" name="eiBillStatus" value="no_bill" onchange="_eiBillStatusStyle()" style="accent-color:#dc2626"/> ❌ No Bill
+                    </label>
+                    <label id="eiBillStatLblP" style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:7px 10px;border-radius:8px;border:2px solid #fbbf24;background:#fffbeb;font-size:12px;font-weight:600">
+                        <input type="radio" name="eiBillStatus" value="pending" checked onchange="_eiBillStatusStyle()" style="accent-color:#d97706"/> ⏳ Pending
+                    </label>
+                </div>
+                <div>
+                    <label class="field-label">Bill Remark <span style="font-weight:400;text-transform:none;color:var(--muted)">(e.g. "Original with accounts", "Lost — cash paid")</span></label>
+                    <input type="text" id="eiBillRemark" class="field-input" placeholder="Optional — note about the bill/receipt"/>
+                </div>
+            </div>
+
             <!-- Multiple bill attachments -->
             <div style="background:#f8fafc;border:1px solid var(--border);border-radius:10px;padding:10px 14px">
                 <p class="field-label" style="margin-bottom:6px">📎 BILLS / RECEIPTS <span style="font-weight:400;text-transform:none;font-size:11px;color:var(--muted)">(tap to add one or more)</span></p>
@@ -2260,6 +2280,9 @@
                                         <span class="badge" style="background:#f0fdf4;color:#0d7c66;border:1px solid #bbf7d0">${it.category}</span>
                                         <span style="font-size:13px;font-weight:600;color:var(--text)">${it.description}</span>
                                         ${_poolLocked?`<span title="Pool ${it.poolID} is Closed — entry is read-only" style="font-size:10px;background:#f3f4f6;color:#6b7280;padding:1px 6px;border-radius:4px;border:1px solid #d1d5db">🔒 Locked</span>`:''}
+                                        ${(()=>{const bs=it.billStatus;if(!bs)return '';
+                                            const map={available:['✅ Bill','#f0fdf4','#16a34a','#bbf7d0'],no_bill:['❌ No Bill','#fef2f2','#dc2626','#fecaca'],pending:['⏳ Bill Pending','#fffbeb','#d97706','#fde68a']};
+                                            const m=map[bs];return m?`<span title="${it.billRemark||''}" style="font-size:10px;background:${m[1]};color:${m[2]};padding:1px 6px;border-radius:4px;border:1px solid ${m[3]}">${m[0]}</span>`:'';})()}
                                     </div>
                                     <p style="font-size:11px;color:var(--muted)">${it.date}${it.payMode?' · '+it.payMode:''}${it.vendor?' · '+it.vendor:''}${techNames?' · 👷 '+techNames:''}</p>
                                     ${it.addedBy?`<p style="font-size:10px;color:#94a3b8;margin-top:1px">✏️ Entered by: <strong style="color:#64748b">${it.addedBy}</strong></p>`:''}
@@ -3013,6 +3036,25 @@
         renderEiStagedGrid();
     }
 
+    // Highlight the selected Bill/Receipt status label (mirrors main-app Director Expenses UX)
+    function _eiBillStatusStyle() {
+        const sel = document.querySelector('input[name="eiBillStatus"]:checked')?.value || 'pending';
+        const styles = {
+            available: { lbl:'eiBillStatLblA', border:'#4ade80', bg:'#f0fdf4' },
+            no_bill:   { lbl:'eiBillStatLblN', border:'#f87171', bg:'#fef2f2' },
+            pending:   { lbl:'eiBillStatLblP', border:'#fbbf24', bg:'#fffbeb' },
+        };
+        Object.values(styles).forEach(s => {
+            const el = document.getElementById(s.lbl);
+            if (!el) return;
+            el.style.border = '2px solid #e5e7eb';
+            el.style.background = '#fff';
+        });
+        const a = styles[sel];
+        const el = document.getElementById(a.lbl);
+        if (el) { el.style.border = '2px solid ' + a.border; el.style.background = a.bg; }
+    }
+
     function openExpItemModal(projID, itemID=null) {
         // ── Pool lock guard ──
         // If editing an existing expense whose pool is Closed, refuse to open
@@ -3039,6 +3081,11 @@
         document.getElementById('eiAmt').value     = item?.amount  || '';
         document.getElementById('eiPayMode').value = item?.payMode || 'Cash';
         document.getElementById('eiVendor').value  = item?.vendor  || '';
+        // ── Bill / Receipt status (default: pending) ──
+        const _bstat = item?.billStatus || 'pending';
+        document.querySelectorAll('input[name="eiBillStatus"]').forEach(r => { r.checked = (r.value === _bstat); });
+        document.getElementById('eiBillRemark').value = item?.billRemark || '';
+        _eiBillStatusStyle();
         if (item?.technicians?.length) _eiStaffRows = item.technicians.map(t=>({name:t.name,staffID:t.staffID||''}));
         else _eiStaffRows = [{name:'',staffID:''}];
         if (item?.billAttachments) _eiBillAttachments = [...item.billAttachments];
@@ -3230,6 +3277,8 @@
             amount:          newAmount,
             payMode:         document.getElementById('eiPayMode').value,
             vendor:          document.getElementById('eiVendor').value,
+            billStatus:      document.querySelector('input[name="eiBillStatus"]:checked')?.value || 'pending',
+            billRemark:      document.getElementById('eiBillRemark')?.value?.trim() || '',
             technicians:     techs,
             staffName:       techs.map(t=>t.name).join(', '),
             billAttachments: [..._eiBillAttachments],
