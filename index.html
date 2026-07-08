@@ -17174,6 +17174,14 @@
             
             try {
                 settings = {
+                    // ★ BUGFIX: spread existing settings FIRST so dynamic keys written
+                    // elsewhere (director opening-settled flags, prSeqFloor_XXXX, GST
+                    // openingITCBalance, pendingTaxCredits, gstPayments, sheets sync
+                    // state, etc.) are PRESERVED. Previously this object was rebuilt
+                    // from a whitelist and every unlisted key was silently wiped each
+                    // time Save Settings was pressed — e.g. director opening-balance
+                    // settlements kept reverting to "unsettled".
+                    ...settings,
                     companyName: document.getElementById('companyName').value,
                     iecNumber: document.getElementById('companyIEC')?.value || settings.iecNumber || '',
                     gstNumber: document.getElementById('companyGST').value,
