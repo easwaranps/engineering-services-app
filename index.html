@@ -4629,18 +4629,33 @@
                 const folderId = await getOrCreateAppFolder();
 
                 // Step 1: Find the file ID inside the app folder
+                // NOTE: no `orderBy` here — combining `in parents` with
+                // `orderBy=modifiedTime desc` intermittently returns HTTP 500
+                // for folders the signed-in user does NOT own (shared-Viewer
+                // scenario, e.g. auditor access). We sort client-side instead,
+                // and retry once on transient 5xx.
                 const q = encodeURIComponent(
                     `name='${fileName}' and '${folderId}' in parents and trashed=false`
                 );
-                const listRes = await fetch(
-                    `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime)&spaces=drive&orderBy=modifiedTime+desc`,
-                    { headers: { 'Authorization': `Bearer ${accessToken}` } }
-                );
+                let listRes = null;
+                for (let attempt = 1; attempt <= 3; attempt++) {
+                    listRes = await fetch(
+                        `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime)&spaces=drive&supportsAllDrives=true&includeItemsFromAllDrives=true`,
+                        { headers: { 'Authorization': `Bearer ${accessToken}` } }
+                    );
+                    if (listRes.ok || listRes.status < 500) break;   // success or non-retryable
+                    console.warn(`List attempt ${attempt} for ${fileName}: HTTP ${listRes.status} — retrying…`);
+                    await new Promise(r => setTimeout(r, 400 * attempt));
+                }
                 if (!listRes.ok) {
                     console.warn(`List failed for ${fileName}:`, listRes.status);
                     return null;
                 }
                 const listData = await listRes.json();
+                // Client-side sort: newest modifiedTime first (replaces server orderBy)
+                if (listData.files && listData.files.length > 1) {
+                    listData.files.sort((a,b) => (b.modifiedTime||'').localeCompare(a.modifiedTime||''));
+                }
                 if (!listData.files || listData.files.length === 0) {
                     console.log(`${fileName} not found in folder — will be created on first save`);
                     return null;
@@ -4951,6 +4966,17 @@
 
         async function saveData(type, data) {
             try {
+                // ── CENTRAL READ-ONLY GUARD ─────────────────────────────
+                // Every persistence call in the app flows through saveData,
+                // so this single check makes the entire app truly read-only
+                // for View Only sessions (e.g. external auditor) regardless
+                // of which buttons happen to be visible. Other roles are
+                // completely unaffected.
+                if (ENABLE_LOGIN && _bmsSession && _bmsSession.role === 'View Only' && appUsers.length > 0) {
+                    console.warn(`🔒 Write blocked (View Only session): saveData('${type}')`);
+                    _showToast('🔒 View Only access — changes are not saved. Contact Admin for edit rights.', '#b45309', 4500);
+                    return;
+                }
                 if (!accessToken) {
                     alert('Session expired. Please sign in again.');
                     handleSignOut();
@@ -6149,6 +6175,10 @@
         }
 
         async function _syncToSheetsLegacy() {
+            if (ENABLE_LOGIN && _bmsSession && _bmsSession.role === 'View Only' && appUsers.length > 0) {
+                _showToast('🔒 View Only access — Google Sheets sync is disabled.', '#b45309', 4000);
+                return;
+            }
             const btn = event.target;
             const originalHTML = btn.innerHTML;
 
@@ -6186,11 +6216,12 @@
                         ];
                         for (const q of queries) {
                             const searchRes = await fetch(
-                                `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)&spaces=drive&orderBy=modifiedTime+desc`,
+                                `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name,modifiedTime)&spaces=drive`,
                                 { headers: { 'Authorization': `Bearer ${accessToken}` } }
                             );
                             if (searchRes.ok) {
                                 const found = await searchRes.json();
+                                if (found.files && found.files.length > 1) found.files.sort((a,b)=>(b.modifiedTime||'').localeCompare(a.modifiedTime||''));
                                 if (found.files && found.files.length > 0) {
                                     spreadsheetId = found.files[0].id;
                                     settings.spreadsheetId = spreadsheetId;
@@ -33561,6 +33592,11 @@ Automated WFH alert — ${company} Attendance System.`;
         }
 
         async function syncToGoogleSheets() {
+            // View Only sessions must not push data anywhere (auditor access)
+            if (ENABLE_LOGIN && _bmsSession && _bmsSession.role === 'View Only' && appUsers.length > 0) {
+                _showToast('🔒 View Only access — Google Sheets sync is disabled.', '#b45309', 4000);
+                return;
+            }
             const sheetId = _sheetsActiveSheetId();
             const statusEl = document.getElementById('sheetsSyncStatus');
             const setStatus = (msg, color = '#475569') => {
