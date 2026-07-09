@@ -7067,6 +7067,66 @@
             return _bmsSession.role !== 'View Only';
         }
 
+        // ═══════════════════════════════════════════════════════════════
+        // VIEW-ONLY UI LOCKDOWN (auditor mode)
+        // ═══════════════════════════════════════════════════════════════
+        // saveData() already blocks persistence for View Only sessions, but
+        // action buttons (Edit / Delete / + New / Sync…) were still visible
+        // and clickable. This layer:
+        //   1. Intercepts clicks on write-action handlers (capture phase)
+        //   2. Visually dims those buttons as views render (MutationObserver)
+        // Classification is by the app's function naming conventions, so new
+        // features following the same conventions are covered automatically.
+        function _voActive() {
+            return ENABLE_LOGIN && _bmsSession && _bmsSession.role === 'View Only' && appUsers.length > 0;
+        }
+        function _voIsBlockedHandler(fn) {
+            if (!fn) return false;
+            // Always allowed — read / navigation / UI-chrome actions
+            if (/^(view|close|switch|filter|render|refresh|search|sort|page|export|download|print|show|hide|toggle\w*Section|open\w*(History|Detail|Preview|Statement)|openInvoicePaymentsModal|poolReconciliationPDF|dirExpStatementPDF|generatePaySlipPDF|handleSignOut|_)/.test(fn)) return false;
+            // Blocked — write / mutate verbs
+            if (/^(save|delete|remove|edit|add|create|new|duplicat|insert|update|upload|attach|approve|reject|settle|disburse|revers|reopen|undo|renew|mark|assign|fill|attGrid|import|sync|record|apply|post|clear|reset|set[A-Z]|toggle)/.test(fn)) return true;
+            // Modal openers in this app are data-entry forms — blocked
+            // (informational ones are matched by the allow-list above)
+            if (/^open\w*Modal$/.test(fn)) return true;
+            return false;
+        }
+        function _voExtractFn(el) {
+            const oc = el.getAttribute('onclick') || '';
+            const m = oc.match(/^\s*([A-Za-z_$][\w$]*)\s*\(/);
+            return m ? m[1] : '';
+        }
+        // 1) Hard block: capture-phase interceptor — fires before inline onclick
+        document.addEventListener('click', function(e) {
+            if (!_voActive()) return;
+            const el = e.target && e.target.closest ? e.target.closest('[onclick]') : null;
+            if (!el) return;
+            if (_voIsBlockedHandler(_voExtractFn(el))) {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                _showToast('🔒 View Only — this action is disabled for your role.', '#b45309', 3000);
+            }
+        }, true);
+        // 2) Soft signal: dim blocked buttons so they LOOK disabled
+        function _voSweep() {
+            if (!_voActive()) return;
+            document.querySelectorAll('[onclick]').forEach(el => {
+                if (el._voDone) return;
+                if (_voIsBlockedHandler(_voExtractFn(el))) {
+                    el._voDone = true;
+                    el.style.opacity = '0.35';
+                    el.style.cursor = 'not-allowed';
+                    el.title = 'View Only — action disabled';
+                }
+            });
+        }
+        (function _voInstall() {
+            if (!document.body) { setTimeout(_voInstall, 300); return; }
+            new MutationObserver(() => { if (_voActive()) _voSweep(); })
+                .observe(document.body, { childList: true, subtree: true });
+            _voSweep();
+        })();
+
         function switchView(view) {
             if (ENABLE_LOGIN && _bmsSession && appUsers.length > 0 && !_canAccess(view)) {
                 _showToast(`🚫 Access restricted — your role (${_bmsSession?.role}) cannot access this module. Contact Admin.`, '#dc2626', 4500);
