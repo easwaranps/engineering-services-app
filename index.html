@@ -7973,6 +7973,7 @@
                             <div style="font-size:18px;font-weight:700;font-family:monospace">${p.poolID}</div>
                         </div>
                         <div style="display:flex;gap:8px;align-items:center">
+                            <button onclick="poolReconciliationPDF('${p.poolID}')" style="background:#fff;color:#6d28d9;border:none;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer" title="Generate ${p.status==='Closed'?'FINAL':'interim'} statement PDF with expense table + supporting bill/voucher appendix">📄 Statement PDF</button>
                             ${p.status==='Closed' ? `<button onclick="reopenPool('${p.poolID}')" style="background:#fff;color:#059669;border:none;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer" title="Re-open this pool — restores field-app edit/delete on its expenses">🔓 Re-open Pool</button>` : ''}
                             <button onclick="this.closest('[style*=fixed]').remove()" style="background:none;border:none;color:#fff;font-size:22px;cursor:pointer">✕</button>
                         </div>
