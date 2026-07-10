@@ -13361,7 +13361,7 @@
         // per ESIC portal spec — NOT attendance days or pay-period days.
         // Portal auto-calculates employee (0.75%) + employer (3.25%) contributions.
         // ════════════════════════════════════════════════════════════════
-        function exportESICContribution(month, year) {
+        async function exportESICContribution(month, year) {
             const MN = ['January','February','March','April','May','June',
                         'July','August','September','October','November','December'];
             const monthLabel = MN[month-1] + ' ' + year;
@@ -13381,16 +13381,16 @@
             // Calendar days in the wage month — per ESIC portal specification
             const calDays = new Date(year, month, 0).getDate();
 
-            // Column headers must EXACTLY match the ESIC portal upload template.
-            // The portal validates header text and rejects files with mismatched headers.
-            // These are copied verbatim from the ESIC portal sample template.
+            // Column headers copied VERBATIM (incl. embedded newlines and the
+            // leading spaces on E/F) from a file the ESIC portal accepted.
+            // The portal validates header text and rejects any mismatch.
             const header = [
-                'IP Number   (10 Digits)',
-                'IP Name  ( Only alphabets and space )',
+                'IP Number \n(10 Digits)',
+                'IP Name\n( Only alphabets and space )',
                 'No of Days for which wages paid/payable during the month',
                 'Total Monthly Wages',
-                'Reason Code for Zero workings days(numeric only; provide 0 for all other reasons- Click on the link for reference)',
-                'Last Working Day  ( Format DD/MM/YYYY  or DD-MM-YYYY)'
+                ' Reason Code for Zero workings days(numeric only; provide 0 for all other reasons- Click on the link for reference)',
+                ' Last Working Day\n( Format DD/MM/YYYY  or DD-MM-YYYY)'
             ];
             const dataRows = [];
 
@@ -13398,6 +13398,8 @@
                 const st = (staff||[]).find(s => s.staffID === r.staffID);
                 const ipNo = (st?.esicNumber || '').trim();
                 if (!ipNo) return;
+                // ALL values as strings → SheetJS stores them as text cells,
+                // exactly matching the accepted portal template.
                 dataRows.push([ipNo, st.name, String(calDays), String(r.esicBasis), '0', '']);
             });
 
@@ -13406,39 +13408,30 @@
                 return;
             }
 
-            let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office"
-                xmlns:x="urn:schemas-microsoft-com:office:excel"
-                xmlns="http://www.w3.org/TR/REC-html40">
-            <head><meta charset="UTF-8">
-            <!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets>
-            <x:ExcelWorksheet><x:Name>Sheet1</x:Name>
-            <x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>
-            </x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
-            <style>
-                td { mso-number-format:"@"; font-family:Arial; font-size:10pt; }
-                th { font-family:Arial; font-size:10pt; font-weight:bold; background:#d9e1f2; }
-            </style></head><body><table border="1">`;
-            html += '<tr>' + header.map(h => `<th>${h}</th>`).join('') + '</tr>';
-            dataRows.forEach(row => {
-                html += '<tr>' + row.map(cell => `<td>${cell}</td>`).join('') + '</tr>';
-            });
-            html += '</table></body></html>';
+            // The ESIC portal requires a GENUINE Excel file. The previous
+            // implementation exported an HTML table renamed to .xls, which
+            // Excel opens but the portal parser rejects. Generate a real
+            // .xlsx via SheetJS (lazy-loaded, same pattern as jsPDF).
+            if (typeof XLSX === 'undefined') {
+                try {
+                    await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+                } catch(e) {
+                    alert('Could not load the Excel library (network issue). Please retry.');
+                    return;
+                }
+            }
 
-            const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=UTF-8' });
-            const url  = URL.createObjectURL(blob);
-            const a    = document.createElement('a');
-            a.href = url;
-            a.download = `ESIC_Contribution_${year}${String(month).padStart(2,'0')}.xls`;
-            a.click();
-            URL.revokeObjectURL(url);
+            const ws = XLSX.utils.aoa_to_sheet([header, ...dataRows]);
+            ws['!cols'] = [{wch:14},{wch:28},{wch:22},{wch:14},{wch:30},{wch:20}];
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+            const fileName = `ESIC_Contribution_${year}${String(month).padStart(2,'0')}.xlsx`;
+            XLSX.writeFile(wb, fileName);
 
-            let msg = `ESIC file downloaded: ESIC_Contribution_${year}${String(month).padStart(2,'0')}.xls\n\n`;
+            let msg = `ESIC file downloaded: ${fileName}\n\n`;
             msg += `Included: ${dataRows.length} staff | Days: ${calDays} (calendar days, ${monthLabel})\n\n`;
             if (noESIC.length) msg += `No ESIC IP number (excluded): ${noESIC.map(r=>r.name).join(', ')}\n\n`;
-            msg += `Before uploading:\n`;
-            msg += `• Open in Excel → verify all columns are Text format\n`;
-            msg += `• If numbers show: select column → Data → Text to Columns → Finish\n`;
-            msg += `• Save as Excel 97-2003 (.xls) before uploading\n\n`;
+            msg += `This is a genuine .xlsx matching the portal template — upload directly.\n`;
             msg += `Upload: ESIC Portal → File Monthly Contributions → Upload Excel.`;
             alert(msg);
         }
