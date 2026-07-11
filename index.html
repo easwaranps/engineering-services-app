@@ -1242,11 +1242,11 @@
                     
                     <!-- Line Items Table -->
                     <div class="overflow-x-auto">
-                        <table class="text-sm border-collapse" style="min-width:1500px; width:100%;">
+                        <table class="text-sm border-collapse" style="min-width:1280px; width:100%;">
                             <thead>
                                 <tr class="bg-gray-100">
                                     <th class="border px-2 py-2 text-left w-12">S.No</th>
-                                    <th class="border px-2 py-2 text-left" style="min-width:280px;">Description</th>
+                                    <th class="border px-2 py-2 text-left" style="min-width:160px;">Description</th>
                                     <th id="thPartNo" class="border px-2 py-2 text-left hidden" style="width:110px;">Part No</th>
                                     <th id="thHSN" class="border px-2 py-2 text-left" style="width:100px;">HSN Code</th>
                                     <th class="border px-2 py-2 text-left" style="width:80px;">Qty</th>
@@ -15925,7 +15925,12 @@
             if (txn) {
                 // Restore values AFTER clone (clone resets them)
                 document.getElementById('txnCategory').value  = txn.txnCategory;
-                document.getElementById('txnDirection').value = txn.txnDirection;
+                // Enquiries are always Outgoing (issued by us to a supplier)
+                document.getElementById('txnDirection').value = txn.txnCategory === 'ENQUIRY' ? 'Outgoing' : (txn.txnDirection || 'Outgoing');
+                // Rebuild party options for THIS category+direction before setting
+                // the value — otherwise the saved party (e.g. a SubContractor on
+                // an Enquiry) isn't in the option list and the field shows blank.
+                updatePartyDropdown();
                 document.getElementById('txnParty').value     = txn.partyName;
                 document.getElementById('txnCurrency').value  = txn.currency || 'INR';
                 document.getElementById('txnStatus').value    = txn.status;
@@ -16076,8 +16081,13 @@
         function updatePartyDropdown() {
             const direction = document.getElementById('txnDirection').value;
             const partySelect = document.getElementById('txnParty');
-            const filteredParties = parties.filter(p => 
-                direction === 'Outgoing' ? p.partyType === 'Client' : p.partyType === 'SubContractor'
+            const cat = document.getElementById('txnCategory')?.value || '';
+            // ENQUIRY: issued BY us (Outgoing) but addressed TO a supplier —
+            // so the party list shows SubContractor parties, not clients.
+            const filteredParties = parties.filter(p =>
+                cat === 'ENQUIRY'        ? p.partyType === 'SubContractor'
+              : direction === 'Outgoing' ? p.partyType === 'Client'
+              :                            p.partyType === 'SubContractor'
             );
             // HTML-escape attribute values so party names containing quotes (") or
             // angle brackets don't break the rendered <option value="..."> markup.
@@ -16085,8 +16095,15 @@
             // the value attribute at the first internal quote → option becomes value=""
             // → the parties.find() lookup later returns undefined → wrong tax mode.
             const escAttr = s => String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            // Preserve the current selection across rebuilds — updatePartyDropdown
+            // can be called again after the value was set (e.g. edit-populate flow),
+            // and innerHTML replacement would otherwise reset the field to blank.
+            const prevValue = partySelect.value;
             partySelect.innerHTML = '<option value="">Select Party</option>' + 
                 filteredParties.map(p => `<option value="${escAttr(p.partyName)}">${escAttr(p.partyName)}</option>`).join('');
+            if (prevValue && filteredParties.some(p => p.partyName === prevValue)) {
+                partySelect.value = prevValue;
+            }
         }
 
         // Enhanced addLineItem with smart GST calculation
@@ -17336,11 +17353,21 @@
             }
             // Sent To (Suppliers): Enquiry only
             const enqRecSec = document.getElementById('enqRecipientsSection');
+            const dirSel    = document.getElementById('txnDirection');
             if (cat === 'ENQUIRY') {
                 enqRecSec?.classList.remove('hidden');
                 _fillEnqSupplierDatalist();
+                // Direction is always Outgoing for an Enquiry; lock the field
+                // and refresh the party list to show suppliers (SubContractors).
+                if (dirSel) {
+                    if (dirSel.value !== 'Outgoing') dirSel.value = 'Outgoing';
+                    dirSel.disabled = true;
+                    dirSel.title = 'Enquiry is always Outgoing — party list shows Suppliers / SubContractors';
+                }
+                updatePartyDropdown();
             } else {
                 enqRecSec?.classList.add('hidden');
+                if (dirSel && dirSel.disabled) { dirSel.disabled = false; dirSel.title = ''; }
             }
 
             // Remarks: Credit Note only
