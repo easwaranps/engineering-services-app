@@ -18777,11 +18777,15 @@ ${'─'.repeat(50)}
             const days = parseFloat(document.getElementById('leDays')?.value)||0;
             const st   = staff.find(x=>x.staffID===sid);
             if(!st||days<=0){document.getElementById('leAmount').value='';return;}
+            // Same component basis as computeOfficeSalary (payslip engine):
+            // grade pay is a FLAT ₹ amount (was wrongly multiplied by basic,
+            // inflating gross ~×800 for staff with grade pay set), and ??
+            // instead of || so an explicit 0% HRA/DA is respected.
             const basic    = st.basicSalary||0;
-            const hra      = basic*(st.hraPct||30)/100;
-            const da       = basic*(st.daPct||65)/100;
-            const gp       = basic*(st.gradePay||0);
-            const gross    = basic+hra+da+gp+(st.conveyance||0)+(st.medical||0);
+            const hra      = basic*(+(st.hraPct??30))/100;
+            const da       = basic*(+(st.daPct??65))/100;
+            const gp       = +st.gradePay||0;
+            const gross    = basic+hra+da+gp+(+st.conveyance||0)+(+st.medical||0);
             const perDay   = +(gross/26).toFixed(2); // encashment on 26-day basis
             const amount   = +(days*perDay).toFixed(2);
             document.getElementById('leAmount').value = amount;
