@@ -967,6 +967,7 @@
                         <select id="txnCategory" class="w-full px-4 py-2 border border-gray-300 rounded-lg" required>
                             <option value="">-- Select Type --</option>
                             <option value="QUOTATION">Quotation</option>
+                            <option value="ENQUIRY">Enquiry (RFQ to Supplier)</option>
                             <option value="PROFORMA_INVOICE">Proforma Invoice</option>
                             <option value="PO">Purchase Order</option>
                             <option value="INVOICE">Invoice</option>
@@ -1209,6 +1210,16 @@
                     <textarea id="txnTerms" placeholder="Enter terms and conditions for this quotation..." 
                               class="w-full px-4 py-2 border border-gray-300 rounded-lg resize-y min-h-[80px]" rows="3"></textarea>
                     <p class="text-xs text-gray-400 mt-1">These will appear at the end of the quotation PDF</p>
+                </div>
+
+                <!-- Sent To (Suppliers) — Enquiry follow-up tracking (internal, never printed) -->
+                <div id="enqRecipientsSection" class="mb-4 hidden">
+                    <div class="flex items-center justify-between mb-2">
+                        <label class="block text-sm font-semibold text-gray-700">📨 Sent To (Suppliers) <span class="font-normal text-gray-400 text-xs">— internal tracking, not printed on PDF/Excel</span></label>
+                        <button type="button" onclick="addEnqRecipientRow()" class="px-2 py-1 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-semibold hover:bg-indigo-100">+ Add Supplier</button>
+                    </div>
+                    <div id="enqRecipientRows" class="flex flex-col gap-2"></div>
+                    <datalist id="enqSupplierList"></datalist>
                 </div>
 
                 <!-- Remarks for Credit Note -->
@@ -5249,6 +5260,7 @@
         function generateTxnID(category) {
             const fyCode = getFinancialYearCode(new Date());
             const prefix = category === 'QUOTATION'         ? 'QTE'
+                         : category === 'ENQUIRY'           ? 'ENQ'
                          : category === 'PROFORMA_INVOICE'  ? 'PI'
                          : category === 'PO'                ? 'PO'
                          : category === 'INVOICE'           ? 'INV'
@@ -5354,7 +5366,127 @@
         }
         // ────────────────────────────────────────────────────────────────────
 
-        async function exportTransactionToPDF(txn) {
+        // ═══════════════════════════════════════════════════════════════
+        // ENQUIRY EXPORT OPTIONS — PDF / Excel, with or without company header
+        // ═══════════════════════════════════════════════════════════════
+        // ── Enquiry recipients ("Sent To") — internal follow-up tracking ──
+        function _fillEnqSupplierDatalist() {
+            const dl = document.getElementById('enqSupplierList');
+            if (!dl) return;
+            dl.innerHTML = (parties||[]).map(p => `<option value="${(p.name||'').replace(/"/g,'&quot;')}"></option>`).join('');
+        }
+        function addEnqRecipientRow(rec = {}) {
+            const wrap = document.getElementById('enqRecipientRows');
+            if (!wrap) return;
+            const row = document.createElement('div');
+            row.className = 'enq-recipient-row';
+            row.style.cssText = 'display:grid;grid-template-columns:2fr 2fr 1.2fr 1.4fr 2fr auto;gap:6px;align-items:center';
+            const esc = v => String(v||'').replace(/"/g,'&quot;');
+            row.innerHTML = `
+                <input type="text" class="er-name px-2 py-1.5 border rounded-lg text-xs" list="enqSupplierList" placeholder="Supplier name *" value="${esc(rec.name)}"/>
+                <input type="text" class="er-contact px-2 py-1.5 border rounded-lg text-xs" placeholder="Contact / email" value="${esc(rec.contact)}"/>
+                <input type="date" class="er-date px-2 py-1.5 border rounded-lg text-xs" value="${esc(rec.sentDate || new Date().toISOString().split('T')[0])}"/>
+                <select class="er-status px-2 py-1.5 border rounded-lg text-xs">
+                    ${['Sent','Quote Received','Declined','No Response'].map(s=>`<option value="${s}" ${rec.status===s?'selected':''}>${s}</option>`).join('')}
+                </select>
+                <input type="text" class="er-notes px-2 py-1.5 border rounded-lg text-xs" placeholder="Follow-up notes" value="${esc(rec.notes)}"/>
+                <button type="button" onclick="this.closest('.enq-recipient-row').remove()" class="text-red-500 hover:text-red-700 text-sm font-bold px-1" title="Remove">✕</button>`;
+            wrap.appendChild(row);
+        }
+        function _collectEnqRecipients() {
+            return Array.from(document.querySelectorAll('#enqRecipientRows .enq-recipient-row')).map(r => ({
+                name:     r.querySelector('.er-name')?.value?.trim() || '',
+                contact:  r.querySelector('.er-contact')?.value?.trim() || '',
+                sentDate: r.querySelector('.er-date')?.value || '',
+                status:   r.querySelector('.er-status')?.value || 'Sent',
+                notes:    r.querySelector('.er-notes')?.value?.trim() || ''
+            })).filter(r => r.name);
+        }
+
+        function exportEnquiryOptions(txnID) {
+            const txn = transactions.find(t => t.txnID === txnID);
+            if (!txn) { alert('Enquiry not found.'); return; }
+            document.getElementById('enqExportModal')?.remove();
+            const modal = document.createElement('div');
+            modal.id = 'enqExportModal';
+            modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;display:flex;align-items:center;justify-content:center';
+            modal.innerHTML = `
+            <div style="background:#fff;border-radius:16px;width:min(420px,94vw)">
+                <div style="background:linear-gradient(135deg,#4f46e5,#4338ca);padding:14px 20px;border-radius:16px 16px 0 0;display:flex;justify-content:space-between;align-items:center">
+                    <div style="color:#fff;font-weight:700;font-size:14px">📤 Export Enquiry ${txn.txnID}</div>
+                    <button onclick="document.getElementById('enqExportModal').remove()" style="color:#fff;font-size:20px;background:none;border:none;cursor:pointer">✕</button>
+                </div>
+                <div style="padding:20px;display:flex;flex-direction:column;gap:14px">
+                    <div>
+                        <div class="text-xs font-semibold text-gray-600 mb-2">FORMAT</div>
+                        <div class="flex gap-2">
+                            <label style="flex:1;display:flex;align-items:center;gap:8px;cursor:pointer;padding:10px 12px;border-radius:10px;border:2px solid #c7d2fe;background:#eef2ff;font-size:13px;font-weight:600">
+                                <input type="radio" name="enqExpFmt" value="pdf" checked style="accent-color:#4f46e5"/> 📄 PDF
+                            </label>
+                            <label style="flex:1;display:flex;align-items:center;gap:8px;cursor:pointer;padding:10px 12px;border-radius:10px;border:2px solid #e5e7eb;background:#fff;font-size:13px;font-weight:600">
+                                <input type="radio" name="enqExpFmt" value="xlsx" style="accent-color:#16a34a"/> 📊 Excel
+                            </label>
+                        </div>
+                        <p class="text-[11px] text-gray-400 mt-1">Excel = rate-collection sheet with blank Rate / GST / Delivery columns for the supplier to fill and return.</p>
+                    </div>
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:10px 12px;border-radius:10px;border:1px solid #fde68a;background:#fffbeb;font-size:13px">
+                        <input type="checkbox" id="enqExpHeader" checked style="accent-color:#d97706"/>
+                        <span><strong>Include company header</strong><br/><span class="text-[11px] text-gray-500">Untick when printing on pre-printed letterhead, or for a neutral sheet to circulate to multiple suppliers.</span></span>
+                    </label>
+                    <div class="flex gap-3 justify-end">
+                        <button onclick="document.getElementById('enqExportModal').remove()" class="px-4 py-2 border rounded-lg text-sm">Cancel</button>
+                        <button onclick="_doEnquiryExport('${txn.txnID}')" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700">📤 Export</button>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+        }
+
+        async function _doEnquiryExport(txnID) {
+            const txn = transactions.find(t => t.txnID === txnID);
+            if (!txn) return;
+            const fmt        = document.querySelector('input[name="enqExpFmt"]:checked')?.value || 'pdf';
+            const withHeader = document.getElementById('enqExpHeader')?.checked !== false;
+            document.getElementById('enqExportModal')?.remove();
+            if (fmt === 'pdf') await exportTransactionToPDF(txn, { noHeader: !withHeader });
+            else               await exportEnquiryExcel(txn, withHeader);
+        }
+
+        async function exportEnquiryExcel(txn, withHeader) {
+            if (typeof XLSX === 'undefined') {
+                try {
+                    await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+                } catch(e) { alert('Could not load the Excel library (network issue). Please retry.'); return; }
+            }
+            const aoa = [];
+            if (withHeader) {
+                aoa.push([settings.companyName || 'IMSE Tech Services Pvt Ltd']);
+                if (settings.companyAddress) aoa.push([String(settings.companyAddress).replace(/\n/g, ' | ')]);
+                aoa.push([]);
+            }
+            aoa.push(['ENQUIRY REF:', txn.txnID, '', 'Date:', txn.txnDate || '']);
+            aoa.push(['To:', txn.partyName || '']);
+            if (txn.clientPIC || txn.clientEmail) aoa.push(['Attn:', [txn.clientPIC, txn.clientEmail].filter(Boolean).join(' — ')]);
+            if (txn.reference) aoa.push(['Reference:', txn.reference]);
+            aoa.push([]);
+            aoa.push(['S.No','Part No / Code','Description','Qty','Unit','Unit Rate (₹)','GST %','Delivery (days)','Remarks']);
+            const headerRowIdx = aoa.length - 1;  // for column sizing
+            (txn.items||[]).forEach((it, i) => {
+                aoa.push([String(i+1), it.partNo||'', it.description||'', String(it.qty||''), it.uom||'Nos', '', '', '', it.remarks||'']);
+            });
+            aoa.push([]);
+            if (txn.terms) { aoa.push(['Terms / Requirements:']); aoa.push([txn.terms]); aoa.push([]); }
+            aoa.push(['Kindly fill the Unit Rate, GST % and Delivery columns and return this sheet against the enquiry reference above.']);
+
+            const ws = XLSX.utils.aoa_to_sheet(aoa);
+            ws['!cols'] = [{wch:6},{wch:16},{wch:44},{wch:8},{wch:8},{wch:13},{wch:8},{wch:13},{wch:24}];
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Enquiry');
+            const safe = (txn.partyName||'Supplier').replace(/[^a-zA-Z0-9]/g,'_');
+            XLSX.writeFile(wb, 'ENQ_' + txn.txnID + '_' + safe + '_RateSheet.xlsx');
+        }
+
+        async function exportTransactionToPDF(txn, opts = {}) {
             try {
                 const { jsPDF } = window.jspdf;
                 const doc = new jsPDF('p', 'mm', 'a4');
@@ -5510,15 +5642,18 @@
                     doc.setTextColor(0, 0, 0);
                 }
 
-                const HEADER_BOTTOM = 32; // mm — content starts here
+                // opts.noHeader: skip company letterhead block (for printing on
+                // pre-printed letterhead paper) — currently offered for Enquiries.
+                const HEADER_BOTTOM = opts.noHeader ? 8 : 32; // mm — content starts here
 
-                addHeader(doc, 1);
+                if (!opts.noHeader) addHeader(doc, 1);
 
                 // Document title — starts below header divider
                 let startY = HEADER_BOTTOM + 8;
                 doc.setFontSize(14);
                 doc.setFont(undefined, 'bold');
                 const docTitle = txn.txnCategory === 'QUOTATION'         ? 'QUOTATION' :
+                                 txn.txnCategory === 'ENQUIRY'           ? 'ENQUIRY' :
                                  txn.txnCategory === 'PROFORMA_INVOICE'  ? 'PROFORMA INVOICE' :
                                  txn.txnCategory === 'PO'                ? 'PURCHASE ORDER' :
                                  txn.txnCategory === 'CREDIT_NOTE'       ? 'CREDIT NOTE' :
@@ -5621,7 +5756,7 @@
                 }
                 
                 // Show Client Contact for Quotation
-                if (txn.txnCategory === 'QUOTATION' && (txn.clientPIC || txn.clientEmail)) {
+                if ((txn.txnCategory === 'QUOTATION' || txn.txnCategory === 'ENQUIRY') && (txn.clientPIC || txn.clientEmail)) {
                     doc.setFontSize(7);
                     doc.setTextColor(80, 80, 80);
                     let contactY = startY + 17;
@@ -5676,15 +5811,19 @@
 
                 // Column widths — A4 usable width = 182mm (14mm margins each side)
                 // For PO/Quotation/DN: add Part No col (14mm), narrow desc 36→27mm, total 28→25mm
-                const isPO = txn.txnCategory === 'PO';
-                const isDN = txn.txnCategory === 'DELIVERY_NOTE';
-                const showPartNo = txn.txnCategory === 'PO' || txn.txnCategory === 'QUOTATION' || isDN;
+                const isPO  = txn.txnCategory === 'PO';
+                const isDN  = txn.txnCategory === 'DELIVERY_NOTE';
+                const isENQ = txn.txnCategory === 'ENQUIRY';
+                const showPartNo = txn.txnCategory === 'PO' || txn.txnCategory === 'QUOTATION' || isDN || isENQ;
 
                 // Delivery Note: different column layout — no price, discount, or tax columns;
                 // just S.No, Part No, Description, HSN, Qty, Unit, Remarks
-                if (isDN) {
+                if (isDN || isENQ) {
+                    // Enquiry (RFQ) shares the no-price table layout with DN:
+                    // S.No, Part No, Description, Qty, Unit, Remarks — we are
+                    // ASKING the supplier for rates, so no financial columns.
                     // ML/MR/CW/PW are declared later in this function (for the invoice path)
-                    // but the DN block executes first via early return — declare locally here.
+                    // but this block executes first via early return — declare locally here.
                     const ML = 14, MR = 14, PW = 210, CW = PW - ML - MR;
                     // Build DN line items table (no financial data — purely a supply document)
                     const dnColW = { sno:8, partno:22, desc:76, qty:15, uom:15, remarks:46 };
@@ -5716,32 +5855,58 @@
 
                     let dnY = doc.lastAutoTable.finalY + 10;
 
-                    // "Received in good order & condition" + signature blocks
-                    const sigW = (CW) / 2;
-                    doc.setFillColor(240, 253, 250);
-                    doc.rect(ML, dnY, CW, 8, 'F');
-                    doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(15, 118, 110);
-                    doc.text('Received in good order & condition', ML + CW/2, dnY + 5.5, { align: 'center' });
-                    dnY += 16;
+                    if (isENQ) {
+                        // ── ENQUIRY footer: RFQ request note + terms + signatory ──
+                        doc.setFillColor(238, 242, 255);
+                        doc.rect(ML, dnY, CW, 8, 'F');
+                        doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(67, 56, 202);
+                        doc.text('Kindly submit your most competitive quotation for the above items at the earliest.', ML + CW/2, dnY + 5.5, { align: 'center' });
+                        dnY += 14;
+                        if (txn.terms) {
+                            doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(60,60,60);
+                            doc.text('Terms / Requirements:', ML, dnY);
+                            dnY += 5;
+                            doc.setFontSize(8.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(80,80,80);
+                            const termLines = doc.splitTextToSize(txn.terms, CW);
+                            doc.text(termLines, ML, dnY);
+                            dnY += termLines.length * 4 + 8;
+                        }
+                        dnY = Math.max(dnY, 240);
+                        doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(60,60,60);
+                        doc.text('For ' + (settings.companyName||'IMSE Tech Services Pvt Ltd'), ML + CW, dnY, { align: 'right' });
+                        doc.setDrawColor(120,120,120); doc.setLineWidth(0.3);
+                        doc.line(ML + CW - 55, dnY + 18, ML + CW, dnY + 18);
+                        doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(80,80,80);
+                        doc.text('Authorised Signatory', ML + CW, dnY + 22, { align: 'right' });
+                    } else {
+                        // ── DN footer: "Received in good order" + dual signature ──
+                        const sigW = (CW) / 2;
+                        doc.setFillColor(240, 253, 250);
+                        doc.rect(ML, dnY, CW, 8, 'F');
+                        doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(15, 118, 110);
+                        doc.text('Received in good order & condition', ML + CW/2, dnY + 5.5, { align: 'center' });
+                        dnY += 16;
 
-                    // Signature line
-                    doc.setDrawColor(120,120,120); doc.setLineWidth(0.3);
-                    doc.line(ML, dnY, ML + sigW - 5, dnY);
-                    doc.line(ML + sigW + 5, dnY, ML + CW, dnY);
-                    doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(80,80,80);
-                    doc.text('Delivered by / Signature', ML, dnY + 4);
-                    doc.text('Receiver\'s Signature & Stamp', ML + sigW + 5, dnY + 4);
+                        // Signature line
+                        doc.setDrawColor(120,120,120); doc.setLineWidth(0.3);
+                        doc.line(ML, dnY, ML + sigW - 5, dnY);
+                        doc.line(ML + sigW + 5, dnY, ML + CW, dnY);
+                        doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(80,80,80);
+                        doc.text('Delivered by / Signature', ML, dnY + 4);
+                        doc.text('Receiver\'s Signature & Stamp', ML + sigW + 5, dnY + 4);
+                    }
 
                     // Footer on each page
+                    const docWord = isENQ ? 'Enquiry' : 'Delivery Note';
                     const totalPg = doc.getNumberOfPages();
                     for (let p = 1; p <= totalPg; p++) {
                         doc.setPage(p);
                         doc.setFontSize(7); doc.setFont('helvetica', 'italic'); doc.setTextColor(150,150,150);
-                        doc.text((settings.companyName||'IMSE Tech Services Pvt Ltd') + ' — Delivery Note ' + txn.txnID + ' — Page ' + p + '/' + totalPg, 105, 291, { align: 'center' });
+                        doc.text((settings.companyName||'IMSE Tech Services Pvt Ltd') + ' — ' + docWord + ' ' + txn.txnID + ' — Page ' + p + '/' + totalPg, 105, 291, { align: 'center' });
                     }
                     const safe = (txn.partyName||'Unknown').replace(/[^a-zA-Z0-9]/g, '_');
-                    doc.save('DN_' + txn.txnID + '_' + safe + '.pdf');
-                    return;   // DN PDF done — skip the rest of the invoice/quotation path
+                    doc.save((isENQ ? 'ENQ_' : 'DN_') + txn.txnID + '_' + safe + '.pdf');
+                    return;   // DN/Enquiry PDF done — skip the rest of the invoice/quotation path
                 }
                 const COL = {
                     sno:     7,
@@ -8889,12 +9054,25 @@
                 <td class="px-3 py-2 max-w-xs truncate" title="${t.partyName}">${t.partyName}</td>
                 <td class="px-3 py-2 text-gray-500 whitespace-nowrap">${t.txnDate}</td>
                 <td class="px-3 py-2 text-gray-500">${t.reference || '—'}</td>
-                <td class="px-3 py-2">${statusBadge(t.status)}</td>
+                <td class="px-3 py-2">${statusBadge(t.status)}${(() => {
+                    if (t.txnCategory !== 'ENQUIRY' || !(t.enquiryRecipients||[]).length) return '';
+                    const recs = t.enquiryRecipients;
+                    const got  = recs.filter(r => r.status === 'Quote Received').length;
+                    const tip  = recs.map(r => `${r.name} — ${r.status}${r.sentDate ? ' ('+r.sentDate+')' : ''}${r.notes ? ' · '+r.notes : ''}`).join('\n');
+                    const col  = got === recs.length ? 'background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0'
+                               : got > 0             ? 'background:#fffbeb;color:#d97706;border:1px solid #fde68a'
+                               :                       'background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe';
+                    return ` <span title="${tip.replace(/"/g,'&quot;')}" style="font-size:10px;padding:1px 6px;border-radius:9px;${col};white-space:nowrap;cursor:help">📨 ${recs.length} · ${got} quote${got===1?'':'s'}</span>`;
+                })()}</td>
                 ${balanceCell}
                 <td class="px-3 py-2 text-right whitespace-nowrap">
-                    <button onclick='exportTransactionToPDF(${tJson})' class="text-blue-600 hover:text-blue-800 mr-1" title="PDF">
+                    ${t.txnCategory === 'ENQUIRY'
+                        ? `<button onclick="exportEnquiryOptions('${t.txnID}')" class="text-indigo-600 hover:text-indigo-800 mr-1" title="Export (PDF / Excel, header on/off)">
                         <svg class="inline" width="15" height="15" fill="currentColor" viewBox="0 0 24 24"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/></svg>
-                    </button>
+                    </button>`
+                        : `<button onclick='exportTransactionToPDF(${tJson})' class="text-blue-600 hover:text-blue-800 mr-1" title="PDF">
+                        <svg class="inline" width="15" height="15" fill="currentColor" viewBox="0 0 24 24"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/></svg>
+                    </button>`}
                     ${showDocs ? `<button onclick='openAttachmentsViewer(${tJson})' class="mr-1 ${hasAttach ? 'text-green-600' : 'text-gray-400'}" title="Docs (${(t.attachments||[]).length})">
                         <svg class="inline" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
                         ${hasAttach ? `<span class="text-xs">(${t.attachments.length})</span>` : ''}
@@ -8930,7 +9108,7 @@
                             : ''}
                            <button onclick='editTransaction(${tJson})' class="text-indigo-600 hover:text-indigo-800 mr-1 text-xs font-medium">Edit</button>
                            <button onclick="duplicateTransaction('${t.txnID}')" class="text-teal-600 hover:text-teal-800 mr-1 text-xs font-medium" title="Create a new ${(t.txnCategory||'transaction').toLowerCase().replace('_',' ')} as a copy of this one">📋 Copy</button>
-                           ${['QUOTATION','INVOICE','PO','CREDIT_NOTE','DELIVERY_NOTE'].includes(t.txnCategory) && ['Sent','Approved','Completed','Paid','Issued','Acknowledged','Invoiced'].includes(t.status)
+                           ${['QUOTATION','ENQUIRY','INVOICE','PO','CREDIT_NOTE','DELIVERY_NOTE'].includes(t.txnCategory) && ['Sent','Approved','Completed','Paid','Issued','Acknowledged','Invoiced','Quote Received','Closed'].includes(t.status)
                                ? `<span class="text-xs text-gray-400 italic" title="${t.txnCategory.charAt(0)+t.txnCategory.slice(1).toLowerCase().replace(/_/g,' ')} is ${t.status} — Delete is blocked. Change status to Draft first if deletion is genuinely needed.">🔒 ${t.status}</span>`
                                : `<button onclick="deleteTransaction('${t.txnID}')" class="text-red-600 hover:text-red-800 text-xs font-medium">Del</button>`
                            }`
@@ -9084,6 +9262,7 @@
         // Group config: label, category match, direction match, header colour
         const TXN_GROUPS = [
             { label: 'Quotations (Client)',           cat: 'QUOTATION',         dir: 'Outgoing',  color: 'bg-blue-600'   },
+            { label: 'Enquiries (RFQ to Supplier)',    cat: 'ENQUIRY',           dir: null,        color: 'bg-indigo-600' },
             { label: 'Proforma Invoices',              cat: 'PROFORMA_INVOICE',  dir: 'Outgoing',  color: 'bg-orange-500' },
             { label: 'Invoices (Client)',              cat: 'INVOICE',           dir: 'Outgoing',  color: 'bg-purple-600' },
             { label: 'Delivery Notes (DC)',            cat: 'DELIVERY_NOTE',     dir: null,        color: 'bg-teal-600'   },
@@ -15718,6 +15897,8 @@
             document.getElementById('lineItems').innerHTML = '';
             document.getElementById('totalSection').classList.add('hidden');
             document.getElementById('supportingDocsSection').classList.add('hidden');
+            const _erReset = document.getElementById('enqRecipientRows');
+            if (_erReset) _erReset.innerHTML = '';
 
             updatePartyDropdown();
 
@@ -15817,6 +15998,12 @@
             // Load Terms & Conditions if exists
             if (txn && txn.terms) {
                 document.getElementById('txnTerms').value = txn.terms;
+                // Enquiry recipients ("Sent To") — rebuild tracking rows
+                const _erWrap = document.getElementById('enqRecipientRows');
+                if (_erWrap) {
+                    _erWrap.innerHTML = '';
+                    (txn.enquiryRecipients||[]).forEach(r => addEnqRecipientRow(r));
+                }
             }
 
             // Load Remarks if exists (Credit Note)
@@ -16055,11 +16242,11 @@
 
             // Show Part No cell if current category is PO, Quotation, or Delivery Note
             const _curCat = document.getElementById('txnCategory')?.value || '';
-            if (_curCat === 'PO' || _curCat === 'QUOTATION' || _curCat === 'DELIVERY_NOTE') {
+            if (_curCat === 'PO' || _curCat === 'QUOTATION' || _curCat === 'ENQUIRY' || _curCat === 'DELIVERY_NOTE') {
                 tr.querySelector('.td-partno')?.classList.remove('hidden');
             }
-            // Hide price/tax cells for Delivery Notes (no financial data on a DC)
-            if (_curCat === 'DELIVERY_NOTE') {
+            // Hide price/tax cells for Delivery Notes and Enquiries (no financial data)
+            if (_curCat === 'DELIVERY_NOTE' || _curCat === 'ENQUIRY') {
                 ['td-hsn','td-rate','td-discount','td-taxable','td-sgst','td-cgst','td-igst','td-total'].forEach(c => {
                     tr.querySelector('.'+c)?.classList.add('hidden');
                 });
@@ -16181,10 +16368,10 @@
                 </td>`;
 
             // Apply category-specific visibility
-            if (_curCat === 'PO' || _curCat === 'QUOTATION' || _curCat === 'DELIVERY_NOTE') {
+            if (_curCat === 'PO' || _curCat === 'QUOTATION' || _curCat === 'ENQUIRY' || _curCat === 'DELIVERY_NOTE') {
                 tr.querySelector('.td-partno')?.classList.remove('hidden');
             }
-            if (_curCat === 'DELIVERY_NOTE') {
+            if (_curCat === 'DELIVERY_NOTE' || _curCat === 'ENQUIRY') {
                 ['td-hsn','td-rate','td-discount','td-taxable','td-sgst','td-cgst','td-igst','td-total'].forEach(c => {
                     tr.querySelector('.'+c)?.classList.add('hidden');
                 });
@@ -16579,6 +16766,7 @@
                     vehicleNo: document.getElementById('txnVehicleNo')?.value || '',
                     poTerms: document.getElementById('txnPOTerms')?.value || '',
                     terms: document.getElementById('txnTerms')?.value || '',
+                    enquiryRecipients: (document.getElementById('txnCategory')?.value === 'ENQUIRY') ? _collectEnqRecipients() : undefined,
                     remarks: document.getElementById('txnRemarks')?.value || '',
                     clientPIC: document.getElementById('txnClientPIC')?.value || '',
                     clientEmail: document.getElementById('txnClientEmail')?.value || '',
@@ -16689,13 +16877,14 @@
                     if (_isNewOrDuplicate) {
                         const category = txnData.txnCategory;
                         const fyCode   = getFinancialYearCode(new Date());
-                        const prefix   = category === 'QUOTATION'         ? 'QTE'
+                        const prefix   = category === 'ENQUIRY'           ? 'ENQ'
+                                       : category === 'QUOTATION'         ? 'QTE'
                                        : category === 'PROFORMA_INVOICE'  ? 'PI'
                                        : category === 'PO'                ? 'PO'
                                        : category === 'INVOICE'           ? 'INV'
                                        : category === 'CREDIT_NOTE'       ? 'CN'
                                        : category === 'DELIVERY_NOTE'     ? 'DN'  : 'TXN';
-                        const labelMap = { 'QUOTATION':'Quotation No', 'PROFORMA_INVOICE':'Proforma Invoice No',
+                        const labelMap = { 'QUOTATION':'Quotation No', 'ENQUIRY':'Enquiry No', 'PROFORMA_INVOICE':'Proforma Invoice No',
                                            'PO':'Purchase Order No', 'INVOICE':'Invoice No',
                                            'CREDIT_NOTE':'Credit Note No', 'DELIVERY_NOTE':'Delivery Note No' };
                         const seq = await _resolveSequence({
@@ -16839,7 +17028,7 @@
 
             // Inform user what happened so they understand it's a new record
             setTimeout(() => {
-                const catLabel = ({QUOTATION:'Quotation', PROFORMA_INVOICE:'Proforma Invoice',
+                const catLabel = ({QUOTATION:'Quotation', ENQUIRY:'Enquiry', PROFORMA_INVOICE:'Proforma Invoice',
                                    PO:'Purchase Order', INVOICE:'Invoice',
                                    CREDIT_NOTE:'Credit Note'})[src.txnCategory] || 'Transaction';
                 const note = src.txnCategory === 'CREDIT_NOTE'
@@ -17045,6 +17234,8 @@
         // Reference dropdown options based on category + direction
         const REFERENCE_OPTIONS = {
             'QUOTATION_Outgoing':   ['Ref Email Dated', 'Ref Meeting Dated', 'Ref Enquiry Dated'],
+            'ENQUIRY_Outgoing':     ['Ref Indent No', 'Ref Project', 'Ref Email Dated'],
+            'ENQUIRY_Incoming':     ['Ref Email Dated'],
             'INVOICE_Outgoing':     ['Ref PO and Quotation', 'Ref PO No', 'Ref Quotation No'],
             'CREDIT_NOTE_Outgoing': ['Ref Invoice No', 'Ref Invoice Dated'],
             'PO_Incoming':          ['Ref Email and Quotation', 'Ref Email Dated', 'Ref Quotation No'],
@@ -17126,8 +17317,8 @@
                 dnExtraFields?.classList.add('hidden');
             }
 
-            // Part No column: PO, Quotation, and Delivery Note
-            if (cat === 'PO' || cat === 'QUOTATION' || cat === 'DELIVERY_NOTE') {
+            // Part No column: PO, Quotation, Enquiry, and Delivery Note
+            if (cat === 'PO' || cat === 'QUOTATION' || cat === 'ENQUIRY' || cat === 'DELIVERY_NOTE') {
                 document.getElementById('thPartNo')?.classList.remove('hidden');
                 document.querySelectorAll('.td-partno').forEach(td => td.classList.remove('hidden'));
             } else {
@@ -17135,13 +17326,21 @@
                 document.querySelectorAll('.td-partno').forEach(td => td.classList.add('hidden'));
             }
 
-            // Client Contact & Terms: Quotation only
-            if (cat === 'QUOTATION') {
+            // Client Contact & Terms: Quotation and Enquiry
+            if (cat === 'QUOTATION' || cat === 'ENQUIRY') {
                 termsField?.classList.remove('hidden');
                 clientContactField?.classList.remove('hidden');
             } else {
                 termsField?.classList.add('hidden');
                 clientContactField?.classList.add('hidden');
+            }
+            // Sent To (Suppliers): Enquiry only
+            const enqRecSec = document.getElementById('enqRecipientsSection');
+            if (cat === 'ENQUIRY') {
+                enqRecSec?.classList.remove('hidden');
+                _fillEnqSupplierDatalist();
+            } else {
+                enqRecSec?.classList.add('hidden');
             }
 
             // Remarks: Credit Note only
@@ -17155,8 +17354,8 @@
             // and hide GST/tax/price fields that don't apply to a delivery challan.
             const _dnPriceCols = ['thHSN','thRate','thDiscount','thTaxable','thSGST','thCGST','thIGST','thTotal'];
             const _tdPriceCls  = ['td-hsn','td-rate','td-discount','td-taxable','td-sgst','td-cgst','td-igst','td-total'];
-            if (cat === 'DELIVERY_NOTE') {
-                // Hide price/tax columns in the header
+            if (cat === 'DELIVERY_NOTE' || cat === 'ENQUIRY') {
+                // Hide price/tax columns in the header (Enquiry = RFQ: no prices)
                 _dnPriceCols.forEach(id => document.getElementById(id)?.classList.add('hidden'));
                 // Hide price/tax cells in all existing rows
                 _tdPriceCls.forEach(c => document.querySelectorAll('.'+c).forEach(el => el.classList.add('hidden')));
@@ -17180,9 +17379,19 @@
                     const validDN = ['Draft','Issued','Acknowledged','Invoiced'];
                     if (validDN.includes(currentStatus)) statusSel.value = currentStatus;
                     else statusSel.value = 'Draft';
+                } else if (cat === 'ENQUIRY') {
+                    // RFQ lifecycle: sent to supplier → their quote received → closed
+                    statusSel.innerHTML = `
+                        <option value="Draft">Draft</option>
+                        <option value="Sent">Sent</option>
+                        <option value="Quote Received">Quote Received</option>
+                        <option value="Closed">Closed</option>`;
+                    const validENQ = ['Draft','Sent','Quote Received','Closed'];
+                    if (validENQ.includes(currentStatus)) statusSel.value = currentStatus;
+                    else statusSel.value = 'Draft';
                 } else {
-                    // Restore standard statuses if switching away from DN
-                    if (!statusSel.querySelector('option[value="Sent"]')) {
+                    // Restore standard statuses if switching away from DN/Enquiry
+                    if (!statusSel.querySelector('option[value="Approved"]')) {
                         statusSel.innerHTML = `
                             <option value="Draft">Draft</option>
                             <option value="Sent">Sent</option>
