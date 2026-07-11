@@ -5742,12 +5742,16 @@
 
                 startY += extraLines;
 
-                // Party block
+                // Party block — skipped on a "neutral" enquiry (header toggle OFF):
+                // that version circulates to multiple suppliers, so it carries
+                // neither our letterhead nor a specific To: party.
+                const _neutralEnq = (txn.txnCategory === 'ENQUIRY' && opts.noHeader);
+                const party = parties.find(p => p.partyName === txn.partyName);
+                if (!_neutralEnq) {
                 startY += 24;
                 doc.setFont(undefined, 'bold');
                 doc.text((txn.txnCategory === 'ENQUIRY' || txn.txnDirection === 'Outgoing') ? 'To:' : 'From:', 14, startY);
                 doc.setFont(undefined, 'normal');
-                const party = parties.find(p => p.partyName === txn.partyName);
                 doc.text(txn.partyName, 14, startY + 6);
                 if (party && party.address) {
                     const aLines = doc.splitTextToSize(party.address, 90);
@@ -5756,6 +5760,7 @@
                 }
                 if (party && party.gstNumber) {
                     doc.text('GST: ' + party.gstNumber, 14, startY + 12);
+                }
                 }
                 // Show vendor code if present
                 if (txn.vendorCode) {
@@ -5767,8 +5772,8 @@
                     startY += 5; // Extra spacing if vendor code shown
                 }
                 
-                // Show Client Contact for Quotation
-                if ((txn.txnCategory === 'QUOTATION' || txn.txnCategory === 'ENQUIRY') && (txn.clientPIC || txn.clientEmail)) {
+                // Show Client Contact for Quotation (skipped on neutral enquiry)
+                if (!_neutralEnq && (txn.txnCategory === 'QUOTATION' || txn.txnCategory === 'ENQUIRY') && (txn.clientPIC || txn.clientEmail)) {
                     doc.setFontSize(7);
                     doc.setTextColor(80, 80, 80);
                     let contactY = startY + 17;
@@ -5910,11 +5915,12 @@
 
                     // Footer on each page
                     const docWord = isENQ ? 'Enquiry' : 'Delivery Note';
+                    const footPrefix = (isENQ && opts.noHeader) ? '' : (settings.companyName||'IMSE Tech Services Pvt Ltd') + ' — ';
                     const totalPg = doc.getNumberOfPages();
                     for (let p = 1; p <= totalPg; p++) {
                         doc.setPage(p);
                         doc.setFontSize(7); doc.setFont('helvetica', 'italic'); doc.setTextColor(150,150,150);
-                        doc.text((settings.companyName||'IMSE Tech Services Pvt Ltd') + ' — ' + docWord + ' ' + txn.txnID + ' — Page ' + p + '/' + totalPg, 105, 291, { align: 'center' });
+                        doc.text(footPrefix + docWord + ' ' + txn.txnID + ' — Page ' + p + '/' + totalPg, 105, 291, { align: 'center' });
                     }
                     if (isENQ) {
                         doc.save(_enqFileName(txn) + '.pdf');
