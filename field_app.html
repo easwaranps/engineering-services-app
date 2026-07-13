@@ -4587,18 +4587,20 @@
 
         try {
             await saveData('workLogs', workLogs);
-            document.getElementById('copyCalibModal').remove();
-            renderWorkLogs(document.getElementById('wlContent'));
-            showToast(
-                `✓ Calibration table ${isMove ? 'moved to' : 'copied to'} ${toEntry.date||'target entry'}`,
-                '#1d4ed8', 3500
-            );
         } catch(err) {
+            // Save failed — roll back the in-memory transfer so data stays consistent
             alert('Transfer failed: ' + err.message);
-            // Rollback
             toEntry.calibrations = toEntry.calibrations.filter(c => c.calibID !== transferred.calibID);
             if (isMove) fromEntry.calibrations.push(sourceCalib);
+            return;
         }
+        // Save succeeded — UI refresh must NOT trigger the rollback path
+        document.getElementById('copyCalibModal')?.remove();
+        renderView();
+        showToast(
+            `✓ Calibration table ${isMove ? 'moved to' : 'copied to'} ${toEntry.date||'target entry'}`,
+            '#1d4ed8', 3500
+        );
     }
 
     async function deleteCalibRecord(wlID, entryID, calibID) {
