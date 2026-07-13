@@ -735,6 +735,10 @@
             <!-- Technicians for this day -->
             <div style="background:#faf5ff;border:1px solid #e9d5ff;border-radius:12px;padding:12px 14px">
                 <p class="field-label" style="color:#7c3aed;margin-bottom:8px">👷 TECHNICIANS ON SITE TODAY</p>
+                <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#6b21a8;margin-bottom:8px;cursor:pointer">
+                    <input type="checkbox" id="dayMergeRemarks" onchange="renderDayStaffRows(document.getElementById('dayWlID').value)" style="accent-color:#7c3aed"/>
+                    <span><strong>Same remark for all technicians</strong> — uses the Remarks field above as one merged entry (shown as a merged cell in the PDF)</span>
+                </label>
                 <div id="dayStaffList" class="space-y-2"></div>
                 <button type="button" onclick="addDayStaffRow()" class="mt-2 text-xs px-3 py-1.5 rounded-lg font-semibold" style="background:#ede9fe;color:#7c3aed;border:1px solid #c4b5fd">+ Add Technician</button>
             </div>
@@ -4582,7 +4586,7 @@
         }
 
         try {
-            await fieldSaveData('workLogs', workLogs);
+            await saveData('workLogs', workLogs);
             document.getElementById('copyCalibModal').remove();
             renderWorkLogs(document.getElementById('wlContent'));
             showToast(
@@ -4961,10 +4965,11 @@
                     <label style="font-size:10px;color:#6b7280;display:block;margin-bottom:2px">End time</label>
                     <input type="time" value="${r.endTime||defEnd}" onchange="_dayStaffRows[${i}].endTime=this.value" class="field-input" style="font-size:12px;padding:4px 6px;width:100%" placeholder="End"/>
                 </div>
+                ${document.getElementById('dayMergeRemarks')?.checked ? '' : `
                 <div style="flex:2;min-width:140px">
                     <label style="font-size:10px;color:#6b7280;display:block;margin-bottom:2px">Remarks for this technician (optional)</label>
                     <input type="text" value="${(r.remarks||'').replace(/"/g,'&quot;')}" onchange="_dayStaffRows[${i}].remarks=this.value" class="field-input" style="font-size:12px;padding:4px 6px;width:100%" placeholder="e.g., late arrival, half-day"/>
-                </div>
+                </div>`}
             </div>
         </div>`).join('');
     }
@@ -5136,6 +5141,8 @@
         document.getElementById('dayStartTime').value=entry?.startTime||'';
         document.getElementById('dayEndTime').value=entry?.endTime||'';
         document.getElementById('dayTimeLogRemarks').value=entry?.timeLogRemarks||'';
+        const _mergeCb=document.getElementById('dayMergeRemarks');
+        if(_mergeCb)_mergeCb.checked=!!entry?.mergeTechRemarks;
         document.getElementById('dayDesc').innerHTML = entry?.description||'';
         document.getElementById('dayObs').innerHTML  = entry?.observations||'';
         document.getElementById('dayExclusions').innerHTML = entry?.exclusions||'';
@@ -5269,6 +5276,7 @@
             startTime:     document.getElementById('dayStartTime').value,
             endTime:       document.getElementById('dayEndTime').value,
             timeLogRemarks:document.getElementById('dayTimeLogRemarks').value,
+            mergeTechRemarks:document.getElementById('dayMergeRemarks')?.checked||false,
             technicians:   techs,
             description:   document.getElementById('dayDesc').innerHTML,
             observations:  document.getElementById('dayObs').innerHTML,
@@ -5889,17 +5897,23 @@
                 // times were supported.
                 const techStart = t.startTime || d.startTime || '';
                 const techEnd   = t.endTime   || d.endTime   || '';
-                // Per-tech remarks shown on each row when set; otherwise show the
-                // day's common time-log remarks on the first row only.
-                const techRemarks = t.remarks || (ti===0 ? (d.timeLogRemarks || '') : '');
-                timeLogRows.push([
+                const row=[
                     ti===0?{content:d.date?d.date.split('-').reverse().join('.'):'—'}:{content:''},
                     {content:String(ti+1)+'.'},
                     {content:t.name||'—'},
                     {content:techStart},
-                    {content:techEnd},
-                    {content:techRemarks}
-                ]);
+                    {content:techEnd}
+                ];
+                if(d.mergeTechRemarks){
+                    // One merged remarks cell spanning ALL technician rows of this
+                    // day (rowSpan) — subsequent rows omit the remarks cell.
+                    if(ti===0) row.push({content:d.timeLogRemarks||'',rowSpan:techs.length,styles:{valign:'middle'}});
+                }else{
+                    // Per-tech remarks on each row when set; otherwise show the
+                    // day's common time-log remarks on the first row only.
+                    row.push({content:t.remarks||(ti===0?(d.timeLogRemarks||''):'')});
+                }
+                timeLogRows.push(row);
             });
         });
 
