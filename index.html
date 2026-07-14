@@ -3456,7 +3456,11 @@
                 let summary, preview;
                 if (Array.isArray(content)) {
                     summary = `Array of ${content.length} record(s)`;
-                    preview = content.slice(0, 8).map((rec, i) => {
+                    // Show ALL records (scrollable + searchable) so the right
+                    // backup can be identified before restoring. Soft cap 1000
+                    // rows to keep the DOM responsive on huge files.
+                    const CAP = 1000;
+                    preview = content.slice(0, CAP).map((rec, i) => {
                         const keys = Object.keys(rec || {}).slice(0, 6);
                         const kvs = keys.map(k => {
                             const v = rec[k];
@@ -3465,14 +3469,14 @@
                                        String(v).substring(0,40));
                             return `<span style="color:#0f766e">${k}</span>: ${s}`;
                         }).join(' · ');
-                        return `<div style="padding:4px 8px;border-bottom:1px solid #f1f5f9;font-family:monospace;font-size:10px">${i+1}. ${kvs}</div>`;
-                    }).join('') + (content.length > 8 ? `<div style="padding:4px 8px;font-style:italic;color:#64748b;font-size:10px">… and ${content.length - 8} more record(s)</div>` : '');
+                        return `<div class="bkp-row" style="padding:4px 8px;border-bottom:1px solid #f1f5f9;font-family:monospace;font-size:10px">${i+1}. ${kvs}</div>`;
+                    }).join('') + (content.length > CAP ? `<div style="padding:4px 8px;font-style:italic;color:#64748b;font-size:10px">… and ${content.length - CAP} more record(s) — use Search to narrow, or restore to inspect fully</div>` : '');
                 } else if (typeof content === 'object' && content !== null) {
                     summary = `Object with ${Object.keys(content).length} key(s)`;
-                    preview = Object.keys(content).slice(0, 12).map(k => {
+                    preview = Object.keys(content).map(k => {
                         const v = content[k];
                         const s = (typeof v === 'object') ? JSON.stringify(v).substring(0,80) : String(v).substring(0,80);
-                        return `<div style="padding:4px 8px;border-bottom:1px solid #f1f5f9;font-family:monospace;font-size:10px"><span style="color:#0f766e">${k}</span>: ${s}</div>`;
+                        return `<div class="bkp-row" style="padding:4px 8px;border-bottom:1px solid #f1f5f9;font-family:monospace;font-size:10px"><span style="color:#0f766e">${k}</span>: ${s}</div>`;
                     }).join('');
                 } else {
                     summary = `Plain value (${typeof content})`;
@@ -3497,7 +3501,10 @@
                             <div style="background:#f0fdf4;padding:8px 10px;border-radius:6px"><strong>Modified:</strong> ${modStr}</div>
                             <div style="grid-column:1/-1;background:#fefce8;padding:8px 10px;border-radius:6px"><strong>Content:</strong> ${summary}</div>
                         </div>
-                        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;max-height:340px;overflow-y:auto">
+                        <input type="text" placeholder="🔍 Search records… (ID, party, amount, date — filters as you type)"
+                               oninput="const q=this.value.toLowerCase();document.querySelectorAll('#inspectBackupModal .bkp-row').forEach(r=>{r.style.display=(!q||r.textContent.toLowerCase().includes(q))?'':'none';});"
+                               style="width:100%;padding:7px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:12px;margin-bottom:8px"/>
+                        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;max-height:55vh;overflow-y:auto">
                             ${preview || '<div style="padding:14px;color:#64748b;font-style:italic">Empty backup (file exists but contains no data)</div>'}
                         </div>
                         <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end">
