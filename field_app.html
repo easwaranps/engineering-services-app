@@ -3600,7 +3600,8 @@
                 for(const b of imgs){
                     if(y+50>275){doc.addPage();y=15;}
                     const xPos=ML+col*(imgW+3);
-                    try{doc.addImage(b.data,b.data.startsWith('data:image/png')?'PNG':'JPEG',xPos,y,imgW,45,'','MEDIUM');
+                    try{const _safeB=await _pdfSafeImage(b.data);if(!_safeB)throw new Error('decode failed');
+                    doc.addImage(_safeB,'JPEG',xPos,y,imgW,45,'','MEDIUM');
                     doc.setFontSize(6.5);doc.setFont('helvetica','normal');doc.setTextColor(100,100,100);
                     doc.text(it.date+' · '+it.category,xPos+imgW/2,y+47,{align:'center'});}
                     catch(e){}
@@ -5690,6 +5691,42 @@
         showToast('✅ Feedback PDF downloaded');
     }
 
+    // ── Acrobat-safe image normalization ─────────────────────────────
+    // Photos arrive in many encodings (WEBP from Android gallery picks,
+    // PNG screenshots, progressive JPEGs). jsPDF embeds bytes as-is with a
+    // declared format; a mismatch (e.g. WEBP labelled JPEG) renders fine in
+    // Chrome's lenient PDF viewer but shows BLANK in Adobe Acrobat.
+    // Re-encoding every photo through a canvas produces a baseline JPEG,
+    // flattened onto white (removes alpha), capped at 1400px — universally
+    // decodable by every PDF viewer.
+    function _pdfSafeImage(srcDataUrl) {
+        return new Promise((resolve) => {
+            try {
+                const img = new Image();
+                img.onload = () => {
+                    try {
+                        const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+                        if (!w || !h) { resolve(null); return; }
+                        // Size/quality tuned for the PDF's 3-column photo grid:
+                        // photos print at ~58mm wide; 300 DPI needs only ~685px,
+                        // so a 1000px cap keeps ~440 DPI effective — indistinguishable
+                        // in print — while roughly halving the embedded byte size.
+                        const maxDim = 1000;
+                        const sc = Math.min(1, maxDim / Math.max(w, h));
+                        const c = document.createElement('canvas');
+                        c.width = Math.round(w * sc); c.height = Math.round(h * sc);
+                        const ctx = c.getContext('2d');
+                        ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, c.width, c.height);
+                        ctx.drawImage(img, 0, 0, c.width, c.height);
+                        resolve(c.toDataURL('image/jpeg', 0.75));
+                    } catch (e) { resolve(null); }
+                };
+                img.onerror = () => resolve(null);
+                img.src = srcDataUrl;
+            } catch (e) { resolve(null); }
+        });
+    }
+
     async function wlPDF(wlID, entryIDFilter){
         const wl=workLogs.find(x=>x.wlID===wlID);if(!wl)return;
         // When entryIDFilter is provided, restrict to that single day's entry.
@@ -5943,6 +5980,22 @@
         doc.setFontSize(10.5);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
         doc.text('II.  Work Performed',ML,y);y+=6;
 
+        // ── Pre-normalize all photos to Acrobat-safe baseline JPEG ──
+        // (async pass here; the render loop below is a sync forEach)
+        const safePhotoData = new Map();
+        for (const _d of days) {
+            for (const _ph of (_d.photos || [])) {
+                let _src;
+                if (_ph && typeof _ph === 'object' && _ph.data) _src = _ph.data;
+                else if (_ph && typeof _ph === 'object' && _ph.driveFileId && drivePhotoData.has(_ph.driveFileId)) _src = drivePhotoData.get(_ph.driveFileId);
+                else _src = _photoSrc(_ph);
+                if (_src && typeof _src === 'string' && _src.startsWith('data:')) {
+                    const _safe = await _pdfSafeImage(_src);
+                    if (_safe) safePhotoData.set(_ph, _safe);
+                }
+            }
+        }
+
         days.forEach((d,idx)=>{
             if(y+20>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=42;}
             const dur=calcDuration(d.startTime,d.endTime);
@@ -6103,9 +6156,11 @@
                             // No usable image data (Drive fetch failed, or non-data URL)
                             throw new Error('image data unavailable');
                         }
-                        // Detect format from data URL prefix; default JPEG
-                        const fmt = src.startsWith('data:image/png') ? 'PNG' : 'JPEG';
-                        doc.addImage(src,fmt,xPos,y,imgW,imgH,'','MEDIUM');
+                        // Acrobat-safe: use the pre-normalized baseline JPEG.
+                        // (raw WEBP/PNG mislabelled as JPEG shows blank in Acrobat)
+                        const safeSrc = safePhotoData.get(ph);
+                        if (!safeSrc) throw new Error('image decode failed');
+                        doc.addImage(safeSrc,'JPEG',xPos,y,imgW,imgH,'','MEDIUM');
                         // Caption: photo number + title (if any)
                         let captionY = y + imgH + 3;
                         if (title) {
