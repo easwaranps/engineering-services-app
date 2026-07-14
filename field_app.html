@@ -5691,6 +5691,9 @@
         showToast('✅ Feedback PDF downloaded');
     }
 
+    const _PDF_BUILD = 'v2.2-acrosafe';
+    console.log('%c[IMSE Field App] build ' + _PDF_BUILD, 'color:#0f766e;font-weight:bold');   // stamped in PDF footers to verify which build generated a file
+
     // ── Acrobat-safe image normalization ─────────────────────────────
     // Photos arrive in many encodings (WEBP from Android gallery picks,
     // PNG screenshots, progressive JPEGs). jsPDF embeds bytes as-is with a
@@ -5896,7 +5899,7 @@
             });
             // Page number centred at bottom
             doc.setFontSize(6.5);doc.setFont('helvetica','italic');doc.setTextColor(130,130,130);
-            doc.text(co+' — Page '+p+' of '+total,PW/2,fY+18.5,{align:'center'});
+            doc.text(co+' — Page '+p+' of '+total+'  ·  '+_PDF_BUILD,PW/2,fY+18.5,{align:'center'});
         }
 
         // Page 1
@@ -5991,7 +5994,7 @@
                 else _src = _photoSrc(_ph);
                 if (_src && typeof _src === 'string' && _src.startsWith('data:')) {
                     const _safe = await _pdfSafeImage(_src);
-                    if (_safe) safePhotoData.set(_ph, _safe);
+                    if (_safe) { safePhotoData.set(_ph, _safe); safePhotoData.set(_src, _safe); }
                 }
             }
         }
@@ -6158,7 +6161,7 @@
                         }
                         // Acrobat-safe: use the pre-normalized baseline JPEG.
                         // (raw WEBP/PNG mislabelled as JPEG shows blank in Acrobat)
-                        const safeSrc = safePhotoData.get(ph);
+                        const safeSrc = safePhotoData.get(ph) || safePhotoData.get(src);
                         if (!safeSrc) throw new Error('image decode failed');
                         doc.addImage(safeSrc,'JPEG',xPos,y,imgW,imgH,'','MEDIUM');
                         // Caption: photo number + title (if any)
