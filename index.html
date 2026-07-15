@@ -623,6 +623,12 @@
                             <option value="">-- Select Account --</option>
                         </select>
                     </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">📒 Ledger Account <span class="font-normal text-gray-400">(optional)</span></label>
+                        <select id="expLedgerAccount" class="field-editable w-full px-3 py-2 border rounded-lg text-sm">
+                            <option value="">— Unmapped / not tagged —</option>
+                        </select>
+                    </div>
                 </div>
 
                 <!-- Remark + Bill Attachments -->
@@ -1303,7 +1309,7 @@
                 <div class="mt-4 pt-4 border-t">
                     <label class="block text-sm font-semibold mb-2">📒 Ledger Account <span class="text-xs font-normal text-gray-400">(optional)</span></label>
                     <select id="txnLedgerAccount" class="w-full px-4 py-2 border rounded-lg">
-                        ${_coaDropdownOptions()}
+                        <option value="">— Unmapped / not tagged —</option>
                     </select>
                     <p class="text-xs text-gray-400 mt-1">Optional — tag this transaction to a Chart of Accounts entry for future reporting. Safe to leave blank.</p>
                 </div>
@@ -10605,6 +10611,10 @@
                 bankAccounts.filter(ba => ba.isActive && (ba.type === 'Expense' || ba.type === 'Both'))
                 .map(ba => `<option value="${ba.id}">${ba.accountName} (${ba.currency})</option>`).join('');
 
+            // Populate Ledger Account dropdown (additive, optional — Chart of Accounts)
+            const expLedgerSel = document.getElementById('expLedgerAccount');
+            if (expLedgerSel) expLedgerSel.innerHTML = _coaDropdownOptions(exp?.ledgerAccountId);
+
             // Populate Inter-Bank From/To dropdowns (all active accounts)
             populateInterBankDropdowns();
             // Populate Salary employee dropdown
@@ -11593,6 +11603,7 @@
                 chequeNo:          document.getElementById('expChequeNo').value,
                 payDate:           document.getElementById('expPayDate').value,
                 bankAccountId:     document.getElementById('expBankAccount').value,
+                ledgerAccountId:   document.getElementById('expLedgerAccount')?.value || '',
                 bankName:          (() => { const ba = bankAccounts.find(b => b.id === document.getElementById('expBankAccount').value); return ba ? ba.accountName : ''; })(),
                 remark:            document.getElementById('expRemark').value,
                 // ── Bill Type fields (EXP-003) ────────────────────────────────
@@ -15901,7 +15912,20 @@
             const dir = document.getElementById('txnDirection')?.value || '';
             const section = document.getElementById('txnBankSection');
             const select = document.getElementById('txnBankAccount');
-            
+
+            // Ledger Account (Chart of Accounts) — always refresh options here,
+            // since chartOfAccounts loads asynchronously from Drive and this
+            // dropdown's HTML is otherwise static from initial page render.
+            const ledgerSel = document.getElementById('txnLedgerAccount');
+            if (ledgerSel) {
+                // Prefer the pending value stashed by editTransaction/openTransactionModal
+                // (set before real options existed, so .value alone can't be trusted)
+                // over the select's current .value, which reflects prior state.
+                const prevVal = ledgerSel.dataset.pendingValue || ledgerSel.value;
+                ledgerSel.innerHTML = _coaDropdownOptions(prevVal || undefined);
+                delete ledgerSel.dataset.pendingValue;
+            }
+
             if (!section || !select) return;
 
             // Show bank selection for outgoing Invoices and Proforma Invoices
@@ -16257,7 +16281,7 @@
 
             // Load bank account if exists
             const _txnLedgerSel = document.getElementById('txnLedgerAccount');
-            if (_txnLedgerSel) _txnLedgerSel.value = txn?.ledgerAccountId || '';
+            if (_txnLedgerSel) { _txnLedgerSel.value = txn?.ledgerAccountId || ''; _txnLedgerSel.dataset.pendingValue = txn?.ledgerAccountId || ''; }
             if (txn && txn.bankAccountId) {
                 document.getElementById('txnBankAccount').value = txn.bankAccountId;
             }
@@ -29652,19 +29676,18 @@ Automated WFH alert — ${company} Attendance System.`;
                 }
             });
 
-            // 5) Director Expense settlements OUT (if tagged to a bank)
-            (directorExpenses||[]).forEach(de => {
-                if (de.settlementBankAccountId !== bankId && !nameMatches(de.settlementBank)) return;
-                if (de.settled && +de.amount > 0) {
-                    rows.push({ date:de.settledDate||de.expDate||'', desc:`Director expense settlement — ${de.description||''}`, credit:0, debit:+de.amount||0, src:'Director Expenses' });
-                }
-            });
-
-            // 6) Interbank transfers (Office Expenses module) — both legs
+            // 5) Interbank transfers (Office Expenses module) — both legs.
+            // NOTE: Director Expense reimbursements are NOT aggregated here as
+            // a separate source — they are always paid out via a Payment
+            // Request (see _prLinkBackPayment), whose bank is already captured
+            // in block (2) above. Adding a second block for them would
+            // double-count the same money leaving the bank.
             (expenses||[]).forEach(e => {
                 if (e.billType !== 'INTERBANK') return;
-                if (e.fromBankAccountId === bankId) rows.push({ date:e.date||e.expDate||'', desc:`Interbank transfer to ${e.toBankName||'another account'}`, credit:0, debit:+e.amount||0, src:'Interbank' });
-                if (e.toBankAccountId   === bankId) rows.push({ date:e.date||e.expDate||'', desc:`Interbank transfer from ${e.fromBankName||'another account'}`, credit:+e.amount||0, debit:0, src:'Interbank' });
+                const amt = +e.transferAmount || 0;
+                if (amt <= 0) return;
+                if (e.fromBankAccountId === bankId) rows.push({ date:e.billDate||'', desc:`Interbank transfer to ${e.toBankName||'another account'}`, credit:0, debit:amt, src:'Interbank' });
+                if (e.toBankAccountId   === bankId) rows.push({ date:e.billDate||'', desc:`Interbank transfer from ${e.fromBankName||'another account'}`, credit:amt, debit:0, src:'Interbank' });
             });
 
             rows.sort((a,b) => (a.date||'').localeCompare(b.date||''));
@@ -29696,7 +29719,7 @@ Automated WFH alert — ${company} Attendance System.`;
             <div class="mb-6 flex items-center justify-between flex-wrap gap-3">
                 <div>
                     <h2 class="text-2xl font-bold text-gray-800">🏦 Bank</h2>
-                    <p class="text-xs text-gray-400 mt-1">Read-only view — aggregates existing Transactions, Payment Requests, Petty Cash, Fund Pool, Director Expense, and Interbank records already tagged to a bank account. Nothing here writes data.</p>
+                    <p class="text-xs text-gray-400 mt-1">Read-only view — aggregates existing Transactions, Payment Requests, Petty Cash, Fund Pool, and Interbank records already tagged to a bank account. Director expense reimbursements appear under Payment Requests (their actual payment path). Nothing here writes data.</p>
                 </div>
             </div>
             <div class="bg-white rounded-xl border p-4 mb-4 flex items-center gap-4 flex-wrap">
@@ -29751,7 +29774,7 @@ Automated WFH alert — ${company} Attendance System.`;
             doc.text(`${ba.accountName} · ${ba.bankName}${ba.accountNo?' · A/c ····'+String(ba.accountNo).slice(-4):''}`, 105, 25, {align:'center'});
             doc.setDrawColor(3,105,161); doc.setLineWidth(0.4); doc.line(14, 28, 196, 28);
             doc.setFontSize(8); doc.setTextColor(120,120,120);
-            doc.text('Aggregated from existing Transactions, Payment Requests, Petty Cash, Fund Pool, Director Expense and Interbank records. Not a bank-reconciled statement.', 105, 33, {align:'center'});
+            doc.text('Aggregated from existing Transactions, Payment Requests, Petty Cash, Fund Pool, and Interbank records. Not a bank-reconciled statement.', 105, 33, {align:'center'});
 
             let running = opening;
             const body = entries.map(r => {
@@ -31184,6 +31207,12 @@ Automated WFH alert — ${company} Attendance System.`;
                         <p class="text-[10px] text-gray-400 mt-1">Configure bank accounts in Settings → Bank Accounts</p>
                     </div>
                     <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1">📒 Ledger Account <span class="font-normal text-gray-400">(optional)</span></label>
+                        <select id="pcrLedgerAccount" class="w-full px-3 py-2 border rounded-lg text-sm">
+                            ${_coaDropdownOptions(t.ledgerAccountId)}
+                        </select>
+                    </div>
+                    <div>
                         <label class="block text-xs font-semibold text-gray-700 mb-1">Remarks</label>
                         <textarea id="pcrRemarks" rows="2" class="w-full px-3 py-2 border rounded-lg text-sm">${(t.remarks||'').replace(/</g,'&lt;')}</textarea>
                     </div>
@@ -31208,6 +31237,7 @@ Automated WFH alert — ${company} Attendance System.`;
             const amount   = parseFloat(document.getElementById('pcrAmount').value) || 0;
             const transferRef = document.getElementById('pcrTransferRef').value.trim();
             const fromBank = document.getElementById('pcrFromBank').value;
+            const ledgerAccountId = document.getElementById('pcrLedgerAccount')?.value || '';
             const remarks  = document.getElementById('pcrRemarks').value.trim();
 
             if (!officeID || !txnDate || amount <= 0) { alert('Office, date and amount are required.'); return; }
@@ -31220,7 +31250,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 txnType: 'REPLENISHMENT',
                 txnDate,
                 amount: +amount.toFixed(2),
-                transferRef, fromBankAccountID: fromBank, remarks,
+                transferRef, fromBankAccountID: fromBank, ledgerAccountId, remarks,
                 verified: isEdit ? (orig.verified||true) : true,
                 verifiedBy: isEdit ? (orig.verifiedBy||'Admin') : ((typeof currentUser !== 'undefined' && currentUser?.name) || 'Admin'),
                 verifiedAt: isEdit ? (orig.verifiedAt || new Date().toISOString()) : new Date().toISOString(),
@@ -35838,6 +35868,13 @@ Automated WFH alert — ${company} Attendance System.`;
                         </div>
                     </div>
 
+                    <div style="margin-top:12px">
+                        <label style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:4px">📒 Ledger Account <span style="font-weight:400;color:#9ca3af">(optional)</span></label>
+                        <select id="prLedgerAccount" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
+                            ${_coaDropdownOptions(pr.ledgerAccountId)}
+                        </select>
+                    </div>
+
                     <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:10px 12px;margin-top:14px;font-size:11px;color:#92400e">
                         ⚠ Once marked Disbursed, you can begin marking individual items as Paid (Phase 4) as they go out from the SBI account.
                     </div>
@@ -35880,6 +35917,7 @@ Automated WFH alert — ${company} Attendance System.`;
             pr.fromBankAccountId = fromId;
             pr.toBankAccountId   = toId;
             pr.transferRef       = ref;
+            pr.ledgerAccountId   = document.getElementById('prLedgerAccount')?.value || '';
             pr.disbursedAt       = date;
             _stampRecord && _stampRecord(pr);
             try {
