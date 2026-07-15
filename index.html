@@ -1299,6 +1299,15 @@
                     <p class="text-xs text-gray-400 mt-1">Select which bank account will receive payment for this invoice</p>
                 </div>
 
+                <!-- Ledger Account (additive, optional — all transaction types) -->
+                <div class="mt-4 pt-4 border-t">
+                    <label class="block text-sm font-semibold mb-2">📒 Ledger Account <span class="text-xs font-normal text-gray-400">(optional)</span></label>
+                    <select id="txnLedgerAccount" class="w-full px-4 py-2 border rounded-lg">
+                        ${_coaDropdownOptions()}
+                    </select>
+                    <p class="text-xs text-gray-400 mt-1">Optional — tag this transaction to a Chart of Accounts entry for future reporting. Safe to leave blank.</p>
+                </div>
+
                 <!-- ════════════════════════════════════════════════════════════
                      PAYMENTS RECEIVED (Invoice category only)
                      Tracks one or more incoming payments against this invoice.
@@ -1582,6 +1591,13 @@
         let expenses = [];        // Expense & Bills module
         let directorExpenses = []; // Director Expenses module
         let bankAccounts = [];    // Bank accounts for income & expense tracking
+        // ── Chart of Accounts (additive, optional) ──────────────────────
+        // A ledger-account master, separate from `parties` (who) and
+        // `ACC_CATEGORIES` (expense-only heads). Every transaction module
+        // gets ONE new optional field referencing this — existing fields,
+        // forms, and save logic are untouched. Old records simply show
+        // "Unmapped" until tagged; nothing is retroactively required.
+        let chartOfAccounts = [];
         let staff = [];           // Staff master (office + field technicians)
         let projectExpenses = []; // Project food/travel reimbursement
         let workLogs = [];        // Technician work logs with photos
@@ -3288,6 +3304,7 @@
             settings = {};
             expenses = [];
             bankAccounts = [];
+            chartOfAccounts = [];
             appFolderId = null;   // Reset so next login re-searches Drive
             settingsUnlocked = false;  // Lock settings on signout
             payslips = [];
@@ -4863,6 +4880,16 @@
                                 ? settingsData : {};
                 expenses        = Array.isArray(expData)     ? expData      : [];
                 bankAccounts    = Array.isArray(bankData)    ? bankData     : getDefaultBankAccounts();
+                // Chart of Accounts — loaded independently (additive feature,
+                // kept out of the main Promise.all tuple above so it can
+                // never affect that block's existing positional assignments).
+                try {
+                    const coaData = await loadFileFromDrive('chartOfAccounts.json');
+                    chartOfAccounts = Array.isArray(coaData) ? coaData : getDefaultChartOfAccounts();
+                } catch(e) {
+                    console.warn('Chart of Accounts load failed, using defaults:', e.message);
+                    chartOfAccounts = getDefaultChartOfAccounts();
+                }
                 staff           = Array.isArray(staffData)   ? staffData    : [];
                 // One-time cleanup: remove phantom blank records that were accidentally
                 // created when the file-picker label click triggered form submission.
@@ -5207,6 +5234,35 @@
         // Transaction Functions
 
         // Returns Indian Financial Year 4-char code  e.g. Apr-2025→Mar-2026 = "2526"
+
+        // ── Default Chart of Accounts (additive, optional master) ────────────
+        // Seeded once on first load. Fully editable in Settings afterward —
+        // add/rename/deactivate accounts freely; nothing here is hardcoded
+        // into other modules' logic.
+        function getDefaultChartOfAccounts() {
+            return [
+                { id:'COA-1000', code:'1000', name:'Cash in Hand',        type:'Asset',     active:true },
+                { id:'COA-1100', code:'1100', name:'Bank Accounts',       type:'Asset',     active:true },
+                { id:'COA-1200', code:'1200', name:'Sundry Debtors (AR)', type:'Asset',     active:true },
+                { id:'COA-1300', code:'1300', name:'TDS Receivable',      type:'Asset',     active:true },
+                { id:'COA-1400', code:'1400', name:'GST ITC Receivable',  type:'Asset',     active:true },
+                { id:'COA-2000', code:'2000', name:'Sundry Creditors (AP)', type:'Liability', active:true },
+                { id:'COA-2100', code:'2100', name:'GST Payable',         type:'Liability', active:true },
+                { id:'COA-2200', code:'2200', name:'TDS Payable',         type:'Liability', active:true },
+                { id:'COA-2300', code:'2300', name:'ESIC Payable',        type:'Liability', active:true },
+                { id:'COA-3000', code:'3000', name:"Director's Current Account", type:'Equity', active:true },
+                { id:'COA-3100', code:'3100', name:'Capital',             type:'Equity',    active:true },
+                { id:'COA-4000', code:'4000', name:'Service Income',      type:'Income',    active:true },
+                { id:'COA-5000', code:'5000', name:'Salaries & Wages',    type:'Expense',   active:true },
+                { id:'COA-5100', code:'5100', name:'Food Expenses',       type:'Expense',   active:true },
+                { id:'COA-5200', code:'5200', name:'Travelling Expenses', type:'Expense',   active:true },
+                { id:'COA-5300', code:'5300', name:'Staff Welfare',       type:'Expense',   active:true },
+                { id:'COA-5400', code:'5400', name:'Office Rent',         type:'Expense',   active:true },
+                { id:'COA-5500', code:'5500', name:'Repairs & Maintenance', type:'Expense', active:true },
+                { id:'COA-5600', code:'5600', name:'Consumables',         type:'Expense',   active:true },
+                { id:'COA-5700', code:'5700', name:'Miscellaneous Expenses', type:'Expense', active:true },
+            ];
+        }
 
         // ── Default Bank Accounts (created on first load) ────────────────────
         function getDefaultBankAccounts() {
@@ -7081,6 +7137,7 @@
                             ${_canAccess('payreq')?`<button onclick="switchView('payreq')" class="px-4 py-2 rounded-lg ${currentView === 'payreq' ? 'bg-cyan-100 text-cyan-700' : 'text-gray-600 hover:bg-gray-100'}">💼 Pay Requests${(()=>{const p=(paymentRequests||[]).filter(r=>r.status==='Draft').length;return p>0?` <span class="ml-1 px-1.5 py-0.5 bg-amber-500 text-white rounded-full text-xs font-bold">${p}</span>`:'';})()}</button>`:''}
                             ${_canAccess('direxp')?`<button onclick="switchView('direxp')" class="px-4 py-2 rounded-lg ${currentView === 'direxp' ? 'bg-rose-100 text-rose-700' : 'text-gray-600 hover:bg-gray-100'}">👔 Directors</button>`:''}
                             ${_canAccess('pettycash')?`<button onclick="switchView('pettycash')" class="px-4 py-2 rounded-lg ${currentView === 'pettycash' ? 'bg-amber-100 text-amber-800' : 'text-gray-600 hover:bg-gray-100'}" title="Office petty cash (Chennai / Mumbai)">💵 Petty Cash${(()=>{const u=(pettyCashTransactions||[]).filter(t=>t.txnType==='EXPENSE'&&!t.verified).length;return u>0?` <span class="ml-1 px-1.5 py-0.5 bg-amber-500 text-white rounded-full text-xs font-bold">${u}</span>`:'';})()}</button>`:''}
+                            ${_canAccess('bank')?`<button onclick="switchView('bank')" class="px-4 py-2 rounded-lg ${currentView === 'bank' ? 'bg-sky-100 text-sky-700' : 'text-gray-600 hover:bg-gray-100'}" title="Consolidated view of all bank transactions — read-only, aggregated from existing records">🏦 Bank</button>`:''}
                             ${_canAccess('tax')?`<button onclick="switchView('tax')" class="px-4 py-2 rounded-lg ${currentView === 'tax' ? 'bg-red-100 text-red-700' : 'text-gray-600 hover:bg-gray-100'}">🧾 Tax</button>`:''}
                             ${_canAccess('mis')?`<button onclick="switchView('mis')" class="px-4 py-2 rounded-lg ${currentView === 'mis' ? 'bg-green-100 text-green-700' : 'text-gray-600 hover:bg-gray-100'}">📊 MIS Report</button>`:''}
                             ${_canAccess('parties')?`<button onclick="switchView('parties')" class="px-4 py-2 rounded-lg ${currentView === 'parties' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Parties</button>`:''}
@@ -7202,6 +7259,7 @@
             { view:'payreq',       label:'Payment Requests' },
             { view:'direxp',       label:'Director Expenses' },
             { view:'pettycash',    label:'Petty Cash' },
+            { view:'bank',         label:'Bank (read-only ledger view)' },
             { view:'tax',          label:'Tax' },
             { view:'mis',          label:'MIS Report' },
             { view:'staff',        label:'Staff', subs:[
@@ -7221,10 +7279,10 @@
         // settings.rolePermissions and are fully editable by Admin.
         const DEFAULT_ROLE_PERMS = {
             'Admin':    ['*'],
-            'Accounts': ['dashboard','transactions','ar','expenses','projexp','payreq','direxp','pettycash','tax','mis','parties','docs','auditlog','settings'],
+            'Accounts': ['dashboard','transactions','ar','expenses','projexp','payreq','direxp','pettycash','bank','tax','mis','parties','docs','auditlog','settings'],
             'HR':       ['dashboard','staff','staff.list','staff.attendance','staff.documents','staff.payslip','mis','docs','auditlog'],
             'Field':    ['dashboard','docs','auditlog'],
-            'View Only':['dashboard','transactions','ar','expenses','projexp','funds','payreq','direxp','pettycash','tax','mis','staff','staff.list','staff.attendance','staff.documents','staff.payslip','parties','docs','auditlog']
+            'View Only':['dashboard','transactions','ar','expenses','projexp','funds','payreq','direxp','pettycash','bank','tax','mis','staff','staff.list','staff.attendance','staff.documents','staff.payslip','parties','docs','auditlog']
         };
 
         // Build ROLE_ACCESS dynamically from saved settings (or defaults)
@@ -7386,6 +7444,7 @@
             else if (currentView === 'payreq')  renderPaymentRequests(content);
             else if (currentView === 'direxp')  renderDirectorExpenses(content);
             else if (currentView === 'pettycash') renderPettyCash(content);
+            else if (currentView === 'bank')     renderBankLedger(content);
             else if (currentView === 'worklogs') renderWorkLogs(content);
             else if (currentView === 'tax')      renderTaxCompliance(content);
             else if (currentView === 'mis')      renderMIS(content);
@@ -9391,6 +9450,119 @@
                     </div>
                 </div>`;
             }).join('');
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        // CHART OF ACCOUNTS — additive, optional master (no other module's
+        // existing fields, forms, or save logic are touched by this).
+        // ═══════════════════════════════════════════════════════════════
+        const COA_TYPE_COLOR = {
+            Asset:'text-blue-700 bg-blue-50 border-blue-200', Liability:'text-orange-700 bg-orange-50 border-orange-200',
+            Equity:'text-purple-700 bg-purple-50 border-purple-200', Income:'text-green-700 bg-green-50 border-green-200',
+            Expense:'text-red-700 bg-red-50 border-red-200'
+        };
+        function renderChartOfAccountsList() {
+            if (!chartOfAccounts || chartOfAccounts.length === 0) {
+                return '<p class="text-gray-400 text-sm py-3">No accounts yet — click "+ Add Account", or defaults will load on next refresh.</p>';
+            }
+            const order = ['Asset','Liability','Equity','Income','Expense'];
+            const sorted = [...chartOfAccounts].sort((a,b) => {
+                const oa = order.indexOf(a.type), ob = order.indexOf(b.type);
+                return oa !== ob ? oa - ob : (a.code||'').localeCompare(b.code||'');
+            });
+            return sorted.map(a => `
+                <div class="flex items-center justify-between border rounded-lg px-3 py-2 hover:bg-gray-50 ${a.active===false?'opacity-50':''}">
+                    <div class="flex items-center gap-2 min-w-0">
+                        <span class="text-xs font-mono text-gray-400 w-14 shrink-0">${a.code||'—'}</span>
+                        <span class="font-medium text-gray-800 truncate">${a.name}</span>
+                        <span class="text-[10px] px-2 py-0.5 rounded border ${COA_TYPE_COLOR[a.type]||''} shrink-0">${a.type}</span>
+                        ${a.active===false ? '<span class="text-[10px] text-gray-400 shrink-0">Inactive</span>' : ''}
+                    </div>
+                    <div class="flex items-center gap-2 shrink-0">
+                        <button onclick='openCoaModal(${JSON.stringify(a).replace(/'/g,"&apos;")})' class="text-indigo-600 hover:text-indigo-800 text-xs">Edit</button>
+                        <button onclick="deleteCoaAccount('${a.id}')" class="text-red-600 hover:text-red-800 text-xs">Del</button>
+                    </div>
+                </div>`).join('');
+        }
+
+        let _currentCoaEdit = null;
+        function openCoaModal(a = null) {
+            _currentCoaEdit = a || null;
+            const modal = document.createElement('div');
+            modal.id = 'coaModal';
+            modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px';
+            modal.innerHTML = `
+            <div style="background:#fff;border-radius:14px;width:min(420px,94vw)">
+                <div style="background:linear-gradient(135deg,#0d9488,#0f766e);padding:14px 18px;border-radius:14px 14px 0 0;display:flex;justify-content:space-between;align-items:center">
+                    <div style="color:#fff;font-weight:700;font-size:14px">${a?'✏️ Edit':'➕ Add'} Ledger Account</div>
+                    <button onclick="document.getElementById('coaModal').remove()" style="color:#fff;font-size:20px;background:none;border:none;cursor:pointer">✕</button>
+                </div>
+                <div style="padding:18px;display:flex;flex-direction:column;gap:12px">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Code</label>
+                        <input type="text" id="coaCode" value="${a?.code||''}" placeholder="e.g. 5800" class="w-full px-3 py-2 border rounded-lg text-sm font-mono"/>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Account Name *</label>
+                        <input type="text" id="coaName" value="${(a?.name||'').replace(/"/g,'&quot;')}" placeholder="e.g. Bank Charges" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Type *</label>
+                        <select id="coaType" class="w-full px-3 py-2 border rounded-lg text-sm">
+                            ${['Asset','Liability','Equity','Income','Expense'].map(t=>`<option value="${t}" ${a?.type===t?'selected':''}>${t}</option>`).join('')}
+                        </select>
+                    </div>
+                    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+                        <input type="checkbox" id="coaActive" ${a?.active===false?'':'checked'} style="accent-color:#0d9488"/> Active (shows in tagging dropdowns)
+                    </label>
+                    <div class="flex justify-end gap-2 pt-2 border-t">
+                        <button onclick="document.getElementById('coaModal').remove()" class="px-4 py-2 border rounded-lg text-sm">Cancel</button>
+                        <button onclick="saveCoaAccount()" class="px-4 py-2 bg-teal-600 text-white rounded-lg text-sm font-semibold hover:bg-teal-700">Save</button>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+        }
+
+        async function saveCoaAccount() {
+            const name = document.getElementById('coaName')?.value?.trim();
+            if (!name) { alert('Account name is required.'); return; }
+            const code = document.getElementById('coaCode')?.value?.trim() || '';
+            const type = document.getElementById('coaType')?.value || 'Expense';
+            const active = document.getElementById('coaActive')?.checked !== false;
+            if (_currentCoaEdit) {
+                const idx = chartOfAccounts.findIndex(a => a.id === _currentCoaEdit.id);
+                if (idx >= 0) chartOfAccounts[idx] = { ...chartOfAccounts[idx], code, name, type, active };
+            } else {
+                chartOfAccounts.push({ id: 'COA-' + Date.now(), code, name, type, active });
+            }
+            try {
+                await saveData('chartOfAccounts', chartOfAccounts);
+                document.getElementById('coaModal')?.remove();
+                renderView();
+                _showToast('✓ Ledger account saved', '#0d9488', 2500);
+            } catch (e) { alert('Save failed: ' + e.message); }
+        }
+
+        async function deleteCoaAccount(id) {
+            if (!confirm('Delete this ledger account? Transactions already tagged with it will simply show "Unmapped" going forward.')) return;
+            chartOfAccounts = chartOfAccounts.filter(a => a.id !== id);
+            try {
+                await saveData('chartOfAccounts', chartOfAccounts);
+                renderView();
+                _showToast('✓ Account deleted', '#0d9488', 2000);
+            } catch (e) { alert('Delete failed: ' + e.message); }
+        }
+
+        // Shared helper: render the optional "Ledger Account" dropdown used
+        // across Transactions / Expenses / Payment Requests. Purely additive —
+        // callers store the result in a new field; nothing else changes.
+        function _coaDropdownOptions(selectedId) {
+            const active = (chartOfAccounts||[]).filter(a => a.active !== false);
+            if (!active.length) return '<option value="">— No accounts configured —</option>';
+            return '<option value="">— Unmapped / not tagged —</option>' + active.map(a =>
+                `<option value="${a.id}" ${selectedId===a.id?'selected':''}>${a.code?a.code+' — ':''}${a.name} (${a.type})</option>`
+            ).join('');
         }
 
         let currentBankAccount = null;
@@ -14886,7 +15058,22 @@
                                 ${renderBankAccountsList()}
                             </div>
                         </div>
-                        
+
+                        <!-- Chart of Accounts (additive, optional) -->
+                        <div class="md:col-span-2 mt-4 border-t pt-4">
+                            <div class="flex items-center justify-between mb-2">
+                                <h3 class="text-lg font-bold">📒 Chart of Accounts <span class="text-xs font-normal text-gray-400">(optional ledger tagging)</span></h3>
+                                <button type="button" onclick="openCoaModal()" class="px-3 py-1.5 text-sm bg-teal-600 text-white rounded-lg hover:bg-teal-700">+ Add Account</button>
+                            </div>
+                            <p class="text-xs text-gray-500 mb-3">
+                                This is a new, optional master list — separate from your existing Parties and expense heads, which continue to work exactly as before.
+                                Transactions, Expenses, and Payment Requests will show an optional "Ledger Account" field you can tag now or leave blank; nothing is required retroactively.
+                            </p>
+                            <div id="coaList" class="space-y-1">
+                                ${renderChartOfAccountsList()}
+                            </div>
+                        </div>
+
                         <!-- Settings Password Section -->
                         <div class="md:col-span-2 mt-4 border-t pt-4">
                             <div class="flex items-center justify-between mb-4">
@@ -16069,6 +16256,8 @@
             }
 
             // Load bank account if exists
+            const _txnLedgerSel = document.getElementById('txnLedgerAccount');
+            if (_txnLedgerSel) _txnLedgerSel.value = txn?.ledgerAccountId || '';
             if (txn && txn.bankAccountId) {
                 document.getElementById('txnBankAccount').value = txn.bankAccountId;
             }
@@ -16838,6 +17027,7 @@
                     status: document.getElementById('txnStatus').value,
                     currency: document.getElementById('txnCurrency').value,
                     bankAccountId: document.getElementById('txnBankAccount')?.value || '',
+                    ledgerAccountId: document.getElementById('txnLedgerAccount')?.value || '',
                     txnDate: document.getElementById('txnDate')?.value || currentTransaction?.txnDate || new Date().toISOString().split('T')[0],
                     attachments: currentTransaction?.attachments || [],
                     items: items,
@@ -29412,6 +29602,183 @@ Automated WFH alert — ${company} Attendance System.`;
 
         function _pcSetFilter(key, val) { window._pcFilter[key] = val; renderView(); }
         function _pcClearFilters() { window._pcFilter = { officeID: '', month: '', year: new Date().getFullYear(), type: '', verified: '' }; renderView(); }
+        // ═══════════════════════════════════════════════════════════════
+        // BANK LEDGER — read-only aggregation across existing records.
+        // Does NOT write anything, does NOT change any other module's
+        // fields or save logic. Purely filters + sorts data that already
+        // exists (Transactions, Payment Requests, Petty Cash, Fund Pools,
+        // Interbank Expense transfers) by which bank account each entry
+        // already references.
+        // ═══════════════════════════════════════════════════════════════
+        function _bankLedgerEntries(bankId) {
+            const ba = (bankAccounts||[]).find(b => b.id === bankId);
+            if (!ba) return [];
+            const nameMatches = (s) => s && ba && (s === ba.bankName || s === ba.accountName);
+            const rows = [];
+
+            // 1) Transactions (Invoices/PO/Proforma) — money IN when marked paid/received
+            (transactions||[]).forEach(t => {
+                if (t.bankAccountId !== bankId) return;
+                const received = (t.payments||[]).reduce((s,p)=>s+(+p.amount||0),0);
+                if (received > 0) {
+                    (t.payments||[]).forEach(p => {
+                        rows.push({ date:p.date||t.txnDate||'', desc:`${t.txnID} — ${t.partyName||''} (payment received)`, credit:+p.amount||0, debit:0, src:'Transactions' });
+                    });
+                }
+            });
+
+            // 2) Payment Requests — money OUT when disbursed
+            (paymentRequests||[]).forEach(pr => {
+                if (pr.fromBankAccountId !== bankId) return;
+                if (+pr.totalPaid > 0) {
+                    rows.push({ date:pr.disbursedAt?.split('T')[0]||pr.disbursementDate||'', desc:`${pr.prID} — ${pr.periodLabel||pr.reason||'Payment Request'}`, credit:0, debit:+pr.totalPaid||0, src:'Payment Requests' });
+                }
+            });
+
+            // 3) Petty Cash — replenishments OUT from bank into the petty cash float
+            (pettyCashTransactions||[]).forEach(pc => {
+                if (pc.fromBankAccountID !== bankId) return;
+                if (pc.txnType === 'REPLENISHMENT' || pc.txnType === 'Replenishment') {
+                    rows.push({ date:pc.txnDate||'', desc:`Petty cash replenishment${pc.transferRef?' — Ref '+pc.transferRef:''}`, credit:0, debit:+pc.amount||0, src:'Petty Cash' });
+                }
+            });
+
+            // 4) Fund Pools — disbursements OUT (matched by bank NAME, since this
+            //    module stores a name string rather than a bank account ID)
+            (fundPools||[]).forEach(p => {
+                if (!nameMatches(p.disbursedFromBank)) return;
+                if (+p.disbursedAmount > 0) {
+                    rows.push({ date:p.disbursedDate||'', desc:`${p.poolID||'Fund Pool'} — ${p.purpose||p.projectName||'Disbursement'}`, credit:0, debit:+p.disbursedAmount||0, src:'Fund Pools' });
+                }
+            });
+
+            // 5) Director Expense settlements OUT (if tagged to a bank)
+            (directorExpenses||[]).forEach(de => {
+                if (de.settlementBankAccountId !== bankId && !nameMatches(de.settlementBank)) return;
+                if (de.settled && +de.amount > 0) {
+                    rows.push({ date:de.settledDate||de.expDate||'', desc:`Director expense settlement — ${de.description||''}`, credit:0, debit:+de.amount||0, src:'Director Expenses' });
+                }
+            });
+
+            // 6) Interbank transfers (Office Expenses module) — both legs
+            (expenses||[]).forEach(e => {
+                if (e.billType !== 'INTERBANK') return;
+                if (e.fromBankAccountId === bankId) rows.push({ date:e.date||e.expDate||'', desc:`Interbank transfer to ${e.toBankName||'another account'}`, credit:0, debit:+e.amount||0, src:'Interbank' });
+                if (e.toBankAccountId   === bankId) rows.push({ date:e.date||e.expDate||'', desc:`Interbank transfer from ${e.fromBankName||'another account'}`, credit:+e.amount||0, debit:0, src:'Interbank' });
+            });
+
+            rows.sort((a,b) => (a.date||'').localeCompare(b.date||''));
+            return rows;
+        }
+
+        function renderBankLedger(el) {
+            const banks = (bankAccounts||[]).filter(b => b.isActive !== false);
+            const selId = window._bankLedgerSel || (banks[0]?.id || '');
+            window._bankLedgerSel = selId;
+            const entries = selId ? _bankLedgerEntries(selId) : [];
+            const openingInput = window._bankLedgerOpening ?? 0;
+            let running = +openingInput || 0;
+            const rowsHtml = entries.map(r => {
+                running += (r.credit||0) - (r.debit||0);
+                return `<tr class="border-t border-gray-100 hover:bg-gray-50">
+                    <td class="px-3 py-2 text-xs text-gray-500 whitespace-nowrap">${r.date||'—'}</td>
+                    <td class="px-3 py-2 text-sm">${(r.desc||'').replace(/</g,'&lt;')}</td>
+                    <td class="px-3 py-2 text-xs"><span class="px-1.5 py-0.5 bg-gray-100 rounded text-gray-500">${r.src}</span></td>
+                    <td class="px-3 py-2 text-sm text-right text-red-600">${r.debit?('₹'+r.debit.toLocaleString('en-IN')):''}</td>
+                    <td class="px-3 py-2 text-sm text-right text-green-600">${r.credit?('₹'+r.credit.toLocaleString('en-IN')):''}</td>
+                    <td class="px-3 py-2 text-sm text-right font-semibold">₹${running.toLocaleString('en-IN')}</td>
+                </tr>`;
+            }).join('');
+            const totalDebit  = entries.reduce((s,r)=>s+(r.debit||0),0);
+            const totalCredit = entries.reduce((s,r)=>s+(r.credit||0),0);
+
+            el.innerHTML = `
+            <div class="mb-6 flex items-center justify-between flex-wrap gap-3">
+                <div>
+                    <h2 class="text-2xl font-bold text-gray-800">🏦 Bank</h2>
+                    <p class="text-xs text-gray-400 mt-1">Read-only view — aggregates existing Transactions, Payment Requests, Petty Cash, Fund Pool, Director Expense, and Interbank records already tagged to a bank account. Nothing here writes data.</p>
+                </div>
+            </div>
+            <div class="bg-white rounded-xl border p-4 mb-4 flex items-center gap-4 flex-wrap">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-500 mb-1">Bank Account</label>
+                    <select onchange="window._bankLedgerSel=this.value;renderView();" class="px-3 py-2 border rounded-lg text-sm min-w-[260px]">
+                        ${banks.length ? banks.map(b=>`<option value="${b.id}" ${b.id===selId?'selected':''}>${b.accountName} — ${b.bankName}${b.accountNo?' (····'+String(b.accountNo).slice(-4)+')':''}</option>`).join('') : '<option value="">No bank accounts configured — add one in Settings</option>'}
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-500 mb-1">Opening Balance <span class="font-normal text-gray-400">(for this view only, not saved)</span></label>
+                    <input type="number" value="${openingInput}" oninput="window._bankLedgerOpening=parseFloat(this.value)||0;renderView();" placeholder="0.00" class="px-3 py-2 border rounded-lg text-sm w-40"/>
+                </div>
+                <div class="ml-auto flex gap-4 text-sm items-center">
+                    <div><span class="text-gray-400">Total In:</span> <span class="font-semibold text-green-600">₹${totalCredit.toLocaleString('en-IN')}</span></div>
+                    <div><span class="text-gray-400">Total Out:</span> <span class="font-semibold text-red-600">₹${totalDebit.toLocaleString('en-IN')}</span></div>
+                    <div><span class="text-gray-400">Net:</span> <span class="font-semibold">₹${running.toLocaleString('en-IN')}</span></div>
+                    ${selId ? `<button onclick="bankLedgerPDF('${selId}')" class="px-3 py-1.5 bg-sky-600 text-white rounded-lg text-xs font-semibold hover:bg-sky-700">📄 Export PDF</button>` : ''}
+                </div>
+            </div>
+            <div class="bg-white rounded-xl border overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead class="bg-gray-50 text-xs text-gray-500 uppercase">
+                        <tr>
+                            <th class="px-3 py-2 text-left">Date</th>
+                            <th class="px-3 py-2 text-left">Description</th>
+                            <th class="px-3 py-2 text-left">Source Module</th>
+                            <th class="px-3 py-2 text-right">Debit (Out)</th>
+                            <th class="px-3 py-2 text-right">Credit (In)</th>
+                            <th class="px-3 py-2 text-right">Running Balance</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rowsHtml || '<tr><td colspan="6" class="px-3 py-8 text-center text-gray-400">No bank-tagged transactions found for this account yet.</td></tr>'}
+                    </tbody>
+                </table>
+            </div>`;
+        }
+
+        async function bankLedgerPDF(bankId) {
+            const ba = (bankAccounts||[]).find(b => b.id === bankId);
+            if (!ba) return;
+            const entries = _bankLedgerEntries(bankId);
+            const opening = +(window._bankLedgerOpening || 0);
+            const INR = n => '\u20B9' + (+n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF({ unit:'mm', format:'a4' });
+            doc.setFontSize(16); doc.setTextColor(3,105,161); doc.setFont('helvetica','bold');
+            doc.text('BANK LEDGER — READ-ONLY STATEMENT', 105, 18, {align:'center'});
+            doc.setFontSize(10); doc.setTextColor(0,0,0); doc.setFont('helvetica','normal');
+            doc.text(`${ba.accountName} · ${ba.bankName}${ba.accountNo?' · A/c ····'+String(ba.accountNo).slice(-4):''}`, 105, 25, {align:'center'});
+            doc.setDrawColor(3,105,161); doc.setLineWidth(0.4); doc.line(14, 28, 196, 28);
+            doc.setFontSize(8); doc.setTextColor(120,120,120);
+            doc.text('Aggregated from existing Transactions, Payment Requests, Petty Cash, Fund Pool, Director Expense and Interbank records. Not a bank-reconciled statement.', 105, 33, {align:'center'});
+
+            let running = opening;
+            const body = entries.map(r => {
+                running += (r.credit||0) - (r.debit||0);
+                return [r.date||'—', r.desc||'', r.src||'', r.debit?INR(r.debit):'', r.credit?INR(r.credit):'', INR(running)];
+            });
+            const totalDebit  = entries.reduce((s,r)=>s+(r.debit||0),0);
+            const totalCredit = entries.reduce((s,r)=>s+(r.credit||0),0);
+
+            doc.autoTable({
+                startY: 38, theme: 'grid', styles: {fontSize: 8, cellPadding:2},
+                headStyles: {fillColor: [3,105,161], textColor: 255, fontStyle:'bold', fontSize:8},
+                head: [['Date','Description','Source','Debit (Out)','Credit (In)','Running Balance']],
+                body: [
+                    [{content:'Opening Balance',colSpan:5,styles:{fontStyle:'bold',fillColor:[240,249,255]}}, {content:INR(opening),styles:{fontStyle:'bold',halign:'right',fillColor:[240,249,255]}}],
+                    ...body,
+                    [{content:'Totals',colSpan:3,styles:{fontStyle:'bold'}}, {content:INR(totalDebit),styles:{fontStyle:'bold'}}, {content:INR(totalCredit),styles:{fontStyle:'bold'}}, {content:INR(running),styles:{fontStyle:'bold',fillColor:[240,249,255]}}]
+                ],
+                columnStyles: {0:{cellWidth:20},1:{cellWidth:70},2:{cellWidth:28},3:{cellWidth:24,halign:'right'},4:{cellWidth:24,halign:'right'},5:{cellWidth:26,halign:'right'}}
+            });
+
+            const pc = doc.getNumberOfPages();
+            for (let p=1;p<=pc;p++){doc.setPage(p);doc.setFontSize(7);doc.setFont('helvetica','italic');doc.setTextColor(150,150,150);
+                doc.text((settings.companyName||'IMSE Tech Services Pvt Ltd')+' — Bank Ledger — '+ba.accountName+' — Page '+p+' of '+pc, 105, 291, {align:'center'});}
+            doc.save('BankLedger_'+ba.accountName.replace(/[^a-zA-Z0-9]/g,'_')+'.pdf');
+        }
+
         function renderPettyCash(content) {
             const fmt = n => '₹' + (+n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
             const offices = (pettyCashOffices || []).filter(o => o.active !== false);
