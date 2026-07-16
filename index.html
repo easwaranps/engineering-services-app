@@ -9160,7 +9160,7 @@
             }
             return `<tr class="border-b hover:bg-gray-50 text-sm">
                 <td class="px-3 py-2 font-medium text-indigo-700 whitespace-nowrap">${t.txnID}${(t.revisionNo||0)>0 ? ` <span class="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px] font-bold align-middle" title="Revised ${t.revisionDate||''} — ${(t.revisionReason||'').replace(/"/g,'&quot;')}">Rev-${t.revisionNo}</span>` : ''}</td>
-                <td class="px-3 py-2 max-w-xs truncate" title="${t.partyName}">${t.partyName}</td>
+                <td class="px-3 py-2 max-w-xs truncate" title="${t.partyName}">${t.partyName}${_ledgerBadge(t.ledgerAccountId)}</td>
                 <td class="px-3 py-2 text-gray-500 whitespace-nowrap">${t.txnDate}</td>
                 <td class="px-3 py-2 text-gray-500">${t.reference || '—'}</td>
                 <td class="px-3 py-2">${statusBadge(t.status)}${(() => {
@@ -9571,6 +9571,16 @@
         // Shared helper: render the optional "Ledger Account" dropdown used
         // across Transactions / Expenses / Payment Requests. Purely additive —
         // callers store the result in a new field; nothing else changes.
+        // Shared helper: small "📒 Account Name" badge for list/table views.
+        // Returns '' if nothing tagged — so untagged (the vast majority of
+        // existing records) show nothing extra, no layout disruption.
+        function _ledgerBadge(ledgerAccountId) {
+            if (!ledgerAccountId) return '';
+            const a = (chartOfAccounts||[]).find(x => x.id === ledgerAccountId);
+            if (!a) return '';
+            return ` <span title="Ledger Account" style="font-size:10px;padding:1px 6px;border-radius:5px;background:#f0fdfa;color:#0f766e;border:1px solid #99f6e4;white-space:nowrap">📒 ${a.name}</span>`;
+        }
+
         function _coaDropdownOptions(selectedId) {
             const active = (chartOfAccounts||[]).filter(a => a.active !== false);
             if (!active.length) return '<option value="">— No accounts configured —</option>';
@@ -10070,7 +10080,7 @@
                         return badge + label;
                     })()}
                 </td>
-                <td class="px-3 py-2${tallyDone?' text-teal-700 font-medium':''}" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${e.description||''}">${e.description||'—'}</td>
+                <td class="px-3 py-2${tallyDone?' text-teal-700 font-medium':''}" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${e.description||''}">${e.description||'—'}${_ledgerBadge(e.ledgerAccountId)}</td>
                 <td class="px-3 py-2 text-right font-semibold">${fmt(e.balanceAmt ?? e.netPayable)}</td>
                 <td class="px-3 py-2 text-center"><span class="px-2 py-0.5 rounded-full text-xs ${statusCls}">${e.payStatus}</span></td>
                 <td class="px-3 py-2 text-center whitespace-nowrap">
@@ -24419,7 +24429,7 @@ Automated WFH alert — ${company} Attendance System.`;
                                     <td class="px-3 py-2"><span class="text-xs font-semibold px-2 py-0.5 rounded-full ${dirIdx===0?'bg-rose-100 text-rose-700':'bg-indigo-100 text-indigo-700'}">${dirName}</span></td>
                                     <td class="px-3 py-2 text-xs">${d.category||'—'}</td>
                                     <td class="px-3 py-2 text-xs" style="max-width:160px;${d.tallyUpdated?'color:#0d9488;font-weight:600':''}" title="${d.description||''}">
-                                        <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.description||'—'}</div>
+                                        <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.description||'—'}${_ledgerBadge(d.ledgerAccountId)}</div>
                                         ${d.tallyUpdated?`<span style="font-size:10px;background:#ccfbf1;color:#0d9488;padding:1px 6px;border-radius:4px">✓ Tally${d.tallyVoucherNo?' #'+d.tallyVoucherNo:''}</span>`:''}
                                         ${d.billStatus === 'available' || (!d.billStatus && (d.attachments||[]).length > 0)
                                             ? `<span style="font-size:10px;background:#f0fdf4;color:#15803d;padding:1px 6px;border-radius:4px;border:1px solid #bbf7d0">✅ Bill${d.billRemark?' · '+d.billRemark:''}</span>`
@@ -27494,7 +27504,7 @@ Automated WFH alert — ${company} Attendance System.`;
                                     <td class="px-3 py-1.5">${item.date||'—'}</td>
                                     <td class="px-3 py-1.5"><span class="px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-800">${item.category||'—'}</span></td>
                                     <td class="px-3 py-1.5" style="${item.tallyUpdated?'color:#0d9488;font-weight:600;background:#f0fdfa':''}">
-                                        ${item.description||'—'}${item.vendor?`<br><span class="text-gray-400">${item.vendor}</span>`:''}
+                                        ${item.description||'—'}${item.vendor?`<br><span class="text-gray-400">${item.vendor}</span>`:''}${_ledgerBadge(item.ledgerAccountId)}
                                         ${item.tallyUpdated?`<span style="font-size:10px;background:#ccfbf1;color:#0d9488;padding:1px 6px;border-radius:4px;margin-left:4px">✓ Tally${item.tallyVoucherNo?' #'+item.tallyVoucherNo:''}</span>`:''}
                                     </td>
                                     <td class="px-3 py-1.5 text-gray-600">${techs}</td>
@@ -27778,6 +27788,10 @@ Automated WFH alert — ${company} Attendance System.`;
                                 </select></div>
                             <div><label class="block text-xs font-semibold text-gray-600 mb-1">Amount (₹) *</label>
                                 <input type="number" id="peiAmount" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm" required/></div>
+                            <div><label class="block text-xs font-semibold text-gray-600 mb-1">📒 Ledger Account <span class="font-normal text-gray-400">(optional)</span></label>
+                                <select id="peiLedgerAccount" class="w-full px-3 py-2 border rounded-lg text-sm">
+                                    ${_coaDropdownOptions()}
+                                </select></div>
                             <div class="col-span-2"><label class="block text-xs font-semibold text-gray-600 mb-1">Supporting Bill (Image/PDF, max 2MB)</label>
                                 <input type="file" id="peiBill" accept="image/*,application/pdf" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                         </div>
@@ -27914,6 +27928,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 description: document.getElementById('peiDescription').value,
                 staffID: document.getElementById('peiStaff').value,
                 staffName, amount: parseFloat(document.getElementById('peiAmount').value)||0,
+                ledgerAccountId: document.getElementById('peiLedgerAccount')?.value || '',
                 billData, billName, billDriveFileId
             };
             // ── Level 2 concurrency: stamp item AND parent project ──
@@ -29974,7 +29989,21 @@ Automated WFH alert — ${company} Attendance System.`;
                 }
             });
 
-            // 5) Interbank transfers (Office Expenses module) — both legs.
+            // 5b) Regular Expenses / Bills paid directly from a bank account
+            // (Supplier, Statutory, Salary, etc.) — OUT. This was a genuine
+            // missing source until now: only the INTERBANK subset of the
+            // `expenses` array was being read; everything else (the bulk of
+            // real bill/expense payments) never appeared in the ledger.
+            (expenses||[]).forEach(e => {
+                if (e.billType === 'INTERBANK') return;   // handled separately above
+                if (e.bankAccountId !== bankId) return;
+                const amt = +e.billAmtINR || 0;
+                if (amt <= 0) return;
+                const who = e.vendor || e.description || 'Bill/Expense';
+                rows.push({ date:e.billDate||'', desc:`${who}${e.billNo?' — Bill '+e.billNo:''}`, credit:0, debit:amt, src:'Expenses/Bills' });
+            });
+
+            // 5c) Interbank transfers (Office Expenses module) — both legs.
             // NOTE: Director Expense reimbursements are NOT aggregated here as
             // a separate source — they are always paid out via a Payment
             // Request (see _prLinkBackPayment), whose bank is already captured
@@ -29996,7 +30025,18 @@ Automated WFH alert — ${company} Attendance System.`;
             const banks = (bankAccounts||[]).filter(b => b.isActive !== false);
             const selId = window._bankLedgerSel || (banks[0]?.id || '');
             window._bankLedgerSel = selId;
-            const entries = selId ? _bankLedgerEntries(selId) : [];
+            const allEntries = selId ? _bankLedgerEntries(selId) : [];
+
+            // ── Period filter (optional — blank means "all dates") ──
+            const fromDate = window._bankLedgerFrom || '';
+            const toDate   = window._bankLedgerTo   || '';
+            const inPeriod = (d) => (!fromDate || (d && d >= fromDate)) && (!toDate || (d && d <= toDate));
+            const entries = (fromDate || toDate) ? allEntries.filter(r => inPeriod(r.date)) : allEntries;
+            // Entries strictly before the period start — used to auto-compute
+            // a correct opening balance for the selected period on request.
+            const priorEntries = fromDate ? allEntries.filter(r => r.date && r.date < fromDate) : [];
+            const computedOpening = priorEntries.reduce((s,r)=>s+(r.credit||0)-(r.debit||0), 0);
+
             const openingInput = window._bankLedgerOpening ?? 0;
             let running = +openingInput || 0;
             const rowsHtml = entries.map(r => {
@@ -30017,7 +30057,7 @@ Automated WFH alert — ${company} Attendance System.`;
             <div class="mb-6 flex items-center justify-between flex-wrap gap-3">
                 <div>
                     <h2 class="text-2xl font-bold text-gray-800">🏦 Bank</h2>
-                    <p class="text-xs text-gray-400 mt-1">Read-only view — aggregates existing Transactions, Payment Requests, Petty Cash, Fund Pool, and Interbank records already tagged to a bank account. Director expense reimbursements appear under Payment Requests (their actual payment path). Nothing here writes data.</p>
+                    <p class="text-xs text-gray-400 mt-1">Read-only view — aggregates existing Transactions, Expenses/Bills, Payment Requests, Petty Cash, Fund Pool, and Interbank records already tagged to a bank account. Director expense reimbursements appear under Payment Requests (their actual payment path). Nothing here writes data.</p>
                 </div>
             </div>
             <div class="bg-white rounded-xl border p-4 mb-4 flex items-center gap-4 flex-wrap">
@@ -30028,14 +30068,28 @@ Automated WFH alert — ${company} Attendance System.`;
                     </select>
                 </div>
                 <div>
+                    <label class="block text-xs font-semibold text-gray-500 mb-1">From</label>
+                    <input type="date" value="${fromDate}" onchange="window._bankLedgerFrom=this.value;renderView();" class="px-3 py-2 border rounded-lg text-sm"/>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-500 mb-1">To</label>
+                    <input type="date" value="${toDate}" onchange="window._bankLedgerTo=this.value;renderView();" class="px-3 py-2 border rounded-lg text-sm"/>
+                </div>
+                ${(fromDate || toDate) ? `<button onclick="window._bankLedgerFrom='';window._bankLedgerTo='';renderView();" class="px-2 py-1.5 text-xs text-gray-500 hover:text-gray-700 underline">Clear period</button>` : ''}
+                <div>
                     <label class="block text-xs font-semibold text-gray-500 mb-1">Opening Balance <span class="font-normal text-gray-400">(for this view only, not saved)</span></label>
-                    <input type="number" value="${openingInput}" oninput="window._bankLedgerOpening=parseFloat(this.value)||0;renderView();" placeholder="0.00" class="px-3 py-2 border rounded-lg text-sm w-40"/>
+                    <div class="flex gap-1">
+                        <input type="number" value="${openingInput}" oninput="window._bankLedgerOpening=parseFloat(this.value)||0;renderView();" placeholder="0.00" class="px-3 py-2 border rounded-lg text-sm w-32"/>
+                        ${fromDate ? `<button onclick="window._bankLedgerOpening=${computedOpening};renderView();" title="Auto-fill using all entries before ${fromDate}" class="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-600">↺ Auto (₹${computedOpening.toLocaleString('en-IN')})</button>` : ''}
+                    </div>
                 </div>
                 <div class="ml-auto flex gap-4 text-sm items-center">
                     <div><span class="text-gray-400">Total In:</span> <span class="font-semibold text-green-600">₹${totalCredit.toLocaleString('en-IN')}</span></div>
                     <div><span class="text-gray-400">Total Out:</span> <span class="font-semibold text-red-600">₹${totalDebit.toLocaleString('en-IN')}</span></div>
                     <div><span class="text-gray-400">Net:</span> <span class="font-semibold">₹${running.toLocaleString('en-IN')}</span></div>
-                    ${selId ? `<button onclick="bankLedgerPDF('${selId}')" class="px-3 py-1.5 bg-sky-600 text-white rounded-lg text-xs font-semibold hover:bg-sky-700">📄 Export PDF</button>` : ''}
+                    ${selId ? `
+                    <button onclick="bankLedgerPDF('${selId}', false)" class="px-3 py-1.5 bg-sky-600 text-white rounded-lg text-xs font-semibold hover:bg-sky-700">📄 Download PDF</button>
+                    <button onclick="bankLedgerPDF('${selId}', true)" class="px-3 py-1.5 bg-slate-600 text-white rounded-lg text-xs font-semibold hover:bg-slate-700">🖨️ View / Print</button>` : ''}
                 </div>
             </div>
             <div class="bg-white rounded-xl border overflow-x-auto">
@@ -30057,12 +30111,17 @@ Automated WFH alert — ${company} Attendance System.`;
             </div>`;
         }
 
-        async function bankLedgerPDF(bankId) {
+        async function bankLedgerPDF(bankId, viewOnly) {
             const ba = (bankAccounts||[]).find(b => b.id === bankId);
             if (!ba) return;
-            const entries = _bankLedgerEntries(bankId);
+            const allEntries = _bankLedgerEntries(bankId);
+            const fromDate = window._bankLedgerFrom || '';
+            const toDate   = window._bankLedgerTo   || '';
+            const inPeriod = (d) => (!fromDate || (d && d >= fromDate)) && (!toDate || (d && d <= toDate));
+            const entries = (fromDate || toDate) ? allEntries.filter(r => inPeriod(r.date)) : allEntries;
             const opening = +(window._bankLedgerOpening || 0);
             const INR = n => '\u20B9' + (+n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+            const dfmt = d => d ? d.split('-').reverse().join('.') : '—';
 
             const { jsPDF } = window.jspdf;
             const doc = new jsPDF({ unit:'mm', format:'a4' });
@@ -30070,24 +30129,28 @@ Automated WFH alert — ${company} Attendance System.`;
             doc.text('BANK LEDGER — READ-ONLY STATEMENT', 105, 18, {align:'center'});
             doc.setFontSize(10); doc.setTextColor(0,0,0); doc.setFont('helvetica','normal');
             doc.text(`${ba.accountName} · ${ba.bankName}${ba.accountNo?' · A/c ····'+String(ba.accountNo).slice(-4):''}`, 105, 25, {align:'center'});
-            doc.setDrawColor(3,105,161); doc.setLineWidth(0.4); doc.line(14, 28, 196, 28);
+            if (fromDate || toDate) {
+                doc.setFontSize(9); doc.setTextColor(3,105,161); doc.setFont('helvetica','bold');
+                doc.text(`Period: ${fromDate?dfmt(fromDate):'Start'}  to  ${toDate?dfmt(toDate):'Date of Generation'}`, 105, 31, {align:'center'});
+            }
+            doc.setDrawColor(3,105,161); doc.setLineWidth(0.4); doc.line(14, 33, 196, 33);
             doc.setFontSize(8); doc.setTextColor(120,120,120);
-            doc.text('Aggregated from existing Transactions, Payment Requests, Petty Cash, Fund Pool, and Interbank records. Not a bank-reconciled statement.', 105, 33, {align:'center'});
+            doc.text('Aggregated from existing Transactions, Expenses/Bills, Payment Requests, Petty Cash, Fund Pool, and Interbank records. Not a bank-reconciled statement.', 105, 38, {align:'center'});
 
             let running = opening;
             const body = entries.map(r => {
                 running += (r.credit||0) - (r.debit||0);
-                return [r.date||'—', r.desc||'', r.src||'', r.debit?INR(r.debit):'', r.credit?INR(r.credit):'', INR(running)];
+                return [dfmt(r.date), r.desc||'', r.src||'', r.debit?INR(r.debit):'', r.credit?INR(r.credit):'', INR(running)];
             });
             const totalDebit  = entries.reduce((s,r)=>s+(r.debit||0),0);
             const totalCredit = entries.reduce((s,r)=>s+(r.credit||0),0);
 
             doc.autoTable({
-                startY: 38, theme: 'grid', styles: {fontSize: 8, cellPadding:2},
+                startY: 43, theme: 'grid', styles: {fontSize: 8, cellPadding:2},
                 headStyles: {fillColor: [3,105,161], textColor: 255, fontStyle:'bold', fontSize:8},
                 head: [['Date','Description','Source','Debit (Out)','Credit (In)','Running Balance']],
                 body: [
-                    [{content:'Opening Balance',colSpan:5,styles:{fontStyle:'bold',fillColor:[240,249,255]}}, {content:INR(opening),styles:{fontStyle:'bold',halign:'right',fillColor:[240,249,255]}}],
+                    [{content:'Opening Balance'+(fromDate?' (as of '+dfmt(fromDate)+')':''),colSpan:5,styles:{fontStyle:'bold',fillColor:[240,249,255]}}, {content:INR(opening),styles:{fontStyle:'bold',halign:'right',fillColor:[240,249,255]}}],
                     ...body,
                     [{content:'Totals',colSpan:3,styles:{fontStyle:'bold'}}, {content:INR(totalDebit),styles:{fontStyle:'bold'}}, {content:INR(totalCredit),styles:{fontStyle:'bold'}}, {content:INR(running),styles:{fontStyle:'bold',fillColor:[240,249,255]}}]
                 ],
@@ -30097,7 +30160,15 @@ Automated WFH alert — ${company} Attendance System.`;
             const pc = doc.getNumberOfPages();
             for (let p=1;p<=pc;p++){doc.setPage(p);doc.setFontSize(7);doc.setFont('helvetica','italic');doc.setTextColor(150,150,150);
                 doc.text((settings.companyName||'IMSE Tech Services Pvt Ltd')+' — Bank Ledger — '+ba.accountName+' — Page '+p+' of '+pc, 105, 291, {align:'center'});}
-            doc.save('BankLedger_'+ba.accountName.replace(/[^a-zA-Z0-9]/g,'_')+'.pdf');
+
+            const fname = 'BankLedger_'+ba.accountName.replace(/[^a-zA-Z0-9]/g,'_')+(fromDate||toDate?'_'+(fromDate||'start')+'_to_'+(toDate||'now'):'')+'.pdf';
+            if (viewOnly) {
+                // Open in a new tab using the browser's native PDF viewer — the
+                // person can review on screen and use its own Print button.
+                window.open(doc.output('bloburl'), '_blank');
+            } else {
+                doc.save(fname);
+            }
         }
 
         function renderPettyCash(content) {
