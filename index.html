@@ -8057,10 +8057,10 @@
                                 <label style="display:block;font-size:11px;font-weight:600;color:#475569;margin-bottom:4px">From Bank Account *</label>
                                 <select id="_dFromBank" required style="width:100%;padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px">
                                     <option value="">— Select —</option>
-                                    ${(bankAccounts||[]).map(b => `<option value="${b.bankName||b.name||''}">${b.bankName||b.name||''}${b.accountNumber?' (****'+String(b.accountNumber).slice(-4)+')':''}</option>`).join('')}
-                                    <option value="HDFC">HDFC (manual)</option>
-                                    <option value="SBI">SBI (manual)</option>
-                                    <option value="Other">Other</option>
+                                    ${(bankAccounts||[]).map(b => `<option value="${b.id}" data-name="${(b.bankName||b.name||'').replace(/"/g,'&quot;')}">${b.accountName||b.bankName||b.name||''}${b.accountNo?' (····'+String(b.accountNo).slice(-4)+')':''}</option>`).join('')}
+                                    <option value="MANUAL:HDFC" data-name="HDFC">HDFC (manual — no matching bank account configured)</option>
+                                    <option value="MANUAL:SBI" data-name="SBI">SBI (manual — no matching bank account configured)</option>
+                                    <option value="MANUAL:Other" data-name="Other">Other</option>
                                 </select>
                             </div>
                             <div>
@@ -8126,10 +8126,16 @@
 
                 const dDate = document.getElementById('_dDate').value;
                 const dAmt  = parseFloat(document.getElementById('_dAmt').value);
-                const dFromBank = document.getElementById('_dFromBank').value;
+                const _dFromBankSel = document.getElementById('_dFromBank');
+                const _dFromBankRaw = _dFromBankSel.value;
+                // Real bank account chosen → precise ID (immune to future renames).
+                // "MANUAL:xxx" fallback → no ID, just the legacy display-name string.
+                const dFromBankId = _dFromBankRaw && !_dFromBankRaw.startsWith('MANUAL:') ? _dFromBankRaw : '';
+                const dFromBank = _dFromBankSel.selectedOptions[0]?.dataset?.name
+                    || (dFromBankId ? ((bankAccounts||[]).find(b=>b.id===dFromBankId)?.bankName || '') : '');
                 const dRef  = document.getElementById('_dRef').value.trim();
                 const dNotes= document.getElementById('_dNotes').value.trim();
-                if (!dDate || !isFinite(dAmt) || dAmt <= 0 || !dFromBank) {
+                if (!dDate || !isFinite(dAmt) || dAmt <= 0 || !_dFromBankRaw) {
                     alert('Please complete all required fields');
                     return;
                 }
@@ -8180,6 +8186,7 @@
                     disbursedAmount:  dAmt,
                     disbursedDate:    dDate,
                     disbursedFromBank:dFromBank,
+                    disbursedFromBankId: dFromBankId,   // additive — precise, rename-proof reference
                     disbursedToBank:  bd.accountNumber || '',
                     disbursedToIFSC:  bd.ifsc || '',
                     transferRefNo:    dRef,
@@ -8214,6 +8221,7 @@
                 r.disbursedAmount = dAmt;
                 r.disbursedDate   = dDate;
                 r.disbursedFromBank = dFromBank;
+                r.disbursedFromBankId = dFromBankId;
                 r.disbursedToBank = bd.accountNumber || '';
                 r.disbursedToIFSC = bd.ifsc || '';
                 r.transferRefNo   = dRef;
@@ -9601,7 +9609,7 @@
                 expenses:      (expenses||[]).filter(e => e.bankAccountId === id || e.fromBankAccountId === id || e.toBankAccountId === id).length,
                 paymentReqs:   (paymentRequests||[]).filter(pr => pr.fromBankAccountId === id || pr.toBankAccountId === id).length,
                 pettyCash:     (pettyCashTransactions||[]).filter(pc => pc.fromBankAccountID === id).length,
-                fundPools:     (fundPools||[]).filter(p => nameMatches(p.disbursedFromBank)).length,
+                fundPools:     (fundPools||[]).filter(p => p.disbursedFromBankId ? p.disbursedFromBankId === id : nameMatches(p.disbursedFromBank)).length,
             };
         }
 
@@ -9717,9 +9725,14 @@
                     });
                     (pettyCashTransactions||[]).forEach(pc => { if (pc.fromBankAccountID === removeId) pc.fromBankAccountID = keepId; });
 
-                    // 2) Re-point Fund Pools (stores a NAME string, not an ID)
+                    // 2) Re-point Fund Pools — set the precise ID (rename-proof)
+                    // and refresh the legacy display-name string to match.
                     (fundPools||[]).forEach(p => {
-                        if (p.disbursedFromBank === removeBA.bankName || p.disbursedFromBank === removeBA.accountName) {
+                        const alreadyId = p.disbursedFromBankId === removeId;
+                        const legacyNameMatch = !p.disbursedFromBankId &&
+                            (p.disbursedFromBank === removeBA.bankName || p.disbursedFromBank === removeBA.accountName);
+                        if (alreadyId || legacyNameMatch) {
+                            p.disbursedFromBankId = keepId;
                             p.disbursedFromBank = keepBA.accountName;
                         }
                     });
@@ -9742,6 +9755,99 @@
             } catch (e) {
                 alert('Merge failed: ' + e.message + '\n\nNo partial changes were saved for files not yet written — check Settings → Data Recovery if something looks inconsistent.');
             }
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        // FUND POOL BANK REFERENCE AUDIT — recovery tool for the structural
+        // weakness above: Fund Pool disbursements historically stored only a
+        // bank NAME string (and worse, the disbursement form's old dropdown
+        // stored just bankName — indistinguishable between e.g. HDFC INR/USD/
+        // Euro, or SBI Invoice/Expense, since they share the same bankName).
+        // This scans every Fund Pool, auto-backfills disbursedFromBankId for
+        // any that cleanly match exactly one current bank account by name,
+        // and surfaces anything ambiguous/orphaned for manual assignment.
+        // ═══════════════════════════════════════════════════════════════
+        function _auditFundPoolBankRefs() {
+            const groups = {};  // key: current disbursedFromBank string -> { pools:[], matchCount }
+            (fundPools||[]).forEach(p => {
+                if (p.disbursedFromBankId) return;  // already precise, skip
+                const key = p.disbursedFromBank || '(blank)';
+                if (!groups[key]) {
+                    const matches = (bankAccounts||[]).filter(b => b.bankName === key || b.accountName === key);
+                    groups[key] = { name: key, pools: [], matchCount: matches.length, matchId: matches.length === 1 ? matches[0].id : null };
+                }
+                groups[key].pools.push(p);
+            });
+            return Object.values(groups);
+        }
+
+        async function openFundPoolAuditModal() {
+            const groups = _auditFundPoolBankRefs();
+            if (!groups.length) { alert('All Fund Pool disbursements already have a precise bank reference. Nothing to audit.'); return; }
+
+            // Auto-fix the unambiguous ones (exactly one current account matches the stored name) immediately
+            let autoFixed = 0;
+            groups.filter(g => g.matchCount === 1).forEach(g => {
+                g.pools.forEach(p => { p.disbursedFromBankId = g.matchId; });
+                autoFixed += g.pools.length;
+            });
+            if (autoFixed > 0) {
+                try { await saveData('fundPools', fundPools); } catch(e) { alert('Auto-fix save failed: ' + e.message); return; }
+            }
+
+            const remaining = groups.filter(g => g.matchCount !== 1);
+            document.getElementById('fpAuditModal')?.remove();
+            const modal = document.createElement('div');
+            modal.id = 'fpAuditModal';
+            modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px';
+            modal.innerHTML = `
+            <div style="background:#fff;border-radius:16px;width:min(640px,96vw);max-height:90vh;overflow-y:auto">
+                <div style="background:linear-gradient(135deg,#0d9488,#0f766e);padding:16px 22px;border-radius:16px 16px 0 0;display:flex;justify-content:space-between;align-items:center">
+                    <div style="color:#fff;font-weight:700;font-size:15px">🔍 Fund Pool Bank Reference Audit</div>
+                    <button onclick="document.getElementById('fpAuditModal').remove()" style="color:#fff;font-size:22px;background:none;border:none;cursor:pointer">✕</button>
+                </div>
+                <div style="padding:20px">
+                    ${autoFixed>0 ? `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:10px 14px;font-size:13px;color:#15803d;margin-bottom:14px">✓ Auto-fixed ${autoFixed} disbursement(s) with an unambiguous bank match. These will now show correctly in the Bank Ledger.</div>` : ''}
+                    ${remaining.length ? `
+                    <div style="font-size:12px;color:#6b7280;margin-bottom:12px">
+                        ${remaining.length} group(s) below couldn't be auto-matched — either the stored name matches <strong>more than one</strong> bank account (ambiguous, e.g. shared bank name across INR/USD/Euro sub-accounts), or matches <strong>none</strong> (orphaned, e.g. a manual "SBI"/"HDFC" entry or a renamed account). Assign the correct account to each group below.
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:12px">
+                        ${remaining.map((g, gi) => `
+                        <div style="border:1px solid #e5e7eb;border-radius:10px;padding:12px" data-fp-group="${gi}">
+                            <div style="font-size:13px;font-weight:600;margin-bottom:2px">"${g.name}" <span style="font-weight:400;color:#9ca3af">— ${g.pools.length} disbursement(s), ${g.matchCount===0?'no match found':'matches '+g.matchCount+' accounts'}</span></div>
+                            <div style="font-size:11px;color:#9ca3af;margin-bottom:6px">${g.pools.slice(0,5).map(p=>p.poolID).join(', ')}${g.pools.length>5?' … +'+(g.pools.length-5)+' more':''}</div>
+                            <div style="display:flex;gap:8px;align-items:center">
+                                <select data-fp-select="${gi}" style="flex:1;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px">
+                                    <option value="">— Select correct bank account —</option>
+                                    ${(bankAccounts||[]).map(b=>`<option value="${b.id}">${b.accountName} — ${b.bankName}</option>`).join('')}
+                                </select>
+                                <button onclick="_applyFundPoolAuditFix(${gi})" style="padding:6px 12px;background:#0d9488;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">Apply</button>
+                            </div>
+                        </div>`).join('')}
+                    </div>
+                    <div style="margin-top:14px"><button onclick="document.getElementById('fpAuditModal').remove();renderView();" style="padding:8px 16px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;background:#fff">Done for now</button></div>
+                    ` : `<div style="text-align:center;color:#059669;font-size:14px;padding:12px">✓ All Fund Pool disbursements now have precise bank references.</div>
+                    <div style="margin-top:14px;text-align:right"><button onclick="document.getElementById('fpAuditModal').remove();renderView();" style="padding:8px 16px;background:#0d9488;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600">Close</button></div>`}
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+            window._fpAuditRemaining = remaining;   // stash for the Apply handler
+        }
+
+        async function _applyFundPoolAuditFix(gi) {
+            const g = window._fpAuditRemaining?.[gi];
+            const sel = document.querySelector(`[data-fp-select="${gi}"]`);
+            const bankId = sel?.value;
+            if (!g || !bankId) { alert('Please select a bank account first.'); return; }
+            const ba = (bankAccounts||[]).find(b => b.id === bankId);
+            g.pools.forEach(p => { p.disbursedFromBankId = bankId; p.disbursedFromBank = ba.accountName; });
+            try {
+                await saveData('fundPools', fundPools);
+                _showToast(`✓ ${g.pools.length} disbursement(s) re-pointed to ${ba.accountName}`, '#0d9488', 3500);
+                document.getElementById('fpAuditModal')?.remove();
+                openFundPoolAuditModal();  // reopen to show remaining groups, if any
+            } catch (e) { alert('Save failed: ' + e.message); }
         }
 
         let currentBankAccount = null;
@@ -15238,6 +15344,7 @@
                                 <h3 class="text-lg font-bold">🏦 Bank Accounts</h3>
                                 <div class="flex gap-2">
                                     ${_findDuplicateBankGroups().length ? `<button type="button" onclick="openBankMergeModal()" class="px-3 py-1.5 text-sm bg-amber-500 text-white rounded-lg hover:bg-amber-600">🔗 Merge Duplicates (${_findDuplicateBankGroups().length})</button>` : ''}
+                                    <button type="button" onclick="openFundPoolAuditModal()" class="px-3 py-1.5 text-sm bg-teal-600 text-white rounded-lg hover:bg-teal-700" title="Fix Fund Pool disbursements that aren't showing correctly in the Bank Ledger">🔍 Audit Fund Pool Bank Refs</button>
                                     <button type="button" onclick="openBankAccountModal()" class="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">+ Add Account</button>
                                 </div>
                             </div>
@@ -29853,10 +29960,15 @@ Automated WFH alert — ${company} Attendance System.`;
                 }
             });
 
-            // 4) Fund Pools — disbursements OUT (matched by bank NAME, since this
-            //    module stores a name string rather than a bank account ID)
+            // 4) Fund Pools — disbursements OUT. Matched by disbursedFromBankId
+            //    when present (precise, survives account renames); falls back
+            //    to legacy bank-NAME matching for older records saved before
+            //    this ID field existed. Run "Audit Fund Pool Bank References"
+            //    in Settings to backfill IDs onto old records or fix any that
+            //    can no longer be matched by name at all.
             (fundPools||[]).forEach(p => {
-                if (!nameMatches(p.disbursedFromBank)) return;
+                const matches = p.disbursedFromBankId ? (p.disbursedFromBankId === bankId) : nameMatches(p.disbursedFromBank);
+                if (!matches) return;
                 if (+p.disbursedAmount > 0) {
                     rows.push({ date:p.disbursedDate||'', desc:`${p.poolID||'Fund Pool'} — ${p.purpose||p.projectName||'Disbursement'}`, credit:0, debit:+p.disbursedAmount||0, src:'Fund Pools' });
                 }
