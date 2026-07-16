@@ -9571,6 +9571,179 @@
             ).join('');
         }
 
+        // ═══════════════════════════════════════════════════════════════
+        // BANK ACCOUNT MERGE — safe, previewable consolidation of duplicate
+        // accounts (same physical account split into separate Income/Expense
+        // records). Re-points every existing reference across Transactions,
+        // Expenses, Payment Requests, Petty Cash, and Fund Pools. Every write
+        // goes through saveData(), which already creates a rolling backup —
+        // so this is reversible via Settings → Data Recovery if needed.
+        // ═══════════════════════════════════════════════════════════════
+        function _normAcctNo(s) { return String(s||'').replace(/\D/g,''); }  // digits only, for comparing "····9349" style numbers safely
+
+        function _findDuplicateBankGroups() {
+            const groups = {};
+            (bankAccounts||[]).forEach(ba => {
+                const key = _normAcctNo(ba.accountNo || ba.accountNumber);
+                if (!key) return;
+                (groups[key] = groups[key] || []).push(ba);
+            });
+            return Object.values(groups).filter(g => g.length > 1);
+        }
+
+        // Count how many existing records reference a given bank account
+        // (by ID) or bank name (for Fund Pools, which store a name string).
+        function _bankUsageCounts(ba) {
+            const id = ba.id;
+            const nameMatches = (s) => s && (s === ba.bankName || s === ba.accountName);
+            return {
+                transactions:  (transactions||[]).filter(t => t.bankAccountId === id).length,
+                expenses:      (expenses||[]).filter(e => e.bankAccountId === id || e.fromBankAccountId === id || e.toBankAccountId === id).length,
+                paymentReqs:   (paymentRequests||[]).filter(pr => pr.fromBankAccountId === id || pr.toBankAccountId === id).length,
+                pettyCash:     (pettyCashTransactions||[]).filter(pc => pc.fromBankAccountID === id).length,
+                fundPools:     (fundPools||[]).filter(p => nameMatches(p.disbursedFromBank)).length,
+            };
+        }
+
+        function openBankMergeModal() {
+            const groups = _findDuplicateBankGroups();
+            if (!groups.length) { alert('No duplicate bank accounts found.'); return; }
+            document.getElementById('bankMergeModal')?.remove();
+            const modal = document.createElement('div');
+            modal.id = 'bankMergeModal';
+            modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px';
+            modal.innerHTML = `
+            <div style="background:#fff;border-radius:16px;width:min(720px,96vw);max-height:92vh;overflow-y:auto">
+                <div style="background:linear-gradient(135deg,#d97706,#b45309);padding:16px 22px;border-radius:16px 16px 0 0;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:2">
+                    <div style="color:#fff;font-weight:700;font-size:15px">🔗 Merge Duplicate Bank Accounts</div>
+                    <button onclick="document.getElementById('bankMergeModal').remove()" style="color:#fff;font-size:22px;background:none;border:none;cursor:pointer">✕</button>
+                </div>
+                <div style="padding:20px">
+                    <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:12px 14px;font-size:12px;color:#92400e;margin-bottom:16px">
+                        For each group below, pick which account to <strong>keep</strong>. It will be set to type <strong>"Both"</strong> (so it appears in Invoice and Expense dropdowns alike), and every existing record referencing the other account will be automatically re-pointed to it. The removed account is deleted. This is reversible via Settings → Data Recovery (rolling backups are kept automatically).
+                    </div>
+                    <div id="bankMergeGroups" style="display:flex;flex-direction:column;gap:16px">
+                        ${groups.map((g, gi) => `
+                        <div style="border:1px solid #e5e7eb;border-radius:12px;padding:14px" data-group-idx="${gi}">
+                            <div style="font-size:12px;color:#6b7280;margin-bottom:8px">Account No: <span style="font-family:monospace">····${(g[0].accountNo||'').slice(-4)}</span></div>
+                            ${g.map((ba, i) => {
+                                const u = _bankUsageCounts(ba);
+                                const total = u.transactions+u.expenses+u.paymentReqs+u.pettyCash+u.fundPools;
+                                return `
+                                <label style="display:flex;align-items:start;gap:10px;padding:8px;border-radius:8px;cursor:pointer;border:1px solid ${i===0?'#93c5fd':'#e5e7eb'};background:${i===0?'#eff6ff':'#fff'};margin-bottom:6px">
+                                    <input type="radio" name="bankMergeKeep-${gi}" value="${ba.id}" ${i===0?'checked':''} style="margin-top:3px;accent-color:#2563eb"/>
+                                    <div style="flex:1">
+                                        <div style="font-weight:600;font-size:13px">${ba.accountName} <span style="font-size:10px;padding:1px 6px;border-radius:5px;background:${ba.type==='Income'?'#dcfce7':ba.type==='Expense'?'#ffedd5':'#dbeafe'};color:${ba.type==='Income'?'#15803d':ba.type==='Expense'?'#c2410c':'#1d4ed8'}">${ba.type}</span></div>
+                                        <div style="font-size:11px;color:#9ca3af">${ba.bankName} · ${ba.currency||'INR'}</div>
+                                        <div style="font-size:11px;color:#6b7280;margin-top:2px">Referenced by: ${total} record${total===1?'':'s'} ${total>0?`(Txn ${u.transactions} · Exp ${u.expenses} · PR ${u.paymentReqs} · PettyCash ${u.pettyCash} · FundPools ${u.fundPools})`:''}</div>
+                                    </div>
+                                </label>`;
+                            }).join('')}
+                        </div>`).join('')}
+                    </div>
+                    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px;padding-top:14px;border-top:1px solid #e5e7eb">
+                        <button onclick="document.getElementById('bankMergeModal').remove()" style="padding:8px 16px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;background:#fff">Cancel</button>
+                        <button onclick="_previewBankMerge()" style="padding:8px 16px;background:#d97706;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">Preview Changes →</button>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+        }
+
+        function _previewBankMerge() {
+            const groups = _findDuplicateBankGroups();
+            const plan = []; // { keepId, removeId, keepName, removeName }
+            document.querySelectorAll('#bankMergeGroups [data-group-idx]').forEach((el, gi) => {
+                const g = groups[gi];
+                const keepId = el.querySelector(`input[name="bankMergeKeep-${gi}"]:checked`)?.value;
+                if (!keepId) return;
+                g.forEach(ba => { if (ba.id !== keepId) plan.push({ keepId, removeId: ba.id, keep: g.find(x=>x.id===keepId), remove: ba }); });
+            });
+            if (!plan.length) { alert('Nothing to merge.'); return; }
+
+            let totalTxns=0,totalExp=0,totalPR=0,totalPC=0,totalFP=0;
+            plan.forEach(p => {
+                const u = _bankUsageCounts(p.remove);
+                totalTxns+=u.transactions; totalExp+=u.expenses; totalPR+=u.paymentReqs; totalPC+=u.pettyCash; totalFP+=u.fundPools;
+            });
+            const totalRecords = totalTxns+totalExp+totalPR+totalPC+totalFP;
+
+            document.getElementById('bankMergeModal')?.remove();
+            const modal = document.createElement('div');
+            modal.id = 'bankMergeConfirmModal';
+            modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px';
+            modal.innerHTML = `
+            <div style="background:#fff;border-radius:16px;width:min(520px,94vw)">
+                <div style="background:linear-gradient(135deg,#dc2626,#b91c1c);padding:16px 22px;border-radius:16px 16px 0 0">
+                    <div style="color:#fff;font-weight:700;font-size:15px">⚠️ Confirm Merge — Final Step</div>
+                </div>
+                <div style="padding:20px">
+                    <div style="font-size:13px;color:#374151;margin-bottom:14px">
+                        ${plan.map(p => `<div style="margin-bottom:8px;padding:8px;background:#f9fafb;border-radius:8px">
+                            <strong>${p.keep.accountName}</strong> (kept, becomes type "Both") ←— merging —<span style="text-decoration:line-through;color:#9ca3af">${p.remove.accountName}</span> (removed)
+                        </div>`).join('')}
+                    </div>
+                    <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:12px;font-size:12px;color:#991b1b;margin-bottom:16px">
+                        <strong>${totalRecords} existing record(s)</strong> will be re-pointed to the surviving account:
+                        Transactions ${totalTxns} · Expenses ${totalExp} · Payment Requests ${totalPR} · Petty Cash ${totalPC} · Fund Pools ${totalFP}.
+                        <br/><br/>A rolling backup is taken automatically before saving — restorable from Settings → Data Recovery if anything looks wrong afterward.
+                    </div>
+                    <div style="display:flex;justify-content:flex-end;gap:10px">
+                        <button onclick="document.getElementById('bankMergeConfirmModal').remove()" style="padding:8px 16px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;background:#fff">Cancel</button>
+                        <button onclick='_executeBankMerge(${JSON.stringify(plan.map(p=>({keepId:p.keepId,removeId:p.removeId})))})' style="padding:8px 16px;background:#dc2626;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">✓ Confirm & Merge Now</button>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+        }
+
+        async function _executeBankMerge(plan) {
+            try {
+                for (const { keepId, removeId } of plan) {
+                    const keepBA   = bankAccounts.find(b => b.id === keepId);
+                    const removeBA = bankAccounts.find(b => b.id === removeId);
+                    if (!keepBA || !removeBA) continue;
+
+                    // 1) Re-point direct ID references
+                    (transactions||[]).forEach(t => { if (t.bankAccountId === removeId) t.bankAccountId = keepId; });
+                    (expenses||[]).forEach(e => {
+                        if (e.bankAccountId === removeId) e.bankAccountId = keepId;
+                        if (e.fromBankAccountId === removeId) e.fromBankAccountId = keepId;
+                        if (e.toBankAccountId === removeId) e.toBankAccountId = keepId;
+                    });
+                    (paymentRequests||[]).forEach(pr => {
+                        if (pr.fromBankAccountId === removeId) pr.fromBankAccountId = keepId;
+                        if (pr.toBankAccountId === removeId) pr.toBankAccountId = keepId;
+                    });
+                    (pettyCashTransactions||[]).forEach(pc => { if (pc.fromBankAccountID === removeId) pc.fromBankAccountID = keepId; });
+
+                    // 2) Re-point Fund Pools (stores a NAME string, not an ID)
+                    (fundPools||[]).forEach(p => {
+                        if (p.disbursedFromBank === removeBA.bankName || p.disbursedFromBank === removeBA.accountName) {
+                            p.disbursedFromBank = keepBA.accountName;
+                        }
+                    });
+
+                    // 3) Promote survivor to "Both" so it appears in every dropdown, then drop the duplicate
+                    keepBA.type = 'Both';
+                    bankAccounts = bankAccounts.filter(b => b.id !== removeId);
+                }
+
+                await saveData('bankAccounts', bankAccounts);
+                await saveData('transactions', transactions);
+                await saveData('expenses', expenses);
+                await saveData('paymentRequests', paymentRequests);
+                await saveData('pettyCashTransactions', pettyCashTransactions);
+                await saveData('fundPools', fundPools);
+
+                document.getElementById('bankMergeConfirmModal')?.remove();
+                renderView();
+                _showToast('✓ Bank accounts merged — all records re-pointed successfully.', '#059669', 5000);
+            } catch (e) {
+                alert('Merge failed: ' + e.message + '\n\nNo partial changes were saved for files not yet written — check Settings → Data Recovery if something looks inconsistent.');
+            }
+        }
+
         let currentBankAccount = null;
 
         function openBankAccountModal(ba = null) {
@@ -15063,8 +15236,14 @@
                         <div class="md:col-span-2 mt-4 border-t pt-4">
                             <div class="flex items-center justify-between mb-4">
                                 <h3 class="text-lg font-bold">🏦 Bank Accounts</h3>
-                                <button type="button" onclick="openBankAccountModal()" class="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">+ Add Account</button>
+                                <div class="flex gap-2">
+                                    ${_findDuplicateBankGroups().length ? `<button type="button" onclick="openBankMergeModal()" class="px-3 py-1.5 text-sm bg-amber-500 text-white rounded-lg hover:bg-amber-600">🔗 Merge Duplicates (${_findDuplicateBankGroups().length})</button>` : ''}
+                                    <button type="button" onclick="openBankAccountModal()" class="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">+ Add Account</button>
+                                </div>
                             </div>
+                            ${_findDuplicateBankGroups().length ? `<div class="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-3 text-xs text-amber-800">
+                                ⚠ Found ${_findDuplicateBankGroups().length} account number(s) with separate "Income" and "Expense" entries (same physical account, split by type). Click "Merge Duplicates" to combine each into one account and re-point all existing Transactions, Expenses, Payment Requests, Petty Cash, and Fund Pool records automatically. A backup is kept via the existing rolling-backup system before any change.
+                            </div>` : ''}
                             <div id="bankAccountsList" class="space-y-2">
                                 ${renderBankAccountsList()}
                             </div>
