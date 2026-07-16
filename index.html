@@ -1305,8 +1305,8 @@
                     <p class="text-xs text-gray-400 mt-1">Select which bank account will receive payment for this invoice</p>
                 </div>
 
-                <!-- Ledger Account (additive, optional — all transaction types) -->
-                <div class="mt-4 pt-4 border-t">
+                <!-- Ledger Account — Invoice and PO only (per business requirement) -->
+                <div id="txnLedgerSection" class="mt-4 pt-4 border-t">
                     <label class="block text-sm font-semibold mb-2">📒 Ledger Account <span class="text-xs font-normal text-gray-400">(optional)</span></label>
                     <select id="txnLedgerAccount" class="w-full px-4 py-2 border rounded-lg">
                         <option value="">— Unmapped / not tagged —</option>
@@ -9162,7 +9162,7 @@
                 <td class="px-3 py-2 font-medium text-indigo-700 whitespace-nowrap">${t.txnID}${(t.revisionNo||0)>0 ? ` <span class="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px] font-bold align-middle" title="Revised ${t.revisionDate||''} — ${(t.revisionReason||'').replace(/"/g,'&quot;')}">Rev-${t.revisionNo}</span>` : ''}</td>
                 <td class="px-3 py-2 max-w-xs">
                     <div class="truncate" title="${t.partyName}">${t.partyName}</div>
-                    ${_ledgerBadge(t.ledgerAccountId)}
+                    ${(t.txnCategory==='INVOICE'||t.txnCategory==='PO') ? _ledgerBadge(t.ledgerAccountId) : ''}
                 </td>
                 <td class="px-3 py-2 text-gray-500 whitespace-nowrap">${t.txnDate}</td>
                 <td class="px-3 py-2 text-gray-500">${t.reference || '—'}</td>
@@ -16215,16 +16215,23 @@
             const section = document.getElementById('txnBankSection');
             const select = document.getElementById('txnBankAccount');
 
-            // Ledger Account (Chart of Accounts) — always refresh options here,
-            // since chartOfAccounts loads asynchronously from Drive and this
-            // dropdown's HTML is otherwise static from initial page render.
+            // Ledger Account (Chart of Accounts) — only relevant for Invoice
+            // and Purchase Order (per business decision: Quotation, Proforma
+            // Invoice, and Delivery Note don't need ledger tagging since they
+            // aren't final financial postings).
+            const ledgerSection = document.getElementById('txnLedgerSection');
             const ledgerSel = document.getElementById('txnLedgerAccount');
-            if (ledgerSel) {
+            const ledgerRelevant = (cat === 'INVOICE' || cat === 'PO');
+            if (ledgerSection) ledgerSection.classList.toggle('hidden', !ledgerRelevant);
+            if (ledgerSel && ledgerRelevant) {
                 // Prefer the pending value stashed by editTransaction/openTransactionModal
                 // (set before real options existed, so .value alone can't be trusted)
                 // over the select's current .value, which reflects prior state.
                 const prevVal = ledgerSel.dataset.pendingValue || ledgerSel.value;
                 ledgerSel.innerHTML = _coaDropdownOptions(prevVal || undefined);
+                delete ledgerSel.dataset.pendingValue;
+            } else if (ledgerSel) {
+                ledgerSel.value = '';   // not relevant for this category — clear any stale selection
                 delete ledgerSel.dataset.pendingValue;
             }
 
