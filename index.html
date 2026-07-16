@@ -30134,7 +30134,13 @@ Automated WFH alert — ${company} Attendance System.`;
             const inPeriod = (d) => (!fromDate || (d && d >= fromDate)) && (!toDate || (d && d <= toDate));
             const entries = (fromDate || toDate) ? allEntries.filter(r => inPeriod(r.date)) : allEntries;
             const opening = +(window._bankLedgerOpening || 0);
-            const INR = n => '\u20B9' + (+n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+            // Rs. prefix — NOT the raw ₹ Unicode glyph. jsPDF's default
+            // Helvetica font has no ₹ glyph and silently substitutes a wrong-
+            // width character in its place (this is why every other PDF
+            // report in this app already uses "Rs." — this function was the
+            // one exception, causing both the garbled symbol and the
+            // resulting column misalignment/truncation).
+            const INR = n => 'Rs.' + (+n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
             const dfmt = d => d ? d.split('-').reverse().join('.') : '—';
 
             const { jsPDF } = window.jspdf;
@@ -30168,14 +30174,20 @@ Automated WFH alert — ${company} Attendance System.`;
                     ...body,
                     [{content:'Totals',colSpan:3,styles:{fontStyle:'bold'}}, {content:INR(totalDebit),styles:{fontStyle:'bold'}}, {content:INR(totalCredit),styles:{fontStyle:'bold'}}, {content:INR(running),styles:{fontStyle:'bold',fillColor:[240,249,255]}}]
                 ],
-                columnStyles: {0:{cellWidth:20},1:{cellWidth:70},2:{cellWidth:28},3:{cellWidth:24,halign:'right'},4:{cellWidth:24,halign:'right'},5:{cellWidth:26,halign:'right'}}
+                columnStyles: {0:{cellWidth:20},1:{cellWidth:62},2:{cellWidth:26},3:{cellWidth:26,halign:'right'},4:{cellWidth:26,halign:'right'},5:{cellWidth:30,halign:'right'}}
             });
 
             const pc = doc.getNumberOfPages();
             for (let p=1;p<=pc;p++){doc.setPage(p);doc.setFontSize(7);doc.setFont('helvetica','italic');doc.setTextColor(150,150,150);
                 doc.text((settings.companyName||'IMSE Tech Services Pvt Ltd')+' — Bank Ledger — '+ba.accountName+' — Page '+p+' of '+pc, 105, 291, {align:'center'});}
 
-            const fname = 'BankLedger_'+ba.accountName.replace(/[^a-zA-Z0-9]/g,'_')+(fromDate||toDate?'_'+(fromDate||'start')+'_to_'+(toDate||'now'):'')+'.pdf';
+            // Filename reflects the actual period covered — either the manually
+            // set From/To filter, or (if none set) the real span of the data
+            // itself, so the file is self-describing when filed/shared.
+            const fnameFrom = fromDate || (entries.length ? entries[0].date : '') || '';
+            const fnameTo   = toDate   || (entries.length ? entries[entries.length-1].date : '') || '';
+            const fnameDateSuffix = (fnameFrom || fnameTo) ? '_'+(fnameFrom||'start')+'_to_'+(fnameTo||'present') : '';
+            const fname = 'BankLedger_'+ba.accountName.replace(/[^a-zA-Z0-9]/g,'_')+fnameDateSuffix+'.pdf';
             if (viewOnly) {
                 // Open in a new tab using the browser's native PDF viewer — the
                 // person can review on screen and use its own Print button.
