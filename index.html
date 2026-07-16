@@ -9160,7 +9160,10 @@
             }
             return `<tr class="border-b hover:bg-gray-50 text-sm">
                 <td class="px-3 py-2 font-medium text-indigo-700 whitespace-nowrap">${t.txnID}${(t.revisionNo||0)>0 ? ` <span class="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px] font-bold align-middle" title="Revised ${t.revisionDate||''} — ${(t.revisionReason||'').replace(/"/g,'&quot;')}">Rev-${t.revisionNo}</span>` : ''}</td>
-                <td class="px-3 py-2 max-w-xs truncate" title="${t.partyName}">${t.partyName}${_ledgerBadge(t.ledgerAccountId)}</td>
+                <td class="px-3 py-2 max-w-xs">
+                    <div class="truncate" title="${t.partyName}">${t.partyName}</div>
+                    ${_ledgerBadge(t.ledgerAccountId)}
+                </td>
                 <td class="px-3 py-2 text-gray-500 whitespace-nowrap">${t.txnDate}</td>
                 <td class="px-3 py-2 text-gray-500">${t.reference || '—'}</td>
                 <td class="px-3 py-2">${statusBadge(t.status)}${(() => {
@@ -10080,7 +10083,10 @@
                         return badge + label;
                     })()}
                 </td>
-                <td class="px-3 py-2${tallyDone?' text-teal-700 font-medium':''}" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${e.description||''}">${e.description||'—'}${_ledgerBadge(e.ledgerAccountId)}</td>
+                <td class="px-3 py-2${tallyDone?' text-teal-700 font-medium':''}" style="max-width:220px">
+                    <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${e.description||''}">${e.description||'—'}</div>
+                    ${_ledgerBadge(e.ledgerAccountId)}
+                </td>
                 <td class="px-3 py-2 text-right font-semibold">${fmt(e.balanceAmt ?? e.netPayable)}</td>
                 <td class="px-3 py-2 text-center"><span class="px-2 py-0.5 rounded-full text-xs ${statusCls}">${e.payStatus}</span></td>
                 <td class="px-3 py-2 text-center whitespace-nowrap">
@@ -24429,7 +24435,8 @@ Automated WFH alert — ${company} Attendance System.`;
                                     <td class="px-3 py-2"><span class="text-xs font-semibold px-2 py-0.5 rounded-full ${dirIdx===0?'bg-rose-100 text-rose-700':'bg-indigo-100 text-indigo-700'}">${dirName}</span></td>
                                     <td class="px-3 py-2 text-xs">${d.category||'—'}</td>
                                     <td class="px-3 py-2 text-xs" style="max-width:160px;${d.tallyUpdated?'color:#0d9488;font-weight:600':''}" title="${d.description||''}">
-                                        <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.description||'—'}${_ledgerBadge(d.ledgerAccountId)}</div>
+                                        <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.description||'—'}</div>
+                                        ${_ledgerBadge(d.ledgerAccountId)}
                                         ${d.tallyUpdated?`<span style="font-size:10px;background:#ccfbf1;color:#0d9488;padding:1px 6px;border-radius:4px">✓ Tally${d.tallyVoucherNo?' #'+d.tallyVoucherNo:''}</span>`:''}
                                         ${d.billStatus === 'available' || (!d.billStatus && (d.attachments||[]).length > 0)
                                             ? `<span style="font-size:10px;background:#f0fdf4;color:#15803d;padding:1px 6px;border-radius:4px;border:1px solid #bbf7d0">✅ Bill${d.billRemark?' · '+d.billRemark:''}</span>`
@@ -30323,6 +30330,7 @@ Automated WFH alert — ${company} Attendance System.`;
                                         ${isExp ? `<span class="font-medium">${_pcCategoryLabel(t.category)}</span>` : ''}
                                         ${t.description ? `<div class="text-[11px] text-gray-500">${(t.description||'').substring(0,80).replace(/</g,'&lt;')}${(t.description||'').length>80?'…':''}</div>` : ''}
                                         ${t.voucherNo ? `<div class="text-[10px] text-gray-400">V# ${t.voucherNo}</div>` : ''}
+                                        ${_ledgerBadge(t.ledgerAccountId)}
                                     </td>
                                     <td class="px-3 py-2 text-xs text-gray-600">${(t.vendor||'').replace(/</g,'&lt;') || '—'}</td>
                                     <td class="px-3 py-2 text-xs text-right font-semibold ${isExp?'text-red-700':'text-green-700'}">${isExp?'−':'+'}${fmt(t.amount)}</td>
