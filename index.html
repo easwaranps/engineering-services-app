@@ -151,6 +151,13 @@
             color: #94A3B8;
             cursor: not-allowed;
         }
+        /* Frozen ID/Party columns in the Transactions table — keeps them
+           visible while scrolling right to reach Amount/Status/Actions on
+           wide rows. Explicit background is required for sticky cells (else
+           scrolled content shows through); this rule keeps the hover
+           highlight consistent across the frozen and scrolling columns. */
+        .txn-sticky-col { background: #fff; }
+        tr:hover .txn-sticky-col { background: #f9fafb; }
     </style>
 </head>
 <body class="bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 min-h-screen">
@@ -9178,8 +9185,8 @@
                 balanceCell = `<td class="px-3 py-2 text-right whitespace-nowrap">${chip}</td>`;
             }
             return `<tr class="border-b hover:bg-gray-50 text-sm">
-                <td class="px-3 py-2 font-medium text-indigo-700 whitespace-nowrap">${t.txnID}${(t.revisionNo||0)>0 ? ` <span class="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px] font-bold align-middle" title="Revised ${t.revisionDate||''} — ${(t.revisionReason||'').replace(/"/g,'&quot;')}">Rev-${t.revisionNo}</span>` : ''}</td>
-                <td class="px-3 py-2 max-w-xs">
+                <td class="txn-sticky-col px-3 py-2 font-medium text-indigo-700" style="position:sticky;left:0;z-index:5;width:110px;min-width:110px;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;box-shadow:2px 0 4px -2px rgba(0,0,0,0.15)" title="${t.txnID}">${t.txnID}${(t.revisionNo||0)>0 ? ` <span class="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px] font-bold align-middle" title="Revised ${t.revisionDate||''} — ${(t.revisionReason||'').replace(/"/g,'&quot;')}">Rev-${t.revisionNo}</span>` : ''}</td>
+                <td class="txn-sticky-col px-3 py-2" style="position:sticky;left:110px;z-index:5;width:170px;min-width:170px;max-width:170px;box-shadow:2px 0 4px -2px rgba(0,0,0,0.15)">
                     <div class="truncate" title="${t.partyName}">${t.partyName}</div>
                     ${(t.txnCategory==='INVOICE'||t.txnCategory==='PO') ? _ledgerBadge(t.ledgerAccountId) : ''}
                 </td>
@@ -9491,8 +9498,8 @@
                         <table class="w-full">
                             <thead class="bg-gray-50 text-xs text-gray-500 uppercase">
                                 <tr>
-                                    <th class="px-3 py-2 text-left">ID</th>
-                                    <th class="px-3 py-2 text-left">Party</th>
+                                    <th class="px-3 py-2 text-left" style="position:sticky;left:0;z-index:11;background:#f9fafb;width:110px;min-width:110px;max-width:110px;box-shadow:2px 0 4px -2px rgba(0,0,0,0.15)">ID</th>
+                                    <th class="px-3 py-2 text-left" style="position:sticky;left:110px;z-index:11;background:#f9fafb;width:170px;min-width:170px;max-width:170px;box-shadow:2px 0 4px -2px rgba(0,0,0,0.15)">Party</th>
                                     <th class="px-3 py-2 text-left">Date</th>
                                     <th class="px-3 py-2 text-left">Subject</th>
                                     ${showAmountCol ? '<th class="px-3 py-2 text-right">Amount</th>' : ''}
