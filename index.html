@@ -1355,7 +1355,16 @@
                             <thead class="bg-gray-50 text-xs text-gray-600 uppercase">
                                 <tr>
                                     <th class="px-3 py-2 text-left">Date</th>
-                                    <th class="px-3 py-2 text-right">Amount (INR)</th>
+                                    <th class="px-3 py-2 text-right">Amount Received (INR)</th>
+                                    <th class="px-3 py-2 text-right">Taxable Amount</th>
+                                    <th class="px-3 py-2 text-right">TDS %</th>
+                                    <th class="px-3 py-2 text-right">TDS Amount</th>
+                                    <th class="px-3 py-2 text-right">IT TDS %</th>
+                                    <th class="px-3 py-2 text-right">IT TDS Amount</th>
+                                    <th class="px-3 py-2 text-right">GST TDS %</th>
+                                    <th class="px-3 py-2 text-right">GST TDS Amount</th>
+                                    <th class="px-3 py-2 text-right">Amount Receivable</th>
+                                    <th class="px-3 py-2 text-right">Difference</th>
                                     <th class="px-3 py-2 text-left">Mode</th>
                                     <th class="px-3 py-2 text-left">Ref / TXN No.</th>
                                     <th class="px-3 py-2 text-left">Remarks</th>
@@ -17257,6 +17266,39 @@
             if (empty) empty.classList.toggle('hidden', rows.length > 0);
         }
 
+        // Recompute a single payment row's TDS amounts (auto-fill from % ×
+        // taxable, but user-editable/overridable) and the two derived fields:
+        //   Amount Receivable = Invoice Grand Total − TDS − IT TDS − GST TDS
+        //   Difference        = Amount Receivable − Amount Received (this row)
+        function recomputeRowTDS(tr, autoFillAmounts = true) {
+            if (!tr) return;
+            const num = sel => parseFloat(tr.querySelector(sel)?.value) || 0;
+            const taxable = num('.pay-taxable');
+            if (autoFillAmounts) {
+                const tdsAmtEl = tr.querySelector('.pay-tds-amt');
+                const itAmtEl  = tr.querySelector('.pay-ittds-amt');
+                const gstAmtEl = tr.querySelector('.pay-gsttds-amt');
+                if (tdsAmtEl) tdsAmtEl.value = taxable ? (+(taxable * num('.pay-tds-pct') / 100).toFixed(2) || '') : tdsAmtEl.value;
+                if (itAmtEl)  itAmtEl.value  = taxable ? (+(taxable * num('.pay-ittds-pct') / 100).toFixed(2) || '') : itAmtEl.value;
+                if (gstAmtEl) gstAmtEl.value = taxable ? (+(taxable * num('.pay-gsttds-pct') / 100).toFixed(2) || '') : gstAmtEl.value;
+            }
+            const totalEl = document.getElementById('totalAmount');
+            const grandTotal = parseFloat((totalEl?.textContent || '').replace(/[^0-9.\-]/g, '')) || 0;
+            const tdsAmt = num('.pay-tds-amt'), itAmt = num('.pay-ittds-amt'), gstAmt = num('.pay-gsttds-amt');
+            const receivable = +(grandTotal - tdsAmt - itAmt - gstAmt).toFixed(2);
+            const received = num('.pay-amt');
+            const diff = +(receivable - received).toFixed(2);
+            const fmt = n => '₹' + (typeof formatNumber === 'function' ? formatNumber(n) : Number(n).toFixed(2));
+            const recvEl = tr.querySelector('.pay-receivable');
+            const diffEl = tr.querySelector('.pay-diff');
+            if (recvEl) recvEl.textContent = fmt(receivable);
+            if (diffEl) {
+                diffEl.textContent = fmt(diff);
+                diffEl.className = 'pay-diff px-2 py-1 text-right font-medium ' +
+                    (Math.abs(diff) < 0.5 ? 'text-green-600' : diff > 0 ? 'text-amber-600' : 'text-red-600');
+            }
+        }
+
         // Append a new payment row. Optional `p` arg pre-fills from a saved entry.
         function addInvoicePaymentRow(p = null) {
             const body = document.getElementById('txnPaymentsBody');
@@ -17268,7 +17310,16 @@
             const modes = ['Cash','G-Pay / UPI','Bank Transfer (NEFT/RTGS/IMPS)','Cheque','Credit Card','Debit Card'];
             tr.innerHTML = `
                 <td class="px-3 py-2"><input type="date" class="pay-date w-full px-2 py-1 border rounded text-sm" value="${p?.date || today}" max="${today}"/></td>
-                <td class="px-3 py-2"><input type="number" min="0" step="0.01" class="pay-amt w-full px-2 py-1 border rounded text-sm text-right" value="${p?.amount ?? ''}" placeholder="0.00" oninput="recomputeInvoicePaymentBalance()"/></td>
+                <td class="px-3 py-2"><input type="number" min="0" step="0.01" class="pay-amt w-24 px-2 py-1 border rounded text-sm text-right" value="${p?.amount ?? ''}" placeholder="0.00" oninput="recomputeInvoicePaymentBalance(); recomputeRowTDS(this.closest('tr'), false);"/></td>
+                <td class="px-3 py-2"><input type="number" min="0" step="0.01" class="pay-taxable w-24 px-2 py-1 border rounded text-sm text-right" value="${p?.taxableAmount ?? ''}" placeholder="0.00" oninput="recomputeRowTDS(this.closest('tr'))"/></td>
+                <td class="px-3 py-2"><input type="number" min="0" step="0.01" class="pay-tds-pct w-16 px-2 py-1 border rounded text-sm text-right" value="${p?.tdsPct ?? ''}" placeholder="%" oninput="recomputeRowTDS(this.closest('tr'))"/></td>
+                <td class="px-3 py-2"><input type="number" min="0" step="0.01" class="pay-tds-amt w-24 px-2 py-1 border rounded text-sm text-right" value="${p?.tdsAmount ?? ''}" placeholder="0.00" oninput="recomputeRowTDS(this.closest('tr'), false)"/></td>
+                <td class="px-3 py-2"><input type="number" min="0" step="0.01" class="pay-ittds-pct w-16 px-2 py-1 border rounded text-sm text-right" value="${p?.itTdsPct ?? ''}" placeholder="%" oninput="recomputeRowTDS(this.closest('tr'))"/></td>
+                <td class="px-3 py-2"><input type="number" min="0" step="0.01" class="pay-ittds-amt w-24 px-2 py-1 border rounded text-sm text-right" value="${p?.itTdsAmount ?? ''}" placeholder="0.00" oninput="recomputeRowTDS(this.closest('tr'), false)"/></td>
+                <td class="px-3 py-2"><input type="number" min="0" step="0.01" class="pay-gsttds-pct w-16 px-2 py-1 border rounded text-sm text-right" value="${p?.gstTdsPct ?? ''}" placeholder="%" oninput="recomputeRowTDS(this.closest('tr'))"/></td>
+                <td class="px-3 py-2"><input type="number" min="0" step="0.01" class="pay-gsttds-amt w-24 px-2 py-1 border rounded text-sm text-right" value="${p?.gstTdsAmount ?? ''}" placeholder="0.00" oninput="recomputeRowTDS(this.closest('tr'), false)"/></td>
+                <td class="px-3 py-2 text-right whitespace-nowrap"><span class="pay-receivable font-medium">₹0.00</span></td>
+                <td class="px-3 py-2 text-right whitespace-nowrap"><span class="pay-diff font-medium">₹0.00</span></td>
                 <td class="px-3 py-2">
                     <select class="pay-mode w-full px-2 py-1 border rounded text-sm">
                         <option value="">-- Select --</option>
@@ -17281,6 +17332,7 @@
             `;
             body.appendChild(tr);
             recomputeInvoicePaymentBalance();
+            recomputeRowTDS(tr, false);   // paint computed cells from any pre-filled saved values, without overwriting saved TDS amounts
         }
 
         // Clear all payment rows (called when modal opens fresh / on category change).
@@ -17384,6 +17436,13 @@
                     paymentsReceived: Array.from(document.querySelectorAll('#txnPaymentsBody tr')).map(tr => ({
                         date:    tr.querySelector('.pay-date')?.value || '',
                         amount:  parseFloat(tr.querySelector('.pay-amt')?.value) || 0,
+                        taxableAmount: parseFloat(tr.querySelector('.pay-taxable')?.value) || 0,
+                        tdsPct:        parseFloat(tr.querySelector('.pay-tds-pct')?.value) || 0,
+                        tdsAmount:     parseFloat(tr.querySelector('.pay-tds-amt')?.value) || 0,
+                        itTdsPct:      parseFloat(tr.querySelector('.pay-ittds-pct')?.value) || 0,
+                        itTdsAmount:   parseFloat(tr.querySelector('.pay-ittds-amt')?.value) || 0,
+                        gstTdsPct:     parseFloat(tr.querySelector('.pay-gsttds-pct')?.value) || 0,
+                        gstTdsAmount:  parseFloat(tr.querySelector('.pay-gsttds-amt')?.value) || 0,
                         mode:    tr.querySelector('.pay-mode')?.value || '',
                         refNo:   (tr.querySelector('.pay-ref')?.value || '').trim(),
                         remarks: (tr.querySelector('.pay-remarks')?.value || '').trim()
