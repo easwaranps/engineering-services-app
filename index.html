@@ -9284,13 +9284,16 @@
                     <!-- Existing payments -->
                     <div id="invPayList">
                         ${payments.map((p,pi)=>`
-                        <div class="border border-gray-200 rounded-xl p-3 flex justify-between items-start">
+                        <div class="border border-gray-200 rounded-xl p-3 flex justify-between items-start" id="invPayRow_${pi}">
                             <div class="text-sm">
                                 <div class="font-semibold">${fmt(p.amount)} · ${p.date||'No date'}</div>
                                 <div class="text-xs text-gray-500">${p.mode||'—'} ${p.refNo?'· Ref: '+p.refNo:''}</div>
                                 <div class="text-xs text-gray-400">${p.remarks||''}</div>
                             </div>
-                            <button onclick="_deleteInvPayment('${txnID}',${pi})" class="text-red-400 hover:text-red-600 text-xs ml-2">✕</button>
+                            <div class="flex items-center gap-2 shrink-0">
+                                <button onclick="_openEditInvPayment('${txnID}',${pi})" class="text-indigo-500 hover:text-indigo-700 text-xs font-medium">Edit</button>
+                                <button onclick="_deleteInvPayment('${txnID}',${pi})" class="text-red-400 hover:text-red-600 text-xs">✕</button>
+                            </div>
                         </div>`).join('')}
                     </div>
 
@@ -9334,6 +9337,67 @@
                 </div>
             </div>`;
             document.body.appendChild(modal);
+        }
+
+        // Turn one existing payment row into an inline edit form (in place,
+        // no need to delete-and-recreate). Cancel restores the plain view.
+        function _openEditInvPayment(txnID, idx) {
+            const txn = (transactions||[]).find(t => t.txnID === txnID);
+            const p = txn?.paymentsReceived?.[idx];
+            const row = document.getElementById(`invPayRow_${idx}`);
+            if (!p || !row) return;
+            const modes = ['Bank Transfer (NEFT/RTGS/IMPS)','Cheque','Cash','UPI','Other'];
+            row.innerHTML = `
+                <div class="w-full">
+                    <div class="grid grid-cols-2 gap-2 mb-2">
+                        <div><label class="block text-[10px] font-semibold text-gray-500 mb-0.5">Date</label>
+                            <input type="date" id="editPayDate_${idx}" value="${p.date||''}" class="w-full px-2 py-1 border rounded text-xs"/></div>
+                        <div><label class="block text-[10px] font-semibold text-gray-500 mb-0.5">Amount (₹)</label>
+                            <input type="number" step="0.01" id="editPayAmt_${idx}" value="${p.amount||0}" class="w-full px-2 py-1 border rounded text-xs"/></div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 mb-2">
+                        <div><label class="block text-[10px] font-semibold text-gray-500 mb-0.5">Mode</label>
+                            <select id="editPayMode_${idx}" class="w-full px-2 py-1 border rounded text-xs">
+                                ${modes.map(m=>`<option value="${m}" ${p.mode===m?'selected':''}>${m}</option>`).join('')}
+                            </select></div>
+                        <div><label class="block text-[10px] font-semibold text-gray-500 mb-0.5">Ref / UTR No.</label>
+                            <input type="text" id="editPayRef_${idx}" value="${(p.refNo||'').replace(/"/g,'&quot;')}" class="w-full px-2 py-1 border rounded text-xs"/></div>
+                    </div>
+                    <div class="mb-2"><label class="block text-[10px] font-semibold text-gray-500 mb-0.5">Remarks</label>
+                        <input type="text" id="editPayRemark_${idx}" value="${(p.remarks||'').replace(/"/g,'&quot;')}" class="w-full px-2 py-1 border rounded text-xs"/></div>
+                    <div class="flex justify-end gap-2">
+                        <button onclick="renderInvPaymentsList('${txnID}')" class="px-3 py-1 border rounded text-xs">Cancel</button>
+                        <button onclick="_saveEditInvPayment('${txnID}',${idx})" class="px-3 py-1 bg-indigo-600 text-white rounded text-xs font-semibold">Save</button>
+                    </div>
+                </div>`;
+        }
+
+        async function _saveEditInvPayment(txnID, idx) {
+            const txn = (transactions||[]).find(t => t.txnID === txnID);
+            if (!txn?.paymentsReceived?.[idx]) return;
+            const date   = document.getElementById(`editPayDate_${idx}`)?.value;
+            const amount = parseFloat(document.getElementById(`editPayAmt_${idx}`)?.value) || 0;
+            if (!date || !amount) { alert('Please enter payment date and amount.'); return; }
+            txn.paymentsReceived[idx] = {
+                ...txn.paymentsReceived[idx],   // preserve any TDS/taxable fields already on this record
+                date, amount,
+                mode:    document.getElementById(`editPayMode_${idx}`)?.value || '',
+                refNo:   (document.getElementById(`editPayRef_${idx}`)?.value || '').trim(),
+                remarks: (document.getElementById(`editPayRemark_${idx}`)?.value || '').trim()
+            };
+            try {
+                await saveData('transactions', transactions);
+                document.getElementById('invPayModal')?.remove();
+                renderView();
+                _showToast('✓ Payment updated for '+txnID, '#15803d', 3000);
+            } catch (err) { alert('Save failed: ' + err.message); }
+        }
+
+        // Re-render just the payment list portion (used by Cancel, to restore
+        // the plain view without closing/reopening the whole modal).
+        function renderInvPaymentsList(txnID) {
+            document.getElementById('invPayModal')?.remove();
+            openInvoicePaymentsModal(txnID);
         }
 
         async function _addInvPayment(txnID) {
@@ -16620,7 +16684,14 @@
             // Reset and (if INVOICE) load saved payments
             clearInvoicePaymentRows();
             if (txn && Array.isArray(txn.paymentsReceived)) {
-                txn.paymentsReceived.forEach(p => addInvoicePaymentRow(p));
+                // Wrapped defensively: a problem restoring one payment row must
+                // NEVER prevent the rest of this function (bank account, ledger
+                // account, and line-item GST mode below) from populating.
+                try {
+                    txn.paymentsReceived.forEach(p => addInvoicePaymentRow(p));
+                } catch (e) {
+                    console.error('Error restoring payment rows:', e);
+                }
             }
             toggleTxnPaymentsSection();   // show/hide based on category
             recomputeInvoicePaymentBalance();
@@ -17272,30 +17343,34 @@
         //   Difference        = Amount Receivable − Amount Received (this row)
         function recomputeRowTDS(tr, autoFillAmounts = true) {
             if (!tr) return;
-            const num = sel => parseFloat(tr.querySelector(sel)?.value) || 0;
-            const taxable = num('.pay-taxable');
-            if (autoFillAmounts) {
-                const tdsAmtEl = tr.querySelector('.pay-tds-amt');
-                const itAmtEl  = tr.querySelector('.pay-ittds-amt');
-                const gstAmtEl = tr.querySelector('.pay-gsttds-amt');
-                if (tdsAmtEl) tdsAmtEl.value = taxable ? (+(taxable * num('.pay-tds-pct') / 100).toFixed(2) || '') : tdsAmtEl.value;
-                if (itAmtEl)  itAmtEl.value  = taxable ? (+(taxable * num('.pay-ittds-pct') / 100).toFixed(2) || '') : itAmtEl.value;
-                if (gstAmtEl) gstAmtEl.value = taxable ? (+(taxable * num('.pay-gsttds-pct') / 100).toFixed(2) || '') : gstAmtEl.value;
-            }
-            const totalEl = document.getElementById('totalAmount');
-            const grandTotal = parseFloat((totalEl?.textContent || '').replace(/[^0-9.\-]/g, '')) || 0;
-            const tdsAmt = num('.pay-tds-amt'), itAmt = num('.pay-ittds-amt'), gstAmt = num('.pay-gsttds-amt');
-            const receivable = +(grandTotal - tdsAmt - itAmt - gstAmt).toFixed(2);
-            const received = num('.pay-amt');
-            const diff = +(receivable - received).toFixed(2);
-            const fmt = n => '₹' + (typeof formatNumber === 'function' ? formatNumber(n) : Number(n).toFixed(2));
-            const recvEl = tr.querySelector('.pay-receivable');
-            const diffEl = tr.querySelector('.pay-diff');
-            if (recvEl) recvEl.textContent = fmt(receivable);
-            if (diffEl) {
-                diffEl.textContent = fmt(diff);
-                diffEl.className = 'pay-diff px-2 py-1 text-right font-medium ' +
-                    (Math.abs(diff) < 0.5 ? 'text-green-600' : diff > 0 ? 'text-amber-600' : 'text-red-600');
+            try {
+                const num = sel => parseFloat(tr.querySelector(sel)?.value) || 0;
+                const taxable = num('.pay-taxable');
+                if (autoFillAmounts) {
+                    const tdsAmtEl = tr.querySelector('.pay-tds-amt');
+                    const itAmtEl  = tr.querySelector('.pay-ittds-amt');
+                    const gstAmtEl = tr.querySelector('.pay-gsttds-amt');
+                    if (tdsAmtEl) tdsAmtEl.value = taxable ? (+(taxable * num('.pay-tds-pct') / 100).toFixed(2) || '') : tdsAmtEl.value;
+                    if (itAmtEl)  itAmtEl.value  = taxable ? (+(taxable * num('.pay-ittds-pct') / 100).toFixed(2) || '') : itAmtEl.value;
+                    if (gstAmtEl) gstAmtEl.value = taxable ? (+(taxable * num('.pay-gsttds-pct') / 100).toFixed(2) || '') : gstAmtEl.value;
+                }
+                const totalEl = document.getElementById('totalAmount');
+                const grandTotal = parseFloat((totalEl?.textContent || '').replace(/[^0-9.\-]/g, '')) || 0;
+                const tdsAmt = num('.pay-tds-amt'), itAmt = num('.pay-ittds-amt'), gstAmt = num('.pay-gsttds-amt');
+                const receivable = +(grandTotal - tdsAmt - itAmt - gstAmt).toFixed(2);
+                const received = num('.pay-amt');
+                const diff = +(receivable - received).toFixed(2);
+                const fmt = n => '₹' + (typeof formatNumber === 'function' ? formatNumber(n) : Number(n).toFixed(2));
+                const recvEl = tr.querySelector('.pay-receivable');
+                const diffEl = tr.querySelector('.pay-diff');
+                if (recvEl) recvEl.textContent = fmt(receivable);
+                if (diffEl) {
+                    diffEl.textContent = fmt(diff);
+                    diffEl.className = 'pay-diff px-2 py-1 text-right font-medium ' +
+                        (Math.abs(diff) < 0.5 ? 'text-green-600' : diff > 0 ? 'text-amber-600' : 'text-red-600');
+                }
+            } catch (e) {
+                console.error('recomputeRowTDS failed for one row (non-fatal):', e);
             }
         }
 
