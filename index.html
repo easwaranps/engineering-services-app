@@ -9135,6 +9135,16 @@
             const showDocs  = (t.txnCategory === 'INVOICE' || t.txnCategory === 'PO') &&
                               ['Approved','Sent','Completed','Paid'].includes(t.status);
             const tJson = JSON.stringify(t).replace(/'/g,"&apos;");
+            // Amount cell — shown for Quotation, PO, Credit Note, and Invoice
+            // (the priced document types). Enquiry and Delivery Note carry no
+            // price by design and are left as-is.
+            let amountCell = '';
+            const AMOUNT_CATS = ['QUOTATION','PO','CREDIT_NOTE','INVOICE'];
+            if (AMOUNT_CATS.includes(t.txnCategory)) {
+                const amt = calculateTotals(t.items || []).total;
+                const fmtAmt = n => '₹' + (typeof formatNumber === 'function' ? formatNumber(n) : Number(n).toFixed(2));
+                amountCell = `<td class="px-3 py-2 text-right whitespace-nowrap font-medium">${fmtAmt(amt)}</td>`;
+            }
             // Balance-due cell — INVOICE category only. Reads payment history
             // and compares with computed line-item grand total. Colour-coded:
             //   green = fully paid, red = balance pending, amber = no payments yet, grey = none recorded.
@@ -9165,7 +9175,8 @@
                     ${(t.txnCategory==='INVOICE'||t.txnCategory==='PO') ? _ledgerBadge(t.ledgerAccountId) : ''}
                 </td>
                 <td class="px-3 py-2 text-gray-500 whitespace-nowrap">${t.txnDate}</td>
-                <td class="px-3 py-2 text-gray-500">${t.reference || '—'}</td>
+                <td class="px-3 py-2 text-gray-500 max-w-xs truncate" title="${(t.subject||'').replace(/"/g,'&quot;')}">${t.subject || '—'}</td>
+                ${amountCell}
                 <td class="px-3 py-2">${statusBadge(t.status)}${(() => {
                     if (t.txnCategory !== 'ENQUIRY' || !(t.enquiryRecipients||[]).length) return '';
                     const recs = t.enquiryRecipients;
@@ -9396,6 +9407,7 @@
                 // Only the Invoice group gets a Balance Due column — that's where
                 // payment tracking happens. Other categories use the standard layout.
                 const isInvoiceGroup = g.cat === 'INVOICE';
+                const showAmountCol = ['QUOTATION','PO','CREDIT_NOTE','INVOICE'].includes(g.cat);
                 return `
                 <div class="bg-white rounded-2xl shadow-sm mb-4 overflow-hidden">
                     <div class="${g.color} px-4 py-2 flex justify-between items-center">
@@ -9409,7 +9421,8 @@
                                     <th class="px-3 py-2 text-left">ID</th>
                                     <th class="px-3 py-2 text-left">Party</th>
                                     <th class="px-3 py-2 text-left">Date</th>
-                                    <th class="px-3 py-2 text-left">Reference</th>
+                                    <th class="px-3 py-2 text-left">Subject</th>
+                                    ${showAmountCol ? '<th class="px-3 py-2 text-right">Amount</th>' : ''}
                                     <th class="px-3 py-2 text-left">Status</th>
                                     ${isInvoiceGroup ? '<th class="px-3 py-2 text-right">Balance Due</th>' : ''}
                                     <th class="px-3 py-2 text-right">Actions</th>
@@ -30071,7 +30084,7 @@ Automated WFH alert — ${company} Attendance System.`;
             <div class="mb-6 flex items-center justify-between flex-wrap gap-3">
                 <div>
                     <h2 class="text-2xl font-bold text-gray-800">🏦 Bank</h2>
-                    <p class="text-xs text-gray-400 mt-1">Read-only view — aggregates existing Transactions, Expenses/Bills, Payment Requests, Petty Cash, Fund Pool, and Interbank records already tagged to a bank account. Director expense reimbursements appear under Payment Requests (their actual payment path). Nothing here writes data.</p>
+                    <p class="text-xs text-gray-400 mt-1">Read-only view — aggregates existing Transactions, Expenses/Bills, Payment Requests, Petty Cash, Fund Pool, and Interbank records already tagged to a bank account. Director expense reimbursements appear under Expenses/Bills (their actual payment path). Nothing here writes data.</p>
                 </div>
             </div>
             <div class="bg-white rounded-xl border p-4 mb-4 flex items-center gap-4 flex-wrap">
