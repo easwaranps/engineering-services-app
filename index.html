@@ -16284,19 +16284,51 @@
 
         // Standalone viewer opened from the transactions list (without opening the edit modal)
         function openAttachmentsViewer(txn) {
-            currentTransaction = JSON.parse(JSON.stringify(txn)); // deep clone
-
-            // Populate modal header with read-only info
+            // Previously this function only set 2 fields (category, status)
+            // and explicitly WIPED the line items to empty — every other
+            // field (party, date, subject, reference, PO details, bank
+            // account, ledger tag, payments) was left blank or showing
+            // stale data from whatever was last open in this shared modal.
+            // That's the root cause of "invoice doesn't show full details /
+            // grand total is wrong" when opening Documents on an invoice.
+            //
+            // Fix: delegate to openTransactionModal(txn), which already does
+            // complete, correct population (and already has the payment-row
+            // exception hardening). Then, if this invoice is locked (Paid/
+            // Completed) and no admin override is set, make the core fields
+            // read-only and disable Save — preserving the original intent
+            // that this "Documents" entry point should not let someone
+            // quietly edit a finalised invoice's core details, while still
+            // showing its real data and keeping attachments/Revise/History
+            // fully functional.
+            openTransactionModal(txn);
             document.getElementById('modalTitle').textContent = 'Documents — ' + txn.txnID;
 
-            // Pre-fill hidden fields so the modal state is consistent
-            document.getElementById('txnCategory').value  = txn.txnCategory;
-            document.getElementById('txnStatus').value    = txn.status;
-            document.getElementById('lineItems').innerHTML = '';
-            document.getElementById('totalSection').classList.add('hidden');
-
-            toggleSupportingDocs();
-            document.getElementById('transactionModal').classList.add('show');
+            const isFinalised = (txn.status === 'Completed' || txn.status === 'Paid');
+            const locked = isFinalised && !settings.allowFinalisedTxnDelete;
+            const form = document.getElementById('transactionForm');
+            if (form) {
+                form.querySelectorAll('input, select, textarea').forEach(el => {
+                    // Leave file-attachment controls and any element inside the
+                    // Supporting Documents section fully usable regardless of lock.
+                    if (el.closest('#supportingDocsSection')) return;
+                    el.disabled = !!locked;
+                });
+                const saveBtn = document.getElementById('txnSaveBtn');
+                if (saveBtn) saveBtn.style.display = locked ? 'none' : '';
+            }
+            let banner = document.getElementById('docsLockedBanner');
+            if (locked) {
+                if (!banner) {
+                    banner = document.createElement('div');
+                    banner.id = 'docsLockedBanner';
+                    banner.className = 'mb-4 px-4 py-2 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg';
+                    banner.textContent = `🔒 ${txn.txnID} is ${txn.status} (finalised) — shown read-only here. Use "Revise" to create an editable new version, or enable "Allow Finalised Transaction Override" in Settings.`;
+                    form?.prepend(banner);
+                }
+            } else if (banner) {
+                banner.remove();
+            }
         }
 
         // ── END Supporting Documents ──────────────────────────────────────────────
