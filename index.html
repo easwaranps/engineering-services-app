@@ -1260,6 +1260,7 @@
                                 <tr class="bg-gray-100">
                                     <th class="border px-2 py-2 text-left w-12">S.No</th>
                                     <th class="border px-2 py-2 text-left" style="min-width:160px;">Description</th>
+                                    <th id="thGstLabel" class="border px-2 py-2 text-left hidden" style="width:150px;" title="Short label used in the GST%-wise Summary below, instead of the full description. Leave blank to just use the description.">GST Summary Label</th>
                                     <th id="thPartNo" class="border px-2 py-2 text-left hidden" style="width:110px;">Part No</th>
                                     <th id="thHSN" class="border px-2 py-2 text-left" style="width:100px;">HSN Code</th>
                                     <th class="border px-2 py-2 text-left" style="width:80px;">Qty</th>
@@ -6231,7 +6232,10 @@
                         const key = gstPct;
                         if (!gGroups.has(key)) gGroups.set(key, { descs: [], taxable: 0, gstAmt: 0, total: 0 });
                         const g = gGroups.get(key);
-                        if (it.description) g.descs.push(it.description);
+                        // Prefer the short GST Summary Label when set; falls
+                        // back to the full description when left blank.
+                        const label = (it.gstSummaryLabel || '').trim() || it.description;
+                        if (label) g.descs.push(label);
                         g.taxable += taxableAmount; g.gstAmt += gstAmt; g.total += lineTotal;
                     });
 
@@ -6250,7 +6254,7 @@
                         const gstBody = sortedRates.map(rate => {
                             const g = gGroups.get(rate);
                             gT += g.taxable; gG += g.gstAmt; gTot += g.total;
-                            let descText = g.descs.join(', ');
+                            let descText = [...new Set(g.descs)].join(', ');   // de-dupe repeated labels (e.g. multiple 'Reimbursement' items)
                             if (descText.length > 60) descText = descText.slice(0, 57) + '…';
                             return [descText || '—', fmtAmt(g.taxable), rate + '%', rate > 0 ? fmtAmt(g.gstAmt) : '', fmtAmt(g.total)];
                         });
@@ -16967,6 +16971,10 @@
                         style="min-height:38px; height:38px;"
                         rows="2" required>${item?.description || ''}</textarea>
                 </td>
+                <td class="td-gstlabel border px-2 py-2 align-top hidden">
+                    <input type="text" placeholder="e.g. Reimbursement" value="${(item?.gstSummaryLabel||'').replace(/"/g,'&quot;')}"
+                        class="item-gstlabel w-full px-2 py-1 border rounded text-sm" title="Short label for the GST%-wise Summary — leave blank to use the description" />
+                </td>
                 <td class="td-partno border px-2 py-2 align-top hidden">
                     <input type="text" placeholder="Part No" value="${item?.partNo || ''}" 
                         class="item-partno w-full px-2 py-1 border rounded text-sm" />
@@ -17056,6 +17064,10 @@
             if (_curCat === 'PO' || _curCat === 'QUOTATION' || _curCat === 'ENQUIRY' || _curCat === 'DELIVERY_NOTE') {
                 tr.querySelector('.td-partno')?.classList.remove('hidden');
             }
+            // Show GST Summary Label cell for Proforma Invoice only
+            if (_curCat === 'PROFORMA_INVOICE') {
+                tr.querySelector('.td-gstlabel')?.classList.remove('hidden');
+            }
             // Hide price/tax cells for Delivery Notes and Enquiries (no financial data)
             if (_curCat === 'DELIVERY_NOTE' || _curCat === 'ENQUIRY') {
                 ['td-hsn','td-rate','td-discount','td-taxable','td-sgst','td-cgst','td-igst','td-total'].forEach(c => {
@@ -17120,6 +17132,10 @@
                         class="item-desc w-full px-2 py-1 border rounded text-sm resize-y"
                         style="min-height:38px; height:38px;" rows="2" required></textarea>
                 </td>
+                <td class="td-gstlabel border px-2 py-2 align-top hidden">
+                    <input type="text" placeholder="e.g. Reimbursement" value=""
+                        class="item-gstlabel w-full px-2 py-1 border rounded text-sm" title="Short label for the GST%-wise Summary — leave blank to use the description" />
+                </td>
                 <td class="td-partno border px-2 py-2 align-top hidden">
                     <input type="text" placeholder="Part No" value=""
                         class="item-partno w-full px-2 py-1 border rounded text-sm" />
@@ -17181,6 +17197,9 @@
             // Apply category-specific visibility
             if (_curCat === 'PO' || _curCat === 'QUOTATION' || _curCat === 'ENQUIRY' || _curCat === 'DELIVERY_NOTE') {
                 tr.querySelector('.td-partno')?.classList.remove('hidden');
+            }
+            if (_curCat === 'PROFORMA_INVOICE') {
+                tr.querySelector('.td-gstlabel')?.classList.remove('hidden');
             }
             if (_curCat === 'DELIVERY_NOTE' || _curCat === 'ENQUIRY') {
                 ['td-hsn','td-rate','td-discount','td-taxable','td-sgst','td-cgst','td-igst','td-total'].forEach(c => {
@@ -17448,6 +17467,7 @@
                 const cgstPct = parseFloat(row.querySelector('.item-cgst')?.value) || 0;
                 const igstPct = parseFloat(row.querySelector('.item-igst')?.value) || 0;
                 const desc = (row.querySelector('.item-desc')?.value || '').trim();
+                const gstLabel = (row.querySelector('.item-gstlabel')?.value || '').trim();
                 if (!qty && !rate) return;   // skip fully-blank rows
 
                 const itemTotal = qty * rate;
@@ -17460,7 +17480,10 @@
                 const key = gstPct;
                 if (!groups.has(key)) groups.set(key, { descs: [], taxable: 0, gstAmt: 0, total: 0 });
                 const g = groups.get(key);
-                if (desc) g.descs.push(desc);
+                // Prefer the short GST Summary Label when set; falls back to
+                // the full description (same as before) when left blank.
+                const label = gstLabel || desc;
+                if (label) g.descs.push(label);
                 g.taxable += taxableAmount;
                 g.gstAmt  += gstAmt;
                 g.total   += lineTotal;
@@ -17479,7 +17502,7 @@
                 grandTaxable += g.taxable; grandGst += g.gstAmt; grandTotal += g.total;
                 // Multiple items sharing a rate → joined description list;
                 // trimmed if it gets long so the summary stays readable.
-                let descText = g.descs.join(', ');
+                let descText = [...new Set(g.descs)].join(', ');   // de-dupe repeated labels (e.g. multiple 'Reimbursement' items)
                 if (descText.length > 80) descText = descText.slice(0, 77) + '…';
                 return `<tr class="border-t">
                     <td class="px-3 py-2">${descText || '—'}</td>
@@ -17671,6 +17694,7 @@
                         itemID: `item-${idx + 1}`,
                         description: row.querySelector('.item-desc').value,
                         partNo: row.querySelector('.item-partno')?.value || '',
+                        gstSummaryLabel: (row.querySelector('.item-gstlabel')?.value || '').trim(),
                         hsnCode: row.querySelector('.item-hsn').value,
                         qty: parseFloat(row.querySelector('.item-qty').value) || 0,
                         uom: row.querySelector('.item-uom').value,
@@ -18276,6 +18300,15 @@
             } else {
                 document.getElementById('thPartNo')?.classList.add('hidden');
                 document.querySelectorAll('.td-partno').forEach(td => td.classList.add('hidden'));
+            }
+
+            // GST Summary Label column: Proforma Invoice only
+            if (cat === 'PROFORMA_INVOICE') {
+                document.getElementById('thGstLabel')?.classList.remove('hidden');
+                document.querySelectorAll('.td-gstlabel').forEach(td => td.classList.remove('hidden'));
+            } else {
+                document.getElementById('thGstLabel')?.classList.add('hidden');
+                document.querySelectorAll('.td-gstlabel').forEach(td => td.classList.add('hidden'));
             }
 
             // Client Contact & Terms: Quotation and Enquiry
