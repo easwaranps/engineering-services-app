@@ -1,6 +1,9 @@
 # IMSE EMS — Engineering Management System
 
 Web applications for IMSE Tech Services Pvt Ltd.
+## Demo URLs
+-**Main App** (office, accounts, directors):https://easwaranps.github.io/ems-demo
+-**Field App** (technicians on-site) :https://easwaranps.github.io/ems-demo/field_app
 
 ## Live URLs
 - **Main App** (office, accounts, directors): https://easwaranps.github.io/engineering-services-app
