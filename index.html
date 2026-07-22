@@ -1301,6 +1301,29 @@
                             </div>
                         </div>
                     </div>
+
+                    <!-- GST%-wise Summary (Proforma Invoice only) — groups line
+                         items by their GST rate, showing taxable/GST/total per
+                         rate bucket. Purely a read-only recap; nothing here is
+                         saved as its own field, it's recomputed from items on
+                         every open/edit and printed on the Proforma PDF. -->
+                    <div id="gstSummarySection" class="mt-4 hidden">
+                        <p class="text-sm font-semibold text-gray-700 mb-2">📊 GST%-wise Summary</p>
+                        <div class="overflow-x-auto border rounded-lg">
+                            <table class="w-full text-sm">
+                                <thead class="bg-gray-100 text-xs text-gray-600 uppercase">
+                                    <tr>
+                                        <th class="px-3 py-2 text-left">Description</th>
+                                        <th class="px-3 py-2 text-right">Taxable Amount</th>
+                                        <th class="px-3 py-2 text-right">GST%</th>
+                                        <th class="px-3 py-2 text-right">GST Amount</th>
+                                        <th class="px-3 py-2 text-right">Total</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="gstSummaryBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Bank Account Selection (Invoice/Proforma only) -->
@@ -6185,6 +6208,71 @@
                 });
 
                 let finalY = doc.lastAutoTable.finalY + 8;
+
+                // ── GST%-wise Summary (Proforma Invoice only) ──
+                // Groups line items by their effective GST rate, mirroring the
+                // same computation used in the edit form's live preview.
+                if (txn.txnCategory === 'PROFORMA_INVOICE' && Array.isArray(txn.items) && txn.items.length) {
+                    const gGroups = new Map();
+                    (txn.items||[]).forEach(it => {
+                        const qty = parseFloat(it.qty) || 0;
+                        const rate = parseFloat(it.rate) || 0;
+                        const discountPct = parseFloat(it.discountPct) || 0;
+                        const sgstPct = parseFloat(it.sgstPct) || 0;
+                        const cgstPct = parseFloat(it.cgstPct) || 0;
+                        const igstPct = parseFloat(it.igstPct) || 0;
+                        if (!qty && !rate) return;
+                        const itemTotal = qty * rate;
+                        const discountAmount = (itemTotal * discountPct) / 100;
+                        const taxableAmount = itemTotal - discountAmount;
+                        const gstPct = +(sgstPct + cgstPct + igstPct).toFixed(2);
+                        const gstAmt = (taxableAmount * gstPct) / 100;
+                        const lineTotal = taxableAmount + gstAmt;
+                        const key = gstPct;
+                        if (!gGroups.has(key)) gGroups.set(key, { descs: [], taxable: 0, gstAmt: 0, total: 0 });
+                        const g = gGroups.get(key);
+                        if (it.description) g.descs.push(it.description);
+                        g.taxable += taxableAmount; g.gstAmt += gstAmt; g.total += lineTotal;
+                    });
+
+                    if (gGroups.size) {
+                        const estH = 10 + 8 + (gGroups.size * 7) + 7 + 6;
+                        if (finalY + estH > 272) { doc.addPage(); addHeader(doc, doc.internal.getNumberOfPages()); finalY = 50; }
+                        doc.setFontSize(9); doc.setFont(undefined, 'bold'); doc.setTextColor(30, 30, 100);
+                        doc.text('GST%-wise Summary', 14, finalY);
+                        doc.setTextColor(0, 0, 0);
+                        finalY += 4;
+
+                        let gT = 0, gG = 0, gTot = 0;
+                        const sortedRates = Array.from(gGroups.keys()).sort((a,b) => a - b);
+                        const gstBody = sortedRates.map(rate => {
+                            const g = gGroups.get(rate);
+                            gT += g.taxable; gG += g.gstAmt; gTot += g.total;
+                            let descText = g.descs.join(', ');
+                            if (descText.length > 60) descText = descText.slice(0, 57) + '…';
+                            return [descText || '—', fmtAmt(g.taxable), rate + '%', rate > 0 ? fmtAmt(g.gstAmt) : '', fmtAmt(g.total)];
+                        });
+                        gstBody.push([
+                            { content: 'TOTAL', styles: { fontStyle: 'bold' } },
+                            { content: fmtAmt(gT), styles: { fontStyle: 'bold' } },
+                            '',
+                            { content: fmtAmt(gG), styles: { fontStyle: 'bold' } },
+                            { content: fmtAmt(gTot), styles: { fontStyle: 'bold' } }
+                        ]);
+                        doc.autoTable({
+                            startY: finalY, theme: 'grid',
+                            margin: { top: 35, left: 14, right: 14, bottom: 20 },
+                            tableWidth: totalTableWidth,
+                            styles: { fontSize: 8, cellPadding: 2 },
+                            headStyles: { fillColor: [30, 64, 175], textColor: 255, fontStyle: 'bold', fontSize: 8 },
+                            head: [['Description', 'Taxable Amount', 'GST%', 'GST Amount', 'Total']],
+                            columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },
+                            body: gstBody,
+                            didDrawPage: function(data) { if (data.pageNumber > 1) addHeader(doc, data.pageNumber); }
+                        });
+                        finalY = doc.lastAutoTable.finalY + 8;
+                    }
+                }
 
                 // ── Payments Received (INVOICE only, when payments exist) ──
                 // Renders a compact summary card (Received / Balance Due) plus
@@ -16608,7 +16696,7 @@
                 const clone = el.cloneNode(true);
                 el.parentNode.replaceChild(clone, el);
             });
-            document.getElementById('txnCategory').addEventListener('change', () => { toggleSupportingDocs(); updateReferenceField(); updateTxnBankSection(); toggleTxnPaymentsSection(); });
+            document.getElementById('txnCategory').addEventListener('change', () => { toggleSupportingDocs(); updateReferenceField(); updateTxnBankSection(); toggleTxnPaymentsSection(); updateGstSummary(); });
             document.getElementById('txnDirection').addEventListener('change', () => { updatePartyDropdown(); updateReferenceField(); updateTxnBankSection(); });
             document.getElementById('txnStatus').addEventListener('change', toggleSupportingDocs);
             // When the party changes, the GST mode (CGST/SGST vs IGST) may flip.
@@ -17330,6 +17418,80 @@
             // Grand total changed → balance summary tiles need a refresh.
             // Safe to call even when the payments section isn't visible (it no-ops).
             recomputeInvoicePaymentBalance();
+            updateGstSummary();
+        }
+
+        // Groups the invoice's line items by their effective GST rate
+        // (SGST%+CGST%+IGST% — normally only one pair is populated per item)
+        // and shows one row per distinct rate: combined Taxable Amount, GST
+        // Amount, and Total for everything taxed at that rate, plus a grand
+        // TOTAL row. Only relevant for Proforma Invoice — hidden otherwise.
+        function updateGstSummary() {
+            const section = document.getElementById('gstSummarySection');
+            const body = document.getElementById('gstSummaryBody');
+            if (!section || !body) return;
+            const cat = document.getElementById('txnCategory')?.value || '';
+            if (cat !== 'PROFORMA_INVOICE') { section.classList.add('hidden'); return; }
+
+            const rows = Array.from(document.getElementById('lineItems')?.children || []);
+            const groups = new Map();   // key: gst% (rounded) -> { descs:[], taxable, gstAmt, total }
+            rows.forEach(row => {
+                const qty = parseFloat(row.querySelector('.item-qty')?.value) || 0;
+                const rateEl = row.querySelector('.item-rate');
+                const rate = rateEl?.dataset.computed !== undefined
+                    ? (parseFloat(rateEl.dataset.computed) || 0)
+                    : (parseFloat(rateEl?.value) || 0);
+                const discountPct = parseFloat(row.querySelector('.item-discount')?.value) || 0;
+                const sgstPct = parseFloat(row.querySelector('.item-sgst')?.value) || 0;
+                const cgstPct = parseFloat(row.querySelector('.item-cgst')?.value) || 0;
+                const igstPct = parseFloat(row.querySelector('.item-igst')?.value) || 0;
+                const desc = (row.querySelector('.item-desc')?.value || '').trim();
+                if (!qty && !rate) return;   // skip fully-blank rows
+
+                const itemTotal = qty * rate;
+                const discountAmount = (itemTotal * discountPct) / 100;
+                const taxableAmount = itemTotal - discountAmount;
+                const gstPct = +(sgstPct + cgstPct + igstPct).toFixed(2);
+                const gstAmt = (taxableAmount * gstPct) / 100;
+                const lineTotal = taxableAmount + gstAmt;
+
+                const key = gstPct;
+                if (!groups.has(key)) groups.set(key, { descs: [], taxable: 0, gstAmt: 0, total: 0 });
+                const g = groups.get(key);
+                if (desc) g.descs.push(desc);
+                g.taxable += taxableAmount;
+                g.gstAmt  += gstAmt;
+                g.total   += lineTotal;
+            });
+
+            if (!groups.size) { section.classList.add('hidden'); return; }
+            section.classList.remove('hidden');
+
+            const fmt = n => (typeof formatNumber === 'function' ? formatNumber(n) : Number(n).toFixed(2));
+            let grandTaxable = 0, grandGst = 0, grandTotal = 0;
+            const sortedRates = Array.from(groups.keys()).sort((a,b) => a - b);
+            body.innerHTML = sortedRates.map(rate => {
+                const g = groups.get(rate);
+                grandTaxable += g.taxable; grandGst += g.gstAmt; grandTotal += g.total;
+                // Multiple items sharing a rate → joined description list;
+                // trimmed if it gets long so the summary stays readable.
+                let descText = g.descs.join(', ');
+                if (descText.length > 80) descText = descText.slice(0, 77) + '…';
+                return `<tr class="border-t">
+                    <td class="px-3 py-2">${descText || '—'}</td>
+                    <td class="px-3 py-2 text-right">${fmt(g.taxable)}</td>
+                    <td class="px-3 py-2 text-right">${rate}%</td>
+                    <td class="px-3 py-2 text-right">${rate>0?fmt(g.gstAmt):''}</td>
+                    <td class="px-3 py-2 text-right font-medium">${fmt(g.total)}</td>
+                </tr>`;
+            }).join('') + `
+                <tr class="border-t-2 bg-gray-50 font-bold">
+                    <td class="px-3 py-2">TOTAL</td>
+                    <td class="px-3 py-2 text-right">${fmt(grandTaxable)}</td>
+                    <td class="px-3 py-2"></td>
+                    <td class="px-3 py-2 text-right">${fmt(grandGst)}</td>
+                    <td class="px-3 py-2 text-right">${fmt(grandTotal)}</td>
+                </tr>`;
         }
 
         // ════════════════════════════════════════════════════════════════
