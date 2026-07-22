@@ -6194,10 +6194,19 @@
                     const payments = txn.paymentsReceived.filter(p => (parseFloat(p.amount) || 0) > 0);
                     if (payments.length > 0) {
                         const totalReceived = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
-                        const balance       = +(grandTotal - totalReceived).toFixed(2);
+                        // TDS/IT TDS/GST TDS deducted by the client at source is
+                        // money that legally left the invoice value (remitted to
+                        // the tax department on the seller's behalf) — it is NOT
+                        // an unpaid shortfall, so it must reduce Balance Due
+                        // exactly like a payment does. Shown as its own line so
+                        // the client-facing PDF is transparent about why the
+                        // cash received is less than the Grand Total.
+                        const totalTDS = payments.reduce((s, p) =>
+                            s + (parseFloat(p.tdsAmount)||0) + (parseFloat(p.itTdsAmount)||0) + (parseFloat(p.gstTdsAmount)||0), 0);
+                        const balance = +(grandTotal - totalReceived - totalTDS).toFixed(2);
 
-                        // Estimate space needed: heading + 2 summary rows + table head + payment rows + padding
-                        const estimatedH = 12 + 12 + 8 + (payments.length * 7) + 6;
+                        // Estimate space needed: heading + summary rows + table head + payment rows + padding
+                        const estimatedH = 12 + (totalTDS > 0.005 ? 16 : 12) + 8 + (payments.length * 7) + 6;
                         if (finalY + estimatedH > 272) { doc.addPage(); addHeader(doc, doc.internal.getNumberOfPages()); finalY = 50; }
 
                         // Section heading
@@ -6206,7 +6215,7 @@
                         doc.setTextColor(0, 0, 0);
                         finalY += 4;
 
-                        // Summary mini-table: Grand Total / Received / Balance Due
+                        // Summary mini-table: Grand Total / Received / [TDS Deducted] / Balance Due
                         // Colour the Balance Due row based on outstanding amount.
                         const balLabel = Math.abs(balance) < 0.005 ? 'Paid in Full'
                                         : balance < 0              ? 'Overpaid by'
@@ -6214,6 +6223,7 @@
                         const summaryRows = [
                             ['Grand Total',                fmtAmt(grandTotal)],
                             ['Less: Payments Received',    fmtAmt(totalReceived)],
+                            ...(totalTDS > 0.005 ? [['Less: TDS Deducted at Source', fmtAmt(totalTDS)]] : []),
                             [balLabel,                     fmtAmt(Math.abs(balance))]
                         ];
                         doc.autoTable({
@@ -9169,7 +9179,11 @@
                 const tot = calculateTotals(t.items || []);
                 const grandTotal = parseFloat(tot.total) || 0;
                 const received = (t.paymentsReceived || []).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
-                const balance  = +(grandTotal - received).toFixed(2);
+                // TDS/IT TDS/GST TDS deducted by the client counts toward
+                // settlement — see recomputeInvoicePaymentBalance for why.
+                const tdsDeducted = (t.paymentsReceived || []).reduce((s, p) =>
+                    s + (parseFloat(p.tdsAmount)||0) + (parseFloat(p.itTdsAmount)||0) + (parseFloat(p.gstTdsAmount)||0), 0);
+                const balance  = +(grandTotal - received - tdsDeducted).toFixed(2);
                 const fmt = n => '₹' + (typeof formatNumber === 'function' ? formatNumber(n) : Number(n).toFixed(2));
                 let chip;
                 if ((t.paymentsReceived||[]).length === 0) {
@@ -9180,7 +9194,7 @@
                     chip = `<span class="px-2 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-bold" title="Received more than invoiced">⚠ Overpaid ${fmt(-balance)}</span>`;
                 } else {
                     chip = `<span class="px-2 py-1 rounded-full bg-red-100 text-red-700 text-xs font-bold">${fmt(balance)} due</span>
-                            <div class="text-[10px] text-gray-500 mt-0.5">Recd ${fmt(received)} / ${fmt(grandTotal)}</div>`;
+                            <div class="text-[10px] text-gray-500 mt-0.5">Recd ${fmt(received)}${tdsDeducted>0.005?' + '+fmt(tdsDeducted)+' TDS':''} / ${fmt(grandTotal)}</div>`;
                 }
                 balanceCell = `<td class="px-3 py-2 text-right whitespace-nowrap">${chip}</td>`;
             }
@@ -17336,26 +17350,36 @@
         }
 
         // Compute and render the Grand Total / Received / Balance Due tiles.
-        // Reads the form's current Grand Total (already in updateTotals)
-        // and sums every payment row's amount input.
+        // Reads the form's current Grand Total (already in updateTotals),
+        // sums every payment row's amount, AND sums TDS/IT TDS/GST TDS
+        // deducted by the client. TDS deducted-at-source is money that
+        // legally left the invoice value (remitted to the tax department on
+        // your behalf, evidenced by the client's TDS certificate) — it is
+        // NOT an unpaid shortfall, so it must reduce Balance Due exactly
+        // like a payment does. Previously Balance Due only subtracted the
+        // raw Amount Received, so a fully-settled TDS invoice incorrectly
+        // showed the TDS amount as still outstanding.
         function recomputeInvoicePaymentBalance() {
             const totalEl = document.getElementById('totalAmount');
             if (!totalEl) return;
             // Strip the currency symbol and grouping commas to parse a number.
             const grandTotal = parseFloat((totalEl.textContent || '').replace(/[^0-9.\-]/g, '')) || 0;
             const rows = document.querySelectorAll('#txnPaymentsBody tr');
-            let received = 0;
+            let received = 0, tdsDeducted = 0;
             rows.forEach(tr => {
                 received += parseFloat(tr.querySelector('.pay-amt')?.value) || 0;
+                tdsDeducted += (parseFloat(tr.querySelector('.pay-tds-amt')?.value) || 0)
+                             + (parseFloat(tr.querySelector('.pay-ittds-amt')?.value) || 0)
+                             + (parseFloat(tr.querySelector('.pay-gsttds-amt')?.value) || 0);
             });
-            const balance = +(grandTotal - received).toFixed(2);
+            const balance = +(grandTotal - received - tdsDeducted).toFixed(2);
             const fmt = n => '₹' + (typeof formatNumber === 'function' ? formatNumber(n) : Number(n).toFixed(2));
             const elTot = document.getElementById('balGrandTotal');
             const elRcv = document.getElementById('balReceived');
             const elDue = document.getElementById('balDue');
             const tile  = document.getElementById('balanceDueTile');
             if (elTot) elTot.textContent = fmt(grandTotal);
-            if (elRcv) elRcv.textContent = fmt(received);
+            if (elRcv) elRcv.textContent = fmt(received) + (tdsDeducted > 0.005 ? ` (+ ${fmt(tdsDeducted)} TDS)` : '');
             if (elDue) elDue.textContent = fmt(balance);
             // Recolour the Balance Due tile: red for outstanding, green for settled,
             // amber for over-paid (which is a data-entry warning, not a real state).
@@ -23347,7 +23371,7 @@ Automated WFH alert — ${company} Attendance System.`;
             const ageDays=d=>d?Math.floor((today-new Date(d))/86400000):0;
             const ageBucket=d=>{const a=ageDays(d);return a<=30?'0-30':a<=60?'31-60':a<=90?'61-90':'90+';};
 
-            const appInvs=(transactions||[]).filter(t=>t.txnCategory==='INVOICE'&&t.txnDirection==='Outgoing'&&!['Draft','Cancelled'].includes(t.status)).map(t=>{const tot=calculateTotals(t.items||[]);const rec=(t.paymentsReceived||[]).reduce((s,p)=>s+(parseFloat(p.amount)||0),0);return{arID:'TXN-'+t.txnID,source:'app',client:t.partyName||'—',invoiceNo:t.txnID,invoiceDate:t.txnDate||'',dueDate:t.dueDate||'',invoiceAmt:tot.total||0,received:rec,balance:Math.max(0,(tot.total||0)-rec),description:(t.items||[]).map(i=>i.description||'').filter(Boolean).join('; '),followUps:t.arFollowUps||[]};}).filter(t=>t.balance>0.01);
+            const appInvs=(transactions||[]).filter(t=>t.txnCategory==='INVOICE'&&t.txnDirection==='Outgoing'&&!['Draft','Cancelled'].includes(t.status)).map(t=>{const tot=calculateTotals(t.items||[]);const rec=(t.paymentsReceived||[]).reduce((s,p)=>s+(parseFloat(p.amount)||0),0);const tds=(t.paymentsReceived||[]).reduce((s,p)=>s+(parseFloat(p.tdsAmount)||0)+(parseFloat(p.itTdsAmount)||0)+(parseFloat(p.gstTdsAmount)||0),0);return{arID:'TXN-'+t.txnID,source:'app',client:t.partyName||'—',invoiceNo:t.txnID,invoiceDate:t.txnDate||'',dueDate:t.dueDate||'',invoiceAmt:tot.total||0,received:rec,balance:Math.max(0,(tot.total||0)-rec-tds),description:(t.items||[]).map(i=>i.description||'').filter(Boolean).join('; '),followUps:t.arFollowUps||[]};}).filter(t=>t.balance>0.01);
             const allAR=[...(arInvoices||[]).filter(a=>a.balance>0.01),...appInvs].sort((a,b)=>(a.client||'').localeCompare(b.client||''));
             const totalOut=allAR.reduce((s,a)=>s+a.balance,0);
             const buckets={'0-30':0,'31-60':0,'61-90':0,'90+':0};
