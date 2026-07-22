@@ -6244,7 +6244,9 @@
                         finalY += 4;
 
                         let gT = 0, gG = 0, gTot = 0;
-                        const sortedRates = Array.from(gGroups.keys()).sort((a,b) => a - b);
+                        // Preserve the order items first appear on the invoice
+                        // (Map keeps insertion order) rather than sorting by rate.
+                        const sortedRates = Array.from(gGroups.keys());
                         const gstBody = sortedRates.map(rate => {
                             const g = gGroups.get(rate);
                             gT += g.taxable; gG += g.gstAmt; gTot += g.total;
@@ -17469,7 +17471,9 @@
 
             const fmt = n => (typeof formatNumber === 'function' ? formatNumber(n) : Number(n).toFixed(2));
             let grandTaxable = 0, grandGst = 0, grandTotal = 0;
-            const sortedRates = Array.from(groups.keys()).sort((a,b) => a - b);
+            // Preserve the order items first appear on the invoice (Map keeps
+            // insertion order) rather than sorting by rate.
+            const sortedRates = Array.from(groups.keys());
             body.innerHTML = sortedRates.map(rate => {
                 const g = groups.get(rate);
                 grandTaxable += g.taxable; grandGst += g.gstAmt; grandTotal += g.total;
