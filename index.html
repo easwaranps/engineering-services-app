@@ -1637,6 +1637,14 @@
         let expenses = [];        // Expense & Bills module
         let directorExpenses = []; // Director Expenses module
         let bankAccounts = [];    // Bank accounts for income & expense tracking
+        // ── Bank Reconciliation checkpoints ──────────────────────────────
+        // One record per bank account per month: { id, bankAccountId,
+        // periodFrom, periodTo, openingBalance, closingBalance, verifiedBy,
+        // verifiedDate, notes }. Purely a reconciliation checkpoint against
+        // your actual bank statement — does NOT touch or duplicate the
+        // underlying Transactions/Expenses/Payment Requests data, which the
+        // Bank Ledger still aggregates fresh and read-only every time.
+        let bankReconciliations = [];
         // ── Chart of Accounts (additive, optional) ──────────────────────
         // A ledger-account master, separate from `parties` (who) and
         // `ACC_CATEGORIES` (expense-only heads). Every transaction module
@@ -3351,6 +3359,7 @@
             expenses = [];
             bankAccounts = [];
             chartOfAccounts = [];
+            bankReconciliations = [];
             appFolderId = null;   // Reset so next login re-searches Drive
             settingsUnlocked = false;  // Lock settings on signout
             payslips = [];
@@ -4935,6 +4944,14 @@
                 } catch(e) {
                     console.warn('Chart of Accounts load failed, using defaults:', e.message);
                     chartOfAccounts = getDefaultChartOfAccounts();
+                }
+                // Bank Reconciliations — loaded independently, same safe pattern.
+                try {
+                    const brData = await loadFileFromDrive('bankReconciliations.json');
+                    bankReconciliations = Array.isArray(brData) ? brData : [];
+                } catch(e) {
+                    console.warn('Bank Reconciliations load failed, defaulting to empty:', e.message);
+                    bankReconciliations = [];
                 }
                 staff           = Array.isArray(staffData)   ? staffData    : [];
                 // One-time cleanup: remove phantom blank records that were accidentally
@@ -30400,16 +30417,21 @@ Automated WFH alert — ${company} Attendance System.`;
 
             // Regular Expenses / Bills paid directly from a bank account
             // (Supplier, Statutory, Salary, etc.) — OUT.
-            // Debit = Net Payable (the actual amount transferred, net of TDS/
-            // advance/credit-note deductions) — NOT the gross bill amount —
-            // falling back to the gross amount only for older records saved
-            // before Net Payable existed as a field.
+            // Debit = balanceAmt — the actual final payable amount after
+            // PF/PT/ESIC/TDS/advance/credit-note deductions (matches the
+            // exact fallback chain the rest of the app already uses for
+            // "amount actually paid" — see Payment Request bill sourcing).
+            // netPayable ALONE is not enough: it only accounts for TDS +
+            // advance + credit-note, not PT/PF/ESIC — using it alone
+            // overstated Debit by exactly the PT+PF amount on wage entries.
+            // Falls back through netPayable, then the gross bill amount,
+            // for older records missing the newer fields.
             // Date = Cheque / Online Paid Date (when the money actually left
             // the bank), not the bill's own date.
             (expenses||[]).forEach(e => {
                 if (e.billType === 'INTERBANK') return;   // handled separately below
                 if (e.bankAccountId !== bankId) return;
-                const amt = +(e.netPayable ?? e.billAmtINR) || 0;
+                const amt = +(e.balanceAmt ?? e.netPayable ?? e.billAmtINR) || 0;
                 if (amt <= 0) return;
                 const who = e.vendor || e.description || 'Bill/Expense';
                 rows.push({ date:e.payDate||e.billDate||'', desc:`${who}${e.billNo?' — Bill '+e.billNo:''}`, credit:0, debit:amt, src:'Expenses/Bills' });
@@ -30433,6 +30455,86 @@ Automated WFH alert — ${company} Attendance System.`;
             return rows;
         }
 
+        // Most recent VERIFIED reconciliation for a bank, strictly before a
+        // given date (used to auto carry-forward opening balance into a new
+        // period). If no date given, just the most recent overall.
+        function _lastVerifiedRecon(bankId, beforeDate) {
+            const list = (bankReconciliations||[]).filter(r => r.bankAccountId === bankId &&
+                (!beforeDate || (r.periodTo && r.periodTo < beforeDate)));
+            if (!list.length) return null;
+            return list.sort((a,b) => (b.periodTo||'').localeCompare(a.periodTo||''))[0];
+        }
+        // Exact match for the currently-selected From/To range — if this
+        // exact period was already verified and saved, show it as such.
+        function _exactRecon(bankId, fromDate, toDate) {
+            if (!fromDate || !toDate) return null;
+            return (bankReconciliations||[]).find(r => r.bankAccountId === bankId && r.periodFrom === fromDate && r.periodTo === toDate) || null;
+        }
+
+        async function saveBankReconciliation(bankId, fromDate, toDate, openingBalance, closingBalance) {
+            if (!fromDate || !toDate) { alert('Please set both a "From" and "To" date before verifying a period — this defines the month/range being locked in.'); return; }
+            const existing = _exactRecon(bankId, fromDate, toDate);
+            const msg = existing
+                ? `This period (${fromDate} to ${toDate}) was already verified on ${existing.verifiedDate}. Overwrite with the current figures?\n\nOpening: ₹${openingBalance.toLocaleString('en-IN')}\nClosing: ₹${closingBalance.toLocaleString('en-IN')}`
+                : `Verify and lock this period as reconciled?\n\nBank: ${(bankAccounts||[]).find(b=>b.id===bankId)?.accountName||''}\nPeriod: ${fromDate} to ${toDate}\nOpening: ₹${openingBalance.toLocaleString('en-IN')}\nClosing: ₹${closingBalance.toLocaleString('en-IN')}\n\nNext month can then auto-carry-forward this closing balance as its opening — no need to re-enter it.`;
+            if (!confirm(msg)) return;
+
+            const rec = {
+                id: existing?.id || ('BR-'+Date.now()),
+                bankAccountId: bankId, periodFrom: fromDate, periodTo: toDate,
+                openingBalance: +openingBalance.toFixed(2), closingBalance: +closingBalance.toFixed(2),
+                verifiedBy: _bmsSession?.name || currentUser?.name || currentUser?.email || 'Unknown',
+                verifiedDate: new Date().toISOString().split('T')[0],
+                notes: ''
+            };
+            if (existing) {
+                const idx = bankReconciliations.findIndex(r => r.id === existing.id);
+                bankReconciliations[idx] = rec;
+            } else {
+                bankReconciliations.push(rec);
+            }
+            try {
+                await saveData('bankReconciliations', bankReconciliations);
+                _showToast('✓ Period verified and saved — next period will auto-carry this closing balance forward.', '#15803d', 4500);
+                window._bankLedgerOpeningManual = false;   // let auto-carry-forward recompute cleanly on next render
+                renderView();
+            } catch (e) { alert('Save failed: ' + e.message); }
+        }
+
+        function openBankReconHistoryModal(bankId) {
+            const ba = (bankAccounts||[]).find(b => b.id === bankId);
+            const list = (bankReconciliations||[]).filter(r => r.bankAccountId === bankId)
+                .sort((a,b) => (b.periodTo||'').localeCompare(a.periodTo||''));
+            document.getElementById('bankReconHistModal')?.remove();
+            const modal = document.createElement('div');
+            modal.id = 'bankReconHistModal';
+            modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px';
+            modal.innerHTML = `
+            <div style="background:#fff;border-radius:16px;width:min(560px,96vw);max-height:85vh;overflow-y:auto">
+                <div style="background:linear-gradient(135deg,#0369a1,#0c4a6e);padding:16px 22px;border-radius:16px 16px 0 0;display:flex;justify-content:space-between;align-items:center">
+                    <div style="color:#fff;font-weight:700;font-size:15px">📌 Verified Reconciliation History — ${ba?.accountName||''}</div>
+                    <button onclick="document.getElementById('bankReconHistModal').remove()" style="color:#fff;font-size:22px;background:none;border:none;cursor:pointer">✕</button>
+                </div>
+                <div style="padding:18px">
+                    ${list.length ? `
+                    <table style="width:100%;font-size:13px;border-collapse:collapse">
+                        <thead><tr style="text-align:left;color:#6b7280;font-size:11px;text-transform:uppercase">
+                            <th style="padding:6px">Period</th><th style="padding:6px;text-align:right">Opening</th><th style="padding:6px;text-align:right">Closing</th><th style="padding:6px">Verified</th>
+                        </tr></thead>
+                        <tbody>
+                        ${list.map(r => `<tr style="border-top:1px solid #f1f5f9">
+                            <td style="padding:6px">${r.periodFrom} to ${r.periodTo}</td>
+                            <td style="padding:6px;text-align:right">₹${r.openingBalance.toLocaleString('en-IN')}</td>
+                            <td style="padding:6px;text-align:right;font-weight:600">₹${r.closingBalance.toLocaleString('en-IN')}</td>
+                            <td style="padding:6px;font-size:11px;color:#6b7280">${r.verifiedBy}<br/>${r.verifiedDate}</td>
+                        </tr>`).join('')}
+                        </tbody>
+                    </table>` : `<p style="color:#9ca3af;font-size:13px;text-align:center;padding:20px">No verified periods yet for this account. Set a From/To range in the Bank Ledger, confirm the closing balance against your bank statement, then click "✓ Verify & Save Closing Balance".</p>`}
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+        }
+
         function renderBankLedger(el) {
             const banks = (bankAccounts||[]).filter(b => b.isActive !== false);
             const selId = window._bankLedgerSel || (banks[0]?.id || '');
@@ -30449,6 +30551,19 @@ Automated WFH alert — ${company} Attendance System.`;
             const priorEntries = fromDate ? allEntries.filter(r => r.date && r.date < fromDate) : [];
             const computedOpening = priorEntries.reduce((s,r)=>s+(r.credit||0)-(r.debit||0), 0);
 
+            // ── Auto carry-forward: if the user hasn't manually typed an
+            // opening balance for the CURRENT bank+period, prefer (in order):
+            // 1) an exact saved verification for this exact From/To range
+            // 2) the closing balance of the most recent verified prior period
+            // 3) the raw computed-from-history figure (previous behaviour)
+            const exactRecon = _exactRecon(selId, fromDate, toDate);
+            const lastVerified = _lastVerifiedRecon(selId, fromDate || undefined);
+            if (!window._bankLedgerOpeningManual) {
+                if (exactRecon) window._bankLedgerOpening = exactRecon.openingBalance;
+                else if (lastVerified) window._bankLedgerOpening = lastVerified.closingBalance;
+                // else leave whatever it currently is (0 by default); the
+                // "↺ Auto" button still offers the raw computed figure.
+            }
             const openingInput = window._bankLedgerOpening ?? 0;
             let running = +openingInput || 0;
             const rowsHtml = entries.map(r => {
@@ -30469,32 +30584,37 @@ Automated WFH alert — ${company} Attendance System.`;
             <div class="mb-6 flex items-center justify-between flex-wrap gap-3">
                 <div>
                     <h2 class="text-2xl font-bold text-gray-800">🏦 Bank</h2>
-                    <p class="text-xs text-gray-400 mt-1">Read-only view — aggregates existing Transactions, Expenses/Bills (Net Payable, by Paid Date), and Payment Request/Interbank records already tagged to a bank account. Petty Cash replenishments and Fund Pool disbursements are intentionally excluded (see those modules directly). Director expense reimbursements appear under Expenses/Bills. Nothing here writes data.</p>
+                    <p class="text-xs text-gray-400 mt-1">Read-only view — aggregates existing Transactions, Expenses/Bills (final Net Payable after all deductions, by Paid Date), and Payment Request/Interbank records already tagged to a bank account. Petty Cash replenishments and Fund Pool disbursements are intentionally excluded (see those modules directly). Director expense reimbursements appear under Expenses/Bills. Nothing here writes data.</p>
                 </div>
             </div>
             <div class="bg-white rounded-xl border p-4 mb-4 flex items-center gap-4 flex-wrap">
                 <div>
                     <label class="block text-xs font-semibold text-gray-500 mb-1">Bank Account</label>
-                    <select onchange="window._bankLedgerSel=this.value;renderView();" class="px-3 py-2 border rounded-lg text-sm min-w-[260px]">
+                    <select onchange="window._bankLedgerSel=this.value;window._bankLedgerOpeningManual=false;renderView();" class="px-3 py-2 border rounded-lg text-sm min-w-[260px]">
                         ${banks.length ? banks.map(b=>`<option value="${b.id}" ${b.id===selId?'selected':''}>${b.accountName} — ${b.bankName}${b.accountNo?' (····'+String(b.accountNo).slice(-4)+')':''}</option>`).join('') : '<option value="">No bank accounts configured — add one in Settings</option>'}
                     </select>
                 </div>
                 <div>
                     <label class="block text-xs font-semibold text-gray-500 mb-1">From</label>
-                    <input type="date" value="${fromDate}" onchange="window._bankLedgerFrom=this.value;renderView();" class="px-3 py-2 border rounded-lg text-sm"/>
+                    <input type="date" value="${fromDate}" onchange="window._bankLedgerFrom=this.value;window._bankLedgerOpeningManual=false;renderView();" class="px-3 py-2 border rounded-lg text-sm"/>
                 </div>
                 <div>
                     <label class="block text-xs font-semibold text-gray-500 mb-1">To</label>
-                    <input type="date" value="${toDate}" onchange="window._bankLedgerTo=this.value;renderView();" class="px-3 py-2 border rounded-lg text-sm"/>
+                    <input type="date" value="${toDate}" onchange="window._bankLedgerTo=this.value;window._bankLedgerOpeningManual=false;renderView();" class="px-3 py-2 border rounded-lg text-sm"/>
                 </div>
-                ${(fromDate || toDate) ? `<button onclick="window._bankLedgerFrom='';window._bankLedgerTo='';renderView();" class="px-2 py-1.5 text-xs text-gray-500 hover:text-gray-700 underline">Clear period</button>` : ''}
+                ${(fromDate || toDate) ? `<button onclick="window._bankLedgerFrom='';window._bankLedgerTo='';window._bankLedgerOpeningManual=false;renderView();" class="px-2 py-1.5 text-xs text-gray-500 hover:text-gray-700 underline">Clear period</button>` : ''}
                 <div>
-                    <label class="block text-xs font-semibold text-gray-500 mb-1">Opening Balance <span class="font-normal text-gray-400">(for this view only, not saved)</span></label>
+                    <label class="block text-xs font-semibold text-gray-500 mb-1">
+                        Opening Balance
+                        ${exactRecon ? `<span class="text-green-600 font-semibold">(✓ verified ${exactRecon.verifiedDate})</span>`
+                          : lastVerified ? `<span class="text-blue-500">(auto from ${lastVerified.periodTo} closing)</span>`
+                          : `<span class="font-normal text-gray-400">(for this view only, not saved)</span>`}
+                    </label>
                     <div class="flex gap-1">
                         <input type="number" step="0.01" value="${openingInput.toFixed(2)}"
-                            onchange="window._bankLedgerOpening=parseFloat(this.value)||0; this.value=window._bankLedgerOpening.toFixed(2); renderView();"
+                            onchange="window._bankLedgerOpening=parseFloat(this.value)||0; window._bankLedgerOpeningManual=true; this.value=window._bankLedgerOpening.toFixed(2); renderView();"
                             placeholder="0.00" class="px-3 py-2 border rounded-lg text-sm w-32"/>
-                        ${fromDate ? `<button onclick="window._bankLedgerOpening=${computedOpening};renderView();" title="Auto-fill using all entries before ${fromDate}" class="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-600">↺ Auto (₹${computedOpening.toLocaleString('en-IN')})</button>` : ''}
+                        ${fromDate ? `<button onclick="window._bankLedgerOpening=${computedOpening};window._bankLedgerOpeningManual=true;renderView();" title="Auto-fill using all entries before ${fromDate}" class="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-600">↺ Recompute (₹${computedOpening.toLocaleString('en-IN')})</button>` : ''}
                     </div>
                 </div>
                 <div class="ml-auto flex gap-4 text-sm items-center">
@@ -30502,6 +30622,10 @@ Automated WFH alert — ${company} Attendance System.`;
                     <div><span class="text-gray-400">Total Out:</span> <span class="font-semibold text-red-600">₹${totalDebit.toLocaleString('en-IN')}</span></div>
                     <div><span class="text-gray-400">Net:</span> <span class="font-semibold">₹${running.toLocaleString('en-IN')}</span></div>
                     ${selId ? `
+                    ${exactRecon
+                        ? `<span class="px-3 py-1.5 bg-green-50 text-green-700 border border-green-200 rounded-lg text-xs font-semibold" title="Verified by ${exactRecon.verifiedBy} on ${exactRecon.verifiedDate}">✓ Verified</span>`
+                        : `<button onclick="saveBankReconciliation('${selId}','${fromDate}','${toDate}',${openingInput},${running})" class="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-semibold hover:bg-emerald-700" title="Lock this period's closing balance after checking it against your actual bank statement. Next period then auto-carries this closing forward as its opening.">✓ Verify &amp; Save</button>`}
+                    <button onclick="openBankReconHistoryModal('${selId}')" class="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-lg text-xs font-semibold hover:bg-gray-200" title="View past verified/reconciled periods for this account">📌 History</button>
                     <button onclick="bankLedgerPDF('${selId}', false)" class="px-3 py-1.5 bg-sky-600 text-white rounded-lg text-xs font-semibold hover:bg-sky-700">📄 Download PDF</button>
                     <button onclick="bankLedgerPDF('${selId}', true)" class="px-3 py-1.5 bg-slate-600 text-white rounded-lg text-xs font-semibold hover:bg-slate-700">🖨️ View / Print</button>` : ''}
                 </div>
@@ -30555,7 +30679,7 @@ Automated WFH alert — ${company} Attendance System.`;
             }
             doc.setDrawColor(3,105,161); doc.setLineWidth(0.4); doc.line(14, 33, 196, 33);
             doc.setFontSize(8); doc.setTextColor(120,120,120);
-            doc.text('Aggregated from existing Transactions, Expenses/Bills (Net Payable), Payment Requests, and Interbank records. Petty Cash and Fund Pools excluded. Not a bank-reconciled statement.', 105, 38, {align:'center'});
+            doc.text('Aggregated from existing Transactions, Expenses/Bills (final Net Payable after all deductions), Payment Requests, and Interbank records. Petty Cash and Fund Pools excluded. Not a bank-reconciled statement.', 105, 38, {align:'center'});
 
             let running = opening;
             const body = entries.map(r => {
