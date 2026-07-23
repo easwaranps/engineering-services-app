@@ -30390,43 +30390,32 @@ Automated WFH alert — ${company} Attendance System.`;
                 }
             });
 
-            // 3) Petty Cash — replenishments OUT from bank into the petty cash float
-            (pettyCashTransactions||[]).forEach(pc => {
-                if (pc.fromBankAccountID !== bankId) return;
-                if (pc.txnType === 'REPLENISHMENT' || pc.txnType === 'Replenishment') {
-                    rows.push({ date:pc.txnDate||'', desc:`Petty cash replenishment${pc.transferRef?' — Ref '+pc.transferRef:''}`, credit:0, debit:+pc.amount||0, src:'Petty Cash' });
-                }
-            });
+            // Petty Cash replenishments and Fund Pool disbursements are
+            // intentionally EXCLUDED from this ledger (per business decision):
+            // they are internal transfers into a float/pool, not a bill or
+            // expense payment, and mixing them into the Debit column here
+            // double-counts against how those two modules are tracked
+            // elsewhere. If you need to see them, use the Petty Cash and
+            // Fund Pools views directly.
 
-            // 4) Fund Pools — disbursements OUT. Matched by disbursedFromBankId
-            //    when present (precise, survives account renames); falls back
-            //    to legacy bank-NAME matching for older records saved before
-            //    this ID field existed. Run "Audit Fund Pool Bank References"
-            //    in Settings to backfill IDs onto old records or fix any that
-            //    can no longer be matched by name at all.
-            (fundPools||[]).forEach(p => {
-                const matches = p.disbursedFromBankId ? (p.disbursedFromBankId === bankId) : nameMatches(p.disbursedFromBank);
-                if (!matches) return;
-                if (+p.disbursedAmount > 0) {
-                    rows.push({ date:p.disbursedDate||'', desc:`${p.poolID||'Fund Pool'} — ${p.purpose||p.projectName||'Disbursement'}`, credit:0, debit:+p.disbursedAmount||0, src:'Fund Pools' });
-                }
-            });
-
-            // 5b) Regular Expenses / Bills paid directly from a bank account
-            // (Supplier, Statutory, Salary, etc.) — OUT. This was a genuine
-            // missing source until now: only the INTERBANK subset of the
-            // `expenses` array was being read; everything else (the bulk of
-            // real bill/expense payments) never appeared in the ledger.
+            // Regular Expenses / Bills paid directly from a bank account
+            // (Supplier, Statutory, Salary, etc.) — OUT.
+            // Debit = Net Payable (the actual amount transferred, net of TDS/
+            // advance/credit-note deductions) — NOT the gross bill amount —
+            // falling back to the gross amount only for older records saved
+            // before Net Payable existed as a field.
+            // Date = Cheque / Online Paid Date (when the money actually left
+            // the bank), not the bill's own date.
             (expenses||[]).forEach(e => {
-                if (e.billType === 'INTERBANK') return;   // handled separately above
+                if (e.billType === 'INTERBANK') return;   // handled separately below
                 if (e.bankAccountId !== bankId) return;
-                const amt = +e.billAmtINR || 0;
+                const amt = +(e.netPayable ?? e.billAmtINR) || 0;
                 if (amt <= 0) return;
                 const who = e.vendor || e.description || 'Bill/Expense';
-                rows.push({ date:e.billDate||'', desc:`${who}${e.billNo?' — Bill '+e.billNo:''}`, credit:0, debit:amt, src:'Expenses/Bills' });
+                rows.push({ date:e.payDate||e.billDate||'', desc:`${who}${e.billNo?' — Bill '+e.billNo:''}`, credit:0, debit:amt, src:'Expenses/Bills' });
             });
 
-            // 5c) Interbank transfers (Office Expenses module) — both legs.
+            // Interbank transfers (Office Expenses module) — both legs.
             // NOTE: Director Expense reimbursements are NOT aggregated here as
             // a separate source — they are always paid out via a Payment
             // Request (see _prLinkBackPayment), whose bank is already captured
@@ -30480,7 +30469,7 @@ Automated WFH alert — ${company} Attendance System.`;
             <div class="mb-6 flex items-center justify-between flex-wrap gap-3">
                 <div>
                     <h2 class="text-2xl font-bold text-gray-800">🏦 Bank</h2>
-                    <p class="text-xs text-gray-400 mt-1">Read-only view — aggregates existing Transactions, Expenses/Bills, Payment Requests, Petty Cash, Fund Pool, and Interbank records already tagged to a bank account. Director expense reimbursements appear under Expenses/Bills (their actual payment path). Nothing here writes data.</p>
+                    <p class="text-xs text-gray-400 mt-1">Read-only view — aggregates existing Transactions, Expenses/Bills (Net Payable, by Paid Date), and Payment Request/Interbank records already tagged to a bank account. Petty Cash replenishments and Fund Pool disbursements are intentionally excluded (see those modules directly). Director expense reimbursements appear under Expenses/Bills. Nothing here writes data.</p>
                 </div>
             </div>
             <div class="bg-white rounded-xl border p-4 mb-4 flex items-center gap-4 flex-wrap">
@@ -30502,7 +30491,9 @@ Automated WFH alert — ${company} Attendance System.`;
                 <div>
                     <label class="block text-xs font-semibold text-gray-500 mb-1">Opening Balance <span class="font-normal text-gray-400">(for this view only, not saved)</span></label>
                     <div class="flex gap-1">
-                        <input type="number" value="${openingInput}" oninput="window._bankLedgerOpening=parseFloat(this.value)||0;renderView();" placeholder="0.00" class="px-3 py-2 border rounded-lg text-sm w-32"/>
+                        <input type="number" step="0.01" value="${openingInput.toFixed(2)}"
+                            onchange="window._bankLedgerOpening=parseFloat(this.value)||0; this.value=window._bankLedgerOpening.toFixed(2); renderView();"
+                            placeholder="0.00" class="px-3 py-2 border rounded-lg text-sm w-32"/>
                         ${fromDate ? `<button onclick="window._bankLedgerOpening=${computedOpening};renderView();" title="Auto-fill using all entries before ${fromDate}" class="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-600">↺ Auto (₹${computedOpening.toLocaleString('en-IN')})</button>` : ''}
                     </div>
                 </div>
@@ -30564,7 +30555,7 @@ Automated WFH alert — ${company} Attendance System.`;
             }
             doc.setDrawColor(3,105,161); doc.setLineWidth(0.4); doc.line(14, 33, 196, 33);
             doc.setFontSize(8); doc.setTextColor(120,120,120);
-            doc.text('Aggregated from existing Transactions, Expenses/Bills, Payment Requests, Petty Cash, Fund Pool, and Interbank records. Not a bank-reconciled statement.', 105, 38, {align:'center'});
+            doc.text('Aggregated from existing Transactions, Expenses/Bills (Net Payable), Payment Requests, and Interbank records. Petty Cash and Fund Pools excluded. Not a bank-reconciled statement.', 105, 38, {align:'center'});
 
             let running = opening;
             const body = entries.map(r => {
