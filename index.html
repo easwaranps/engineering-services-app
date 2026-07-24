@@ -1033,6 +1033,11 @@
                         <input type="text" id="txnVendorCode" placeholder="Vendor/Customer code (optional)" class="w-full px-4 py-2 border border-gray-300 rounded-lg" maxlength="50" />
                         <p class="text-xs text-gray-400 mt-1">Internal reference code for this party</p>
                     </div>
+                    <div id="txnVesselNameSection" class="hidden">
+                        <label class="block text-sm font-semibold text-gray-700 mb-2">🚢 Vessel Name <span class="text-xs font-normal text-gray-400">(optional)</span></label>
+                        <input type="text" id="txnVesselName" placeholder="e.g. Haldi" class="w-full px-4 py-2 border border-gray-300 rounded-lg" maxlength="100" />
+                        <p class="text-xs text-gray-400 mt-1">Prints "To The Master and Owner of Vessel [name]" on the PDF, below "To:" and above the party details</p>
+                    </div>
                     <div>
                         <label class="block text-sm font-semibold text-gray-700 mb-2">Status</label>
                         <select id="txnStatus" class="w-full px-4 py-2 border border-gray-300 rounded-lg">
@@ -5883,6 +5888,15 @@
                 startY += 24;
                 doc.setFont(undefined, 'bold');
                 doc.text((txn.txnCategory === 'ENQUIRY' || txn.txnDirection === 'Outgoing') ? 'To:' : 'From:', 14, startY);
+                // Optional maritime addressing line (Invoice only) — e.g.
+                // "To The Master and Owner of Vessel Haldi" — printed between
+                // "To:" and the party details. Shifts everything below down
+                // by one line to make room; only appears when Vessel Name is set.
+                if (txn.txnCategory === 'INVOICE' && txn.vesselName) {
+                    doc.setFont(undefined, 'bold');
+                    doc.text('To The Master and Owner of Vessel ' + txn.vesselName, 14, startY + 6);
+                    startY += 6;
+                }
                 doc.setFont(undefined, 'normal');
                 doc.text(txn.partyName, 14, startY + 6);
                 if (party && party.address) {
@@ -16768,6 +16782,8 @@
             // when the modal is re-opened for a new transaction.
             const subjEl = document.getElementById('txnSubject');
             if (subjEl) subjEl.value = (txn && txn.subject) ? txn.subject : '';
+            const vesselEl = document.getElementById('txnVesselName');
+            if (vesselEl) vesselEl.value = (txn && txn.vesselName) ? txn.vesselName : '';
 
             // Load vendor code if exists
             if (txn && txn.vendorCode) {
@@ -17741,6 +17757,7 @@
                     reference: document.getElementById('txnReference').value,
                     referenceType: document.getElementById('txnReferenceType')?.value || '',
                     subject: document.getElementById('txnSubject')?.value || '',
+                    vesselName: document.getElementById('txnVesselName')?.value?.trim() || '',
                     vendorCode: document.getElementById('txnVendorCode')?.value || '',
                     poNumber: document.getElementById('txnPoNumber')?.value || '',
                     poDate: document.getElementById('txnPoDate')?.value || '',
@@ -18326,6 +18343,14 @@
             } else {
                 document.getElementById('thGstLabel')?.classList.add('hidden');
                 document.querySelectorAll('.td-gstlabel').forEach(td => td.classList.add('hidden'));
+            }
+
+            // Vessel Name (maritime addressing line): Invoice only
+            const vesselSection = document.getElementById('txnVesselNameSection');
+            if (cat === 'INVOICE') {
+                vesselSection?.classList.remove('hidden');
+            } else {
+                vesselSection?.classList.add('hidden');
             }
 
             // Client Contact & Terms: Quotation and Enquiry
