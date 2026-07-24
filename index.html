@@ -5935,22 +5935,29 @@
                     startY += 8; // Extra spacing for client contact
                 }
 
-                // Supply Details for Invoice (right-side block)
+                // Supply Details for Invoice — now stacks BELOW the To: address
+                // block (previously rendered as a right-side column running
+                // parallel to it, using startY-20 and x=110).
                 if (txn.txnCategory === 'INVOICE' && (txn.supplyDateTime || txn.placeOfSupply || txn.vehicleNo)) {
+                    startY += 6;
                     doc.setFontSize(7);
                     doc.setTextColor(60, 60, 60);
-                    let supY = startY - 20; // align with party block
+                    doc.setFont(undefined, 'bold');
+                    doc.text('Supply Details:', 14, startY);
+                    doc.setFont(undefined, 'normal');
+                    startY += 5;
                     if (txn.supplyDateTime) {
                         const dtFormatted = new Date(txn.supplyDateTime).toLocaleString('en-IN', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
-                        doc.text('Supply Date/Time: ' + dtFormatted, 110, supY);
-                        supY += 5;
+                        doc.text('Date & Time of Supply: ' + dtFormatted, 14, startY);
+                        startY += 5;
                     }
                     if (txn.placeOfSupply) {
-                        doc.text('Place of Supply: ' + txn.placeOfSupply, 110, supY);
-                        supY += 5;
+                        doc.text('Place of Supply: ' + txn.placeOfSupply, 14, startY);
+                        startY += 5;
                     }
                     if (txn.vehicleNo) {
-                        doc.text('Vehicle No: ' + txn.vehicleNo.toUpperCase(), 110, supY);
+                        doc.text('Vehicle No: ' + txn.vehicleNo.toUpperCase(), 14, startY);
+                        startY += 5;
                     }
                     doc.setFontSize(8);
                     doc.setTextColor(0, 0, 0);
