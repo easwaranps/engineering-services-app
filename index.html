@@ -9836,13 +9836,20 @@
             _hideVoucherPreview();
             const box = document.createElement('div');
             box.id = '_voucherHoverPreview';
-            box.style.cssText = 'position:fixed;z-index:100000;background:#fff;border:1px solid #d1d5db;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.18);padding:8px;pointer-events:none;max-width:260px';
+            box.style.cssText = 'position:fixed;z-index:100000;background:#fff;border:1px solid #d1d5db;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.18);padding:8px;pointer-events:none;max-width:320px';
             const isImg = (mime||'').startsWith('image/') && dataUrl;
-            const isPdf = (mime||'') === 'application/pdf';
+            const isPdf = (mime||'') === 'application/pdf' && dataUrl;
             if (isImg) {
                 box.innerHTML = `<img src="${dataUrl}" style="max-width:240px;max-height:320px;display:block;border-radius:6px"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label}</div>`:''}`;
             } else if (isPdf) {
-                box.innerHTML = `<div style="width:160px;height:100px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#fef2f2;border-radius:6px;color:#b91c1c"><span style="font-size:28px">📕</span><span style="font-size:10px;margin-top:4px">PDF — click View to open</span></div>`;
+                // Browsers with a built-in PDF viewer (Chrome/Edge/Firefox)
+                // render the actual first page live via <embed> — no PDF.js
+                // or other library needed, just the same dataUrl already held
+                // for the image case. pointer-events:none on the outer box
+                // keeps this a lightweight, non-interactive glance (no
+                // scroll/zoom) — full interaction is still one click away
+                // via the existing View button.
+                box.innerHTML = `<embed src="${dataUrl}" type="application/pdf" style="width:280px;height:360px;border:1px solid #e5e7eb;border-radius:6px;display:block"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label} (first page shown)</div>`:''}`;
             } else {
                 box.innerHTML = `<div style="width:160px;height:70px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#f9fafb;border-radius:6px;color:#9ca3af"><span style="font-size:22px">📎</span><span style="font-size:10px;margin-top:4px">Stored in Drive — click View to open</span></div>`;
             }
