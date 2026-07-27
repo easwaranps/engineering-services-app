@@ -9832,13 +9832,20 @@
         // For Drive-only vouchers with no inline data: shows a static note
         // rather than fetching from Drive on every hover (would otherwise
         // fire a network request per row while scanning a table quickly).
-        function _showVoucherPreview(event, dataUrl, mime, label) {
+        // Cache of already-fetched Drive voucher previews this session, keyed
+        // by driveId, so re-hovering the same voucher doesn't re-fetch.
+        const _voucherPreviewCache = {};
+        let _voucherHoverTimer = null;
+
+        function _showVoucherPreview(event, dataUrl, mime, label, driveId) {
             _hideVoucherPreview();
             const box = document.createElement('div');
             box.id = '_voucherHoverPreview';
             box.style.cssText = 'position:fixed;z-index:100000;background:#fff;border:1px solid #d1d5db;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.18);padding:8px;pointer-events:none;max-width:320px';
             const isImg = (mime||'').startsWith('image/') && dataUrl;
             const isPdf = (mime||'') === 'application/pdf' && dataUrl;
+            const cached = driveId && _voucherPreviewCache[driveId];
+
             if (isImg) {
                 box.innerHTML = `<img src="${dataUrl}" style="max-width:240px;max-height:320px;display:block;border-radius:6px"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label}</div>`:''}`;
             } else if (isPdf) {
@@ -9850,11 +9857,52 @@
                 // scroll/zoom) — full interaction is still one click away
                 // via the existing View button.
                 box.innerHTML = `<embed src="${dataUrl}" type="application/pdf" style="width:280px;height:360px;border:1px solid #e5e7eb;border-radius:6px;display:block"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label} (first page shown)</div>`:''}`;
+            } else if (cached) {
+                // Already fetched this driveId earlier this session — instant.
+                box.innerHTML = cached.isPdf
+                    ? `<embed src="${cached.url}" type="application/pdf" style="width:280px;height:360px;border:1px solid #e5e7eb;border-radius:6px;display:block"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label} (first page shown)</div>`:''}`
+                    : `<img src="${cached.url}" style="max-width:240px;max-height:320px;display:block;border-radius:6px"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label}</div>`:''}`;
+            } else if (driveId) {
+                // Not fetched yet — show a loading placeholder immediately,
+                // then fetch after a short debounce (only if the user is
+                // still hovering — avoids firing a Drive API call for every
+                // row the mouse quickly passes over while scanning a table).
+                box.dataset.driveId = driveId;
+                box.innerHTML = `<div style="width:160px;height:90px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#f9fafb;border-radius:6px;color:#6b7280"><span style="font-size:22px">⏳</span><span style="font-size:10px;margin-top:4px">Loading preview…</span></div>`;
+                clearTimeout(_voucherHoverTimer);
+                _voucherHoverTimer = setTimeout(() => _fetchDriveVoucherPreview(driveId, mime, label), 350);
             } else {
-                box.innerHTML = `<div style="width:160px;height:70px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#f9fafb;border-radius:6px;color:#9ca3af"><span style="font-size:22px">📎</span><span style="font-size:10px;margin-top:4px">Stored in Drive — click View to open</span></div>`;
+                box.innerHTML = `<div style="width:160px;height:70px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#f9fafb;border-radius:6px;color:#9ca3af"><span style="font-size:22px">📎</span><span style="font-size:10px;margin-top:4px">No preview available — click View to open</span></div>`;
             }
             document.body.appendChild(box);
             _positionVoucherPreview(event);
+        }
+
+        async function _fetchDriveVoucherPreview(driveId, mime, label) {
+            try {
+                const res = await fetch(`https://www.googleapis.com/drive/v3/files/${driveId}?alt=media`,
+                    { headers: { 'Authorization': `Bearer ${accessToken}` } });
+                if (!res.ok) throw new Error('Drive returned ' + res.status);
+                const blob = await res.blob();
+                const isPdf = (blob.type === 'application/pdf') || mime === 'application/pdf';
+                const url = URL.createObjectURL(blob);
+                _voucherPreviewCache[driveId] = { url, isPdf };
+                // Only update the visible box if the user is STILL hovering
+                // this same voucher (the box wasn't removed by mouseleave,
+                // and hasn't since been replaced by a different hover target).
+                const box = document.getElementById('_voucherHoverPreview');
+                if (box && box.dataset.driveId === driveId) {
+                    box.innerHTML = isPdf
+                        ? `<embed src="${url}" type="application/pdf" style="width:280px;height:360px;border:1px solid #e5e7eb;border-radius:6px;display:block"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label} (first page shown)</div>`:''}`
+                        : `<img src="${url}" style="max-width:240px;max-height:320px;display:block;border-radius:6px"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label}</div>`:''}`;
+                }
+            } catch (e) {
+                console.warn('Voucher preview fetch failed:', e.message);
+                const box = document.getElementById('_voucherHoverPreview');
+                if (box && box.dataset.driveId === driveId) {
+                    box.innerHTML = `<div style="width:160px;height:70px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#fef2f2;border-radius:6px;color:#b91c1c"><span style="font-size:20px">⚠️</span><span style="font-size:10px;margin-top:4px">Preview failed — click View to open</span></div>`;
+                }
+            }
         }
         function _positionVoucherPreview(event) {
             const box = document.getElementById('_voucherHoverPreview');
@@ -9868,6 +9916,7 @@
             box.style.top  = Math.max(4,y) + 'px';
         }
         function _hideVoucherPreview() {
+            clearTimeout(_voucherHoverTimer);
             document.getElementById('_voucherHoverPreview')?.remove();
         }
         // Per-module lookups — resolve the record fresh at hover-time rather
@@ -9876,18 +9925,18 @@
         function _showExpVoucherPreview(event, expID) {
             const e = (expenses||[]).find(x => x.expID === expID);
             if (!e) return;
-            _showVoucherPreview(event, e.tallyVoucherData, e.tallyVoucherMime, e.tallyVoucherNo ? 'Voucher #'+e.tallyVoucherNo : '');
+            _showVoucherPreview(event, e.tallyVoucherData, e.tallyVoucherMime, e.tallyVoucherNo ? 'Voucher #'+e.tallyVoucherNo : '', e.tallyVoucherDriveId);
         }
         function _showDirExpVoucherPreview(event, deID) {
             const d = (directorExpenses||[]).find(x => x.deID === deID);
             if (!d) return;
-            _showVoucherPreview(event, d.tallyVoucherData, d.tallyVoucherMime, d.tallyVoucherNo ? 'Voucher #'+d.tallyVoucherNo : '');
+            _showVoucherPreview(event, d.tallyVoucherData, d.tallyVoucherMime, d.tallyVoucherNo ? 'Voucher #'+d.tallyVoucherNo : '', d.tallyVoucherDriveId);
         }
         function _showProjExpVoucherPreview(event, projID, itemID) {
             const p = (projectExpenses||[]).find(x => x.projExpID === projID);
             const item = p?.items?.find(x => x.itemID === itemID);
             if (!item) return;
-            _showVoucherPreview(event, item.tallyVoucherData, item.tallyVoucherMime, item.tallyVoucherNo ? 'Voucher #'+item.tallyVoucherNo : '');
+            _showVoucherPreview(event, item.tallyVoucherData, item.tallyVoucherMime, item.tallyVoucherNo ? 'Voucher #'+item.tallyVoucherNo : '', item.tallyVoucherDriveId);
         }
 
         function _ledgerBadge(ledgerAccountId) {
