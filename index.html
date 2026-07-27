@@ -4959,18 +4959,19 @@
                     bankReconciliations = [];
                 }
                 staff           = Array.isArray(staffData)   ? staffData    : [];
-                // One-time cleanup: remove phantom blank records that were accidentally
-                // created when the file-picker label click triggered form submission.
-                // These records have no name (the only required field) — they're safe
-                // to silently remove. Any such records will be resaved on next load.
-                const _blankCount = staff.filter(s => !(s.name||'').trim()).length;
-                if (_blankCount > 0) {
-                    staff = staff.filter(s => (s.name||'').trim());
-                    console.log(`🧹 Removed ${_blankCount} blank phantom staff record(s) on load`);
-                    // Save the cleaned array back silently
-                    saveFileToDrive('staff.json', staff).catch(e =>
-                        console.warn('Could not auto-clean phantom staff records:', e.message)
-                    );
+                // SAFETY: blank-name staff records are NEVER auto-deleted.
+                // This used to silently filter them out AND auto-save the
+                // purged array back to Drive — meaning if a save ever left a
+                // legitimate staff record's name blank for ANY reason (a bug
+                // elsewhere, a timing glitch, anything), this code would
+                // permanently destroy that record on the very next load and
+                // compound the loss into every subsequent backup. Now it only
+                // warns, so nothing is ever silently deleted; an admin can
+                // review and fix the record manually via Settings if needed.
+                const _blankNameStaff = staff.filter(s => !(s.name||'').trim());
+                if (_blankNameStaff.length > 0) {
+                    console.warn(`⚠️ ${_blankNameStaff.length} staff record(s) have a blank name:`, _blankNameStaff.map(s=>s.staffID));
+                    window._blankNameStaffWarning = _blankNameStaff.length;
                 }
                 projectExpenses = Array.isArray(projExpData) ? projExpData  : [];
                 workLogs        = Array.isArray(workLogData)   ? workLogData   : [];
