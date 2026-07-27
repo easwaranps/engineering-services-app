@@ -18744,7 +18744,7 @@
                             </div>
                         </div>
                         <!-- ── DOCUMENT ATTACHMENTS — multi-file with view/edit/delete ── -->
-                        <div class="border-t pt-4">
+                        <div class="border-t pt-4" id="staffDocsAttachSection">
                             <div class="flex items-center justify-between mb-3">
                                 <div>
                                     <h4 class="text-sm font-bold text-gray-700">📎 Document Attachments</h4>
@@ -21141,7 +21141,7 @@ ${'─'.repeat(50)}
                             <span class="ml-2 text-xs bg-${s.staffType==='Technician'?'blue':'purple'}-100 text-${s.staffType==='Technician'?'blue':'purple'}-700 px-2 py-0.5 rounded-full">${s.staffType}</span>
                             ${attachCount>0 ? `<button onclick="viewStaffDocsModal('${s.staffID}')" class="ml-2 text-xs bg-teal-100 hover:bg-teal-200 text-teal-700 px-2 py-0.5 rounded-full font-semibold">📎 ${attachCount} attached</button>` : ''}
                         </div>
-                        <button onclick="editStaff('${s.staffID}')" class="text-xs text-indigo-600 hover:text-indigo-800">Edit Docs</button>
+                        <button onclick="editStaffDocsOnly('${s.staffID}')" class="text-xs text-indigo-600 hover:text-indigo-800">Edit Docs</button>
                     </div>
                     <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
                         ${docs.map(d => {
@@ -21592,6 +21592,16 @@ ${'─'.repeat(50)}
         // Staff CRUD
         function openStaffModal(s = null) {
             currentStaff = s;
+            // Clear any restriction left over from a previous editStaffDocsOnly
+            // or viewStaff call, so a normal Edit isn't accidentally still locked.
+            document.getElementById('staffDocsOnlyBanner')?.remove();
+            const _staffFormEl = document.getElementById('staffForm');
+            _staffFormEl?.querySelectorAll('input, select, textarea').forEach(el => {
+                el.disabled = false;
+                el.classList.remove('cursor-not-allowed','bg-gray-50');
+            });
+            const _saveBtn = document.getElementById('staffFormSaveBtn');
+            if (_saveBtn) _saveBtn.style.display = '';
             document.getElementById('staffModalTitle').textContent = s ? 'Edit Staff Member' : 'Add Staff Member';
             document.getElementById('staffForm').reset();
             // Initialize loans working buffer from staff record (deep-copy so cancel doesn't mutate)
@@ -21936,7 +21946,7 @@ ${'─'.repeat(50)}
                         <p class="text-xs opacity-80">${docs.length} attachment${docs.length!==1?'s':''} · ${s.designation||s.staffType||''}</p>
                     </div>
                     <div class="flex gap-2">
-                        <button onclick="closeStaffDocsViewModal();editStaff('${s.staffID}')" class="px-3 py-1.5 bg-white/20 hover:bg-white/30 text-white rounded-lg text-sm font-medium">✏ Manage / Add More</button>
+                        <button onclick="closeStaffDocsViewModal();editStaffDocsOnly('${s.staffID}')" class="px-3 py-1.5 bg-white/20 hover:bg-white/30 text-white rounded-lg text-sm font-medium">✏ Manage / Add More</button>
                         <button onclick="closeStaffDocsViewModal()" class="text-white text-2xl font-bold leading-none">✕</button>
                     </div>
                 </div>
@@ -22099,6 +22109,40 @@ ${'─'.repeat(50)}
         }
 
         function editStaff(id) { const s = staff.find(x => x.staffID === id); if (s) openStaffModal(s); }
+
+        // Documents-only edit entry point. Used by the Documents sub-tab and
+        // the document viewer's "Manage / Add More" button — NEVER opens the
+        // full staff-edit form. This always applies, regardless of whether
+        // settings.allowStaffEdit is locked or unlocked: editing a staff
+        // member's core details (salary, personal info, etc.) always requires
+        // the general Edit lock to be open; managing their document
+        // attachments is treated as a separate, narrower permission and stays
+        // available either way. Every field except the Document Attachments
+        // section is disabled — Save still works normally (disabled fields
+        // still report their unchanged value), so only the documents array
+        // can actually change.
+        function editStaffDocsOnly(id) {
+            const s = staff.find(x => x.staffID === id);
+            if (!s) return;
+            openStaffModal(s);
+            const modal = document.getElementById('staffModal');
+            if (!modal) return;
+            modal.querySelectorAll('input, select, textarea').forEach(el => {
+                if (el.closest('#staffDocsAttachSection')) return;   // documents stay editable
+                el.disabled = true;
+                el.classList.add('cursor-not-allowed','bg-gray-50');
+            });
+            const title = document.getElementById('staffModalTitle');
+            if (title) title.textContent = '📎 Edit Documents — ' + (s.name || '');
+            let banner = document.getElementById('staffDocsOnlyBanner');
+            if (!banner) {
+                banner = document.createElement('div');
+                banner.id = 'staffDocsOnlyBanner';
+                banner.className = 'mb-4 px-4 py-2 bg-teal-50 border border-teal-200 text-teal-800 text-sm rounded-lg';
+                document.getElementById('staffForm')?.prepend(banner);
+            }
+            banner.textContent = '📎 Documents-only mode — only the Document Attachments section below can be edited. Other staff details are locked' + (!settings.allowStaffEdit ? ' (enable "Allow Staff Edit" in Settings to edit full staff details).' : ' here by design — use the regular Edit button on the Staff List for full editing.');
+        }
 
         // Read-only view: opens the same modal that Edit uses, populates from the
         // staff record, then disables every input/select/textarea and hides the
