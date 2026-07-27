@@ -9841,13 +9841,13 @@
             _hideVoucherPreview();
             const box = document.createElement('div');
             box.id = '_voucherHoverPreview';
-            box.style.cssText = 'position:fixed;z-index:100000;background:#fff;border:1px solid #d1d5db;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.18);padding:8px;pointer-events:none;max-width:320px';
+            box.style.cssText = 'position:fixed;z-index:100000;background:#fff;border:1px solid #d1d5db;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.18);padding:8px;pointer-events:none;max-width:520px';
             const isImg = (mime||'').startsWith('image/') && dataUrl;
             const isPdf = (mime||'') === 'application/pdf' && dataUrl;
             const cached = driveId && _voucherPreviewCache[driveId];
 
             if (isImg) {
-                box.innerHTML = `<img src="${dataUrl}" style="max-width:240px;max-height:320px;display:block;border-radius:6px"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label}</div>`:''}`;
+                box.innerHTML = `<img src="${dataUrl}" style="max-width:420px;max-height:560px;display:block;border-radius:6px"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label}</div>`:''}`;
             } else if (isPdf) {
                 // Browsers with a built-in PDF viewer (Chrome/Edge/Firefox)
                 // render the actual first page live via <embed> — no PDF.js
@@ -9856,12 +9856,12 @@
                 // keeps this a lightweight, non-interactive glance (no
                 // scroll/zoom) — full interaction is still one click away
                 // via the existing View button.
-                box.innerHTML = `<embed src="${dataUrl}" type="application/pdf" style="width:280px;height:360px;border:1px solid #e5e7eb;border-radius:6px;display:block"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label} (first page shown)</div>`:''}`;
+                box.innerHTML = `<embed src="${dataUrl}" type="application/pdf" style="width:480px;height:640px;border:1px solid #e5e7eb;border-radius:6px;display:block"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label} (first page shown)</div>`:''}`;
             } else if (cached) {
                 // Already fetched this driveId earlier this session — instant.
                 box.innerHTML = cached.isPdf
-                    ? `<embed src="${cached.url}" type="application/pdf" style="width:280px;height:360px;border:1px solid #e5e7eb;border-radius:6px;display:block"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label} (first page shown)</div>`:''}`
-                    : `<img src="${cached.url}" style="max-width:240px;max-height:320px;display:block;border-radius:6px"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label}</div>`:''}`;
+                    ? `<embed src="${cached.url}" type="application/pdf" style="width:480px;height:640px;border:1px solid #e5e7eb;border-radius:6px;display:block"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label} (first page shown)</div>`:''}`
+                    : `<img src="${cached.url}" style="max-width:420px;max-height:560px;display:block;border-radius:6px"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label}</div>`:''}`;
             } else if (driveId) {
                 // Not fetched yet — show a loading placeholder immediately,
                 // then fetch after a short debounce (only if the user is
@@ -9893,8 +9893,8 @@
                 const box = document.getElementById('_voucherHoverPreview');
                 if (box && box.dataset.driveId === driveId) {
                     box.innerHTML = isPdf
-                        ? `<embed src="${url}" type="application/pdf" style="width:280px;height:360px;border:1px solid #e5e7eb;border-radius:6px;display:block"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label} (first page shown)</div>`:''}`
-                        : `<img src="${url}" style="max-width:240px;max-height:320px;display:block;border-radius:6px"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label}</div>`:''}`;
+                        ? `<embed src="${url}" type="application/pdf" style="width:480px;height:640px;border:1px solid #e5e7eb;border-radius:6px;display:block"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label} (first page shown)</div>`:''}`
+                        : `<img src="${url}" style="max-width:420px;max-height:560px;display:block;border-radius:6px"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label}</div>`:''}`;
                 }
             } catch (e) {
                 console.warn('Voucher preview fetch failed:', e.message);
