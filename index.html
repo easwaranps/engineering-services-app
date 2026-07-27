@@ -3902,7 +3902,7 @@
                 el.style.cssText = 'position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:60;'
                                  + 'background:#fef3c7;border:1.5px solid #f59e0b;color:#92400e;'
                                  + 'padding:10px 16px;border-radius:12px;font-size:13px;font-weight:600;'
-                                 + 'box-shadow:0 6px 24px rgba(0,0,0,.18);display:flex;align-items:center;gap:12px;max-width:520px';
+                                 + 'box-shadow:0 6px 24px rgba(0,0,0,.18);display:flex;align-items:center;gap:12px;max-width:min(80vw,950px)';
                 document.body.appendChild(el);
             }
             const byTxt = by ? ` by ${by}` : '';
@@ -9841,13 +9841,13 @@
             _hideVoucherPreview();
             const box = document.createElement('div');
             box.id = '_voucherHoverPreview';
-            box.style.cssText = 'position:fixed;z-index:100000;background:#fff;border:1px solid #d1d5db;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.18);padding:8px;pointer-events:none;max-width:520px';
+            box.style.cssText = 'position:fixed;z-index:100000;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border:1px solid #d1d5db;border-radius:12px;box-shadow:0 20px 50px rgba(0,0,0,0.35);padding:12px;pointer-events:none;max-width:94vw;max-height:94vh;overflow:auto';
             const isImg = (mime||'').startsWith('image/') && dataUrl;
             const isPdf = (mime||'') === 'application/pdf' && dataUrl;
             const cached = driveId && _voucherPreviewCache[driveId];
 
             if (isImg) {
-                box.innerHTML = `<img src="${dataUrl}" style="max-width:420px;max-height:560px;display:block;border-radius:6px"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label}</div>`:''}`;
+                box.innerHTML = `<img src="${dataUrl}" style="max-width:min(88vw,1300px);max-height:min(88vh,1300px);display:block;border-radius:6px"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label}</div>`:''}`;
             } else if (isPdf) {
                 // Browsers with a built-in PDF viewer (Chrome/Edge/Firefox)
                 // render the actual first page live via <embed> — no PDF.js
@@ -9856,12 +9856,12 @@
                 // keeps this a lightweight, non-interactive glance (no
                 // scroll/zoom) — full interaction is still one click away
                 // via the existing View button.
-                box.innerHTML = `<embed src="${dataUrl}" type="application/pdf" style="width:480px;height:640px;border:1px solid #e5e7eb;border-radius:6px;display:block"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label} (first page shown)</div>`:''}`;
+                box.innerHTML = `<embed src="${dataUrl}" type="application/pdf" style="width:min(88vw,1300px);height:min(88vh,1300px);border:1px solid #e5e7eb;border-radius:6px;display:block"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label} (first page shown)</div>`:''}`;
             } else if (cached) {
                 // Already fetched this driveId earlier this session — instant.
                 box.innerHTML = cached.isPdf
-                    ? `<embed src="${cached.url}" type="application/pdf" style="width:480px;height:640px;border:1px solid #e5e7eb;border-radius:6px;display:block"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label} (first page shown)</div>`:''}`
-                    : `<img src="${cached.url}" style="max-width:420px;max-height:560px;display:block;border-radius:6px"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label}</div>`:''}`;
+                    ? `<embed src="${cached.url}" type="application/pdf" style="width:min(88vw,1300px);height:min(88vh,1300px);border:1px solid #e5e7eb;border-radius:6px;display:block"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label} (first page shown)</div>`:''}`
+                    : `<img src="${cached.url}" style="max-width:min(88vw,1300px);max-height:min(88vh,1300px);display:block;border-radius:6px"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label}</div>`:''}`;
             } else if (driveId) {
                 // Not fetched yet — show a loading placeholder immediately,
                 // then fetch after a short debounce (only if the user is
@@ -9893,8 +9893,8 @@
                 const box = document.getElementById('_voucherHoverPreview');
                 if (box && box.dataset.driveId === driveId) {
                     box.innerHTML = isPdf
-                        ? `<embed src="${url}" type="application/pdf" style="width:480px;height:640px;border:1px solid #e5e7eb;border-radius:6px;display:block"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label} (first page shown)</div>`:''}`
-                        : `<img src="${url}" style="max-width:420px;max-height:560px;display:block;border-radius:6px"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label}</div>`:''}`;
+                        ? `<embed src="${url}" type="application/pdf" style="width:min(88vw,1300px);height:min(88vh,1300px);border:1px solid #e5e7eb;border-radius:6px;display:block"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label} (first page shown)</div>`:''}`
+                        : `<img src="${url}" style="max-width:min(88vw,1300px);max-height:min(88vh,1300px);display:block;border-radius:6px"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label}</div>`:''}`;
                 }
             } catch (e) {
                 console.warn('Voucher preview fetch failed:', e.message);
@@ -9904,17 +9904,12 @@
                 }
             }
         }
-        function _positionVoucherPreview(event) {
-            const box = document.getElementById('_voucherHoverPreview');
-            if (!box) return;
-            const pad = 14;
-            let x = event.clientX + pad, y = event.clientY + pad;
-            const rect = box.getBoundingClientRect();
-            if (x + rect.width > window.innerWidth)  x = event.clientX - rect.width - pad;
-            if (y + rect.height > window.innerHeight) y = event.clientY - rect.height - pad;
-            box.style.left = Math.max(4,x) + 'px';
-            box.style.top  = Math.max(4,y) + 'px';
-        }
+        // Kept as a no-op for backward-compat with existing onmousemove
+        // attributes already wired to the voucher badges — the preview is
+        // now a large FIXED panel (see _showVoucherPreview) rather than one
+        // that follows the cursor, since a preview this size works far
+        // better anchored in place than constantly repositioning.
+        function _positionVoucherPreview(event) {}
         function _hideVoucherPreview() {
             clearTimeout(_voucherHoverTimer);
             document.getElementById('_voucherHoverPreview')?.remove();
