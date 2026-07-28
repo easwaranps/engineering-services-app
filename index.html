@@ -10800,8 +10800,33 @@
             const lbClose = document.createElement('button');
             lbClose.textContent = '✕';
             lbClose.style.cssText = 'color:#fff;font-size:28px;background:none;border:none;cursor:pointer;line-height:1';
-            lbClose.addEventListener('click', () => { document.getElementById('expAttachLightbox')?.remove(); window._lbList=null; });
-            lbTop.appendChild(lbCounter); lbTop.appendChild(lbClose);
+            lbClose.addEventListener('click', () => {
+                document.getElementById('expAttachLightbox')?.remove();
+                document.getElementById('_lbPrintStyle')?.remove();
+                window._lbList=null;
+            });
+            const lbDownload = document.createElement('a');
+            lbDownload.textContent = '⬇'; lbDownload.title = 'Download';
+            lbDownload.style.cssText = 'color:#fff;font-size:20px;text-decoration:none;background:rgba(255,255,255,0.15);border-radius:6px;width:34px;height:34px;display:flex;align-items:center;justify-content:center';
+            lbDownload.addEventListener('click', (e) => {
+                if (!window._lbCurrentUrl) { e.preventDefault(); return; }
+                lbDownload.href = window._lbCurrentUrl;
+                lbDownload.download = window._lbCurrentName || 'attachment';
+            });
+            const lbPrint = document.createElement('button');
+            lbPrint.textContent = '🖨'; lbPrint.title = 'Print';
+            lbPrint.style.cssText = 'color:#fff;font-size:18px;background:rgba(255,255,255,0.15);border:none;border-radius:6px;width:34px;height:34px;cursor:pointer;display:flex;align-items:center;justify-content:center';
+            lbPrint.addEventListener('click', () => {
+                let ps = document.getElementById('_lbPrintStyle');
+                if (!ps) {
+                    ps = document.createElement('style');
+                    ps.id = '_lbPrintStyle';
+                    ps.textContent = '@media print{body>*:not(#expAttachLightbox){display:none!important;}#expAttachLightbox{position:absolute!important;background:#fff!important;}#expLbPrev,#expLbNext,#expLbCounter{display:none!important;}}';
+                    document.head.appendChild(ps);
+                }
+                window.print();
+            });
+            lbTop.appendChild(lbCounter); lbTop.appendChild(lbDownload); lbTop.appendChild(lbPrint); lbTop.appendChild(lbClose);
             const lbPrev = document.createElement('button');
             lbPrev.id = 'expLbPrev';
             lbPrev.textContent = '‹';
@@ -10847,11 +10872,20 @@
             if (prev) prev.style.display = list.length > 1 ? 'flex' : 'none';
             if (next) next.style.display = list.length > 1 ? 'flex' : 'none';
 
+            // Reset — populated below once the actual displayable URL for
+            // this slide is known, so the Download button always acts on
+            // whatever is currently shown.
+            window._lbCurrentUrl = null;
+            window._lbCurrentName = a.name || 'attachment';
+
             if (a.driveFileId) {
                 // Drive-stored file — use Drive viewer
                 const isPdf = a.type === 'pdf';
                 if (isPdf) {
                     content.innerHTML = `<iframe src="${driveViewUrl(a.driveFileId, true)}" style="width:85vw;height:80vh;border:none;background:#fff;border-radius:4px" title="${a.name||''}"></iframe>`;
+                    // Drive's direct-download link — works without an extra
+                    // fetch, unlike the embedded viewer URL used for display.
+                    window._lbCurrentUrl = `https://drive.google.com/uc?export=download&id=${a.driveFileId}`;
                 } else {
                     // Show loading spinner then fetch full-res blob
                     content.innerHTML = `<div style="color:#fff;text-align:center;padding:40px"><div style="font-size:32px;margin-bottom:12px">⏳</div>Loading from Drive…</div>`;
@@ -10861,6 +10895,7 @@
                         if (window._lbCur === i && document.getElementById('expLbContent')) {
                             document.getElementById('expLbContent').innerHTML =
                                 `<img src="${blobUrl}" style="max-width:100%;max-height:80vh;object-fit:contain;border-radius:4px" alt="${a.name||''}"/>`;
+                            window._lbCurrentUrl = blobUrl;
                         }
                     } catch(e) {
                         if (document.getElementById('expLbContent'))
@@ -10870,6 +10905,7 @@
                 }
             } else if (a.data) {
                 // Legacy base64 data
+                window._lbCurrentUrl = a.data;
                 if (a.type === 'pdf') {
                     content.innerHTML = `<iframe src="${a.data}" style="width:85vw;height:80vh;border:none;background:#fff;border-radius:4px" title="${a.name||''}"></iframe>`;
                 } else {
@@ -12430,8 +12466,33 @@
             const lbClose = document.createElement('button');
             lbClose.textContent = '✕';
             lbClose.style.cssText = 'color:#fff;font-size:28px;background:none;border:none;cursor:pointer;line-height:1';
-            lbClose.addEventListener('click', () => { document.getElementById('expAttachLightbox')?.remove(); window._lbList=null; });
-            lbTop.appendChild(lbCounter); lbTop.appendChild(lbClose);
+            lbClose.addEventListener('click', () => {
+                document.getElementById('expAttachLightbox')?.remove();
+                document.getElementById('_lbPrintStyle')?.remove();
+                window._lbList=null;
+            });
+            const lbDownload = document.createElement('a');
+            lbDownload.textContent = '⬇'; lbDownload.title = 'Download';
+            lbDownload.style.cssText = 'color:#fff;font-size:20px;text-decoration:none;background:rgba(255,255,255,0.15);border-radius:6px;width:34px;height:34px;display:flex;align-items:center;justify-content:center';
+            lbDownload.addEventListener('click', (e) => {
+                if (!window._lbCurrentUrl) { e.preventDefault(); return; }
+                lbDownload.href = window._lbCurrentUrl;
+                lbDownload.download = window._lbCurrentName || 'attachment';
+            });
+            const lbPrint = document.createElement('button');
+            lbPrint.textContent = '🖨'; lbPrint.title = 'Print';
+            lbPrint.style.cssText = 'color:#fff;font-size:18px;background:rgba(255,255,255,0.15);border:none;border-radius:6px;width:34px;height:34px;cursor:pointer;display:flex;align-items:center;justify-content:center';
+            lbPrint.addEventListener('click', () => {
+                let ps = document.getElementById('_lbPrintStyle');
+                if (!ps) {
+                    ps = document.createElement('style');
+                    ps.id = '_lbPrintStyle';
+                    ps.textContent = '@media print{body>*:not(#expAttachLightbox){display:none!important;}#expAttachLightbox{position:absolute!important;background:#fff!important;}#expLbPrev,#expLbNext,#expLbCounter{display:none!important;}}';
+                    document.head.appendChild(ps);
+                }
+                window.print();
+            });
+            lbTop.appendChild(lbCounter); lbTop.appendChild(lbDownload); lbTop.appendChild(lbPrint); lbTop.appendChild(lbClose);
             const lbPrev = document.createElement('button');
             lbPrev.id = 'expLbPrev';
             lbPrev.textContent = '‹';
@@ -25694,8 +25755,12 @@ Automated WFH alert — ${company} Attendance System.`;
             const lbTop = document.createElement('div'); lbTop.style.cssText='position:absolute;top:12px;right:16px;display:flex;gap:10px;align-items:center';
             const lbCounter = document.createElement('span'); lbCounter.id='expLbCounter'; lbCounter.style.cssText='color:#fff;font-size:14px;font-weight:bold';
             const lbClose = document.createElement('button'); lbClose.textContent='✕'; lbClose.style.cssText='color:#fff;font-size:28px;background:none;border:none;cursor:pointer;line-height:1';
-            lbClose.addEventListener('click',()=>{document.getElementById('expAttachLightbox')?.remove();window._lbList=null;});
-            lbTop.appendChild(lbCounter); lbTop.appendChild(lbClose);
+            lbClose.addEventListener('click',()=>{document.getElementById('expAttachLightbox')?.remove();document.getElementById('_lbPrintStyle')?.remove();window._lbList=null;});
+            const lbDownload = document.createElement('a'); lbDownload.textContent='⬇'; lbDownload.title='Download'; lbDownload.style.cssText='color:#fff;font-size:20px;text-decoration:none;background:rgba(255,255,255,0.15);border-radius:6px;width:34px;height:34px;display:flex;align-items:center;justify-content:center';
+            lbDownload.addEventListener('click',(e)=>{if(!window._lbCurrentUrl){e.preventDefault();return;}lbDownload.href=window._lbCurrentUrl;lbDownload.download=window._lbCurrentName||'attachment';});
+            const lbPrint = document.createElement('button'); lbPrint.textContent='🖨'; lbPrint.title='Print'; lbPrint.style.cssText='color:#fff;font-size:18px;background:rgba(255,255,255,0.15);border:none;border-radius:6px;width:34px;height:34px;cursor:pointer;display:flex;align-items:center;justify-content:center';
+            lbPrint.addEventListener('click',()=>{let ps=document.getElementById('_lbPrintStyle');if(!ps){ps=document.createElement('style');ps.id='_lbPrintStyle';ps.textContent='@media print{body>*:not(#expAttachLightbox){display:none!important;}#expAttachLightbox{position:absolute!important;background:#fff!important;}#expLbPrev,#expLbNext,#expLbCounter{display:none!important;}}';document.head.appendChild(ps);}window.print();});
+            lbTop.appendChild(lbCounter); lbTop.appendChild(lbDownload); lbTop.appendChild(lbPrint); lbTop.appendChild(lbClose);
             const lbPrev = document.createElement('button'); lbPrev.id='expLbPrev'; lbPrev.textContent='‹'; lbPrev.style.cssText='position:absolute;left:12px;top:50%;transform:translateY(-50%);color:#fff;font-size:48px;background:rgba(255,255,255,0.2);border:none;cursor:pointer;border-radius:50%;width:56px;height:56px;line-height:1;display:none'; lbPrev.addEventListener('click',()=>expLbNav(-1));
             const lbNext = document.createElement('button'); lbNext.id='expLbNext'; lbNext.textContent='›'; lbNext.style.cssText='position:absolute;right:12px;top:50%;transform:translateY(-50%);color:#fff;font-size:48px;background:rgba(255,255,255,0.2);border:none;cursor:pointer;border-radius:50%;width:56px;height:56px;line-height:1;display:none'; lbNext.addEventListener('click',()=>expLbNav(1));
             const lbContent = document.createElement('div'); lbContent.id='expLbContent'; lbContent.style.cssText='max-width:90%;max-height:84vh;display:flex;align-items:center;justify-content:center';
@@ -25714,8 +25779,12 @@ Automated WFH alert — ${company} Attendance System.`;
             const lbTop=document.createElement('div'); lbTop.style.cssText='position:absolute;top:12px;right:16px;display:flex;gap:10px;align-items:center';
             const lbCounter=document.createElement('span'); lbCounter.id='expLbCounter'; lbCounter.style.cssText='color:#fff;font-size:14px;font-weight:bold';
             const lbClose=document.createElement('button'); lbClose.textContent='✕'; lbClose.style.cssText='color:#fff;font-size:28px;background:none;border:none;cursor:pointer;line-height:1';
-            lbClose.addEventListener('click',()=>{document.getElementById('expAttachLightbox')?.remove();window._lbList=null;});
-            lbTop.appendChild(lbCounter); lbTop.appendChild(lbClose);
+            lbClose.addEventListener('click',()=>{document.getElementById('expAttachLightbox')?.remove();document.getElementById('_lbPrintStyle')?.remove();window._lbList=null;});
+            const lbDownload=document.createElement('a'); lbDownload.textContent='⬇'; lbDownload.title='Download'; lbDownload.style.cssText='color:#fff;font-size:20px;text-decoration:none;background:rgba(255,255,255,0.15);border-radius:6px;width:34px;height:34px;display:flex;align-items:center;justify-content:center';
+            lbDownload.addEventListener('click',(e)=>{if(!window._lbCurrentUrl){e.preventDefault();return;}lbDownload.href=window._lbCurrentUrl;lbDownload.download=window._lbCurrentName||'attachment';});
+            const lbPrint=document.createElement('button'); lbPrint.textContent='🖨'; lbPrint.title='Print'; lbPrint.style.cssText='color:#fff;font-size:18px;background:rgba(255,255,255,0.15);border:none;border-radius:6px;width:34px;height:34px;cursor:pointer;display:flex;align-items:center;justify-content:center';
+            lbPrint.addEventListener('click',()=>{let ps=document.getElementById('_lbPrintStyle');if(!ps){ps=document.createElement('style');ps.id='_lbPrintStyle';ps.textContent='@media print{body>*:not(#expAttachLightbox){display:none!important;}#expAttachLightbox{position:absolute!important;background:#fff!important;}#expLbPrev,#expLbNext,#expLbCounter{display:none!important;}}';document.head.appendChild(ps);}window.print();});
+            lbTop.appendChild(lbCounter); lbTop.appendChild(lbDownload); lbTop.appendChild(lbPrint); lbTop.appendChild(lbClose);
             const lbPrev=document.createElement('button'); lbPrev.id='expLbPrev'; lbPrev.textContent='‹'; lbPrev.style.cssText='position:absolute;left:12px;top:50%;transform:translateY(-50%);color:#fff;font-size:48px;background:rgba(255,255,255,0.2);border:none;cursor:pointer;border-radius:50%;width:56px;height:56px;line-height:1;display:none'; lbPrev.addEventListener('click',()=>expLbNav(-1));
             const lbNext=document.createElement('button'); lbNext.id='expLbNext'; lbNext.textContent='›'; lbNext.style.cssText='position:absolute;right:12px;top:50%;transform:translateY(-50%);color:#fff;font-size:48px;background:rgba(255,255,255,0.2);border:none;cursor:pointer;border-radius:50%;width:56px;height:56px;line-height:1;display:none'; lbNext.addEventListener('click',()=>expLbNav(1));
             const lbContent=document.createElement('div'); lbContent.id='expLbContent'; lbContent.style.cssText='max-width:90%;max-height:84vh;display:flex;align-items:center;justify-content:center';
