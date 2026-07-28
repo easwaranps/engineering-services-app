@@ -9910,6 +9910,20 @@
         // that follows the cursor, since a preview this size works far
         // better anchored in place than constantly repositioning.
         function _positionVoucherPreview(event) {}
+        // Shared debounce for search boxes. Updating a JS variable and
+        // immediately calling renderView() on every keystroke (oninput)
+        // destroys and recreates the input element mid-typing — killing
+        // focus after every single character, making it feel impossible to
+        // type continuously. This waits for a short pause in typing before
+        // actually re-rendering, so search still feels live without ever
+        // interrupting what you're typing.
+        let _searchDebounceTimer = null;
+        function _debouncedSearch(varName, value) {
+            window[varName] = value;
+            clearTimeout(_searchDebounceTimer);
+            _searchDebounceTimer = setTimeout(() => renderView(), 300);
+        }
+
         function _hideVoucherPreview() {
             clearTimeout(_voucherHoverTimer);
             document.getElementById('_voucherHoverPreview')?.remove();
@@ -19225,7 +19239,7 @@
             ) : staff;
             const searchBar = `<div class="mb-3">
                 <input type="text" value="${(window._staffListSearch||'').replace(/"/g,'&quot;')}"
-                    oninput="window._staffListSearch=this.value;renderView();"
+                    oninput="_debouncedSearch('_staffListSearch',this.value)"
                     placeholder="🔍 Search by name, designation, or type…"
                     class="w-full max-w-sm px-3 py-2 border rounded-lg text-sm"/>
                 ${q ? `<span class="text-xs text-gray-400 ml-2">${filtered.length} of ${staff.length} shown</span>` : ''}
@@ -21315,7 +21329,7 @@ ${'─'.repeat(50)}
             const staffFiltered = q ? staff.filter(s => (s.name||'').toLowerCase().includes(q) || (s.staffType||'').toLowerCase().includes(q)) : staff;
             const searchBar = `<div class="mb-1">
                 <input type="text" value="${(window._staffDocsSearch||'').replace(/"/g,'&quot;')}"
-                    oninput="window._staffDocsSearch=this.value;renderView();"
+                    oninput="_debouncedSearch('_staffDocsSearch',this.value)"
                     placeholder="🔍 Search by staff name or type…"
                     class="w-full max-w-sm px-3 py-2 border rounded-lg text-sm"/>
             </div>`;
@@ -21410,7 +21424,7 @@ ${'─'.repeat(50)}
                 </div>
                 <div class="px-4 py-3 border-b border-gray-100 flex flex-wrap gap-2 items-center bg-gray-50">
                     <input type="text" value="${(window._payslipSearch||'').replace(/"/g,'&quot;')}"
-                        oninput="window._payslipSearch=this.value;renderView();"
+                        oninput="_debouncedSearch('_payslipSearch',this.value)"
                         placeholder="🔍 Search by staff name…"
                         class="px-3 py-1.5 border rounded-lg text-xs w-56"/>
                     <select onchange="window._payslipFilterMonth=this.value;renderView();" class="px-2 py-1.5 border rounded-lg text-xs">
