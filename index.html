@@ -1619,7 +1619,7 @@
         // Build stamp — printed in PDF footers and logged on load, so any
         // generated file (or bug report) can be traced to the exact build.
         // Bump this string whenever a PDF-affecting fix is deployed.
-        const _APP_BUILD = 'v1.1-attendance-cols';
+        const _APP_BUILD = 'v1.2-voucher-toolbar';
         console.log('%c[IMSE Easy BMS] build ' + _APP_BUILD, 'color:#1d4ed8;font-weight:bold');
 
         let tokenClient;
@@ -24156,6 +24156,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 <body>
                     <div class="toolbar no-print">
                         <span class="name">📎 ${safeName}</span>
+                        <span style="font-size:10px;color:#6b7280">${_APP_BUILD}</span>
                         <a class="download" href="${url}" download="${safeName}">⬇ Download</a>
                         <button onclick="window.print()">🖨 Print</button>
                     </div>
@@ -24200,8 +24201,28 @@ Automated WFH alert — ${company} Attendance System.`;
                 }
                 if (data) {
                     const isPdf = data.startsWith('data:application/pdf');
+                    // Convert the (potentially large) base64 data: URL into a
+                    // lightweight blob: URL first — using the raw data: URL
+                    // directly means embedding it TWICE in the generated page
+                    // (once for the image/embed src, once for the download
+                    // href), which for a multi-MB voucher can make the whole
+                    // HTML string large enough that the browser fails to
+                    // render the surrounding toolbar/CSS reliably while still
+                    // painting the raw image — exactly matching "toolbar
+                    // missing, just the raw image, like before" for inline-
+                    // stored vouchers specifically (Drive-stored ones were
+                    // never affected, since that path already used a short
+                    // blob: URL).
+                    let previewUrl = data;
+                    try {
+                        const blob = await (await fetch(data)).blob();
+                        previewUrl = URL.createObjectURL(blob);
+                        setTimeout(() => URL.revokeObjectURL(previewUrl), 60000);
+                    } catch (convErr) {
+                        console.warn('data: to blob: conversion failed, falling back to raw data URL:', convErr.message);
+                    }
                     w.document.open();
-                    w.document.write(_voucherViewerHtml(data, isPdf, name));
+                    w.document.write(_voucherViewerHtml(previewUrl, isPdf, name));
                     w.document.close();
                     return;
                 }
