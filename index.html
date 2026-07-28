@@ -19216,7 +19216,22 @@
 
         function renderStaffList() {
             if (!staff.length) return `<div class="text-center py-16 text-gray-400"><div class="text-5xl mb-4">👤</div><p class="font-medium">No staff added yet.</p><p class="text-sm mt-1">Click "+ Add Staff" to get started.</p></div>`;
-            return `<div class="overflow-x-auto"><table class="w-full text-sm">
+            const q = (window._staffListSearch || '').toLowerCase().trim();
+            const filtered = q ? staff.filter(s =>
+                (s.name||'').toLowerCase().includes(q) ||
+                (s.designation||'').toLowerCase().includes(q) ||
+                (s.staffType||'').toLowerCase().includes(q) ||
+                (s.staffID||'').toLowerCase().includes(q)
+            ) : staff;
+            const searchBar = `<div class="mb-3">
+                <input type="text" value="${(window._staffListSearch||'').replace(/"/g,'&quot;')}"
+                    oninput="window._staffListSearch=this.value;renderView();"
+                    placeholder="🔍 Search by name, designation, or type…"
+                    class="w-full max-w-sm px-3 py-2 border rounded-lg text-sm"/>
+                ${q ? `<span class="text-xs text-gray-400 ml-2">${filtered.length} of ${staff.length} shown</span>` : ''}
+            </div>`;
+            if (!filtered.length) return searchBar + `<p class="text-center text-gray-400 py-12 text-sm">No staff match "${window._staffListSearch}".</p>`;
+            return searchBar + `<div class="overflow-x-auto"><table class="w-full text-sm">
                 <thead class="bg-teal-50 text-xs text-gray-500 uppercase">
                     <tr>
                         <th class="px-3 py-2 text-left">Name</th>
@@ -19230,7 +19245,7 @@
                     </tr>
                 </thead>
                 <tbody>
-                    ${staff.map(s => `<tr class="border-b hover:bg-teal-50">
+                    ${filtered.map(s => `<tr class="border-b hover:bg-teal-50">
                         <td class="px-3 py-2 font-medium text-teal-800">${s.name}</td>
                         <td class="px-3 py-2"><span class="px-2 py-0.5 rounded-full text-xs ${s.staffType==='Technician' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}">${s.staffType}</span></td>
                         <td class="px-3 py-2">${s.designation||'—'}</td>
@@ -21296,8 +21311,16 @@ ${'─'.repeat(50)}
             if (!staff.length) return `<p class="text-center text-gray-400 py-12">No staff added yet.</p>`;
             const today = new Date().toISOString().split('T')[0];
             const warn30 = new Date(Date.now() + 30*24*3600000).toISOString().split('T')[0];
-            return `<div class="space-y-4">
-            ${staff.map(s => {
+            const q = (window._staffDocsSearch || '').toLowerCase().trim();
+            const staffFiltered = q ? staff.filter(s => (s.name||'').toLowerCase().includes(q) || (s.staffType||'').toLowerCase().includes(q)) : staff;
+            const searchBar = `<div class="mb-1">
+                <input type="text" value="${(window._staffDocsSearch||'').replace(/"/g,'&quot;')}"
+                    oninput="window._staffDocsSearch=this.value;renderView();"
+                    placeholder="🔍 Search by staff name or type…"
+                    class="w-full max-w-sm px-3 py-2 border rounded-lg text-sm"/>
+            </div>`;
+            return searchBar + `<div class="space-y-4">
+            ${staffFiltered.map(s => {
                 const docs = [
                     {label:'PAN Card', val: s.pan, expiry: null},
                     {label:'Aadhar', val: s.aadhar, expiry: null},
@@ -21352,8 +21375,17 @@ ${'─'.repeat(50)}
                     return rec&&ATT_ORDER.includes(rec.status)?rec.status:'';
                 });
             }
-            // Payslip records table
-            const psRows=payslips.slice().sort((a,b)=>b.periodYear!==a.periodYear?b.periodYear-a.periodYear:b.periodMonth-a.periodMonth).map(ps=>`<tr class="border-b hover:bg-teal-50">
+            // Payslip records table — search + period (month/year) filter
+            const psQ = (window._payslipSearch || '').toLowerCase().trim();
+            const psFM = window._payslipFilterMonth || '';   // '' = all months
+            const psFY = window._payslipFilterYear || '';    // '' = all years
+            const psYears = [...new Set(payslips.map(p=>p.periodYear))].sort((a,b)=>b-a);
+            const psFiltered = payslips.filter(p =>
+                (!psQ || (p.staffName||'').toLowerCase().includes(psQ)) &&
+                (!psFM || p.periodMonth === +psFM) &&
+                (!psFY || p.periodYear === +psFY)
+            );
+            const psRows=psFiltered.slice().sort((a,b)=>b.periodYear!==a.periodYear?b.periodYear-a.periodYear:b.periodMonth-a.periodMonth).map(ps=>`<tr class="border-b hover:bg-teal-50">
                 <td class="px-3 py-2 font-medium text-xs">${ps.staffName}</td>
                 <td class="px-3 py-2 text-xs">${ps.periodLabel}</td>
                 <td class="px-3 py-2 text-right text-xs">₹${(+ps.gross||0).toLocaleString('en-IN',{minimumFractionDigits:2})}</td>
@@ -21369,14 +21401,30 @@ ${'─'.repeat(50)}
             return `
             <!-- Payslip Records Table -->
             <div class="bg-white border border-gray-200 rounded-xl overflow-hidden mb-6">
-                <div class="px-4 py-3 border-b border-gray-100 flex justify-between items-center">
-                    <div><div class="font-semibold text-gray-700 text-sm">🧾 Payslip Records (${payslips.length})</div>
+                <div class="px-4 py-3 border-b border-gray-100 flex justify-between items-center flex-wrap gap-2">
+                    <div><div class="font-semibold text-gray-700 text-sm">🧾 Payslip Records (${psFiltered.length}${psFiltered.length!==payslips.length?' of '+payslips.length:''})</div>
                     <div class="text-xs text-gray-400">Approved payslips are locked. Go to Settings to unlock editing.</div></div>
                     <button onclick="cleanupDuplicatePayslips()" class="px-3 py-1.5 bg-amber-100 text-amber-700 rounded-lg text-xs font-semibold hover:bg-amber-200" title="Find and remove duplicate payslip records (keeps the latest per staff/period)">
                         🧹 Remove Duplicates
                     </button>
                 </div>
+                <div class="px-4 py-3 border-b border-gray-100 flex flex-wrap gap-2 items-center bg-gray-50">
+                    <input type="text" value="${(window._payslipSearch||'').replace(/"/g,'&quot;')}"
+                        oninput="window._payslipSearch=this.value;renderView();"
+                        placeholder="🔍 Search by staff name…"
+                        class="px-3 py-1.5 border rounded-lg text-xs w-56"/>
+                    <select onchange="window._payslipFilterMonth=this.value;renderView();" class="px-2 py-1.5 border rounded-lg text-xs">
+                        <option value="">All Months</option>
+                        ${MN.map((m,i)=>`<option value="${i+1}" ${psFM==(i+1)?'selected':''}>${m}</option>`).join('')}
+                    </select>
+                    <select onchange="window._payslipFilterYear=this.value;renderView();" class="px-2 py-1.5 border rounded-lg text-xs">
+                        <option value="">All Years</option>
+                        ${psYears.map(y=>`<option value="${y}" ${psFY==y?'selected':''}>${y}</option>`).join('')}
+                    </select>
+                    ${(psQ||psFM||psFY) ? `<button onclick="window._payslipSearch='';window._payslipFilterMonth='';window._payslipFilterYear='';renderView();" class="px-2 py-1.5 text-xs text-gray-500 hover:text-gray-700 underline">Clear filters</button>` : ''}
+                </div>
                 ${!payslips.length?'<p class="text-center text-gray-400 py-8 text-sm">No payslip records yet. Generate a payslip below and click "Approve & Save Record".</p>':
+                !psFiltered.length?'<p class="text-center text-gray-400 py-8 text-sm">No payslips match the current search/filter.</p>':
                 `<div class="overflow-x-auto"><table class="w-full text-sm"><thead class="bg-teal-50 text-xs text-gray-500 uppercase"><tr>
                     <th class="px-3 py-2 text-left">Staff</th><th class="px-3 py-2 text-left">Period</th><th class="px-3 py-2 text-right">Gross</th><th class="px-3 py-2 text-right">Net Pay</th><th class="px-3 py-2 text-center">Status</th><th class="px-3 py-2 text-center">Actions</th>
                 </tr></thead><tbody>${psRows}</tbody></table></div>`}
@@ -23106,9 +23154,23 @@ Automated WFH alert — ${company} Attendance System.`;
                 _pendingPayslip={psID:'PS'+Date.now(),type:'tech',staffID,staffName,periodMonth,periodYear,periodLabel:MN[periodMonth-1]+' '+periodYear,gross,netPay,snapshot:{...s},approved:false,createdAt:new Date().toISOString()};
             }
             document.getElementById('payslipApproveSummary').innerHTML=summary;
+            // Reset the Approve & Save button — it's a static, reused element
+            // (never destroyed/recreated), so without this it stays stuck
+            // showing "Saving…" and disabled from the PREVIOUS payslip's
+            // successful save, making every subsequent approval look broken
+            // even though nothing was actually wrong with the save itself.
+            const _approveBtn = document.querySelector('#payslipApproveModal .flex.gap-3.justify-end button:last-child');
+            if (_approveBtn) { _approveBtn.disabled = false; _approveBtn.textContent = '✅ Approve & Save'; }
             document.getElementById('payslipApproveModal').classList.add('show');
         }
-        function closePayslipApproveModal(){document.getElementById('payslipApproveModal').classList.remove('show');_pendingPayslip=null;}
+        function closePayslipApproveModal(){
+            document.getElementById('payslipApproveModal').classList.remove('show');
+            _pendingPayslip=null;
+            // Also reset here — covers Cancel being clicked after the button
+            // was already disabled by a prior click.
+            const _approveBtn = document.querySelector('#payslipApproveModal .flex.gap-3.justify-end button:last-child');
+            if (_approveBtn) { _approveBtn.disabled = false; _approveBtn.textContent = '✅ Approve & Save'; }
+        }
         // ════════════════════════════════════════════════════════════════
         // ONE-TIME CLEANUP: remove duplicate payslip records
         // Fixes existing duplicates created by the double-click bug in
