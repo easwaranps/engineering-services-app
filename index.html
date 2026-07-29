@@ -581,7 +581,7 @@
                 <!-- Advance + Payment -->
                 <div id="expAdvanceSection" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
                     <div id="expAdvanceAmtWrap">
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">Advance Paid Amount</label>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Advance Paid Amount <span class="font-normal text-gray-400">(first payment only — see note below)</span></label>
                         <input type="number" id="expAdvanceAmt" placeholder="0.00" min="0" step="0.01" class="field-editable w-full px-3 py-2 border rounded-lg text-sm" oninput="calcExpAmounts()"/>
                     </div>
                     <div id="expAdvanceDateWrap">
@@ -613,7 +613,7 @@
                         <label class="block text-xs font-bold text-teal-800">💰 Payments Made <span class="font-normal text-gray-500">(optional — for bills paid across multiple periods)</span></label>
                         <button type="button" onclick="addExpPaymentMadeRow()" class="px-2 py-1 bg-teal-600 text-white rounded-lg text-xs font-semibold hover:bg-teal-700">+ Add Payment</button>
                     </div>
-                    <p class="text-[11px] text-gray-500 mb-2">Each row here reduces "Balance to Pay" alongside Advance Paid above — use this when a bill is settled in 3 or more instalments across different months.</p>
+                    <p class="text-[11px] text-gray-500 mb-2">⚠️ Record <strong>every payment after the first Advance</strong> here — do not re-type a running total into "Advance Paid Amount" above, or earlier payments will be lost from the balance calculation. Use this even for a simple 2-payment bill (Advance + 1 final payment).</p>
                     <div class="overflow-x-auto">
                         <table class="w-full text-xs" id="expPaymentsMadeTable">
                             <thead class="text-gray-500">
@@ -692,7 +692,7 @@
                     <div><span class="text-gray-500 block text-xs">Taxable Amount (INR)</span><span id="sumBillINR" class="font-bold text-orange-700">—</span></div>
                     <div><span class="text-gray-500 block text-xs">Total Bill Amount</span><span id="sumTotalBill" class="font-bold text-blue-700">—</span></div>
                     <div><span class="text-gray-500 block text-xs">Total Tax (GST)</span><span id="sumTax" class="font-bold text-orange-700">—</span></div>
-                    <div><span class="text-gray-500 block text-xs">TDS Deducted</span><span id="sumTDS" class="font-bold text-orange-700">—</span></div>
+                    <div><span class="text-gray-500 block text-xs">Total Deduction</span><span id="sumTDS" class="font-bold text-orange-700">—</span></div>
                     <div><span class="text-gray-500 block text-xs">Credit Note / Discount</span><span id="sumCN" class="font-bold text-green-700">—</span></div>
                     <div><span class="text-gray-500 block text-xs">Advance Paid</span><span id="sumAdv" class="font-bold text-purple-700">—</span></div>
                     <div><span class="text-gray-500 block text-xs">Net Payable</span><span id="sumNet" class="font-bold text-orange-800 text-base">—</span></div>
@@ -9439,6 +9439,12 @@
             const fmt = n => '₹'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
             const payments = txn.paymentsReceived||[];
             const totalReceived = payments.reduce((s,p)=>s+(parseFloat(p.amount)||0),0);
+            // TDS/IT TDS/GST TDS deducted by the client at source counts
+            // toward settlement, same as a payment — otherwise Outstanding
+            // shows the TDS amount itself whenever a bill is fully paid
+            // except for the TDS gap (since that becomes the only source
+            // of the shortfall in the naive grandTotal-received formula).
+            const tdsDeductedTotal = payments.reduce((s,p)=>s+(parseFloat(p.tdsAmount)||0)+(parseFloat(p.itTdsAmount)||0)+(parseFloat(p.gstTdsAmount)||0),0);
 
             const modal = document.createElement('div');
             modal.id = 'invPayModal'; modal.className = 'modal show';
@@ -9502,8 +9508,8 @@
 
                     <div class="bg-gray-50 rounded-xl p-3 text-xs text-gray-600">
                         Invoice total: <strong>${fmt(grandTotal)}</strong> · 
-                        Recorded: <strong class="${totalReceived>0?'text-green-600':'text-red-600'}">${fmt(totalReceived)}</strong> · 
-                        Outstanding: <strong class="${(grandTotal-totalReceived)>0.01?'text-red-600':'text-green-600'}">${fmt(Math.max(0,grandTotal-totalReceived))}</strong>
+                        Recorded: <strong class="${totalReceived>0?'text-green-600':'text-red-600'}">${fmt(totalReceived)}</strong>${tdsDeductedTotal>0?` · TDS Deducted: <strong class="text-amber-600">${fmt(tdsDeductedTotal)}</strong>`:''} · 
+                        Outstanding: <strong class="${(grandTotal-totalReceived-tdsDeductedTotal)>0.01?'text-red-600':'text-green-600'}">${fmt(Math.max(0,grandTotal-totalReceived-tdsDeductedTotal))}</strong>
                     </div>
 
                     <div class="flex justify-end gap-3">
@@ -11393,11 +11399,20 @@
             if (rcmDefault) rcmDefault.checked = false;
             toggleRCMHelpText();
 
-            // Populate bank account dropdown (expense accounts only)
+            // Populate bank account dropdown (expense accounts only) — but
+            // always include the CURRENTLY-SAVED bank too, even if its type
+            // no longer matches the Expense/Both filter. Without this, a
+            // saved bankAccountId whose account type doesn't match (or was
+            // changed after the expense was saved) can never be re-selected
+            // when reopening — the value silently fails to apply, looking
+            // exactly like "the bank isn't saving" even though it is.
             const bankSelect = document.getElementById('expBankAccount');
+            const _filteredBanks = bankAccounts.filter(ba => ba.isActive && (ba.type === 'Expense' || ba.type === 'Both'));
+            const _savedBankMissing = exp?.bankAccountId && !_filteredBanks.some(ba => ba.id === exp.bankAccountId);
+            const _savedBank = _savedBankMissing ? bankAccounts.find(ba => ba.id === exp.bankAccountId) : null;
             bankSelect.innerHTML = '<option value="">-- Select Account --</option>' +
-                bankAccounts.filter(ba => ba.isActive && (ba.type === 'Expense' || ba.type === 'Both'))
-                .map(ba => `<option value="${ba.id}">${ba.accountName} (${ba.currency})</option>`).join('');
+                _filteredBanks.map(ba => `<option value="${ba.id}">${ba.accountName} (${ba.currency})</option>`).join('') +
+                (_savedBank ? `<option value="${_savedBank.id}">${_savedBank.accountName} (${_savedBank.currency}) — currently selected</option>` : '');
 
             // Populate Ledger Account dropdown (additive, optional — Chart of Accounts)
             const expLedgerSel = document.getElementById('expLedgerAccount');
@@ -11499,7 +11514,11 @@
                 const _epmBody = document.getElementById('expPaymentsMadeBody');
                 if (_epmBody) {
                     _epmBody.innerHTML = '';
-                    (exp.paymentsMade||[]).forEach(p => addExpPaymentMadeRow(p));
+                    try {
+                        (exp.paymentsMade||[]).forEach(p => addExpPaymentMadeRow(p));
+                    } catch (e) {
+                        console.error('Error restoring Payments Made rows:', e);
+                    }
                 }
                 document.getElementById('expBalanceAmt').value    = exp.balanceAmt||'';
                 document.getElementById('expPayStatus').value     = exp.payStatus||'Pending';
@@ -23749,7 +23768,12 @@ Automated WFH alert — ${company} Attendance System.`;
                 .map(t=>{
                     const tot=calculateTotals(t.items||[]);
                     const received=(t.paymentsReceived||[]).reduce((s,p)=>s+(parseFloat(p.amount)||0),0);
-                    const balance=Math.max(0,(tot.total||0)-received);
+                    // TDS/IT TDS/GST TDS deducted by the client at source is money
+                    // that legally left the invoice value — it must reduce Balance
+                    // Due exactly like a payment does, or a fully-settled TDS
+                    // invoice looks perpetually outstanding here.
+                    const tdsDeducted=(t.paymentsReceived||[]).reduce((s,p)=>s+(parseFloat(p.tdsAmount)||0)+(parseFloat(p.itTdsAmount)||0)+(parseFloat(p.gstTdsAmount)||0),0);
+                    const balance=Math.max(0,(tot.total||0)-received-tdsDeducted);
                     return {arID:'TXN-'+t.txnID,source:'app',txnID:t.txnID,client:t.partyName||'—',invoiceNo:t.txnID,invoiceDate:t.txnDate||'',dueDate:t.dueDate||'',invoiceAmt:tot.total||0,received,balance,description:(t.items||[]).map(i=>i.description||'').filter(Boolean).join('; '),followUps:t.arFollowUps||[]};
                 }).filter(t=>t.balance>0.01);
 
@@ -23896,6 +23920,9 @@ Automated WFH alert — ${company} Attendance System.`;
                             <input type="number" id="arReceived" value="${ex?.received||0}" step="0.01" min="0" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="0.00"/>
                         </div>
                     </div>
+                    <div><label class="block text-xs font-semibold text-gray-700 mb-1">Amount Received Date</label>
+                        <input type="date" id="arReceivedDate" value="${ex?.receivedDate||''}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                    </div>
                     <div><label class="block text-xs font-semibold text-gray-700 mb-1">Description / Work Done</label>
                         <textarea id="arDesc" class="w-full px-3 py-2 border rounded-lg text-sm" rows="2" placeholder="Brief description of work or service billed...">${ex?.description||''}</textarea>
                     </div>
@@ -23918,15 +23945,16 @@ Automated WFH alert — ${company} Attendance System.`;
             const dueDate=document.getElementById('arDueDate')?.value;
             const invAmt=parseFloat(document.getElementById('arInvAmt')?.value)||0;
             const received=parseFloat(document.getElementById('arReceived')?.value)||0;
+            const receivedDate=document.getElementById('arReceivedDate')?.value||'';
             const desc=document.getElementById('arDesc')?.value.trim();
             const poRef=document.getElementById('arPORef')?.value.trim();
             if (!client||!invNo||!invDate||!invAmt){alert('Please fill in Client, Invoice Number, Date, and Amount.');return;}
             const balance=Math.max(0,invAmt-received);
             if (arID) {
                 const idx=arInvoices.findIndex(a=>a.arID===arID);
-                if (idx>=0) Object.assign(arInvoices[idx],{client,invoiceNo:invNo,invoiceDate:invDate,dueDate,invoiceAmt:invAmt,received,balance,description:desc,poRef});
+                if (idx>=0) Object.assign(arInvoices[idx],{client,invoiceNo:invNo,invoiceDate:invDate,dueDate,invoiceAmt:invAmt,received,receivedDate,balance,description:desc,poRef});
             } else {
-                arInvoices.push({arID:'AR-'+Date.now(),source:'historical',client,invoiceNo:invNo,invoiceDate:invDate,dueDate,invoiceAmt:invAmt,received,balance,description:desc,poRef,followUps:[],createdAt:new Date().toISOString()});
+                arInvoices.push({arID:'AR-'+Date.now(),source:'historical',client,invoiceNo:invNo,invoiceDate:invDate,dueDate,invoiceAmt:invAmt,received,receivedDate,balance,description:desc,poRef,followUps:[],createdAt:new Date().toISOString()});
             }
             try {
                 await saveData('arInvoices',arInvoices);
