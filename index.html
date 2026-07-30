@@ -36400,9 +36400,13 @@ Automated WFH alert — ${company} Attendance System.`;
             // Show a loading modal immediately, then fetch any Drive-only attachments
             // (those with driveFileId but no inline .data) so they display instantly
             // once fetched, rather than the user clicking and seeing nothing.
+            // Inline z-index of 20000 sits above the PR detail modal's inline
+            // z-index of 10000 — without this the attachment modal opens
+            // *behind* the PR detail and appears invisible/uncloseable.
             const loadingModal = document.createElement('div');
             loadingModal.id = 'prAttachmentModal';
             loadingModal.className = 'modal show';
+            loadingModal.style.zIndex = '20000';
             loadingModal.innerHTML = `
             <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm m-4 p-8 text-center">
                 <div class="animate-spin h-8 w-8 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-3"></div>
@@ -36457,6 +36461,7 @@ Automated WFH alert — ${company} Attendance System.`;
             const modal = document.createElement('div');
             modal.id = 'prAttachmentModal';
             modal.className = 'modal show';
+            modal.style.zIndex = '20000';
             modal.innerHTML = `
             <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl m-4 max-h-[92vh] overflow-y-auto">
                 <div class="bg-gradient-to-r from-blue-600 to-indigo-600 p-4 text-white flex justify-between items-center sticky top-0 z-10">
