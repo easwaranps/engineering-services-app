@@ -36760,31 +36760,38 @@ Automated WFH alert — ${company} Attendance System.`;
             return { amount: closingBalance, fromPrID: prior.prID };
         }
 
-        // Edit a reconciliation entry — pre-fills the Add Line fields with the
-        // existing values, removes the old entry, and lets the user re-save it.
+        // Edit a reconciliation entry — enters "editing mode" where the
+        // existing entry stays in the ledger, its values populate the Add-Line
+        // inputs, the button changes to "💾 Save Edit", and a Cancel Edit
+        // button appears. Prior behaviour immediately deleted the entry and
+        // relied on the user re-saving — but the re-render wiped the input
+        // values along with the entry, effectively destroying data on click.
+        //
+        // window._prReconEditingIdx  — -1 when adding new, >=0 when editing
+        //                              the entry at that index. Consumed by
+        //                              the render (pre-fills inputs, swaps
+        //                              button label) and by _prAddReconciliation
+        //                              (replace at index instead of push).
         function _prEditReconciliation(prID, idx) {
             const pr = (paymentRequests||[]).find(r => r.prID === prID);
             if (!pr || !pr.reconciliation?.[idx]) return;
-            const r = pr.reconciliation[idx];
-            const recv = document.getElementById('prReconReceived');
-            const disb = document.getElementById('prReconDisbursed');
-            const rmk  = document.getElementById('prReconRemark');
-            const ref  = document.getElementById('prReconRefPR');
-            if (recv) recv.value = r.fundReceived || '';
-            if (disb) disb.value = r.fundDisbursed || '';
-            if (rmk)  rmk.value  = r.remark || '';
-            // Restore the PR reference — falls back to current PR if the old
-            // entry pre-dates the refPrID field (backward compat).
-            if (ref)  ref.value  = r.refPrID || pr.prID;
-            _prReconOnPickPR(prID);  // refresh hint
-            // Remove the old entry immediately so user is effectively replacing it
-            pr.reconciliation.splice(idx, 1);
-            saveData('paymentRequests', paymentRequests).then(() => {
-                _renderPaymentRequestDetail(pr);
-                // Scroll to and highlight the Add Line section
+            window._prReconEditingIdx = idx;
+            _renderPaymentRequestDetail(pr);
+            // Scroll the Add Line section into view so the pre-filled inputs are visible
+            setTimeout(() => {
                 document.getElementById('prReconReceived')?.scrollIntoView({ behavior:'smooth', block:'center' });
-                _showToast('Entry loaded into edit fields — make changes and click "+ Add Line" to save.', '#2563eb', 5000);
-            });
+            }, 30);
+            _showToast('Editing entry — modify the fields and click "💾 Save Edit", or Cancel to leave unchanged.', '#2563eb', 4500);
+        }
+
+        // Leave editing mode without touching the entry — user changes their
+        // mind. Simply clears the marker and re-renders (which resets the
+        // Add Line form to blank / add-new state).
+        function _prCancelReconEdit(prID) {
+            const pr = (paymentRequests||[]).find(r => r.prID === prID);
+            if (!pr) return;
+            window._prReconEditingIdx = -1;
+            _renderPaymentRequestDetail(pr);
         }
 
         // When the user picks a PR from the Applied-to dropdown, show a hint
@@ -36827,6 +36834,11 @@ Automated WFH alert — ${company} Attendance System.`;
         // record fund events that pertain to prior PRs whose remaining balance
         // is being settled here (e.g. money received specifically for
         // PR2627007's remaining amount).
+        //
+        // If `window._prReconEditingIdx >= 0` the function REPLACES the entry
+        // at that index (preserving the original date/by so the audit trail
+        // survives edits) instead of pushing a new one. The editing marker
+        // is cleared on success.
         async function _prAddReconciliation(prID) {
             const pr = (paymentRequests||[]).find(r => r.prID === prID);
             if (!pr) return;
@@ -36839,18 +36851,39 @@ Automated WFH alert — ${company} Attendance System.`;
                 return;
             }
             pr.reconciliation = pr.reconciliation || [];
-            pr.reconciliation.push({
-                date: new Date().toISOString(),
-                refPrID,
-                fundReceived: received,
-                fundDisbursed: disbursed,
-                remark,
-                by: (typeof currentUser !== 'undefined' && currentUser?.name) || 'User'
-            });
+            const editingIdx = (typeof window._prReconEditingIdx === 'number') ? window._prReconEditingIdx : -1;
+            const editing = editingIdx >= 0 && pr.reconciliation[editingIdx];
+            const nowUser = (typeof currentUser !== 'undefined' && currentUser?.name) || 'User';
+            if (editing) {
+                const orig = pr.reconciliation[editingIdx];
+                // Preserve original date/by so the audit trail stays intact;
+                // append a light-touch edit trail to `by` so it's visible
+                // that the record was modified.
+                pr.reconciliation[editingIdx] = {
+                    date: orig.date || new Date().toISOString(),
+                    refPrID,
+                    fundReceived: received,
+                    fundDisbursed: disbursed,
+                    remark,
+                    by: orig.by || nowUser,
+                    editedAt: new Date().toISOString(),
+                    editedBy: nowUser
+                };
+                window._prReconEditingIdx = -1;
+            } else {
+                pr.reconciliation.push({
+                    date: new Date().toISOString(),
+                    refPrID,
+                    fundReceived: received,
+                    fundDisbursed: disbursed,
+                    remark,
+                    by: nowUser
+                });
+            }
             try {
                 await saveData('paymentRequests', paymentRequests);
                 _renderPaymentRequestDetail(pr);
-                _showToast('✓ Reconciliation entry added', '#6d28d9', 3500);
+                _showToast(editing ? '✓ Reconciliation entry updated' : '✓ Reconciliation entry added', '#6d28d9', 3500);
             } catch(err) {
                 alert('Save failed: ' + err.message);
             }
@@ -37142,8 +37175,23 @@ Automated WFH alert — ${company} Attendance System.`;
 
                         <!-- Add a reconciliation line item -->
                         <div style="border-top:1px dashed #ddd6fe;padding-top:10px">
-                            <p style="font-size:10px;color:#6b7280;font-weight:600;margin-bottom:6px;text-transform:uppercase">+ Add reconciliation line</p>
                             ${(() => {
+                                // Editing mode: window._prReconEditingIdx points at
+                                // the entry being modified. Pre-fill inputs, change
+                                // the submit button label, and offer a Cancel button
+                                // that leaves the entry unchanged.
+                                const editingIdx = (typeof window._prReconEditingIdx === 'number') ? window._prReconEditingIdx : -1;
+                                const editingEntry = (editingIdx >= 0) ? (pr.reconciliation||[])[editingIdx] : null;
+                                const preRecv   = editingEntry ? (editingEntry.fundReceived  || '') : '';
+                                const preDisb   = editingEntry ? (editingEntry.fundDisbursed || '') : '';
+                                const preRemark = editingEntry ? (editingEntry.remark || '')       : '';
+                                const preRefPR  = editingEntry ? (editingEntry.refPrID || pr.prID) : pr.prID;
+
+                                // Header line — reflects add vs edit
+                                const headerLine = editingEntry
+                                    ? `<p style="font-size:10px;color:#2563eb;font-weight:700;margin-bottom:6px;text-transform:uppercase">✏️ Editing entry #${editingIdx+1}${editingEntry.date?' · '+editingEntry.date.substring(0,10):''}</p>`
+                                    : `<p style="font-size:10px;color:#6b7280;font-weight:600;margin-bottom:6px;text-transform:uppercase">+ Add reconciliation line</p>`;
+
                                 // Build the PR options list — every raised PR
                                 // sorted newest disbursement first, current PR
                                 // at the very top and pre-selected. Cancelled
@@ -37155,12 +37203,16 @@ Automated WFH alert — ${company} Attendance System.`;
                                     .slice()
                                     .sort((a,b) => (b.disbursementDate||'').localeCompare(a.disbursementDate||''));
                                 const opts = allPRs.map(p => {
+                                    const isSelected = p.prID === preRefPR;
                                     const isCurrent = p.prID === pr.prID;
                                     const label = `${p.prID} — ${p.periodLabel||p.reason||''}${p.status && p.status!=='Draft'?' ('+p.status+')':''}`;
-                                    return `<option value="${p.prID}"${isCurrent?' selected':''}>${isCurrent?'► ':''}${label}</option>`;
+                                    return `<option value="${p.prID}"${isSelected?' selected':''}>${isCurrent?'► ':''}${label}</option>`;
                                 }).join('');
+                                const btnLabel = editingEntry ? '💾 Save Edit' : '+ Add Line';
+                                const btnColor = editingEntry ? '#2563eb' : '#6d28d9';
                                 return `
-                            <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr 2fr auto;gap:8px;align-items:end">
+                            ${headerLine}
+                            <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr 2fr auto${editingEntry?' auto':''};gap:8px;align-items:end">
                                 <div>
                                     <label style="font-size:10px;color:#6b7280;display:block;margin-bottom:2px">Applied to Payment Request</label>
                                     <select id="prReconRefPR" onchange="_prReconOnPickPR('${pr.prID}')"
@@ -37171,17 +37223,18 @@ Automated WFH alert — ${company} Attendance System.`;
                                 </div>
                                 <div>
                                     <label style="font-size:10px;color:#6b7280;display:block;margin-bottom:2px">Fund Received (₹) <span style="color:#9ca3af;font-weight:400">source</span></label>
-                                    <input type="number" id="prReconReceived" step="0.01" placeholder="0.00" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px"/>
+                                    <input type="number" id="prReconReceived" value="${preRecv}" step="0.01" placeholder="0.00" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px"/>
                                 </div>
                                 <div>
                                     <label style="font-size:10px;color:#6b7280;display:block;margin-bottom:2px">Fund Disbursed (₹) <span style="color:#9ca3af;font-weight:400">use</span></label>
-                                    <input type="number" id="prReconDisbursed" step="0.01" placeholder="0.00" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px"/>
+                                    <input type="number" id="prReconDisbursed" value="${preDisb}" step="0.01" placeholder="0.00" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px"/>
                                 </div>
                                 <div>
                                     <label style="font-size:10px;color:#6b7280;display:block;margin-bottom:2px">Remarks <span style="font-weight:400;color:#9ca3af">(details — e.g. "TANGEDCO bill paid ₹4991 more than funds received")</span></label>
-                                    <input type="text" id="prReconRemark" placeholder="e.g. MSED office bill paid ₹390 more than funds received" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px"/>
+                                    <input type="text" id="prReconRemark" value="${(preRemark||'').replace(/"/g,'&quot;')}" placeholder="e.g. MSED office bill paid ₹390 more than funds received" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px"/>
                                 </div>
-                                <button onclick="_prAddReconciliation('${pr.prID}')" style="padding:6px 14px;background:#6d28d9;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">+ Add Line</button>
+                                <button onclick="_prAddReconciliation('${pr.prID}')" style="padding:6px 14px;background:${btnColor};color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">${btnLabel}</button>
+                                ${editingEntry ? `<button onclick="_prCancelReconEdit('${pr.prID}')" style="padding:6px 12px;background:#fff;color:#6b7280;border:1px solid #d1d5db;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap" title="Leave the entry unchanged">✕ Cancel</button>` : ''}
                             </div>`;
                             })()}
                         </div>
@@ -37395,6 +37448,7 @@ Automated WFH alert — ${company} Attendance System.`;
             const modal = document.getElementById('prDetailModal');
             if (modal) modal.style.display = 'none';
             window._currentPR = null;
+            window._prReconEditingIdx = -1;  // clear any in-flight reconciliation edit
         }
 
         // ── Item decision handlers (write to in-memory + persist on close/finalise) ──
@@ -38043,7 +38097,7 @@ Automated WFH alert — ${company} Attendance System.`;
 
             // ── Account Balance Reconciliation (if entries exist or carried forward set) ──
             const recon = pr.reconciliation || [];
-            if (recon.length > 0 || pr.bankBalance > 0 || parseFloat(pr.carriedForwardAmt) > 0) {
+            if (recon.length > 0 || pr.bankBalance > 0 || parseFloat(pr.carriedForwardAmt) > 0 || parseFloat(pr.carriedForwardUse) > 0 || pr.carriedForwardRemark) {
                 if (y > 220) { doc.addPage(); y = 15; }
                 y += 4;
                 doc.setFontSize(10); doc.setTextColor(91, 33, 182); doc.setFont(undefined, 'bold');
@@ -38053,42 +38107,73 @@ Automated WFH alert — ${company} Attendance System.`;
                 const carriedFwd = autoCarryFwd.fromPrID
                     ? autoCarryFwd
                     : { amount: parseFloat(pr.carriedForwardAmt)||0, fromPrID: '' };
+                const carryFwdUse    = parseFloat(pr.carriedForwardUse) || 0;
+                const carryFwdRemark = pr.carriedForwardRemark || '';
+                const carryFwdBalance = +(carriedFwd.amount - carryFwdUse).toFixed(2);
                 const totalReceived  = recon.reduce((s,r)=>s+(parseFloat(r.fundReceived)||0),0);
                 const totalDisbursed = recon.reduce((s,r)=>s+(parseFloat(r.fundDisbursed)||0),0);
-                const closingBalance = +(carriedFwd.amount + totalReceived - totalDisbursed).toFixed(2);
+                const closingBalance = +(carryFwdBalance + totalReceived - totalDisbursed).toFixed(2);
 
-                const reconBody = [
-                    [
-                        `Funds carried forward${carriedFwd.fromPrID?' after '+carriedFwd.fromPrID:''} (incl. min. balance)`,
-                        { content: 'Rs.'+fmt(carriedFwd.amount), styles:{halign:'right'} },
-                        { content: '—', styles:{halign:'center',textColor:[150,150,150]} },
-                        { content: '—', styles:{halign:'center',textColor:[150,150,150]} },
-                        { content: carriedFwd.fromPrID?'Carried from previous request':'Opening balance (no prior request)', styles:{fontSize:7.5,textColor:[120,120,120]} }
-                    ],
-                    [
-                        `${pr.prID} — ${pr.periodLabel||pr.reason||''}`,
-                        { content: 'Rs.'+fmt(totalReceived), styles:{halign:'right',textColor:[21,128,61]} },
-                        { content: 'Rs.'+fmt(totalDisbursed), styles:{halign:'right',textColor:[180,83,9]} },
-                        { content: 'Rs.'+fmt(closingBalance), styles:{halign:'right',fontStyle:'bold'} },
-                        { content: recon.map(r=>r.remark).filter(Boolean).join('  |  '), styles:{fontSize:7.5} }
-                    ]
-                ];
+                // Build the body row-by-row. Previous code compressed every
+                // reconciliation entry into a single "|"-separated blob in the
+                // Remarks column of a single aggregate row — which cut off
+                // most content and hid per-entry dates and PR references.
+                // Now each reconciliation entry renders as its own row with
+                // its own PR ref, fund received/disbursed, and remark+date+by.
+                const reconBody = [];
+                // Row 1 — Opening carry-forward (with editable Use/Remark)
+                reconBody.push([
+                    `Funds carried forward${carriedFwd.fromPrID?' after '+carriedFwd.fromPrID:''} (incl. min. balance)`,
+                    { content: 'Rs.'+fmt(carriedFwd.amount), styles:{halign:'right'} },
+                    { content: carryFwdUse > 0 ? 'Rs.'+fmt(carryFwdUse) : '—', styles:{halign:'right', textColor: carryFwdUse>0?[180,83,9]:[150,150,150]} },
+                    { content: (carriedFwd.amount||carryFwdUse) ? 'Rs.'+fmt(carryFwdBalance) : '—', styles:{halign:'right', textColor: carryFwdUse>0?[91,33,182]:[80,80,80], fontStyle: carryFwdUse>0?'bold':'normal'} },
+                    { content: carryFwdRemark || (carriedFwd.fromPrID?'Carried from previous request':'Opening balance (no prior request)'), styles:{fontSize:7.5, textColor: carryFwdRemark?[60,60,60]:[120,120,120]} }
+                ]);
+                // Rows 2..N — one per reconciliation entry
+                let runningBal = carryFwdBalance;
+                recon.forEach((r, ri) => {
+                    const fRecv = parseFloat(r.fundReceived) || 0;
+                    const fDisb = parseFloat(r.fundDisbursed) || 0;
+                    runningBal = +(runningBal + fRecv - fDisb).toFixed(2);
+                    const refID = r.refPrID || pr.prID;
+                    const isCurrent = refID === pr.prID;
+                    const dateStr = (r.date||'').substring(0,10);
+                    const byStr = r.by ? ` · ${r.by}` : '';
+                    const editedStr = r.editedAt ? ` · edited ${r.editedAt.substring(0,10)}` : '';
+                    // Item cell — entry number + refPrID marker so it's clear
+                    // this row is a discrete fund event, not the current-PR
+                    // aggregate. Amber highlight for cross-PR references.
+                    const itemLabel = isCurrent
+                        ? `#${ri+1} — for ${refID}`
+                        : `#${ri+1} — for ${refID} ↗`;
+                    reconBody.push([
+                        { content: itemLabel, styles:{ fontSize: 8, textColor: isCurrent?[91,33,182]:[146,64,14], fontStyle:'bold' } },
+                        { content: fRecv > 0 ? 'Rs.'+fmt(fRecv) : '—',
+                          styles:{halign:'right', textColor: fRecv>0?[21,128,61]:[150,150,150]} },
+                        { content: fDisb > 0 ? 'Rs.'+fmt(fDisb) : '—',
+                          styles:{halign:'right', textColor: fDisb>0?[180,83,9]:[150,150,150]} },
+                        { content: 'Rs.'+fmt(runningBal), styles:{halign:'right'} },
+                        { content: (r.remark||'').trim() + (dateStr ? `\n${dateStr}${byStr}${editedStr}` : ''),
+                          styles:{ fontSize: 7.8, textColor:[60,60,60] } }
+                    ]);
+                });
+
                 doc.autoTable({
                     startY: y, margin:{left:ML,right:MR}, theme:'grid',
-                    styles:{fontSize:8.5, cellPadding:2.5},
+                    styles:{fontSize:8.5, cellPadding:2.5, valign:'top'},
                     headStyles:{fillColor:[91,33,182], textColor:[255,255,255], fontStyle:'bold', fontSize:8},
                     head:[['Items','Source of Fund','Use of Fund','Balance Available','Remarks']],
                     body: reconBody,
                     foot:[[
                         {content:'TOTAL',styles:{fontStyle:'bold'}},
-                        {content:'',styles:{}},
-                        {content:'',styles:{}},
+                        {content:'Rs.'+fmt(totalReceived),styles:{halign:'right',fontStyle:'bold',textColor:[21,128,61]}},
+                        {content:'Rs.'+fmt(totalDisbursed+carryFwdUse),styles:{halign:'right',fontStyle:'bold',textColor:[180,83,9]}},
                         {content:'Rs.'+fmt(closingBalance), styles:{halign:'right',fontStyle:'bold',textColor:[91,33,182]}},
                         {content:'Carries forward to next Payment Request',styles:{fontSize:7.5,textColor:[120,120,120]}}
                     ]],
                     columnStyles:{
-                        0:{cellWidth:50}, 1:{cellWidth:24,halign:'right'}, 2:{cellWidth:24,halign:'right'},
-                        3:{cellWidth:24,halign:'right'}, 4:{cellWidth:CW-122}
+                        0:{cellWidth:45}, 1:{cellWidth:24,halign:'right'}, 2:{cellWidth:24,halign:'right'},
+                        3:{cellWidth:26,halign:'right'}, 4:{cellWidth:CW-119}
                     }
                 });
                 y = doc.lastAutoTable.finalY + 6;
