@@ -19519,10 +19519,27 @@
             const isTech=selSt?.staffType==='Technician';
             const shM=attGridState.periodMonth,shY=attGridState.periodYear;
             const allAtt=[];staff.forEach(s=>(s.attendance||[]).forEach(a=>allAtt.push({...a,staffName:s.name,staffType:s.staffType})));allAtt.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
-            // Apply staff filter, then optional date filter (exact-day match)
+            // Apply staff filter, then EITHER the exact-day filter (takes
+            // precedence — user explicitly picked a specific date) OR the
+            // pay-period month/year filter (26th prev month → 25th current
+            // month, matching the "Pay Period Month" label semantics used
+            // throughout the tab — technician grid, office-staff summary,
+            // payslip periods). Previously the Records list ignored the
+            // month/year dropdown entirely and dumped every date the staff
+            // had ever punched, capped at 150 rows — misleading and made the
+            // "Pay Period Month" filter appear broken.
             let showingAtt = selID ? allAtt.filter(a=>a.staffID===selID) : allAtt;
             if (attGridState.dateFilter) {
                 showingAtt = showingAtt.filter(a => (a.date||'') === attGridState.dateFilter);
+            } else {
+                const _pm = shM===1 ? 12 : shM-1;
+                const _py = shM===1 ? shY-1 : shY;
+                const _ppStart = `${_py}-${String(_pm).padStart(2,'0')}-26`;
+                const _ppEnd   = `${shY}-${String(shM).padStart(2,'0')}-25`;
+                showingAtt = showingAtt.filter(a => {
+                    const d = a.date || '';
+                    return d >= _ppStart && d <= _ppEnd;
+                });
             }
             let gridHTML='';
             if(selID&&isTech){
@@ -19672,7 +19689,7 @@
             })()}
 
             <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
-                <div class="px-4 py-3 border-b border-gray-100 font-semibold text-sm text-gray-700">Records ${selID&&selSt?'— '+selSt.name:'(All)'} (${showingAtt.length})</div>
+                <div class="px-4 py-3 border-b border-gray-100 font-semibold text-sm text-gray-700">Records ${selID&&selSt?'— '+selSt.name:'(All)'} <span class="text-xs font-normal text-gray-500">${attGridState.dateFilter?`· ${attGridState.dateFilter}`:`· ${MN[shM-1]} ${shY} pay period (26 ${MN[(shM===1?12:shM-1)-1]} → 25 ${MN[shM-1]})`}</span> (${showingAtt.length})</div>
                 ${!showingAtt.length?'<p class="text-center text-gray-400 py-10 text-sm">No attendance records.</p>':
                 `<div class="overflow-x-auto"><table class="w-full text-sm"><thead class="bg-blue-50 text-xs text-gray-500 uppercase"><tr><th class="px-3 py-2 text-left">Date</th><th class="px-3 py-2 text-left">Staff</th><th class="px-3 py-2 text-left">Type</th><th class="px-3 py-2 text-center">OT</th><th class="px-3 py-2 text-left">Project</th><th class="px-3 py-2 text-left">Remarks</th><th class="px-3 py-2 text-center">Actions</th></tr></thead>
                 <tbody>${showingAtt.slice(0,150).map(a=>{
@@ -36612,6 +36629,32 @@ Automated WFH alert — ${company} Attendance System.`;
             }, 800);
         }
 
+        // Companion saver for Use-of-Fund and Remarks on the carry-forward row.
+        // Same debounce pattern; `field` is the property key on the PR object.
+        // Numeric fields (`carriedForwardUse`) → coerced to float, else stored
+        // as string. On save, re-render so the Balance Available cell and the
+        // TOTAL row's closing balance update immediately.
+        const _prCarryFwdFieldTimers = {};
+        function _prSaveCarryFwdField(prID, field, value) {
+            clearTimeout(_prCarryFwdFieldTimers[field]);
+            _prCarryFwdFieldTimers[field] = setTimeout(async () => {
+                const pr = (paymentRequests||[]).find(r => r.prID === prID);
+                if (!pr) return;
+                if (field === 'carriedForwardUse') {
+                    pr[field] = parseFloat(value) || 0;
+                } else {
+                    pr[field] = (value || '').toString();
+                }
+                try {
+                    await saveData('paymentRequests', paymentRequests);
+                    _showToast('✓ Carry-forward ' + (field==='carriedForwardUse'?'use of fund':'remark') + ' saved', '#5b21b6', 2500);
+                    _renderPaymentRequestDetail(pr);
+                } catch(err) {
+                    console.error('_prSaveCarryFwdField failed:', err);
+                }
+            }, 800);
+        }
+
         // Find the closing balance of the most recent PRIOR Payment Request
         // (by disbursement date, excluding the current one and any Cancelled/
         // Superseded requests) — this becomes "Funds Carried Forward" for the
@@ -36634,9 +36677,10 @@ Automated WFH alert — ${company} Attendance System.`;
             const recon = prior.reconciliation || [];
             const totalReceived  = recon.reduce((s,r)=>s+(parseFloat(r.fundReceived)||0),0);
             const totalDisbursed = recon.reduce((s,r)=>s+(parseFloat(r.fundDisbursed)||0),0);
+            const carryUse = parseFloat(prior.carriedForwardUse) || 0;
             // Recursively include whatever the PRIOR request itself carried forward
             const priorCarry = _prGetCarriedForward(prior.prID);
-            const closingBalance = +(priorCarry.amount + totalReceived - totalDisbursed).toFixed(2);
+            const closingBalance = +(priorCarry.amount - carryUse + totalReceived - totalDisbursed).toFixed(2);
             return { amount: closingBalance, fromPrID: prior.prID };
         }
 
@@ -36919,7 +36963,15 @@ Automated WFH alert — ${company} Attendance System.`;
                         const recon = pr.reconciliation || [];
                         const totalReceived  = recon.reduce((s,r)=>s+(parseFloat(r.fundReceived)||0),0);
                         const totalDisbursed = recon.reduce((s,r)=>s+(parseFloat(r.fundDisbursed)||0),0);
-                        const closingBalance = +(carriedFwd.amount + totalReceived - totalDisbursed).toFixed(2);
+                        // Carry-forward row can now have its own Use of Fund
+                        // (money already spent out of the carried-forward amount
+                        // before this PR's own activities began). Subtract it
+                        // from both the row's own Balance Available and the
+                        // closing balance rolled up in the TOTAL row.
+                        const carryFwdUse    = parseFloat(pr.carriedForwardUse) || 0;
+                        const carryFwdRemark = pr.carriedForwardRemark || '';
+                        const carryFwdBalance = +(carriedFwd.amount - carryFwdUse).toFixed(2);
+                        const closingBalance = +(carryFwdBalance + totalReceived - totalDisbursed).toFixed(2);
                         return `
                     <!-- Fund Reconciliation Ledger -->
                     <div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;padding:12px 14px;margin-bottom:14px">
@@ -36949,12 +37001,24 @@ Automated WFH alert — ${company} Attendance System.`;
                                                </div>`
                                         }
                                     </td>
-                                    <td style="padding:6px;border:1px solid #ede9fe;text-align:right">—</td>
-                                    <td style="padding:6px;border:1px solid #ede9fe;text-align:right">—</td>
-                                    <td style="padding:6px;border:1px solid #ede9fe;color:#9ca3af">
-                                        ${carriedFwd.fromPrID
-                                            ? 'Carried from previous request closing balance'
-                                            : '<span style="color:#7c3aed;font-size:10px">✏️ Enter the carried-forward balance from the last payment request made outside the app (e.g. PR2627006 closing balance)</span>'}
+                                    <td style="padding:6px;border:1px solid #ede9fe;text-align:right">
+                                        <div style="display:flex;align-items:center;gap:4px;justify-content:flex-end">
+                                            <input type="number" value="${carryFwdUse||''}" step="0.01" min="0"
+                                                placeholder="0.00"
+                                                title="Money already spent out of the carried-forward amount before this PR's activities began. Subtracts from Balance Available and rolls into the TOTAL closing balance."
+                                                style="width:90px;padding:3px 6px;border:1px solid #c4b5fd;border-radius:4px;font-size:11px;text-align:right"
+                                                oninput="_prSaveCarryFwdField('${pr.prID}','carriedForwardUse',this.value)"/>
+                                        </div>
+                                    </td>
+                                    <td style="padding:6px;border:1px solid #ede9fe;text-align:right${carryFwdUse>0?';color:#5b21b6;font-weight:600':''}">${(carriedFwd.amount||carryFwdUse)?fmt(carryFwdBalance):'—'}</td>
+                                    <td style="padding:6px;border:1px solid #ede9fe">
+                                        <input type="text" value="${(carryFwdRemark||'').replace(/"/g,'&quot;')}"
+                                            placeholder="${carriedFwd.fromPrID
+                                                ? 'e.g. ₹2,500 spent on urgent site material before this PR'
+                                                : 'e.g. Opening balance from PR2627006 closing (outside app)'}"
+                                            style="width:100%;padding:4px 6px;border:1px solid #ddd6fe;border-radius:4px;font-size:11px;background:#fff"
+                                            oninput="_prSaveCarryFwdField('${pr.prID}','carriedForwardRemark',this.value)"/>
+                                        ${!carriedFwd.fromPrID && !carryFwdRemark ? '<div style="color:#7c3aed;font-size:10px;margin-top:2px">✏️ Enter the carried-forward balance from the last payment request made outside the app (e.g. PR2627006 closing balance)</div>' : ''}
                                     </td>
                                 </tr>
                                 <tr>
