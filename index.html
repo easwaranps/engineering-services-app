@@ -30081,14 +30081,18 @@ Automated WFH alert — ${company} Attendance System.`;
         // Per user spec: every payment obligation (salary, wages, rent, electricity,
         // water, PF, ESIC, TDS, GST, vendor invoices, etc.) is recorded in
         // Expenses & Bills with the appropriate `billType`. The PR just picks up
-        // any expense with `payStatus === 'Pending'` and `billDate ≤ periodEnd`.
+        // any expense with an outstanding balance (payStatus === 'Pending' OR
+        // 'Partial' — a partial-paid bill still has money owed, tracked in
+        // `balanceAmt`) and `billDate ≤ periodEnd`.
         //
         // We tag each item with its `billType` as a sub-grouping hint for the UI.
         // The gap detector (_prCollectStaffSalaryGaps) checks for missing salary
         // bills and the result is surfaced as a warning banner on the request.
         function _prCollectPendingBills(periodEnd) {
             return (expenses || [])
-                .filter(e => e.payStatus === 'Pending' && (e.billDate || '') <= periodEnd)
+                .filter(e => (e.payStatus === 'Pending' || e.payStatus === 'Partial')
+                             && (e.billDate || '') <= periodEnd
+                             && (parseFloat(e.balanceAmt ?? e.netPayable) || 0) > 0)
                 .map(e => {
                     const payeeName = e.companyName || e.staffName || e.vendor || '—';
                     const desc = e.description ||
@@ -30615,7 +30619,12 @@ Automated WFH alert — ${company} Attendance System.`;
             });
 
             const pending = (expenses || []).filter(e => {
-                if (e.payStatus !== 'Pending') return false;
+                // Include both fully Pending bills and Partial-paid bills that
+                // still have an outstanding balance — the PR is about remaining
+                // money owed, not about "hasn't been touched at all". Partial
+                // bills carry their remaining owed amount in `balanceAmt`.
+                if (e.payStatus !== 'Pending' && e.payStatus !== 'Partial') return false;
+                if ((parseFloat(e.balanceAmt ?? e.netPayable) || 0) <= 0) return false;
                 if (billsLockedByPR.has(e.expID)) return false;
                 if (typeFilter) {
                     if (typeFilter === 'OTHER') {
