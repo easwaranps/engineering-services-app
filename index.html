@@ -12348,7 +12348,7 @@
                    (parseFloat(document.getElementById('expOtherDeduction').value)||0))
                 : 0;
 
-            const balance = Math.max(0, netPayable - totalDeductions);
+            const balance = Math.max(0, netPayable - totalDeductions - _sumExpPaymentsMade());
 
             // Handle multiple file attachments
             let billAttachments = currentExpense?.billAttachments ? [...currentExpense.billAttachments] : [];
