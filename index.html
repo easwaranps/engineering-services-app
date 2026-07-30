@@ -30607,16 +30607,50 @@ Automated WFH alert — ${company} Attendance System.`;
             // this one. EXCEPTION: when revising a PR (window._prRevisingID set),
             // that PR's own items don't count as "locked" — they're meant to be
             // edited/carried into the revision.
+            //
+            // *** STALE-CLAIM CARVE-OUT for Partial-paid bills ***
+            // Real-world scenario Easu described: last month's PR included a bill,
+            // part of it was paid (bill flipped to `Partial`, balanceAmt shrunk to
+            // the remaining owed), but the earlier PR wasn't marked Closed. Under
+            // the strict "one PR per bill" lock, that bill would be silently
+            // blocked from every future PR — even though the remaining balance
+            // IS a legitimate new payment obligation. The old PR's item is
+            // effectively stale: the payment it was supposed to trigger already
+            // happened outside the PR flow (via Payments Made or a manual entry).
+            //
+            // Fix: only lock a bill if the source expense is still fully `Pending`.
+            // If the source is `Partial`, the old PR's claim is stale — release
+            // the bill so the remaining balance can be picked up in the new PR.
+            // We surface the stale claims in the stats line so Easu knows the
+            // old PR still has a leftover reference he may want to clean up.
             const billsLockedByPR = new Map();  // expID → prID that holds it
+            const staleClaims     = new Map();  // expID → prID (Partial bills freed from stale locks)
             (paymentRequests || []).forEach(pr => {
                 if (pr.status === 'Cancelled' || pr.status === 'Closed' || pr.status === 'Superseded') return;
                 if (window._prRevisingID && pr.prID === window._prRevisingID) return;  // don't lock the PR being revised
                 (pr.items || []).forEach(it => {
-                    if (it.sourceType === 'expense' && !it.paid) {
-                        billsLockedByPR.set(it.sourceID, pr.prID);
+                    if (it.sourceType !== 'expense' || it.paid) return;
+                    const srcExp = (expenses || []).find(x => x.expID === it.sourceID);
+                    if (srcExp && srcExp.payStatus === 'Partial') {
+                        // Old PR's claim is stale — payment already recorded on the bill.
+                        // Free the remaining balance to be claimed by the new PR.
+                        if (!staleClaims.has(it.sourceID)) staleClaims.set(it.sourceID, pr.prID);
+                        return;
                     }
+                    billsLockedByPR.set(it.sourceID, pr.prID);
                 });
             });
+
+            // Bookkeeping counters so the user can see *why* a bill isn't
+            // showing up — e.g. a Partial bill that's locked to a still-active
+            // earlier PR, or one whose recorded payments have zeroed out the
+            // balance. Without this, an "expected" Partial bill silently
+            // disappears and it's impossible to tell whether the fix is
+            // working or whether the bill is being filtered for a good reason.
+            let cntPending = 0, cntPartial = 0;
+            let cntLockedPending = 0, cntLockedPartial = 0;
+            let cntZeroBalance = 0;
+            const partialLockedByPR = new Map();  // subset of billsLockedByPR that are Partial
 
             const pending = (expenses || []).filter(e => {
                 // Include both fully Pending bills and Partial-paid bills that
@@ -30624,8 +30658,17 @@ Automated WFH alert — ${company} Attendance System.`;
                 // money owed, not about "hasn't been touched at all". Partial
                 // bills carry their remaining owed amount in `balanceAmt`.
                 if (e.payStatus !== 'Pending' && e.payStatus !== 'Partial') return false;
-                if ((parseFloat(e.balanceAmt ?? e.netPayable) || 0) <= 0) return false;
-                if (billsLockedByPR.has(e.expID)) return false;
+                const bal = parseFloat(e.balanceAmt ?? e.netPayable) || 0;
+                if (bal <= 0) { cntZeroBalance++; return false; }
+                if (billsLockedByPR.has(e.expID)) {
+                    if (e.payStatus === 'Partial') {
+                        cntLockedPartial++;
+                        partialLockedByPR.set(e.expID, billsLockedByPR.get(e.expID));
+                    } else {
+                        cntLockedPending++;
+                    }
+                    return false;
+                }
                 if (typeFilter) {
                     if (typeFilter === 'OTHER') {
                         // Anything not in the known types
@@ -30639,12 +30682,19 @@ Automated WFH alert — ${company} Attendance System.`;
                     const hay = `${e.companyName||''} ${e.staffName||''} ${e.vendor||''} ${e.description||''} ${e.billType||''} ${e.billNo||''} ${e.voucherNo||''}`.toLowerCase();
                     if (!hay.includes(qLow)) return false;
                 }
+                if (e.payStatus === 'Partial') cntPartial++; else cntPending++;
                 return true;
             }).sort((a,b) => (a.billDate||'').localeCompare(b.billDate||''));
 
-            // Stats line
+            // Stats line — now shows Pending vs Partial breakdown AND separates
+            // "locked on other PRs" into pending-locked vs partial-locked, so
+            // it's obvious when a Partial bill is missing because a still-active
+            // earlier PR holds it (the common case — Partial usually means an
+            // earlier PR was created but not yet Closed / marked paid).
             const statsEl = document.getElementById('adhocPickStats');
             if (statsEl) {
+                const showing = `${pending.length} showing (${cntPending} Pending${cntPartial?` + ${cntPartial} Partial`:''})`;
+                const bits = [showing];
                 if (billsLockedByPR.size > 0) {
                     // Group locked bills by which PR holds them, for a clear breakdown
                     const byPR = {};
@@ -30652,10 +30702,25 @@ Automated WFH alert — ${company} Attendance System.`;
                     const breakdown = Object.entries(byPR).map(([prID,n]) =>
                         `<a href="javascript:void(0)" onclick="closeAdHocPRModal();openPaymentRequestDetail('${prID}')" style="color:#0891b2;text-decoration:underline">${prID}</a> (${n})`
                     ).join(', ');
-                    statsEl.innerHTML = `${pending.length} pending bill${pending.length===1?'':'s'} · ${billsLockedByPR.size} on other PRs: ${breakdown}`;
-                } else {
-                    statsEl.textContent = `${pending.length} pending bill${pending.length===1?'':'s'}`;
+                    const lockLabel = cntLockedPartial > 0
+                        ? `${billsLockedByPR.size} locked on other PRs (${cntLockedPending} Pending + ${cntLockedPartial} Partial)`
+                        : `${billsLockedByPR.size} locked on other PRs`;
+                    bits.push(`${lockLabel}: ${breakdown}`);
                 }
+                if (staleClaims.size > 0) {
+                    // Partial bills that USED to be locked by an old PR — freed here
+                    // because the earlier claim is functionally stale. Tell the user
+                    // which old PRs still carry the leftover reference so they can
+                    // Close them.
+                    const byPR = {};
+                    staleClaims.forEach((prID) => { byPR[prID] = (byPR[prID]||0) + 1; });
+                    const breakdown = Object.entries(byPR).map(([prID,n]) =>
+                        `<a href="javascript:void(0)" onclick="closeAdHocPRModal();openPaymentRequestDetail('${prID}')" style="color:#b45309;text-decoration:underline">${prID}</a> (${n})`
+                    ).join(', ');
+                    bits.push(`<span style="color:#b45309">${staleClaims.size} Partial bill${staleClaims.size===1?'':'s'} freed from stale PR claim${staleClaims.size===1?'':'s'}: ${breakdown} — consider closing once settled</span>`);
+                }
+                if (cntZeroBalance > 0) bits.push(`${cntZeroBalance} skipped (zero balance)`);
+                statsEl.innerHTML = bits.join(' · ');
             }
 
             if (pending.length === 0) {
@@ -30701,20 +30766,26 @@ Automated WFH alert — ${company} Attendance System.`;
                         const amt = parseFloat(e.balanceAmt ?? e.netPayable) || 0;
                         const payee = e.companyName || e.staffName || e.vendor || '—';
                         const desc = e.description || e.billType || '';
+                        const isPartial = e.payStatus === 'Partial';
+                        const stalePR = staleClaims.get(e.expID);
+                        // For Partial bills, show the original bill amount alongside
+                        // the remaining balance so it's clear this is a leftover.
+                        const origAmt = parseFloat(e.netPayable) || 0;
                         return `
-                        <tr class="border-t ${checked?'bg-orange-50':'hover:bg-gray-50'}">
+                        <tr class="border-t ${checked?'bg-orange-50':(isPartial?'bg-amber-50/60 hover:bg-amber-50':'hover:bg-gray-50')}">
                             <td class="px-3 py-2 text-center">
                                 <input type="checkbox" ${checked?'checked':''} onchange="_adhocToggleBill('${e.expID}')"
                                     class="w-4 h-4 accent-orange-600 cursor-pointer"/>
                             </td>
                             <td class="px-3 py-2 text-gray-600 whitespace-nowrap">${e.billDate || '—'}</td>
-                            <td class="px-3 py-2 text-xs">${_prBillTypeLabel(e.billType)}</td>
+                            <td class="px-3 py-2 text-xs">${_prBillTypeLabel(e.billType)}${isPartial?' <span class="ml-1 px-1.5 py-0.5 bg-amber-200 text-amber-900 rounded text-[10px] font-bold">PARTIAL</span>':''}</td>
                             <td class="px-3 py-2">
                                 <div class="font-medium text-gray-800">${payee.replace(/</g,'&lt;')}</div>
                                 <div class="text-xs text-gray-500">${desc.replace(/</g,'&lt;').substring(0,80)}${desc.length>80?'…':''}</div>
+                                ${stalePR?`<div class="text-[10px] text-amber-700 mt-0.5">↩ freed from stale claim on <strong>${stalePR}</strong> — remaining balance owed</div>`:''}
                             </td>
                             <td class="px-3 py-2 text-xs text-gray-500 font-mono">${e.billNo || e.voucherNo || '—'}</td>
-                            <td class="px-3 py-2 text-right font-semibold whitespace-nowrap">${fmt(amt)}</td>
+                            <td class="px-3 py-2 text-right font-semibold whitespace-nowrap">${fmt(amt)}${isPartial && origAmt>amt?`<div class="text-[10px] text-gray-400 font-normal">of ${fmt(origAmt)} original</div>`:''}</td>
                         </tr>`;
                     }).join('')}
                 </tbody>
