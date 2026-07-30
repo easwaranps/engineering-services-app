@@ -5931,13 +5931,10 @@
                     doc.text('GST: ' + party.gstNumber, 14, startY + 12);
                 }
                 }
-                // Show vendor code if present
+                // Show vendor code if present — same size/color as GST and
+                // address lines (was smaller grey 7pt; user asked to match).
                 if (txn.vendorCode) {
-                    doc.setFontSize(7);
-                    doc.setTextColor(80, 80, 80);
                     doc.text('Vendor Code: ' + txn.vendorCode, 14, startY + 17);
-                    doc.setFontSize(8);
-                    doc.setTextColor(0, 0, 0);
                     startY += 5; // Extra spacing if vendor code shown
                 }
                 
@@ -24825,7 +24822,12 @@ Automated WFH alert — ${company} Attendance System.`;
         }
 
         function generatePaySlipPDF(){const techV=!document.getElementById('twSection')?.classList.contains('hidden'),offV=!document.getElementById('opSection')?.classList.contains('hidden');if(techV)_pdfTech();else if(offV)_pdfOffice();else alert('Please select a staff member first.');}
-        function _pdfHdr(doc,l1,l2,l3){doc.setFillColor(224,242,254);doc.rect(0,0,210,40,'F');doc.setFillColor(186,230,253);doc.rect(0,36,210,4,'F');doc.setFontSize(17);doc.setFont('helvetica','bold');doc.setTextColor(15,23,72);doc.text(l1,105,13,{align:'center'});doc.setFontSize(11);doc.setFont('helvetica','normal');doc.setTextColor(30,64,175);doc.text(l2,105,23,{align:'center'});doc.setFontSize(8.5);doc.setTextColor(71,85,105);doc.text(l3,105,31,{align:'center'});doc.setTextColor(0,0,0);}
+        // Compact header — banner 30mm (was 40mm), tighter fonts + Y
+        // positions. Saves ~10mm on every payslip, letting the tech payslip
+        // fit on one page even with attendance + earnings + deductions + loan
+        // block. Signature and generated-by strings at the bottom stay at
+        // y=282/289 unchanged.
+        function _pdfHdr(doc,l1,l2,l3){doc.setFillColor(224,242,254);doc.rect(0,0,210,30,'F');doc.setFillColor(186,230,253);doc.rect(0,27,210,3,'F');doc.setFontSize(14);doc.setFont('helvetica','bold');doc.setTextColor(15,23,72);doc.text(l1,105,10,{align:'center'});doc.setFontSize(10);doc.setFont('helvetica','normal');doc.setTextColor(30,64,175);doc.text(l2,105,18,{align:'center'});doc.setFontSize(8);doc.setTextColor(71,85,105);doc.text(l3,105,24,{align:'center'});doc.setTextColor(0,0,0);}
         function _pdfTech(){
             const{jsPDF}=window.jspdf,s=techWageState;
             if(!s.basic&&!s.variableAllow){alert('Please enter Basic salary for the technician.');return;}
@@ -24840,9 +24842,9 @@ Automated WFH alert — ${company} Attendance System.`;
             const INR=n=>'INR '+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
             const RT=n=>(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
             _pdfHdr(doc,(settings.companyName||'EASY EMS').toUpperCase(),'FIELD TECHNICIAN PAY SLIP — '+mL.toUpperCase(),'Pay Period: '+pl);
-            let y=48;
+            let y=34;
             // Employee info table
-            doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:9},headStyles:{fillColor:[186,230,253],textColor:[15,23,72],fontStyle:'bold'},
+            doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:8,cellPadding:1.4},headStyles:{fillColor:[186,230,253],textColor:[15,23,72],fontStyle:'bold'},
                 head:[['Field','Details','Field','Details']],
                 body:[
                     ['Employee',nm,'Designation',st?.designation||'—'],
@@ -24853,20 +24855,20 @@ Automated WFH alert — ${company} Attendance System.`;
                     ['Variable Allow.',INR(cal.varA),'Daily Wage',INR(cal.dailyWage)],
                     ['Standby Wage',INR(cal.standbyWage),'Engaged Days',String(cal.eng)]
                 ],columnStyles:{0:{cellWidth:35,fontStyle:'bold'},2:{cellWidth:42,fontStyle:'bold'}}});
-            y=doc.lastAutoTable.finalY+4;
+            y=doc.lastAutoTable.finalY+2;
             // Wage structure note
-            doc.setFontSize(8);doc.setFont('helvetica','italic');doc.setTextColor(70,130,70);
+            doc.setFontSize(7);doc.setFont('helvetica','italic');doc.setTextColor(70,130,70);
             doc.text('Wage Structure: Basic '+INR(cal.basic)+' | HRA(50%) '+INR(cal.hra)+' + DA(65%) '+INR(cal.da)+' + GP(30%) '+INR(cal.gp)+' = Fixed Allow '+INR(cal.fixedAllow),14,y);
-            doc.text('Daily Wage = (Basic+Fixed+Variable) / '+cal.daysInMonth+' days = '+INR(cal.dailyWage)+' | Standby Wage = (Basic+Fixed) / '+cal.daysInMonth+' = '+INR(cal.standbyWage),14,y+4);
-            doc.setFont('helvetica','normal');doc.setTextColor(0,0,0);y+=10;
+            doc.text('Daily Wage = (Basic+Fixed+Variable) / '+cal.daysInMonth+' days = '+INR(cal.dailyWage)+' | Standby Wage = (Basic+Fixed) / '+cal.daysInMonth+' = '+INR(cal.standbyWage),14,y+3.2);
+            doc.setFont('helvetica','normal');doc.setTextColor(0,0,0);y+=8;
             // Attendance summary
             const att=Object.entries(ATT_TYPES).filter(([t])=>t&&cal.c[t]>0).map(([t,tp])=>[tp.label,cal.c[t]+' day'+(cal.c[t]>1?'s':'')]);
-            if(att.length){const ar=[];for(let i=0;i<att.length;i+=2)ar.push([att[i][0],att[i][1],att[i+1]?att[i+1][0]:'',att[i+1]?att[i+1][1]:'']);doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:8},headStyles:{fillColor:[226,232,240],textColor:[15,23,72]},head:[['Attendance Type','Days','Attendance Type','Days']],body:ar});y=doc.lastAutoTable.finalY+4;}
+            if(att.length){const ar=[];for(let i=0;i<att.length;i+=2)ar.push([att[i][0],att[i][1],att[i+1]?att[i+1][0]:'',att[i+1]?att[i+1][1]:'']);doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:7.5,cellPadding:1.3},headStyles:{fillColor:[226,232,240],textColor:[15,23,72]},head:[['Attendance Type','Days','Attendance Type','Days']],body:ar});y=doc.lastAutoTable.finalY+2;}
             // Earnings table
             const sC={Wage:[30,78,216],Allowance:[14,116,144],Threshold:[21,128,61],Deduct:[220,38,38]};
             const earBody=cal.rows.map(r=>[r.name,r.days!==null?String(r.days):'—',r.rate!==null?RT(r.rate):'—',INR(r.amt)]);
             if(exgratiaAmt>0)earBody.push([s.exgratiaRemark?'Ex-Gratia – '+s.exgratiaRemark:'Ex-Gratia','—','—',INR(exgratiaAmt)]);
-            doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:9},headStyles:{fillColor:[186,230,253],textColor:[15,23,72],fontStyle:'bold'},
+            doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:8,cellPadding:1.4},headStyles:{fillColor:[186,230,253],textColor:[15,23,72],fontStyle:'bold'},
                 head:[['Earnings Component','Days','Rate (₹)','Amount (₹)']],body:earBody,
                 columnStyles:{0:{cellWidth:90},1:{halign:'right',cellWidth:20},2:{halign:'right',cellWidth:30},3:{halign:'right',cellWidth:40}},
                 didParseCell:function(d){if(d.section==='body'&&cal.rows[d.row.index]){const sc=cal.rows[d.row.index].sec;
@@ -24874,14 +24876,14 @@ Automated WFH alert — ${company} Attendance System.`;
                     if(sc==='Threshold')d.cell.styles.fillColor=[240,253,244];
                     if(sc==='Deduct'){d.cell.styles.fillColor=[255,245,245];if(d.column.index===3)d.cell.styles.textColor=[220,38,38];}
                     else if(d.column.index===3)d.cell.styles.textColor=sC[sc]||[0,0,0];}}});
-            y=doc.lastAutoTable.finalY+2;
-            doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:11,fontStyle:'bold'},body:[['GROSS PAY',INR(cal.gross)]],
+            y=doc.lastAutoTable.finalY+1.5;
+            doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:10,fontStyle:'bold',cellPadding:1.6},body:[['GROSS PAY',INR(cal.gross)]],
                 columnStyles:{0:{cellWidth:140,fillColor:[224,242,254],textColor:[15,23,72]},1:{halign:'right',fillColor:[186,230,253],textColor:[15,23,72],cellWidth:40}}});
-            y=doc.lastAutoTable.finalY+2;
+            y=doc.lastAutoTable.finalY+1.5;
             // PF basis note
-            doc.setFontSize(8);doc.setFont('helvetica','italic');doc.setTextColor(70,70,70);
+            doc.setFontSize(7);doc.setFont('helvetica','italic');doc.setTextColor(70,70,70);
             doc.text('PF Basis: Basic '+INR(cal.basic)+' + Fixed Allow '+INR(cal.fixedAllow)+' = '+INR(ded.pfGross)+' | ESIC/PT Basis: Basic+Fixed = '+INR(ded.basisForESIC),14,y);
-            doc.setFont('helvetica','normal');doc.setTextColor(0,0,0);y+=6;
+            doc.setFont('helvetica','normal');doc.setTextColor(0,0,0);y+=4;
             // Deductions table
             const dedBody=[];
             dedBody.push([`PF – ${ded.pfPct}% of (Basic+Fixed) INR ${RT(ded.pfGross)}`,INR(ded.pfAmt)]);
@@ -24902,28 +24904,28 @@ Automated WFH alert — ${company} Attendance System.`;
                     dedBody.push([`Loan EMI – ${ld.loan.loanID}`, INR(ld.deductionAmount)]);
                 }
             }));
-            doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:9},headStyles:{fillColor:[254,226,226],textColor:[153,27,27],fontStyle:'bold'},
+            doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:8,cellPadding:1.4},headStyles:{fillColor:[254,226,226],textColor:[153,27,27],fontStyle:'bold'},
                 head:[['Deduction Component','Amount (INR)']],body:dedBody,
                 columnStyles:{0:{cellWidth:140},1:{halign:'right',cellWidth:40}}});
-            y=doc.lastAutoTable.finalY+2;
+            y=doc.lastAutoTable.finalY+1.5;
             // Total deductions + Net (Travel is already included in Gross, not added again)
             const summaryBody=[['TOTAL DEDUCTIONS',INR(ded.totalDed)]];
             summaryBody.push(['NET PAY — '+nm.toUpperCase()+' — '+mL,INR(netPay)]);
-            doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:10,fontStyle:'bold'},body:summaryBody,
+            doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:9,fontStyle:'bold',cellPadding:1.6},body:summaryBody,
                 columnStyles:{0:{cellWidth:140},1:{halign:'right',cellWidth:40}},
                 didParseCell:function(d){
                     if(d.row.index===0){d.cell.styles.fillColor=[254,226,226];d.cell.styles.textColor=[153,27,27];}
-                    if(d.row.index===summaryBody.length-1){d.cell.styles.fillColor=[224,242,254];d.cell.styles.textColor=[15,23,72];d.cell.styles.fontSize=12;}}});
-            y=doc.lastAutoTable.finalY+8;
+                    if(d.row.index===summaryBody.length-1){d.cell.styles.fillColor=[224,242,254];d.cell.styles.textColor=[15,23,72];d.cell.styles.fontSize=11;}}});
+            y=doc.lastAutoTable.finalY+4;
 
             // ── LOAN ACCOUNT(S) summary block ──
             // Shows each loan's principal, EMIs paid, balance, and this-month's deduction.
             const loansForBlock = (st?.loans || []).filter(l => l.status === 'Active' ||
                 (ded.loanDeductions||[]).some(ld => ld.loan.loanID === l.loanID));
             if (loansForBlock.length > 0) {
-                if (y > 250) { doc.addPage(); y = 15; }
-                doc.setFontSize(10); doc.setTextColor(180, 83, 9); doc.setFont('helvetica','bold');
-                doc.text('🏦 LOAN ACCOUNT(S)', 14, y); y += 4;
+                if (y > 258) { doc.addPage(); y = 15; }
+                doc.setFontSize(9); doc.setTextColor(180, 83, 9); doc.setFont('helvetica','bold');
+                doc.text('🏦 LOAN ACCOUNT(S)', 14, y); y += 3;
                 const loanRows = loansForBlock.map(l => {
                     const dv = loanDerivedFields(l);
                     const thisMonth = (ded.loanDeductions||[]).find(ld => ld.loan.loanID === l.loanID);
@@ -24939,7 +24941,7 @@ Automated WFH alert — ${company} Attendance System.`;
                     ];
                 });
                 doc.autoTable({startY: y, margin: {left:14, right:14}, theme: 'grid',
-                    styles: {fontSize: 8, cellPadding: 2},
+                    styles: {fontSize: 7.5, cellPadding: 1.3},
                     headStyles: {fillColor: [254, 215, 170], textColor: [120, 53, 15], fontStyle: 'bold'},
                     head: [['Loan ID', 'Disbursed', 'Principal', 'EMIs Paid', 'Paid So Far', 'Balance', 'This Month']],
                     body: loanRows,
@@ -24949,7 +24951,7 @@ Automated WFH alert — ${company} Attendance System.`;
                         5: {halign:'right', cellWidth: 26}, 6: {halign:'right', cellWidth: 27, fontStyle:'bold'}
                     }
                 });
-                y = doc.lastAutoTable.finalY + 6;
+                y = doc.lastAutoTable.finalY + 4;
             }
 
             doc.setFontSize(8);doc.setFont('helvetica','italic');doc.setTextColor(100,100,100);doc.text('This is a computer generated payslip and does not require any signature.',105,282,{align:'center'});
@@ -24976,7 +24978,7 @@ Automated WFH alert — ${company} Attendance System.`;
             const pl=c.periodLabel; // "26-MMM-YYYY – 25-MMM-YYYY"
             const doc=new jsPDF();
             const INR=n=>'INR '+Math.max(0,+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
-            _pdfHdr(doc,(settings.companyName||'EASY EMS').toUpperCase(),'OFFICE STAFF PAY SLIP — '+mL.toUpperCase(),'Pay Period: '+pl+' ('+c.periodDays+' days)');let y=48;
+            _pdfHdr(doc,(settings.companyName||'EASY EMS').toUpperCase(),'OFFICE STAFF PAY SLIP — '+mL.toUpperCase(),'Pay Period: '+pl+' ('+c.periodDays+' days)');let y=34;
             doc.autoTable({startY:y,margin:{left:14,right:14},theme:'grid',styles:{fontSize:9},headStyles:{fillColor:[186,230,253],textColor:[15,23,72],fontStyle:'bold'},head:[['Field','Details','Field','Details']],body:[
                 ['Employee',st.name,'Designation',st.designation||'—'],
                 ['Employee Code',st.empCode||'—','PAN',st.pan||'—'],
@@ -36356,9 +36358,9 @@ Automated WFH alert — ${company} Attendance System.`;
         // ════════════════════════════════════════════════════════════════
         async function _prViewAttachments(itemID, sourceType) {
             const pr = paymentRequests.find(r => r.prID === window._currentPR);
-            if (!pr) return;
+            if (!pr) { alert('Could not open attachments: current payment request context is missing. Try reopening the request from the list.'); return; }
             const it = (pr.items||[]).find(i => i.itemID === itemID);
-            if (!it) return;
+            if (!it) { alert('Could not find this line item on the request.'); return; }
 
             let attachments = [];
             let titleInfo = it.description || '';
@@ -36367,10 +36369,21 @@ Automated WFH alert — ${company} Attendance System.`;
                 const srcExp = (expenses||[]).find(e => e.expID === it.sourceID);
                 if (srcExp) {
                     attachments = [...(srcExp.billAttachments||[])];
-                    if (srcExp.billData && !attachments.length) {
-                        attachments.push({ name: srcExp.billPhotoName||'attachment', data: srcExp.billData, type: 'image' });
+                    // Legacy single-photo fallback — old records used
+                    // `billPhotoData` + `billPhotoName` before the array was
+                    // introduced. Only include if the array is empty (else
+                    // migration/dedup has already happened).
+                    if (srcExp.billPhotoData && !attachments.length) {
+                        attachments.push({
+                            name: srcExp.billPhotoName || 'attachment',
+                            data: srcExp.billPhotoData,
+                            type: (srcExp.billPhotoData||'').startsWith('data:application/pdf') ? 'pdf' : 'image'
+                        });
                     }
                     titleInfo = `${srcExp.companyName||srcExp.staffName||srcExp.vendor||''} — ${srcExp.description||srcExp.billType||''} — ${srcExp.billDate||''}`;
+                } else {
+                    alert('Source expense record not found — it may have been deleted after this request was created.');
+                    return;
                 }
             } else if (it.sourceSnapshot?.deIDs?.length) {
                 const linkedExps = (directorExpenses||[]).filter(d => it.sourceSnapshot.deIDs.includes(d.deID));
@@ -36394,23 +36407,53 @@ Automated WFH alert — ${company} Attendance System.`;
             <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm m-4 p-8 text-center">
                 <div class="animate-spin h-8 w-8 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-3"></div>
                 <p class="text-sm text-gray-600">Loading ${attachments.length} attachment(s)…</p>
+                <p class="text-[10px] text-gray-400 mt-1">Fetching from Google Drive</p>
             </div>`;
             document.body.appendChild(loadingModal);
 
-            // Fetch Drive-stored attachments that don't have inline data yet
+            // Fetch Drive-stored attachments that don't have inline data yet.
+            // Track EACH attachment's fetch outcome so we can render a per-tile
+            // fallback (Drive link) when the fetch fails — much better than the
+            // previous behaviour of silently rendering blank tiles.
+            let noTokenWarned = false;
             for (const a of attachments) {
-                if (!a.data && a.driveFileId) {
-                    try {
-                        const r = await fetch(`https://www.googleapis.com/drive/v3/files/${a.driveFileId}?alt=media`, { headers: { Authorization: `Bearer ${accessToken}` } });
-                        if (r.ok) {
-                            const blob = await r.blob();
-                            a.data = await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(blob); });
-                        }
-                    } catch(e) { console.warn('Could not fetch attachment', a.driveFileId, e); }
+                if (a.data || !a.driveFileId) continue;  // already inline, or nothing to fetch
+                if (typeof accessToken === 'undefined' || !accessToken) {
+                    a._fetchError = 'Not signed in to Google Drive';
+                    noTokenWarned = true;
+                    continue;
+                }
+                try {
+                    const r = await fetch(`https://www.googleapis.com/drive/v3/files/${a.driveFileId}?alt=media`, { headers: { Authorization: `Bearer ${accessToken}` } });
+                    if (r.ok) {
+                        const blob = await r.blob();
+                        // Preserve blob mime for accurate downstream type detection
+                        a._blobMime = blob.type || '';
+                        a.data = await new Promise((res,rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = () => rej(fr.error); fr.readAsDataURL(blob); });
+                    } else {
+                        a._fetchError = `Drive returned ${r.status}${r.status===401?' (session expired — sign in again)':r.status===404?' (file not found — may have been deleted from Drive)':''}`;
+                    }
+                } catch(e) {
+                    a._fetchError = 'Network error: ' + (e?.message || e);
+                    console.warn('Could not fetch attachment', a.driveFileId, e);
                 }
             }
             document.getElementById('prAttachmentModal')?.remove();
 
+            // Robust type detection across the many ways attachments can be tagged:
+            //   - a.type: could be 'pdf', 'image', 'application/pdf', 'image/jpeg', etc.
+            //   - a._blobMime: mime we captured from the Drive blob (most reliable)
+            //   - a.name: file extension is the last-resort signal
+            //   - a.data: data-URL prefix is authoritative when present
+            const isPdf = a => (
+                (a.data||'').startsWith('data:application/pdf')
+                || (a._blobMime||'').toLowerCase() === 'application/pdf'
+                || (a.type||'').toLowerCase() === 'pdf'
+                || (a.type||'').toLowerCase().includes('pdf')
+                || (a.name||'').toLowerCase().endsWith('.pdf')
+            );
+
+            const failed = attachments.filter(a => !a.data && !!a._fetchError);
             const modal = document.createElement('div');
             modal.id = 'prAttachmentModal';
             modal.className = 'modal show';
@@ -36418,32 +36461,60 @@ Automated WFH alert — ${company} Attendance System.`;
             <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl m-4 max-h-[92vh] overflow-y-auto">
                 <div class="bg-gradient-to-r from-blue-600 to-indigo-600 p-4 text-white flex justify-between items-center sticky top-0 z-10">
                     <div class="min-w-0">
-                        <h3 class="text-base font-bold">📎 Bills / Supporting Documents</h3>
+                        <h3 class="text-base font-bold">📎 Bills / Supporting Documents (${attachments.length})</h3>
                         <p class="text-xs opacity-80 mt-0.5 truncate">${titleInfo.replace(/</g,'&lt;')}</p>
                     </div>
                     <button onclick="document.getElementById('prAttachmentModal').remove()" class="text-white text-2xl font-bold leading-none flex-shrink-0 ml-3">✕</button>
                 </div>
+                ${failed.length ? `
+                <div class="mx-4 mt-3 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900">
+                    ⚠ ${failed.length} of ${attachments.length} attachment(s) could not be fetched from Google Drive${noTokenWarned?' — you may need to sign in to Google again':''}. Use the <strong>Open in Drive</strong> button on each failed tile.
+                </div>` : ''}
                 <div class="p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    ${attachments.map((a,idx) => `
+                    ${attachments.map((a,idx) => {
+                        const hasData  = !!a.data;
+                        const driveURL = a.driveFileId ? `https://drive.google.com/file/d/${a.driveFileId}/view` : '';
+                        const nameEsc  = (a.name||'attachment').replace(/</g,'&lt;');
+                        const errEsc   = (a._fetchError||'').replace(/</g,'&lt;');
+                        // Failure tile — fetch didn't yield inline data
+                        if (!hasData) {
+                            return `
+                        <div class="border border-amber-200 rounded-xl overflow-hidden bg-amber-50/40">
+                            ${a._expDate ? `<div class="px-3 py-1.5 bg-gray-50 text-xs text-gray-500 border-b">${a._expDate}${a._desc?' · '+a._desc:''}</div>` : ''}
+                            <div style="height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:16px;text-align:center">
+                                <div style="font-size:38px;line-height:1;margin-bottom:8px">📎</div>
+                                <div class="text-sm font-semibold text-amber-800">${nameEsc}</div>
+                                <div class="text-[11px] text-amber-700 mt-1">${errEsc || 'Preview not available'}</div>
+                                ${driveURL ? `<a href="${driveURL}" target="_blank" rel="noopener"
+                                    class="inline-block mt-3 px-3 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700">
+                                    ↗ Open in Drive
+                                </a>` : ''}
+                            </div>
+                            <div class="px-3 py-1.5 text-[10px] text-gray-400 border-t bg-gray-50">${nameEsc}</div>
+                        </div>`;
+                        }
+                        // Success tile — inline PDF or image preview
+                        return `
                         <div class="border border-gray-200 rounded-xl overflow-hidden">
                             ${a._expDate ? `<div class="px-3 py-1.5 bg-gray-50 text-xs text-gray-500 border-b">${a._expDate}${a._desc?' · '+a._desc:''}</div>` : ''}
-                            ${(a.type === 'pdf' || (a.name||'').toLowerCase().endsWith('.pdf') || (a.data||'').startsWith('data:application/pdf'))
+                            ${isPdf(a)
                                 ? `<div style="height:400px">
                                      <embed src="${a.data}" type="application/pdf" width="100%" height="100%" style="border:none"/>
                                    </div>
                                    <div class="p-2 text-center">
-                                     <a href="${a.data}" download="${a.name||'bill.pdf'}" target="_blank"
+                                     <a href="${a.data}" download="${nameEsc}" target="_blank"
                                         class="inline-block px-3 py-1 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700">
                                         Open in New Tab / Download
                                      </a>
+                                     ${driveURL ? `<a href="${driveURL}" target="_blank" rel="noopener" class="ml-1 inline-block px-3 py-1 border border-gray-300 text-gray-600 text-xs font-semibold rounded-lg hover:bg-gray-50">↗ Drive</a>`:''}
                                    </div>`
-                                : `<img src="${a.data}" alt="${(a.name||'Bill attachment').replace(/"/g,'&quot;')}"
+                                : `<img src="${a.data}" alt="${nameEsc.replace(/"/g,'&quot;')}"
                                      class="w-full h-auto cursor-zoom-in" style="max-height:400px;object-fit:contain;background:#f9fafb"
                                      onclick="window.open('${a.data}','_blank')"/>`
                             }
-                            <div class="px-3 py-1.5 text-[10px] text-gray-400 border-t bg-gray-50">${(a.name||'attachment').replace(/</g,'&lt;')}</div>
-                        </div>
-                    `).join('')}
+                            <div class="px-3 py-1.5 text-[10px] text-gray-400 border-t bg-gray-50">${nameEsc}</div>
+                        </div>`;
+                    }).join('')}
                 </div>
                 <div class="p-4 pt-0 flex justify-end">
                     <button onclick="document.getElementById('prAttachmentModal').remove()"
