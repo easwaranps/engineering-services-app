@@ -36649,9 +36649,14 @@ Automated WFH alert — ${company} Attendance System.`;
             const recv = document.getElementById('prReconReceived');
             const disb = document.getElementById('prReconDisbursed');
             const rmk  = document.getElementById('prReconRemark');
+            const ref  = document.getElementById('prReconRefPR');
             if (recv) recv.value = r.fundReceived || '';
             if (disb) disb.value = r.fundDisbursed || '';
             if (rmk)  rmk.value  = r.remark || '';
+            // Restore the PR reference — falls back to current PR if the old
+            // entry pre-dates the refPrID field (backward compat).
+            if (ref)  ref.value  = r.refPrID || pr.prID;
+            _prReconOnPickPR(prID);  // refresh hint
             // Remove the old entry immediately so user is effectively replacing it
             pr.reconciliation.splice(idx, 1);
             saveData('paymentRequests', paymentRequests).then(() => {
@@ -36660,6 +36665,23 @@ Automated WFH alert — ${company} Attendance System.`;
                 document.getElementById('prReconReceived')?.scrollIntoView({ behavior:'smooth', block:'center' });
                 _showToast('Entry loaded into edit fields — make changes and click "+ Add Line" to save.', '#2563eb', 5000);
             });
+        }
+
+        // When the user picks a PR from the Applied-to dropdown, show a hint
+        // below with that PR's requested total and status — this is the
+        // "Source of Fund pulled from the fund request" info the user needs
+        // to see while entering the manually-typed Fund Received / Disbursed.
+        function _prReconOnPickPR(currentPrID) {
+            const sel = document.getElementById('prReconRefPR');
+            const hint = document.getElementById('prReconRefHint');
+            if (!sel || !hint) return;
+            const chosen = (paymentRequests||[]).find(p => p.prID === sel.value);
+            if (!chosen) { hint.textContent = ''; return; }
+            const fmt = n => '₹'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+            const requested = (chosen.items||[]).reduce((s,it)=>s+(parseFloat(it.amount)||0),0);
+            const isCurrent = chosen.prID === currentPrID;
+            const status = chosen.status || 'Draft';
+            hint.innerHTML = `${isCurrent?'<span style="color:#5b21b6;font-weight:600">this request</span> · ':''}requested ${fmt(requested)} · ${status}`;
         }
 
         async function _prDeleteReconciliation(prID, idx) {
@@ -36680,12 +36702,18 @@ Automated WFH alert — ${company} Attendance System.`;
         // bank/management approval vs. amount disbursed for this Payment Request,
         // with remarks. Useful when the approved amount is paid in tranches or
         // when the bank releases a different amount than originally requested.
+        // Now tags each entry with `refPrID` — the PR the entry is being
+        // applied against (defaults to the current PR). This lets the user
+        // record fund events that pertain to prior PRs whose remaining balance
+        // is being settled here (e.g. money received specifically for
+        // PR2627007's remaining amount).
         async function _prAddReconciliation(prID) {
             const pr = (paymentRequests||[]).find(r => r.prID === prID);
             if (!pr) return;
             const received  = parseFloat(document.getElementById('prReconReceived')?.value) || 0;
             const disbursed = parseFloat(document.getElementById('prReconDisbursed')?.value) || 0;
-            const remark     = (document.getElementById('prReconRemark')?.value || '').trim();
+            const remark    = (document.getElementById('prReconRemark')?.value || '').trim();
+            const refPrID   = (document.getElementById('prReconRefPR')?.value || pr.prID);
             if (received === 0 && disbursed === 0) {
                 alert('Enter at least Fund Received or Fund Disbursed amount.');
                 return;
@@ -36693,6 +36721,7 @@ Automated WFH alert — ${company} Attendance System.`;
             pr.reconciliation = pr.reconciliation || [];
             pr.reconciliation.push({
                 date: new Date().toISOString(),
+                refPrID,
                 fundReceived: received,
                 fundDisbursed: disbursed,
                 remark,
@@ -36934,10 +36963,19 @@ Automated WFH alert — ${company} Attendance System.`;
                                     <td style="padding:6px;border:1px solid #ede9fe;text-align:right;color:#b45309">${fmt(totalDisbursed)}</td>
                                     <td style="padding:6px;border:1px solid #ede9fe;text-align:right">${fmt(closingBalance)}</td>
                                     <td style="padding:6px;border:1px solid #ede9fe">
-                                        ${recon.length ? recon.map((r,ri) => `
+                                        ${recon.length ? recon.map((r,ri) => {
+                                            // Show the referenced PR as a small badge — if it's
+                                            // this PR, use a subtle style; if a different PR,
+                                            // link back to that PR's detail view for context.
+                                            const refID = r.refPrID || pr.prID;
+                                            const isCurrent = refID === pr.prID;
+                                            const refBadge = isCurrent
+                                                ? `<span style="display:inline-block;padding:1px 6px;background:#ede9fe;color:#5b21b6;border-radius:9px;font-size:9px;font-weight:600;margin-right:4px">for ${refID}</span>`
+                                                : `<a href="javascript:void(0)" onclick="openPaymentRequestDetail('${refID}')" style="display:inline-block;padding:1px 6px;background:#fef3c7;color:#92400e;border-radius:9px;font-size:9px;font-weight:600;margin-right:4px;text-decoration:none">for ${refID} ↗</a>`;
+                                            return `
                                         <div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:4px;padding-bottom:4px;border-bottom:1px dashed #ede9fe">
                                             <div style="flex:1;font-size:11px">
-                                                <span>${(r.remark||'').replace(/</g,'&lt;')}</span>
+                                                ${refBadge}<span>${(r.remark||'').replace(/</g,'&lt;')}</span>
                                                 ${(r.fundReceived||r.fundDisbursed) ? `<span style="color:#9ca3af;font-size:10px;margin-left:4px">(${r.fundReceived?'+'+fmt(r.fundReceived):''}${r.fundDisbursed?' −'+fmt(r.fundDisbursed):''})</span>` : ''}
                                                 <span style="color:#c4b5fd;font-size:9px;margin-left:4px">${(r.date||'').substring(0,10)}${r.by?' · '+r.by:''}</span>
                                             </div>
@@ -36949,7 +36987,7 @@ Automated WFH alert — ${company} Attendance System.`;
                                                     style="padding:2px 6px;background:#fff7f7;border:1px solid #fca5a5;border-radius:4px;color:#dc2626;cursor:pointer;font-size:10px;white-space:nowrap"
                                                     title="Delete this entry">✕ Del</button>
                                             </div>
-                                        </div>`).join('') : '<span style="color:#9ca3af;font-size:11px">No entries yet — use "+ Add Line" below</span>'}
+                                        </div>`}).join('') : '<span style="color:#9ca3af;font-size:11px">No entries yet — use "+ Add Line" below</span>'}
                                     </td>
                                 </tr>
                                 <tr style="background:#faf5ff;font-weight:700">
@@ -36965,21 +37003,47 @@ Automated WFH alert — ${company} Attendance System.`;
                         <!-- Add a reconciliation line item -->
                         <div style="border-top:1px dashed #ddd6fe;padding-top:10px">
                             <p style="font-size:10px;color:#6b7280;font-weight:600;margin-bottom:6px;text-transform:uppercase">+ Add reconciliation line</p>
-                            <div style="display:grid;grid-template-columns:1fr 1fr 2.5fr auto;gap:8px;align-items:end">
+                            ${(() => {
+                                // Build the PR options list — every raised PR
+                                // sorted newest disbursement first, current PR
+                                // at the very top and pre-selected. Cancelled
+                                // and Superseded PRs are still shown but tagged
+                                // so Easu can see the full history — reconciling
+                                // against a cancelled request is a valid case
+                                // (e.g. money was received before it was cancelled).
+                                const allPRs = (paymentRequests||[])
+                                    .slice()
+                                    .sort((a,b) => (b.disbursementDate||'').localeCompare(a.disbursementDate||''));
+                                const opts = allPRs.map(p => {
+                                    const isCurrent = p.prID === pr.prID;
+                                    const label = `${p.prID} — ${p.periodLabel||p.reason||''}${p.status && p.status!=='Draft'?' ('+p.status+')':''}`;
+                                    return `<option value="${p.prID}"${isCurrent?' selected':''}>${isCurrent?'► ':''}${label}</option>`;
+                                }).join('');
+                                return `
+                            <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr 2fr auto;gap:8px;align-items:end">
                                 <div>
-                                    <label style="font-size:10px;color:#6b7280;display:block;margin-bottom:2px">Fund Received (₹)</label>
+                                    <label style="font-size:10px;color:#6b7280;display:block;margin-bottom:2px">Applied to Payment Request</label>
+                                    <select id="prReconRefPR" onchange="_prReconOnPickPR('${pr.prID}')"
+                                        style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;background:#fff">
+                                        ${opts}
+                                    </select>
+                                    <div id="prReconRefHint" style="font-size:10px;color:#7c3aed;margin-top:3px;min-height:12px"></div>
+                                </div>
+                                <div>
+                                    <label style="font-size:10px;color:#6b7280;display:block;margin-bottom:2px">Fund Received (₹) <span style="color:#9ca3af;font-weight:400">source</span></label>
                                     <input type="number" id="prReconReceived" step="0.01" placeholder="0.00" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px"/>
                                 </div>
                                 <div>
-                                    <label style="font-size:10px;color:#6b7280;display:block;margin-bottom:2px">Fund Disbursed (₹)</label>
+                                    <label style="font-size:10px;color:#6b7280;display:block;margin-bottom:2px">Fund Disbursed (₹) <span style="color:#9ca3af;font-weight:400">use</span></label>
                                     <input type="number" id="prReconDisbursed" step="0.01" placeholder="0.00" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px"/>
                                 </div>
                                 <div>
-                                    <label style="font-size:10px;color:#6b7280;display:block;margin-bottom:2px">Remarks <span style="font-weight:400;color:#9ca3af">(justify variance — e.g. "TANGEDCO bill paid ₹4991 more than funds received")</span></label>
+                                    <label style="font-size:10px;color:#6b7280;display:block;margin-bottom:2px">Remarks <span style="font-weight:400;color:#9ca3af">(details — e.g. "TANGEDCO bill paid ₹4991 more than funds received")</span></label>
                                     <input type="text" id="prReconRemark" placeholder="e.g. MSED office bill paid ₹390 more than funds received" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px"/>
                                 </div>
                                 <button onclick="_prAddReconciliation('${pr.prID}')" style="padding:6px 14px;background:#6d28d9;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">+ Add Line</button>
-                            </div>
+                            </div>`;
+                            })()}
                         </div>
                     </div>`; })() : ''}
 
