@@ -9976,6 +9976,54 @@
             _showVoucherPreview(event, item.tallyVoucherData, item.tallyVoucherMime, item.tallyVoucherNo ? 'Voucher #'+item.tallyVoucherNo : '', item.tallyVoucherDriveId);
         }
 
+        // ═══════════════════════════════════════════════════════════════
+        // RECALCULATE EXPENSE BALANCES — one-time fix for records saved
+        // BEFORE the Payments Made subtraction bug was corrected. The code
+        // fix only affects future saves; any expense already saved with
+        // multiple payments recorded still holds its stale, incorrect
+        // balanceAmt until recalculated. This recomputes every expense's
+        // balanceAmt from its own saved fields (netPayable, totalDeductions,
+        // paymentsMade) using the SAME corrected formula, and reports
+        // exactly which records changed before saving anything.
+        // ═══════════════════════════════════════════════════════════════
+        function _correctExpBalance(e) {
+            const paymentsSum = (e.paymentsMade||[]).reduce((s,p)=>s+(parseFloat(p.amount)||0),0);
+            return Math.max(0, (parseFloat(e.netPayable)||0) - (parseFloat(e.totalDeductions)||0) - paymentsSum);
+        }
+
+        async function recalculateExpenseBalances() {
+            const changes = [];
+            (expenses||[]).forEach(e => {
+                if (!(e.paymentsMade||[]).length) return;   // only relevant where multiple payments exist
+                const correct = +_correctExpBalance(e).toFixed(2);
+                const current = +(parseFloat(e.balanceAmt)||0).toFixed(2);
+                if (Math.abs(correct - current) > 0.01) {
+                    changes.push({ e, current, correct });
+                }
+            });
+
+            if (!changes.length) {
+                alert('✓ Checked all expenses with recorded payments — every balanceAmt already matches the corrected formula. Nothing to fix.');
+                return;
+            }
+
+            const preview = changes.slice(0, 15).map(c =>
+                `${c.e.expID || '(no ID)'} — ${c.e.companyName||c.e.staffName||c.e.description||'—'}: was Rs.${c.current.toLocaleString('en-IN')}, corrected to Rs.${c.correct.toLocaleString('en-IN')}`
+            ).join('\n');
+            const more = changes.length > 15 ? `\n… and ${changes.length - 15} more.` : '';
+
+            if (!confirm(`Found ${changes.length} expense(s) with a stale Net Payable / Balance figure (saved before the Payments Made calculation was fixed):\n\n${preview}${more}\n\nRecalculate and save the corrected values now?`)) return;
+
+            changes.forEach(c => { c.e.balanceAmt = c.correct; });
+            try {
+                await saveData('expenses', expenses);
+                renderView();
+                _showToast(`✓ Corrected ${changes.length} expense balance(s).`, '#15803d', 4500);
+            } catch (err) {
+                alert('Save failed: ' + err.message);
+            }
+        }
+
         function _ledgerBadge(ledgerAccountId) {
             if (!ledgerAccountId) return '';
             const a = (chartOfAccounts||[]).find(x => x.id === ledgerAccountId);
@@ -10424,6 +10472,7 @@
                     <div class="flex gap-2 flex-wrap">
                         <button onclick="refreshDataFromDrive()" class="px-3 py-2 bg-blue-50 border border-blue-300 text-blue-700 rounded-xl hover:bg-blue-100 text-sm font-medium">🔄 Refresh</button>
                         <button onclick="printExpensesFiltered()" class="px-3 py-2 bg-gray-100 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-200 text-sm font-medium" title="Print or save as PDF — exactly the rows currently shown, respecting your search and filters">🖨️ Print View</button>
+                        <button onclick="recalculateExpenseBalances()" class="px-3 py-2 bg-amber-50 border border-amber-300 text-amber-700 rounded-xl hover:bg-amber-100 text-sm font-medium" title="One-time fix: recalculates Net Payable for any expense with multiple payments recorded, correcting records saved before this was fixed">🔧 Recalculate Balances</button>
                         <button onclick="syncToGoogleSheets()" class="px-3 py-2 bg-green-600 text-white rounded-xl hover:bg-green-700 text-sm font-medium">📊 Sync Sheets</button>
                         <button onclick="openExpenseModal()" class="px-5 py-2 bg-orange-600 text-white rounded-xl hover:bg-orange-700 font-medium">+ New Expense</button>
                     </div>
