@@ -7454,7 +7454,16 @@
             { view:'direxp',       label:'Director Expenses' },
             { view:'pettycash',    label:'Petty Cash' },
             { view:'bank',         label:'Bank (read-only ledger view)' },
-            { view:'tax',          label:'Tax' },
+            // Tax gets two sub-permissions so a CA on a view-only base role
+            // can still Certify tax entries without gaining any other write
+            // access. Office staff (Accounts) can Verify; CA (View Only or
+            // the dedicated "CA" role) can Certify. Both are optional — if
+            // a role has 'tax' but neither sub, legacy fallback lets both
+            // through (backward compatibility for existing setups).
+            { view:'tax',          label:'Tax', subs:[
+                { view:'tax.verify',  label:'Office Verify tax entries' },
+                { view:'tax.certify', label:'CA Certify tax entries' },
+            ]},
             { view:'mis',          label:'MIS Report' },
             { view:'staff',        label:'Staff', subs:[
                 { view:'staff.list',       label:'Staff List' },
@@ -7471,12 +7480,21 @@
         // Default permissions — used when no customisation saved yet.
         // Admin always gets '*' (all). These defaults are stored in
         // settings.rolePermissions and are fully editable by Admin.
+        //
+        // Accounts   → can VERIFY and CERTIFY (they do both in a small team)
+        // View Only  → can CERTIFY only (this is the "view-only CA" case —
+        //              CA sees everything but only writes to the CA-cert
+        //              fields on tax entries; nothing else)
+        // CA         → dedicated read-mostly role for the external
+        //              accountant, view access to the tabs they need +
+        //              CERTIFY on tax
         const DEFAULT_ROLE_PERMS = {
             'Admin':    ['*'],
-            'Accounts': ['dashboard','transactions','ar','expenses','projexp','payreq','direxp','pettycash','bank','tax','mis','parties','docs','auditlog','settings'],
+            'Accounts': ['dashboard','transactions','ar','expenses','projexp','payreq','direxp','pettycash','bank','tax','tax.verify','tax.certify','mis','parties','docs','auditlog','settings'],
             'HR':       ['dashboard','staff','staff.list','staff.attendance','staff.documents','staff.payslip','mis','docs','auditlog'],
             'Field':    ['dashboard','docs','auditlog'],
-            'View Only':['dashboard','transactions','ar','expenses','projexp','funds','payreq','direxp','pettycash','bank','tax','mis','staff','staff.list','staff.attendance','staff.documents','staff.payslip','parties','docs','auditlog']
+            'View Only':['dashboard','transactions','ar','expenses','projexp','funds','payreq','direxp','pettycash','bank','tax','tax.certify','mis','staff','staff.list','staff.attendance','staff.documents','staff.payslip','parties','docs','auditlog'],
+            'CA':       ['dashboard','transactions','ar','expenses','projexp','payreq','direxp','pettycash','bank','tax','tax.certify','mis','parties','docs','auditlog']
         };
 
         // Build ROLE_ACCESS dynamically from saved settings (or defaults)
@@ -13255,6 +13273,10 @@
         }
 
         async function _taxToggleOfficeVerify(recID, sourceType) {
+            if (typeof _canAccessSub === 'function' && !_canAccessSub('tax','verify')) {
+                alert("Your role doesn't have permission to office-verify tax entries.\n\nAsk an Admin to grant 'Office Verify tax entries' under Settings → Role Permissions.");
+                return;
+            }
             const { list, idKey, saveKey } = _taxRecFor(sourceType);
             const e = (list||[]).find(x => x[idKey] === recID);
             if (!e) { alert('Entry not found.'); return; }
@@ -13282,6 +13304,10 @@
         }
 
         async function _taxToggleCACertify(recID, sourceType) {
+            if (typeof _canAccessSub === 'function' && !_canAccessSub('tax','certify')) {
+                alert("Your role doesn't have permission to CA-certify tax entries.\n\nAsk an Admin to grant 'CA Certify tax entries' under Settings → Role Permissions, or switch your role to CA / View Only.");
+                return;
+            }
             const { list, idKey, saveKey } = _taxRecFor(sourceType);
             const e = (list||[]).find(x => x[idKey] === recID);
             if (!e) { alert('Entry not found.'); return; }
@@ -13314,6 +13340,9 @@
         //       'gst' → GST Input (expenses only — director bills verified individually)
         //       'gstout' → GST Output (transaction invoices)
         async function _taxBulkOfficeVerify(mode, month, year) {
+            if (typeof _canAccessSub === 'function' && !_canAccessSub('tax','verify')) {
+                alert("Your role doesn't have permission to office-verify tax entries."); return;
+            }
             const d = getTaxPeriodData(month, year);
             let targets, saveKey;
             if (mode === 'tds')         { targets = d.tdsExpenses.filter(e => !e.taxOfficeVerified);    saveKey = 'expenses'; }
@@ -13334,6 +13363,9 @@
         }
 
         async function _taxBulkCACertify(mode, month, year) {
+            if (typeof _canAccessSub === 'function' && !_canAccessSub('tax','certify')) {
+                alert("Your role doesn't have permission to CA-certify tax entries."); return;
+            }
             const d = getTaxPeriodData(month, year);
             let source, saveKey, listToSave;
             if (mode === 'tds')         { source = d.tdsExpenses;   saveKey = 'expenses';     listToSave = expenses; }
@@ -13361,29 +13393,51 @@
 
         // Small badge builder used by TDS + GST tables — same look everywhere.
         // sourceType: 'exp' | 'dir' | 'txn' (see _taxRecFor above).
+        //
+        // Permission-aware rendering: the Verify and Certify buttons are only
+        // interactive when the current user's role has 'tax.verify' or
+        // 'tax.certify' respectively. This makes the CA workflow work with a
+        // view-only-style base role (the CA can only touch these two fields;
+        // everything else stays read-only). Without permission, the stamp
+        // area shows a plain read-only display of the current state — the CA
+        // still sees who has verified, and office staff still sees who has
+        // certified, without being able to change the other side's stamp.
         function _taxVerifyBadge(e, sourceType) {
             const idKey = (sourceType === 'dir') ? 'deID' : (sourceType === 'txn' ? 'txnID' : 'expID');
             const safeId = String(e[idKey] || '').replace(/'/g,"\\'");
             const officeOK = !!e.taxOfficeVerified;
             const caOK     = !!e.taxCACertified;
+            const canVerify  = (typeof _canAccessSub === 'function') ? _canAccessSub('tax', 'verify')  : true;
+            const canCertify = (typeof _canAccessSub === 'function') ? _canAccessSub('tax', 'certify') : true;
             const officeTitle = officeOK
-                ? `Office verified by ${e.taxOfficeVerifiedBy||'—'} on ${(e.taxOfficeVerifiedAt||'').substring(0,10)}. Click to un-verify.`
-                : 'Not office-verified. Click to mark as verified by office staff.';
+                ? `Office verified by ${e.taxOfficeVerifiedBy||'—'} on ${(e.taxOfficeVerifiedAt||'').substring(0,10)}${canVerify?'. Click to un-verify.':''}`
+                : (canVerify ? 'Not office-verified. Click to mark as verified by office staff.' : 'Not office-verified. Your role cannot perform office verification.');
             const caTitle = caOK
-                ? `CA-certified by ${e.taxCACertifiedBy||'—'} on ${(e.taxCACertifiedAt||'').substring(0,10)}${e.taxCANotes?'\nNotes: '+e.taxCANotes:''}. Click to un-certify.`
-                : 'Not CA-certified. Certifies liability for payment.';
-            return `<div class="flex flex-col gap-0.5 items-stretch">
-                <button onclick="_taxToggleOfficeVerify('${safeId}','${sourceType}')"
-                    title="${officeTitle.replace(/"/g,'&quot;')}"
-                    class="px-1.5 py-0.5 text-[10px] font-bold rounded border ${officeOK?'bg-cyan-100 border-cyan-400 text-cyan-800':'bg-gray-50 border-gray-300 text-gray-500 hover:bg-cyan-50'}">
-                    ${officeOK?'✓ Office':'👤 Verify'}
-                </button>
-                <button onclick="_taxToggleCACertify('${safeId}','${sourceType}')"
-                    title="${caTitle.replace(/"/g,'&quot;')}"
-                    class="px-1.5 py-0.5 text-[10px] font-bold rounded border ${caOK?'bg-green-100 border-green-400 text-green-800':'bg-gray-50 border-gray-300 text-gray-500 hover:bg-green-50'}">
-                    ${caOK?'✓✓ CA':'👔 Certify'}
-                </button>
-            </div>`;
+                ? `CA-certified by ${e.taxCACertifiedBy||'—'} on ${(e.taxCACertifiedAt||'').substring(0,10)}${e.taxCANotes?'\nNotes: '+e.taxCANotes:''}${canCertify?'. Click to un-certify.':''}`
+                : (canCertify ? 'Not CA-certified. Certifies liability for payment.' : 'Not CA-certified. Your role cannot certify.');
+            // Office row: clickable button when user has verify perm; else read-only display
+            const officeCell = canVerify
+                ? `<button onclick="_taxToggleOfficeVerify('${safeId}','${sourceType}')"
+                        title="${officeTitle.replace(/"/g,'&quot;')}"
+                        class="px-1.5 py-0.5 text-[10px] font-bold rounded border ${officeOK?'bg-cyan-100 border-cyan-400 text-cyan-800':'bg-gray-50 border-gray-300 text-gray-500 hover:bg-cyan-50'}">
+                        ${officeOK?'✓ Office':'👤 Verify'}
+                    </button>`
+                : `<span title="${officeTitle.replace(/"/g,'&quot;')}"
+                        class="inline-block px-1.5 py-0.5 text-[10px] font-bold rounded border ${officeOK?'bg-cyan-50 border-cyan-200 text-cyan-700':'bg-transparent border-transparent text-gray-400'}">
+                        ${officeOK?'✓ Office':'—'}
+                    </span>`;
+            // CA row: clickable button when user has certify perm; else read-only display
+            const caCell = canCertify
+                ? `<button onclick="_taxToggleCACertify('${safeId}','${sourceType}')"
+                        title="${caTitle.replace(/"/g,'&quot;')}"
+                        class="px-1.5 py-0.5 text-[10px] font-bold rounded border ${caOK?'bg-green-100 border-green-400 text-green-800':'bg-gray-50 border-gray-300 text-gray-500 hover:bg-green-50'}">
+                        ${caOK?'✓✓ CA':'👔 Certify'}
+                    </button>`
+                : `<span title="${caTitle.replace(/"/g,'&quot;')}"
+                        class="inline-block px-1.5 py-0.5 text-[10px] font-bold rounded border ${caOK?'bg-green-50 border-green-200 text-green-700':'bg-transparent border-transparent text-gray-400'}">
+                        ${caOK?'✓✓ CA':'—'}
+                    </span>`;
+            return `<div class="flex flex-col gap-0.5 items-stretch">${officeCell}${caCell}</div>`;
         }
 
         function buildTaxDashboard(month, year) {
@@ -13589,8 +13643,8 @@
                         <span title="CA-certified entries — approved for payment">👔 CA: <strong class="text-green-700">${d.tdsExpenses.filter(e=>e.taxCACertified).length}/${d.tdsExpenses.length}</strong></span>
                     </span>
                     <span class="ml-auto flex gap-1.5">
-                        <button onclick="_taxBulkOfficeVerify('tds',${month},${year})" class="px-2.5 py-1 text-xs rounded border bg-cyan-50 border-cyan-300 text-cyan-800 hover:bg-cyan-100" title="Office-verify every row at once">👤 Verify All</button>
-                        <button onclick="_taxBulkCACertify('tds',${month},${year})" class="px-2.5 py-1 text-xs rounded border bg-green-50 border-green-300 text-green-800 hover:bg-green-100" title="CA-certify every office-verified row at once">👔 Certify All</button>
+                        ${_canAccessSub('tax','verify')?`<button onclick="_taxBulkOfficeVerify('tds',${month},${year})" class="px-2.5 py-1 text-xs rounded border bg-cyan-50 border-cyan-300 text-cyan-800 hover:bg-cyan-100" title="Office-verify every row at once">👤 Verify All</button>`:''}
+                        ${_canAccessSub('tax','certify')?`<button onclick="_taxBulkCACertify('tds',${month},${year})" class="px-2.5 py-1 text-xs rounded border bg-green-50 border-green-300 text-green-800 hover:bg-green-100" title="CA-certify every office-verified row at once">👔 Certify All</button>`:''}
                     </span>` : ''}
                 </div>
                 ${d.tdsExpenses.length ? `
@@ -13758,8 +13812,8 @@
                     </div>
                     ${d.gstInputExps.length ? `
                     <div class="flex gap-1.5">
-                        <button onclick="_taxBulkOfficeVerify('gst',${month},${year})" class="px-2.5 py-1 text-xs rounded border bg-cyan-50 border-cyan-300 text-cyan-800 hover:bg-cyan-100" title="Office-verify every ITC bill">👤 Verify All</button>
-                        <button onclick="_taxBulkCACertify('gst',${month},${year})" class="px-2.5 py-1 text-xs rounded border bg-green-50 border-green-300 text-green-800 hover:bg-green-100" title="CA-certify every office-verified ITC bill">👔 Certify All</button>
+                        ${_canAccessSub('tax','verify')?`<button onclick="_taxBulkOfficeVerify('gst',${month},${year})" class="px-2.5 py-1 text-xs rounded border bg-cyan-50 border-cyan-300 text-cyan-800 hover:bg-cyan-100" title="Office-verify every ITC bill">👤 Verify All</button>`:''}
+                        ${_canAccessSub('tax','certify')?`<button onclick="_taxBulkCACertify('gst',${month},${year})" class="px-2.5 py-1 text-xs rounded border bg-green-50 border-green-300 text-green-800 hover:bg-green-100" title="CA-certify every office-verified ITC bill">👔 Certify All</button>`:''}
                     </div>` : ''}
                 </div>
                 ${(d.gstInputExps.length || d.dirITCEligible.length || d.rcmExps.length) ? `
@@ -13847,8 +13901,8 @@
                     </div>
                     ${d.outInvoices.length ? `
                     <div class="flex gap-1.5">
-                        <button onclick="_taxBulkOfficeVerify('gstout',${month},${year})" class="px-2.5 py-1 text-xs rounded border bg-cyan-50 border-cyan-300 text-cyan-800 hover:bg-cyan-100" title="Office-verify every output invoice">👤 Verify All</button>
-                        <button onclick="_taxBulkCACertify('gstout',${month},${year})" class="px-2.5 py-1 text-xs rounded border bg-green-50 border-green-300 text-green-800 hover:bg-green-100" title="CA-certify every office-verified output invoice">👔 Certify All</button>
+                        ${_canAccessSub('tax','verify')?`<button onclick="_taxBulkOfficeVerify('gstout',${month},${year})" class="px-2.5 py-1 text-xs rounded border bg-cyan-50 border-cyan-300 text-cyan-800 hover:bg-cyan-100" title="Office-verify every output invoice">👤 Verify All</button>`:''}
+                        ${_canAccessSub('tax','certify')?`<button onclick="_taxBulkCACertify('gstout',${month},${year})" class="px-2.5 py-1 text-xs rounded border bg-green-50 border-green-300 text-green-800 hover:bg-green-100" title="CA-certify every office-verified output invoice">👔 Certify All</button>`:''}
                     </div>` : ''}
                 </div>
                 ${(d.outInvoices.length || d.rcmExps.length) ? `
@@ -16512,7 +16566,7 @@
                                 <tbody>
                                     ${ALL_MODULES.map(m => {
                                         const perms = settings?.rolePermissions || DEFAULT_ROLE_PERMS;
-                                        const roles = ['Admin','Accounts','HR','Field','View Only'];
+                                        const roles = ['Admin','Accounts','HR','Field','View Only','CA'];
                                         const _legacySubChecked = (role, parentView, subView) => {
                                             // For perms saved before sub-tab support: mirror old hardcoded rule
                                             const short = subView.split('.')[1];
@@ -16601,14 +16655,15 @@
                                     <td class="px-4 py-2.5 font-semibold">${u.name} ${u.userID===(_bmsSession?.userID||'')?'<span class="text-xs bg-indigo-100 text-indigo-600 px-1.5 rounded ml-1">You</span>':''}</td>
                                     <td class="px-4 py-2.5">
                                         ${_bmsSession?.role === 'Admin' ? `
-                                        <select onchange="_changeUserRole('${u.userID}',this.value)" class="text-xs px-2 py-0.5 border border-gray-200 rounded-lg bg-white cursor-pointer ${u.role==='Admin'?'text-purple-700 font-bold':u.role==='View Only'?'text-gray-500':'text-blue-700'}">
+                                        <select onchange="_changeUserRole('${u.userID}',this.value)" class="text-xs px-2 py-0.5 border border-gray-200 rounded-lg bg-white cursor-pointer ${u.role==='Admin'?'text-purple-700 font-bold':u.role==='View Only'?'text-gray-500':u.role==='CA'?'text-green-700':'text-blue-700'}">
                                             <option value="Admin"    ${u.role==='Admin'?'selected':''}>Admin</option>
                                             <option value="Accounts" ${u.role==='Accounts'?'selected':''}>Accounts</option>
                                             <option value="HR"       ${u.role==='HR'?'selected':''}>HR</option>
                                             <option value="Field"    ${u.role==='Field'?'selected':''}>Field</option>
                                             <option value="View Only" ${u.role==='View Only'?'selected':''}>View Only</option>
+                                            <option value="CA"       ${u.role==='CA'?'selected':''}>CA (Certifier)</option>
                                         </select>` :
-                                        `<span class="text-xs px-2 py-0.5 rounded-full ${u.role==='Admin'?'bg-purple-100 text-purple-700':u.role==='View Only'?'bg-gray-100 text-gray-600':'bg-blue-100 text-blue-700'}">${u.role}</span>`}
+                                        `<span class="text-xs px-2 py-0.5 rounded-full ${u.role==='Admin'?'bg-purple-100 text-purple-700':u.role==='View Only'?'bg-gray-100 text-gray-600':u.role==='CA'?'bg-green-100 text-green-700':'bg-blue-100 text-blue-700'}">${u.role}</span>`}
                                     </td>
                                     <td class="px-4 py-2.5 text-center">
                                         ${u.pinHash ? (expired
@@ -24001,7 +24056,8 @@ Automated WFH alert — ${company} Attendance System.`;
                             <option value="Accounts" ${u?.role==='Accounts'?'selected':''}>Accounts — Expenses, Tax, Payment Requests</option>
                             <option value="HR" ${u?.role==='HR'?'selected':''}>HR — Staff, Attendance, Payroll</option>
                             <option value="Field" ${u?.role==='Field'?'selected':''}>Field — Field App only</option>
-                            <option value="View Only" ${u?.role==='View Only'?'selected':''}>View Only — read all, no writes</option>
+                            <option value="View Only" ${u?.role==='View Only'?'selected':''}>View Only — read all + CA certify on tax</option>
+                            <option value="CA" ${u?.role==='CA'?'selected':''}>CA — external accountant, view + certify tax entries</option>
                         </select>
                     </div>
                     <div><label class="block text-xs font-semibold text-gray-700 mb-1">PIN Expiry Override (days) <span class="font-normal text-gray-400">leave blank to use default</span></label>
@@ -24035,7 +24091,7 @@ Automated WFH alert — ${company} Attendance System.`;
         }
 
         async function _saveRolePermissions() {
-            const roles = ['Accounts','HR','Field','View Only'];  // Admin always '*', not in matrix
+            const roles = ['Accounts','HR','Field','View Only','CA'];  // Admin always '*', not in matrix
             const newPerms = { 'Admin': ['*'] };
             for (const role of roles) {
                 const checked = Array.from(document.querySelectorAll(
