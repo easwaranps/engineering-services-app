@@ -13225,27 +13225,38 @@
         }
 
         // ════════════════════════════════════════════════════════════════
-        // TWO-STAGE VERIFICATION FOR TAX ENTRIES (TDS + GST INPUT)
+        // TWO-STAGE VERIFICATION FOR TAX ENTRIES (TDS + GST INPUT + GST OUTPUT)
         // ────────────────────────────────────────────────────────────────
-        // Stage 1 — OFFICE staff clicks 👤 Office Verify on each row after
-        //           checking amount / section / PAN / vendor against the
-        //           source bill. Stamps `taxOfficeVerified{At,By}`.
-        // Stage 2 — CA clicks 👔 CA Certify on each row (or bulk-all in
-        //           header) after reviewing. Stamps `taxCACertified{At,By}`
-        //           and can leave `taxCANotes` via prompt.
+        // Stage 1 — OFFICE staff clicks 👤 Verify on each row after checking
+        //           amount / section / PAN / vendor / GSTIN against the
+        //           source bill or invoice. Stamps `taxOfficeVerified{At,By}`.
+        // Stage 2 — CA clicks 👔 Certify on each row (or bulk-all in header)
+        //           after reviewing. Stamps `taxCACertified{At,By}` and can
+        //           leave `taxCANotes` via prompt.
         //
-        // Both flags live directly on the source expense record (or director-
-        // expense record for GST-Dir rows). We deliberately use `taxOffice…`
-        // and `taxCA…` field names — NOT `tdsOffice…` — so the SAME two
-        // flags work whether the entry is a TDS row or a GST-Input row.
-        // A single expense may appear on both TDS and GST panels for a given
-        // month, and it should carry one verification state, not two.
+        // Both flags live directly on the source record. `sourceType` selects
+        // the collection:
+        //   'exp' → expenses[]           (TDS rows + GST Input bills + RCM)
+        //   'dir' → directorExpenses[]   (GST Input director bills)
+        //   'txn' → transactions[]       (GST Output invoices)
+        //
+        // We deliberately use `taxOffice…` / `taxCA…` field names — NOT
+        // `tdsOffice…` — so the SAME two flags work whether the record is a
+        // TDS row, a GST-Input row, or a GST-Output row. A single expense may
+        // appear on both TDS and GST panels and should carry one verification
+        // state, not two.
         // ════════════════════════════════════════════════════════════════
 
-        async function _taxToggleOfficeVerify(expID, isDirector) {
-            const list = isDirector ? directorExpenses : expenses;
-            const idKey = isDirector ? 'deID' : 'expID';
-            const e = (list||[]).find(x => x[idKey] === expID);
+        // Map sourceType → { list, idKey, saveKey } for the collection lookup.
+        function _taxRecFor(sourceType) {
+            if (sourceType === 'dir') return { list: directorExpenses, idKey: 'deID',  saveKey: 'directorExpenses' };
+            if (sourceType === 'txn') return { list: transactions,     idKey: 'txnID', saveKey: 'transactions'     };
+            return { list: expenses, idKey: 'expID', saveKey: 'expenses' };   // 'exp' default
+        }
+
+        async function _taxToggleOfficeVerify(recID, sourceType) {
+            const { list, idKey, saveKey } = _taxRecFor(sourceType);
+            const e = (list||[]).find(x => x[idKey] === recID);
             if (!e) { alert('Entry not found.'); return; }
             const already = !!e.taxOfficeVerified;
             if (already && !confirm(`Un-verify this entry?\n\nThis will clear the office verification stamp (${e.taxOfficeVerifiedBy||'—'} on ${(e.taxOfficeVerifiedAt||'').substring(0,10)}). CA certification (if any) will also be cleared, since verification must precede certification.`)) return;
@@ -13264,16 +13275,15 @@
                 e.taxOfficeVerifiedAt = new Date().toISOString();
             }
             try {
-                await saveData(isDirector ? 'directorExpenses' : 'expenses', list);
+                await saveData(saveKey, list);
                 renderView();
                 _showToast(already ? 'Office verification cleared' : '✓ Office-verified — awaiting CA certification', '#0891b2', 3500);
             } catch(err) { alert('Save failed: '+err.message); }
         }
 
-        async function _taxToggleCACertify(expID, isDirector) {
-            const list = isDirector ? directorExpenses : expenses;
-            const idKey = isDirector ? 'deID' : 'expID';
-            const e = (list||[]).find(x => x[idKey] === expID);
+        async function _taxToggleCACertify(recID, sourceType) {
+            const { list, idKey, saveKey } = _taxRecFor(sourceType);
+            const e = (list||[]).find(x => x[idKey] === recID);
             if (!e) { alert('Entry not found.'); return; }
             if (!e.taxOfficeVerified && !e.taxCACertified) {
                 if (!confirm('This entry has NOT been office-verified yet.\n\nCA certification normally follows office verification — the office confirms the entry is correct, then the CA certifies the tax liability for payment.\n\nProceed anyway with direct CA certification?')) return;
@@ -13293,26 +13303,31 @@
                 if (note.trim()) e.taxCANotes = note.trim();
             }
             try {
-                await saveData(isDirector ? 'directorExpenses' : 'expenses', list);
+                await saveData(saveKey, list);
                 renderView();
                 _showToast(already ? 'CA certification cleared' : '✓✓ CA-certified — liability approved for payment', '#15803d', 3500);
             } catch(err) { alert('Save failed: '+err.message); }
         }
 
         // Bulk-verify all rows in the current panel (invoked from panel header)
+        // mode: 'tds' → TDS deducted expenses
+        //       'gst' → GST Input (expenses only — director bills verified individually)
+        //       'gstout' → GST Output (transaction invoices)
         async function _taxBulkOfficeVerify(mode, month, year) {
-            // mode: 'tds' | 'gst'
             const d = getTaxPeriodData(month, year);
-            const targets = mode === 'tds'
-                ? d.tdsExpenses.filter(e => !e.taxOfficeVerified)
-                : d.gstInputExps.filter(e => !e.taxOfficeVerified);
+            let targets, saveKey;
+            if (mode === 'tds')         { targets = d.tdsExpenses.filter(e => !e.taxOfficeVerified);    saveKey = 'expenses'; }
+            else if (mode === 'gstout') { targets = d.outInvoices.filter(t => !t.taxOfficeVerified);    saveKey = 'transactions'; }
+            else                        { targets = d.gstInputExps.filter(e => !e.taxOfficeVerified);  saveKey = 'expenses'; }
             if (targets.length === 0) { alert('Nothing to verify — every entry is already office-verified.'); return; }
-            if (!confirm(`Office-verify ${targets.length} ${mode.toUpperCase()} entr${targets.length===1?'y':'ies'} at once?`)) return;
+            const label = mode === 'gstout' ? 'GST Output' : mode.toUpperCase();
+            if (!confirm(`Office-verify ${targets.length} ${label} entr${targets.length===1?'y':'ies'} at once?`)) return;
             const by = (typeof currentUser !== 'undefined' && currentUser?.name) || 'User';
             const at = new Date().toISOString();
             targets.forEach(e => { e.taxOfficeVerified = true; e.taxOfficeVerifiedBy = by; e.taxOfficeVerifiedAt = at; });
             try {
-                await saveData('expenses', expenses);
+                const listToSave = mode === 'gstout' ? transactions : expenses;
+                await saveData(saveKey, listToSave);
                 renderView();
                 _showToast(`✓ ${targets.length} entr${targets.length===1?'y':'ies'} office-verified`, '#0891b2', 3500);
             } catch(err) { alert('Save failed: '+err.message); }
@@ -13320,7 +13335,10 @@
 
         async function _taxBulkCACertify(mode, month, year) {
             const d = getTaxPeriodData(month, year);
-            const source = mode === 'tds' ? d.tdsExpenses : d.gstInputExps;
+            let source, saveKey, listToSave;
+            if (mode === 'tds')         { source = d.tdsExpenses;   saveKey = 'expenses';     listToSave = expenses; }
+            else if (mode === 'gstout') { source = d.outInvoices;   saveKey = 'transactions'; listToSave = transactions; }
+            else                        { source = d.gstInputExps; saveKey = 'expenses';     listToSave = expenses; }
             const officeOK = source.filter(e => e.taxOfficeVerified && !e.taxCACertified);
             const notVerifiedYet = source.filter(e => !e.taxOfficeVerified && !e.taxCACertified);
             if (officeOK.length === 0 && notVerifiedYet.length === 0) { alert('Every entry is already CA-certified.'); return; }
@@ -13329,21 +13347,23 @@
                 extra = `\n\n⚠ ${notVerifiedYet.length} entr${notVerifiedYet.length===1?'y is':'ies are'} NOT office-verified yet. Only office-verified entries will be certified. Skipping the un-verified ones.`;
             }
             if (officeOK.length === 0) { alert('No office-verified entries to certify.' + extra); return; }
-            if (!confirm(`CA-certify all ${officeOK.length} office-verified ${mode.toUpperCase()} entr${officeOK.length===1?'y':'ies'}?${extra}`)) return;
+            const label = mode === 'gstout' ? 'GST Output' : mode.toUpperCase();
+            if (!confirm(`CA-certify all ${officeOK.length} office-verified ${label} entr${officeOK.length===1?'y':'ies'}?${extra}`)) return;
             const by = (typeof currentUser !== 'undefined' && currentUser?.name) || 'CA';
             const at = new Date().toISOString();
             officeOK.forEach(e => { e.taxCACertified = true; e.taxCACertifiedBy = by; e.taxCACertifiedAt = at; });
             try {
-                await saveData('expenses', expenses);
+                await saveData(saveKey, listToSave);
                 renderView();
                 _showToast(`✓✓ ${officeOK.length} entr${officeOK.length===1?'y':'ies'} CA-certified — approved for payment`, '#15803d', 3500);
             } catch(err) { alert('Save failed: '+err.message); }
         }
 
-        // Small badge builder used by TDS + GST tables — same look everywhere
-        function _taxVerifyBadge(e, isDirector) {
-            const idKey = isDirector ? (e.deID||'') : (e.expID||'');
-            const safeId = String(idKey).replace(/'/g,"\\'");
+        // Small badge builder used by TDS + GST tables — same look everywhere.
+        // sourceType: 'exp' | 'dir' | 'txn' (see _taxRecFor above).
+        function _taxVerifyBadge(e, sourceType) {
+            const idKey = (sourceType === 'dir') ? 'deID' : (sourceType === 'txn' ? 'txnID' : 'expID');
+            const safeId = String(e[idKey] || '').replace(/'/g,"\\'");
             const officeOK = !!e.taxOfficeVerified;
             const caOK     = !!e.taxCACertified;
             const officeTitle = officeOK
@@ -13353,12 +13373,12 @@
                 ? `CA-certified by ${e.taxCACertifiedBy||'—'} on ${(e.taxCACertifiedAt||'').substring(0,10)}${e.taxCANotes?'\nNotes: '+e.taxCANotes:''}. Click to un-certify.`
                 : 'Not CA-certified. Certifies liability for payment.';
             return `<div class="flex flex-col gap-0.5 items-stretch">
-                <button onclick="_taxToggleOfficeVerify('${safeId}',${isDirector?'true':'false'})"
+                <button onclick="_taxToggleOfficeVerify('${safeId}','${sourceType}')"
                     title="${officeTitle.replace(/"/g,'&quot;')}"
                     class="px-1.5 py-0.5 text-[10px] font-bold rounded border ${officeOK?'bg-cyan-100 border-cyan-400 text-cyan-800':'bg-gray-50 border-gray-300 text-gray-500 hover:bg-cyan-50'}">
                     ${officeOK?'✓ Office':'👤 Verify'}
                 </button>
-                <button onclick="_taxToggleCACertify('${safeId}',${isDirector?'true':'false'})"
+                <button onclick="_taxToggleCACertify('${safeId}','${sourceType}')"
                     title="${caTitle.replace(/"/g,'&quot;')}"
                     class="px-1.5 py-0.5 text-[10px] font-bold rounded border ${caOK?'bg-green-100 border-green-400 text-green-800':'bg-gray-50 border-gray-300 text-gray-500 hover:bg-green-50'}">
                     ${caOK?'✓✓ CA':'👔 Certify'}
@@ -13457,7 +13477,7 @@
                             ? `<span class="text-green-700 font-semibold">✅ Paid</span>`
                             : `<span class="text-red-500 font-semibold">⏳ Pending</span>`}
                     </td>
-                    <td class="px-3 py-2 text-xs text-center">${_taxVerifyBadge(e, false)}</td>
+                    <td class="px-3 py-2 text-xs text-center">${_taxVerifyBadge(e, 'exp')}</td>
                     <td class="px-3 py-2 text-xs text-center">${challan?`<span class="font-mono text-blue-700">${challan}</span>`:'—'}</td>
                     <td class="px-3 py-2 text-xs text-center whitespace-nowrap">
                         <button onclick="openTDSPayModal('${safeId}')"
@@ -13678,7 +13698,7 @@
                     <td class="px-3 py-2 text-xs text-right">${fmt(e.sgst||0)}</td>
                     <td class="px-3 py-2 text-xs text-right">${fmt(e.igst||0)}</td>
                     <td class="px-3 py-2 text-xs text-right font-bold text-amber-700">${fmt(tax)}</td>
-                    <td class="px-3 py-2 text-xs text-center">${_taxVerifyBadge(e, false)}</td>
+                    <td class="px-3 py-2 text-xs text-center">${_taxVerifyBadge(e, 'exp')}</td>
                 </tr>`;
             }).join('');
 
@@ -13698,6 +13718,7 @@
                     <td class="px-3 py-2 text-xs text-right">${fmt(tot.sgst||0)}</td>
                     <td class="px-3 py-2 text-xs text-right">${fmt(tot.igst||0)}</td>
                     <td class="px-3 py-2 text-xs text-right font-bold text-purple-700">${fmt(tot.totalTax||0)}</td>
+                    <td class="px-3 py-2 text-xs text-center">${_taxVerifyBadge(t, 'txn')}</td>
                 </tr>`;
             }).join('');
 
@@ -13776,7 +13797,7 @@
                                     <td class="px-3 py-2 text-xs text-right text-indigo-600">${fmt(de.sgstAmt||de.sgst||0)}</td>
                                     <td class="px-3 py-2 text-xs text-right text-indigo-600">${fmt(de.igstAmt||de.igst||0)}</td>
                                     <td class="px-3 py-2 text-xs text-right font-bold text-indigo-700">${fmt(itc)}</td>
-                                    <td class="px-3 py-2 text-xs text-center">${_taxVerifyBadge(de, true)}</td>
+                                    <td class="px-3 py-2 text-xs text-center">${_taxVerifyBadge(de, 'dir')}</td>
                                 </tr>`;
                             }).join('')}
                             ${d.rcmExps.length ? `
@@ -13796,7 +13817,7 @@
                                     <td class="px-3 py-2 text-xs text-right text-orange-700">${fmt(e.sgst||0)}</td>
                                     <td class="px-3 py-2 text-xs text-right text-orange-700">${fmt(e.igst||0)}</td>
                                     <td class="px-3 py-2 text-xs text-right font-bold text-orange-800">${fmt(tax)}</td>
-                                    <td class="px-3 py-2 text-xs text-center">${_taxVerifyBadge(e, false)}</td>
+                                    <td class="px-3 py-2 text-xs text-center">${_taxVerifyBadge(e, 'exp')}</td>
                                 </tr>`;
                             }).join('')}` : ''}
                         </tbody>
@@ -13814,9 +13835,21 @@
                 </div>` : `<p class="text-gray-400 text-center py-4 text-sm">No GST-inclusive expenses or director bills in ${d.monthName} ${year}</p>`}
 
                 <!-- GST Output table -->
-                <div class="px-5 py-2 bg-purple-50 flex items-center justify-between border-t border-b">
-                    <span class="text-xs font-bold text-purple-700 uppercase">📤 Output Tax Details (Invoices${d.rcmExps.length?' + RCM':''})</span>
-                    <span class="text-xs text-purple-600">${d.outInvoices.length} invoice(s)${d.rcmExps.length?' + '+d.rcmExps.length+' RCM bill(s)':''} · ${fmt(d.gstOutput)}</span>
+                <div class="px-5 py-2 bg-purple-50 flex items-center justify-between border-t border-b flex-wrap gap-2">
+                    <div class="flex items-center gap-3 flex-wrap">
+                        <span class="text-xs font-bold text-purple-700 uppercase">📤 Output Tax Details (Invoices${d.rcmExps.length?' + RCM':''})</span>
+                        <span class="text-xs text-purple-600">${d.outInvoices.length} invoice(s)${d.rcmExps.length?' + '+d.rcmExps.length+' RCM bill(s)':''} · ${fmt(d.gstOutput)}</span>
+                        ${d.outInvoices.length ? `
+                        <span class="pl-3 border-l border-purple-200 flex items-center gap-2 text-xs">
+                            <span title="Office-verified — office staff have checked amount/GSTIN/HSN/client">👤 <strong class="text-cyan-700">${d.outInvoices.filter(t=>t.taxOfficeVerified).length}/${d.outInvoices.length}</strong></span>
+                            <span title="CA-certified — approved for output tax liability">👔 <strong class="text-green-700">${d.outInvoices.filter(t=>t.taxCACertified).length}/${d.outInvoices.length}</strong></span>
+                        </span>` : ''}
+                    </div>
+                    ${d.outInvoices.length ? `
+                    <div class="flex gap-1.5">
+                        <button onclick="_taxBulkOfficeVerify('gstout',${month},${year})" class="px-2.5 py-1 text-xs rounded border bg-cyan-50 border-cyan-300 text-cyan-800 hover:bg-cyan-100" title="Office-verify every output invoice">👤 Verify All</button>
+                        <button onclick="_taxBulkCACertify('gstout',${month},${year})" class="px-2.5 py-1 text-xs rounded border bg-green-50 border-green-300 text-green-800 hover:bg-green-100" title="CA-certify every office-verified output invoice">👔 Certify All</button>
+                    </div>` : ''}
                 </div>
                 ${(d.outInvoices.length || d.rcmExps.length) ? `
                 <div class="overflow-x-auto">
@@ -13833,11 +13866,12 @@
                                 <th class="px-3 py-2 text-right">SGST</th>
                                 <th class="px-3 py-2 text-right">IGST</th>
                                 <th class="px-3 py-2 text-right">Total Tax</th>
+                                <th class="px-3 py-2 text-center">Verification</th>
                             </tr>
                         </thead>
                         <tbody>${gstOutputRows}
                             ${d.rcmExps.length ? `
-                            <tr class="bg-orange-100"><td colspan="10" class="px-3 py-1.5 text-xs font-bold text-orange-900">
+                            <tr class="bg-orange-100"><td colspan="11" class="px-3 py-1.5 text-xs font-bold text-orange-900">
                                 🔄 Reverse Charge (RCM) Liability — buyer pays GST to govt directly (Section 9(3) / unregistered vendor cases)
                             </td></tr>
                             ${d.rcmExps.map(e => {
@@ -13853,6 +13887,7 @@
                                     <td class="px-3 py-2 text-xs text-right text-orange-700">${fmt(e.sgst||0)}</td>
                                     <td class="px-3 py-2 text-xs text-right text-orange-700">${fmt(e.igst||0)}</td>
                                     <td class="px-3 py-2 text-xs text-right font-bold text-orange-800">${fmt(tax)}</td>
+                                    <td class="px-3 py-2 text-xs text-center">${_taxVerifyBadge(e, 'exp')}</td>
                                 </tr>`;
                             }).join('')}` : ''}
                         </tbody>
@@ -13863,6 +13898,7 @@
                                 <td class="px-3 py-2 text-right text-purple-800">${fmt(d.gstOutputSGST)}</td>
                                 <td class="px-3 py-2 text-right text-purple-800">${fmt(d.gstOutputIGST)}</td>
                                 <td class="px-3 py-2 text-right text-purple-800">${fmt(d.gstOutput)}</td>
+                                <td></td>
                             </tr>
                         </tfoot>
                     </table>
@@ -15117,14 +15153,50 @@
         }
 
         // ── TDS PDF ──────────────────────────────────────────────────────
+        // Helper for the tax PDFs — compact per-row rendering of the two
+        // verification stamps. Returns a jsPDF-autoTable cell object with
+        // content + styles baked in, so the pattern is identical across TDS,
+        // GST Input, and GST Output tables. Line 1: name (initials for long
+        // names to save column width). Line 2: date (MM-DD, since the report
+        // is scoped to a single month/year the full year is redundant).
+        // Colour cyan when stamped, muted grey when pending — mirrors the
+        // on-screen badge palette so a CA reading the PDF sees the same
+        // colour cues as on-screen.
+        function _pdfInitials(name) {
+            if (!name) return '';
+            const parts = name.trim().split(/\s+/);
+            if (parts.length === 1) return parts[0].substring(0, 8);
+            return parts.map(p => p[0] || '').join('').substring(0, 4).toUpperCase();
+        }
+        function _pdfOfficeCell(e) {
+            if (!e.taxOfficeVerified) return { content: '— pending —', styles: { fontSize: 6.5, halign: 'center', textColor: [156,163,175] } };
+            const nm = _pdfInitials(e.taxOfficeVerifiedBy || '');
+            const dt = (e.taxOfficeVerifiedAt || '').substring(5, 10);   // MM-DD
+            return { content: (nm ? nm + '\n' : '') + (dt || ''), styles: { fontSize: 6.5, halign: 'center', fontStyle: 'bold', textColor: [8,145,178] } };
+        }
+        function _pdfCACell(e) {
+            if (!e.taxCACertified) return { content: '— pending —', styles: { fontSize: 6.5, halign: 'center', textColor: [156,163,175] } };
+            const nm = _pdfInitials(e.taxCACertifiedBy || '');
+            const dt = (e.taxCACertifiedAt || '').substring(5, 10);
+            // If the CA left notes, add a tiny 3rd line so the auditor can see
+            // there's context recorded without cluttering the main cell.
+            const notesTag = e.taxCANotes ? '\nnote:' + String(e.taxCANotes).substring(0, 12) + (e.taxCANotes.length>12?'…':'') : '';
+            return { content: (nm ? nm + '\n' : '') + (dt || '') + notesTag, styles: { fontSize: 6.5, halign: 'center', fontStyle: 'bold', textColor: [21,128,61] } };
+        }
+
         async function exportTDSPDF() {
             const sel   = window._taxSelectedPeriod || {};
             const month = sel.month || parseInt(document.getElementById('taxMonth')?.value || new Date().getMonth()+1);
             const year  = sel.year  || parseInt(document.getElementById('taxYear')?.value  || new Date().getFullYear());
             const d     = getTaxPeriodData(month, year);
             const jsPDF = await _ensureJsPDF();
-            const doc   = new jsPDF({orientation:'portrait', unit:'mm', format:'a4'});
-            const ML=14, MR=14, CW=182, PW=210;
+            // Landscape gives us the horizontal room to add Office / CA
+            // certification columns without squeezing the existing content.
+            // Portrait was already over-budget (10 cols summing to 190mm on a
+            // 182mm content width); the CA-facing audit view benefits from
+            // the wider layout too.
+            const doc   = new jsPDF({orientation:'landscape', unit:'mm', format:'a4'});
+            const ML=14, MR=14, PW=297, PH=210, CW=269;
             const INR = n => 'Rs.'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
             const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
@@ -15135,6 +15207,7 @@
 
             // TDS Summary box
             doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
+                tableWidth:CW,
                 styles:{fontSize:9,cellPadding:3},
                 headStyles:{fillColor:[127,29,29],textColor:[255,255,255],fontStyle:'bold'},
                 head:[[{content:'TDS SUMMARY — '+d.monthName.toUpperCase()+' '+year,colSpan:2,styles:{halign:'center'}}]],
@@ -15142,8 +15215,13 @@
                     ['TDS Deducted (deposit by 7th '+months[month%12]+')',{content:INR(d.totalTDSDeducted),styles:{fontStyle:'bold',textColor:[220,38,38]}}],
                     ['TDS Receivable (from clients)',{content:INR(d.totalTDSReceivable),styles:{fontStyle:'bold'}}],
                     ['Net TDS to Deposit',{content:INR(Math.max(0,d.totalTDSDeducted-d.totalTDSReceivable)),styles:{fontStyle:'bold',textColor:[185,28,28]}}],
+                    // Verification progress summary at the bottom so the CA
+                    // sees at a glance how many entries are still awaiting
+                    // office check-off or their own certification.
+                    [{content:'Office Verified / CA Certified',styles:{fontStyle:'bold',fillColor:[240,253,244]}},
+                     {content:`${d.tdsExpenses.filter(e=>e.taxOfficeVerified).length} / ${d.tdsExpenses.length}   ·   ${d.tdsExpenses.filter(e=>e.taxCACertified).length} / ${d.tdsExpenses.length}`,styles:{fontStyle:'bold',halign:'right',fillColor:[240,253,244]}}],
                 ],
-                columnStyles:{0:{cellWidth:120},1:{cellWidth:62,halign:'right'}}
+                columnStyles:{0:{cellWidth:180},1:{cellWidth:89,halign:'right'}}
             });
             y = doc.lastAutoTable.finalY+6;
 
@@ -15161,6 +15239,7 @@
                 ];
 
                 doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
+                    tableWidth:CW,
                     styles:{fontSize:7.5,cellPadding:2.5},
                     headStyles:{fillColor:[127,29,29],textColor:[255,255,255],fontStyle:'bold'},
                     head:[['TDS SECTION-WISE BREAKDOWN',{content:'',colSpan:4}]],
@@ -15168,6 +15247,7 @@
                 });
                 y = doc.lastAutoTable.finalY;
                 doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
+                    tableWidth:CW,
                     styles:{fontSize:8,cellPadding:2.5},
                     headStyles:{fillColor:[185,28,28],textColor:[255,255,255],fontStyle:'bold'},
                     head:[['Section Code','Description','Entries','TDS Amount']],
@@ -15189,24 +15269,19 @@
                     columnStyles:{0:{cellWidth:32},1:{cellWidth:CW-32-22-32},2:{cellWidth:22,halign:'center'},3:{cellWidth:32,halign:'right'}}
                 });
                 y = doc.lastAutoTable.finalY+4;
-                if (y>240) {doc.addPage(); y=15;}
+                if (y>170) {doc.addPage(); y=15;}
 
-                // Detailed entries
+                // Detailed entries — 12 columns now including Office + CA
+                // certification stamps. Landscape CW=269 lets these fit
+                // cleanly without shrinking the audit-critical columns
+                // (Section / TDS Amt / Status).
                 doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
-                    styles:{fontSize:7.5,cellPadding:2.5},
-                    headStyles:{fillColor:[185,28,28],textColor:[255,255,255],fontStyle:'bold'},
-                    head:[['TDS DEDUCTED ENTRIES — DETAILS',{content:'',colSpan:8}]],
-                    body:[], columnStyles:{0:{cellWidth:CW}}
-                });
-                y = doc.lastAutoTable.finalY;
-                doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
-                    styles:{fontSize:7,cellPadding:2},
-                    headStyles:{fillColor:[239,68,68],textColor:[255,255,255],fontStyle:'bold'},
-                    head:[['Date','Section','Vendor','Description','PAN','Bill No','Taxable','TDS%','TDS Amt','Status']],
+                    tableWidth:CW,
+                    styles:{fontSize:7,cellPadding:2, valign:'middle'},
+                    headStyles:{fillColor:[239,68,68],textColor:[255,255,255],fontStyle:'bold', fontSize:7, halign:'center'},
+                    head:[['Date','Section','Vendor','Description','PAN','Bill No','Taxable','TDS%','TDS Amt','Status','Office Verified','CA Certified']],
                     body:d.tdsExpenses.map(e=>{
                         const pan=(e.vendorPAN||'').trim()||((e.vendorGSTIN&&e.vendorGSTIN.length>=12)?e.vendorGSTIN.substring(2,12):'')||'—';
-                        // Section column: newCode-tracesCode format (e.g. "393(1)-1023", "392-1002")
-                        // Falls back to old code (194C etc.) for legacy records without new codes
                         const meta = TDS_SECTIONS.find(s => s.id === e.tdsSectionID) ||
                                      TDS_SECTIONS.find(s => s.oldCode === e.tdsSection && s.tracesCode === e.tdsTracesCode) ||
                                      TDS_SECTIONS.find(s => s.oldCode === e.tdsSection);
@@ -15214,7 +15289,7 @@
                             ? (meta.newCode + (meta.tracesCode ? '-' + meta.tracesCode : ''))
                             : (e.tdsSection || '—');
                         return [e.billDate||'—',
-                            {content:sectionLabel,styles:{fontStyle:'bold',fontSize:7.5}},
+                            {content:sectionLabel,styles:{fontStyle:'bold',fontSize:7}},
                             e.companyName||e.staffName||e.vendor||'—',
                             {content:e.description||'—',styles:{fontSize:6.5}},
                             {content:pan,styles:{halign:'center',fontSize:6.5}},
@@ -15222,14 +15297,29 @@
                             {content:INR(e.taxableAmt||e.billAmtINR||0),styles:{halign:'right'}},
                             {content:(e.tdsPct||'—')+'%',styles:{halign:'center'}},
                             {content:INR(e.tdsAmt),styles:{halign:'right',fontStyle:'bold',textColor:[185,28,28]}},
-                            {content:e.tdsPaid?'Paid':'Pending',styles:{halign:'center',textColor:e.tdsPaid?[21,128,61]:[220,38,38]}}
+                            {content:e.tdsPaid?'Paid':'Pending',styles:{halign:'center',textColor:e.tdsPaid?[21,128,61]:[220,38,38]}},
+                            _pdfOfficeCell(e),
+                            _pdfCACell(e)
                         ];
                     }),
-                    foot:[[{content:'TOTAL',colSpan:8,styles:{fontStyle:'bold',halign:'right'}},{content:INR(d.totalTDSDeducted),styles:{fontStyle:'bold',halign:'right',textColor:[185,28,28]}},'']],
-                    columnStyles:{0:{cellWidth:16},1:{cellWidth:20},2:{cellWidth:26},3:{cellWidth:28},4:{cellWidth:20},5:{cellWidth:16},6:{cellWidth:18,halign:'right'},7:{cellWidth:10},8:{cellWidth:20},9:{cellWidth:16}}
+                    foot:[[{content:'TOTAL',colSpan:8,styles:{fontStyle:'bold',halign:'right'}},{content:INR(d.totalTDSDeducted),styles:{fontStyle:'bold',halign:'right',textColor:[185,28,28]}},'','','']],
+                    columnStyles:{
+                        0:{cellWidth:18},   // Date
+                        1:{cellWidth:22},   // Section
+                        2:{cellWidth:32},   // Vendor
+                        3:{cellWidth:38},   // Description
+                        4:{cellWidth:22},   // PAN
+                        5:{cellWidth:18},   // Bill No
+                        6:{cellWidth:22, halign:'right'},   // Taxable
+                        7:{cellWidth:11, halign:'center'},  // TDS%
+                        8:{cellWidth:22, halign:'right'},   // TDS Amt
+                        9:{cellWidth:14, halign:'center'},  // Status
+                        10:{cellWidth:25, halign:'center'}, // Office
+                        11:{cellWidth:25, halign:'center'}  // CA
+                    }   // total: 269 = CW
                 });
             } else {
-                if (y>250) {doc.addPage(); y=15;}
+                if (y>170) {doc.addPage(); y=15;}
                 doc.setFontSize(10); doc.setTextColor(150,150,150);
                 doc.text('No TDS deducted entries for '+d.monthName+' '+year+'.', ML, y+10);
             }
@@ -15239,7 +15329,7 @@
             for(let pg=1;pg<=pc;pg++){
                 doc.setPage(pg);
                 doc.setFontSize(7);doc.setFont('helvetica','italic');doc.setTextColor(150,150,150);
-                doc.text((settings.companyName||'IMSE Tech India')+' — TDS Compliance Report — '+d.monthName+' '+year+' — Page '+pg+' of '+pc, PW/2, 291, {align:'center'});
+                doc.text((settings.companyName||'IMSE Tech India')+' — TDS Compliance Report — '+d.monthName+' '+year+' — Page '+pg+' of '+pc, PW/2, PH-5, {align:'center'});
             }
             doc.save('TDS_Report_'+d.monthName+'_'+year+'.pdf');
         }
@@ -15270,6 +15360,12 @@
                     ['GST Output (Invoices + RCM)',{content:INR(d.gstOutput),styles:{textColor:[126,34,206],fontStyle:'bold'}}],
                     [d.netGST>0?'Expected Net GST Payable (GSTR-3B)':'Net GST Credit (Carry Forward)',
                      {content:INR(Math.abs(d.netGST)),styles:{fontStyle:'bold',textColor:d.netGST>0?[126,34,206]:[13,148,136]}}],
+                    // Verification progress bar — CA sees at a glance how much
+                    // of the input side and output side has been signed off.
+                    [{content:'Input — Office Verified / CA Certified',styles:{fillColor:[240,253,244]}},
+                     {content:`${d.gstInputExps.filter(e=>e.taxOfficeVerified).length} / ${d.gstInputExps.length}   ·   ${d.gstInputExps.filter(e=>e.taxCACertified).length} / ${d.gstInputExps.length}`,styles:{halign:'right',fillColor:[240,253,244],fontStyle:'bold'}}],
+                    [{content:'Output — Office Verified / CA Certified',styles:{fillColor:[243,232,255]}},
+                     {content:`${d.outInvoices.filter(t=>t.taxOfficeVerified).length} / ${d.outInvoices.length}   ·   ${d.outInvoices.filter(t=>t.taxCACertified).length} / ${d.outInvoices.length}`,styles:{halign:'right',fillColor:[243,232,255],fontStyle:'bold'}}],
                 ],
                 columnStyles:{0:{cellWidth:180},1:{cellWidth:89,halign:'right'}}
             });
@@ -15293,7 +15389,8 @@
                         {content:INR(e.cgst||0),styles:{halign:'right',textColor:[234,88,12]}},
                         {content:INR(e.sgst||0),styles:{halign:'right',textColor:[234,88,12]}},
                         {content:INR(e.igst||0),styles:{halign:'right',textColor:[234,88,12]}},
-                        {content:INR(tax),styles:{halign:'right',fontStyle:'bold',textColor:[234,88,12]}}];
+                        {content:INR(tax),styles:{halign:'right',fontStyle:'bold',textColor:[234,88,12]}},
+                        _pdfOfficeCell(e), _pdfCACell(e)];
                 });
 
                 // d.gstInputCGST/SGST/IGST already include RCM (from getTaxPeriodData gstInputCGSTAll)
@@ -15306,9 +15403,9 @@
 
                 doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
                     tableWidth:CW, showFoot:'lastPage',
-                    styles:{fontSize:7.5,cellPadding:2.5},
-                    headStyles:{fillColor:[180,83,9],textColor:[255,255,255],fontStyle:'bold'},
-                    head:[['Date','Vendor','GSTIN','Bill No','Description','Taxable','CGST','SGST','IGST','Total Tax']],
+                    styles:{fontSize:7.5,cellPadding:2, valign:'middle'},
+                    headStyles:{fillColor:[180,83,9],textColor:[255,255,255],fontStyle:'bold', fontSize:7, halign:'center'},
+                    head:[['Date','Vendor','GSTIN','Bill No','Description','Taxable','CGST','SGST','IGST','Total Tax','Office Verified','CA Certified']],
                     body:[
                         ...d.gstInputExps.map(e=>{
                             const tax=(parseFloat(e.cgst)||0)+(parseFloat(e.sgst)||0)+(parseFloat(e.igst)||0);
@@ -15321,7 +15418,8 @@
                                 {content:INR(e.cgst||0),styles:{halign:'right'}},
                                 {content:INR(e.sgst||0),styles:{halign:'right'}},
                                 {content:INR(e.igst||0),styles:{halign:'right'}},
-                                {content:INR(tax),styles:{halign:'right',fontStyle:'bold',textColor:[180,83,9]}}];
+                                {content:INR(tax),styles:{halign:'right',fontStyle:'bold',textColor:[180,83,9]}},
+                                _pdfOfficeCell(e), _pdfCACell(e)];
                         }),
                         ...d.dirITCEligible.map(de=>{
                             const tax=(parseFloat(de.cgstAmt)||parseFloat(de.cgst)||0)+(parseFloat(de.sgstAmt)||parseFloat(de.sgst)||0)+(parseFloat(de.igstAmt)||parseFloat(de.igst)||0);
@@ -15335,7 +15433,8 @@
                                 {content:INR(de.cgstAmt||de.cgst||0),styles:{halign:'right',textColor:[99,102,241]}},
                                 {content:INR(de.sgstAmt||de.sgst||0),styles:{halign:'right',textColor:[99,102,241]}},
                                 {content:INR(de.igstAmt||de.igst||0),styles:{halign:'right',textColor:[99,102,241]}},
-                                {content:INR(parseFloat(de.itcAmt)||tax),styles:{halign:'right',fontStyle:'bold',textColor:[99,102,241]}}];
+                                {content:INR(parseFloat(de.itcAmt)||tax),styles:{halign:'right',fontStyle:'bold',textColor:[99,102,241]}},
+                                _pdfOfficeCell(de), _pdfCACell(de)];
                         }),
                         // Fix 3: RCM input rows (orange highlight)
                         ...rcmInputRows,
@@ -15347,9 +15446,13 @@
                         {content:INR(totalInputCGST),styles:{halign:'right'}},
                         {content:INR(totalInputSGST),styles:{halign:'right'}},
                         {content:INR(totalInputIGST),styles:{halign:'right'}},
-                        {content:INR(totalInputAmt),styles:{halign:'right',fillColor:[120,55,6]}}
+                        {content:INR(totalInputAmt),styles:{halign:'right',fillColor:[120,55,6]}},
+                        '', ''
                     ]],
-                    columnStyles:{0:{cellWidth:16},1:{cellWidth:34},2:{cellWidth:28},3:{cellWidth:18},4:{cellWidth:36},5:{cellWidth:22},6:{cellWidth:22},7:{cellWidth:22},8:{cellWidth:20},9:{cellWidth:22}}
+                    // Widths (mm) sum to 269 = landscape CW. Description shrinks
+                    // slightly and Vendor/GSTIN are already tight — Verify
+                    // columns (22+22=44) come out of those middle columns.
+                    columnStyles:{0:{cellWidth:14},1:{cellWidth:28},2:{cellWidth:24},3:{cellWidth:14},4:{cellWidth:26},5:{cellWidth:20},6:{cellWidth:20},7:{cellWidth:20},8:{cellWidth:18},9:{cellWidth:19},10:{cellWidth:23,halign:'center'},11:{cellWidth:23,halign:'center'}}
                 });
                 y = doc.lastAutoTable.finalY+5;
             }
@@ -15371,7 +15474,8 @@
                         {content:INR(e.cgst||0),styles:{halign:'right',textColor:[234,88,12]}},
                         {content:INR(e.sgst||0),styles:{halign:'right',textColor:[234,88,12]}},
                         {content:INR(e.igst||0),styles:{halign:'right',textColor:[234,88,12]}},
-                        {content:INR(tax),styles:{halign:'right',fontStyle:'bold',textColor:[234,88,12]}}];
+                        {content:INR(tax),styles:{halign:'right',fontStyle:'bold',textColor:[234,88,12]}},
+                        _pdfOfficeCell(e), _pdfCACell(e)];
                 });
 
                 // d.gstOutput / gstOutputCGST/SGST/IGST already include RCM
@@ -15384,9 +15488,9 @@
                 const totalOutAmt  = d.gstOutput || 0;
                 doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
                     tableWidth:CW, showFoot:'lastPage',
-                    styles:{fontSize:7.5,cellPadding:2.5},
-                    headStyles:{fillColor:[126,34,206],textColor:[255,255,255],fontStyle:'bold'},
-                    head:[['Date','Client / Vendor','GSTIN','Invoice No','Taxable','CGST','SGST','IGST','Total Tax']],
+                    styles:{fontSize:7.5,cellPadding:2, valign:'middle'},
+                    headStyles:{fillColor:[126,34,206],textColor:[255,255,255],fontStyle:'bold', fontSize:7, halign:'center'},
+                    head:[['Date','Client / Vendor','GSTIN','Invoice No','Taxable','CGST','SGST','IGST','Total Tax','Office Verified','CA Certified']],
                     body:[
                         ...d.outInvoices.map(t=>{
                             const tot=calculateTotals(t.items||[]);
@@ -15399,7 +15503,8 @@
                                 {content:INR(tot.cgst||0),styles:{halign:'right'}},
                                 {content:INR(tot.sgst||0),styles:{halign:'right'}},
                                 {content:INR(tot.igst||0),styles:{halign:'right'}},
-                                {content:INR(tot.totalTax||0),styles:{halign:'right',fontStyle:'bold',textColor:[126,34,206]}}];
+                                {content:INR(tot.totalTax||0),styles:{halign:'right',fontStyle:'bold',textColor:[126,34,206]}},
+                                _pdfOfficeCell(t), _pdfCACell(t)];
                         }),
                         // Fix 3: RCM output liability rows (orange — same vendor, different obligation)
                         ...rcmOutputRows,
@@ -15410,9 +15515,11 @@
                         {content:INR(totalOutCGST),styles:{halign:'right'}},
                         {content:INR(totalOutSGST),styles:{halign:'right'}},
                         {content:INR(totalOutIGST),styles:{halign:'right'}},
-                        {content:INR(totalOutAmt),styles:{halign:'right',fillColor:[88,22,162]}}
+                        {content:INR(totalOutAmt),styles:{halign:'right',fillColor:[88,22,162]}},
+                        '', ''
                     ]],
-                    columnStyles:{0:{cellWidth:18},1:{cellWidth:40},2:{cellWidth:28},3:{cellWidth:22},4:{cellWidth:28},5:{cellWidth:24},6:{cellWidth:24},7:{cellWidth:22},8:{cellWidth:23}}
+                    // Widths (mm) sum to 269 = landscape CW.
+                    columnStyles:{0:{cellWidth:16},1:{cellWidth:36},2:{cellWidth:26},3:{cellWidth:20},4:{cellWidth:26},5:{cellWidth:22},6:{cellWidth:22},7:{cellWidth:20},8:{cellWidth:22},9:{cellWidth:29,halign:'center'},10:{cellWidth:30,halign:'center'}}
                 });
                 y = doc.lastAutoTable.finalY+5;
             }
