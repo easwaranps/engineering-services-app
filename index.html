@@ -38450,10 +38450,19 @@ Automated WFH alert — ${company} Attendance System.`;
             const availableForPayment = parseFloat(pr.availableForPayment) || Math.max(0, (parseFloat(pr.bankBalance)||0) - (parseFloat(pr.minBalance)||10000));
             // Always compute live from items — totalForDoc/totalGenerated can be stale
             const liveItemTotal = (pr.items||[]).filter(includeItem).reduce((s,it)=>s+(parseFloat(it.amount)||0),0);
-            const netFundsRequired = Math.max(0, liveItemTotal - availableForPayment);
+            // Amount already paid via Mark Paid on individual items — reduces the
+            // net transfer still required (once payment lands, that portion of
+            // the approved total no longer needs to be transferred in).
+            const alreadyPaid = parseFloat(pr.totalPaid) || 0;
+            const netFundsRequired = Math.max(0, liveItemTotal - availableForPayment - alreadyPaid);
             if (isDraftPDF) {
+                // Slightly taller when we also need to show "already paid" (rare for
+                // Drafts but possible if the PR was reopened for revision).
+                const draftBoxH = (availableForPayment > 0 && alreadyPaid > 0) ? 43
+                                : (availableForPayment > 0)                    ? 36
+                                                                                : 20;
                 doc.setFillColor(254, 243, 199);
-                doc.rect(ML, y, CW, availableForPayment > 0 ? 36 : 20, 'F');
+                doc.rect(ML, y, CW, draftBoxH, 'F');
                 doc.setTextColor(146, 64, 14); doc.setFontSize(10); doc.setFont(undefined, 'bold');
                 doc.text('DRAFT — PENDING APPROVAL', ML + 4, y + 5);
                 doc.setFontSize(8.5); doc.setFont(undefined, 'normal'); doc.setTextColor(120, 80, 30);
@@ -38463,22 +38472,44 @@ Automated WFH alert — ${company} Attendance System.`;
                 doc.text('Total Bills + Director:', ML + 4, y + 17);
                 doc.setFont(undefined, 'bold');
                 doc.text('Rs.' + fmt(liveItemTotal), ML + 50, y + 17);
+                let yLine = 24;
                 if (availableForPayment > 0) {
                     // Row 2: Less: Available Bank Balance (normal size, same line)
                     doc.setFontSize(9); doc.setFont(undefined, 'normal');
-                    doc.text('Less: Available Bank Balance:', ML + 4, y + 24);
+                    doc.text('Less: Available Bank Balance:', ML + 4, y + yLine);
                     doc.setFont(undefined, 'bold');
-                    doc.text('Rs.' + fmt(availableForPayment), ML + 58, y + 24);
-                    // Row 3: Net Funds Required — larger, prominent, on its own line
+                    doc.text('Rs.' + fmt(availableForPayment), ML + 58, y + yLine);
+                    yLine += 7;
+                }
+                if (alreadyPaid > 0) {
+                    doc.setFontSize(9); doc.setFont(undefined, 'normal');
+                    doc.text('Less: Already Paid:', ML + 4, y + yLine);
+                    doc.setFont(undefined, 'bold');
+                    doc.text('Rs.' + fmt(alreadyPaid), ML + 58, y + yLine);
+                    yLine += 7;
+                }
+                if (availableForPayment > 0 || alreadyPaid > 0) {
+                    // Final line: Net Funds Required — larger, prominent, on its own line
                     doc.setFontSize(12); doc.setFont(undefined, 'bold'); doc.setTextColor(127, 29, 29);
-                    doc.text('Net Funds Required: Rs.' + fmt(netFundsRequired), ML + 4, y + 33);
-                    y += 41;
+                    doc.text('Net Funds Required: Rs.' + fmt(netFundsRequired), ML + 4, y + yLine + 2);
+                    y += draftBoxH + 5;
                 } else {
                     y += 24;
                 }
             } else {
+                // ── APPROVED / DISBURSED: TRANSFER INSTRUCTION block ──
+                // Previously showed only "Amount: [gross approved]" which
+                // confused approvers: the transfer they authorise from the
+                // funding source shouldn't be the full approved amount — the
+                // bank already holds `availableForPayment`, and items already
+                // marked paid don't need topping up again. Show the full
+                // breakdown so the actual transfer instruction is unambiguous.
+                const needsBreakdown = (availableForPayment > 0 || alreadyPaid > 0);
+                const boxH = needsBreakdown
+                    ? (28 + (availableForPayment > 0 ? 6 : 0) + (alreadyPaid > 0 ? 6 : 0) + 8)
+                    : 28;
                 doc.setFillColor(247, 232, 254);
-                doc.rect(ML, y, CW, 28, 'F');
+                doc.rect(ML, y, CW, boxH, 'F');
                 doc.setTextColor(107, 33, 168); doc.setFontSize(10); doc.setFont(undefined, 'bold');
                 doc.text('TRANSFER INSTRUCTION', ML + 4, y + 5);
                 doc.setFontSize(11); doc.setFont(undefined, 'normal'); doc.setTextColor(60, 60, 60);
@@ -38486,16 +38517,48 @@ Automated WFH alert — ${company} Attendance System.`;
                 doc.setFont(undefined, 'bold'); doc.text(acctLabel(fromAcct), ML + 18, y + 11);
                 doc.setFont(undefined, 'normal'); doc.text('To:', ML + 4, y + 17);
                 doc.setFont(undefined, 'bold'); doc.text(acctLabel(toAcct), ML + 18, y + 17);
-                doc.setFont(undefined, 'normal'); doc.text('Amount:', ML + 4, y + 23);
-                doc.setFont(undefined, 'bold'); doc.setTextColor(107, 33, 168); doc.setFontSize(13);
-                doc.text('Rs.' + fmt(totalForDoc), ML + 22, y + 23);
-                doc.setFontSize(10); doc.setTextColor(107, 33, 168);
-                if (pr.transferRef) {
-                    doc.setFont(undefined, 'normal');
-                    doc.text('Ref:', ML + 80, y + 23);
-                    doc.setFont(undefined, 'bold'); doc.text(pr.transferRef, ML + 88, y + 23);
+
+                if (needsBreakdown) {
+                    // Full breakdown: Total Approved − Bank Balance − Already Paid = Net to Transfer
+                    doc.setFontSize(9); doc.setFont(undefined, 'normal'); doc.setTextColor(107, 33, 168);
+                    doc.text('Total Approved:', ML + 4, y + 23);
+                    doc.setFont(undefined, 'bold'); doc.text('Rs.' + fmt(liveItemTotal), ML + 40, y + 23);
+                    let bY = 29;
+                    if (availableForPayment > 0) {
+                        doc.setFont(undefined, 'normal');
+                        doc.text('Less: Available Bank Balance:', ML + 4, y + bY);
+                        doc.setFont(undefined, 'bold'); doc.text('Rs.' + fmt(availableForPayment), ML + 58, y + bY);
+                        bY += 6;
+                    }
+                    if (alreadyPaid > 0) {
+                        doc.setFont(undefined, 'normal');
+                        doc.text('Less: Already Paid:', ML + 4, y + bY);
+                        doc.setFont(undefined, 'bold'); doc.text('Rs.' + fmt(alreadyPaid), ML + 58, y + bY);
+                        bY += 6;
+                    }
+                    // Final row — Net Amount to Transfer in a prominent size
+                    doc.setFont(undefined, 'bold'); doc.setFontSize(13); doc.setTextColor(107, 33, 168);
+                    doc.text('Net Amount to Transfer: Rs.' + fmt(netFundsRequired), ML + 4, y + bY + 2);
+                    if (pr.transferRef) {
+                        doc.setFontSize(9); doc.setFont(undefined, 'normal');
+                        doc.text('Ref: ' + pr.transferRef, ML + 100, y + bY + 2);
+                    }
+                    y += boxH + 5;
+                } else {
+                    // Zero bank balance AND zero prior payments — the transfer
+                    // equals the full approved amount, so the old single-line
+                    // "Amount" layout is exactly right (no confusion possible).
+                    doc.setFont(undefined, 'normal'); doc.text('Amount:', ML + 4, y + 23);
+                    doc.setFont(undefined, 'bold'); doc.setTextColor(107, 33, 168); doc.setFontSize(13);
+                    doc.text('Rs.' + fmt(totalForDoc), ML + 22, y + 23);
+                    doc.setFontSize(10); doc.setTextColor(107, 33, 168);
+                    if (pr.transferRef) {
+                        doc.setFont(undefined, 'normal');
+                        doc.text('Ref:', ML + 80, y + 23);
+                        doc.setFont(undefined, 'bold'); doc.text(pr.transferRef, ML + 88, y + 23);
+                    }
+                    y += 33;
                 }
-                y += 33;
             }
 
             // Category-wise setup — strip emoji from labels (jsPDF can't render them)
@@ -38593,6 +38656,17 @@ Automated WFH alert — ${company} Attendance System.`;
                     { content: '(Rs.' + fmt(availableForPayment) + ')', styles: { halign: 'right', fontStyle: 'bold', textColor: [21,128,61] } }
                 ]);
             }
+            // Deduct payments already made against approved items — matches
+            // the "Less: Already Paid" row that now appears in the TRANSFER
+            // INSTRUCTION box at the top. Keeps the summary consistent.
+            if (alreadyPaid > 0) {
+                summaryBody.push([
+                    { content: 'Less: Already Paid', styles: { fontStyle: 'italic', textColor: [21,128,61] } },
+                    { content: '', styles: { halign: 'center' } },
+                    { content: '(Rs.' + fmt(alreadyPaid) + ')', styles: { halign: 'right', fontStyle: 'bold', textColor: [21,128,61] } }
+                ]);
+            }
+            const showsNetLabel = (availableForPayment > 0 || alreadyPaid > 0);
             doc.autoTable({
                 startY: y, margin: { left: ML, right: MR }, theme: 'grid',
                 styles: { fontSize: 9, cellPadding: 2.5 },
@@ -38600,9 +38674,9 @@ Automated WFH alert — ${company} Attendance System.`;
                 head: [['Category', 'Items', itemCountLabel]],
                 body: summaryBody,
                 foot: [[
-                    { content: availableForPayment > 0 ? 'NET FUNDS REQUIRED' : 'GRAND TOTAL', styles: { fontStyle: 'bold' } },
+                    { content: showsNetLabel ? 'NET FUNDS REQUIRED' : 'GRAND TOTAL', styles: { fontStyle: 'bold' } },
                     { content: String((pr.items||[]).filter(includeItem).length), styles: { halign: 'center', fontStyle: 'bold' } },
-                    { content: 'Rs.' + fmt(availableForPayment > 0 ? Math.max(0, liveItemTotal - availableForPayment) : liveItemTotal),
+                    { content: 'Rs.' + fmt(showsNetLabel ? netFundsRequired : liveItemTotal),
                       styles: { halign: 'right', fontStyle: 'bold', textColor: isDraftPDF ? [180, 83, 9] : [107, 33, 168] } }
                 ]],
                 columnStyles: { 0: { cellWidth: 110 }, 1: { cellWidth: 28, halign: 'center' }, 2: { cellWidth: 44, halign: 'right' } }
