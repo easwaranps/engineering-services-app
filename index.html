@@ -9657,24 +9657,105 @@
             { label: 'Outgoing POs',                  cat: 'PO',          dir: 'Outgoing',  color: 'bg-green-700'  },
         ];
 
+        // Per-group paging state — one entry per (category + direction) tab.
+        // key = `${cat}|${dir||''}` (matches TXN_GROUPS iteration). Persisted
+        // on `window` so it survives re-renders. Defaults: page 0, size 10.
+        // The user's chosen pageSize is remembered globally across groups so
+        // switching preference in one group applies to others too.
+        window._txnPaging = window._txnPaging || {};
+        window._txnDefaultPageSize = window._txnDefaultPageSize || 10;
+
+        function _txnGroupKey(g) { return `${g.cat}|${g.dir || ''}`; }
+        function _txnGetPaging(g) {
+            const key = _txnGroupKey(g);
+            if (!window._txnPaging[key]) {
+                window._txnPaging[key] = { page: 0, pageSize: window._txnDefaultPageSize };
+            }
+            return window._txnPaging[key];
+        }
+        // Navigation handlers wired into pagination buttons below
+        window.txnGoToPage = function(cat, dir, page) {
+            const key = `${cat}|${dir||''}`;
+            if (!window._txnPaging[key]) window._txnPaging[key] = { page: 0, pageSize: window._txnDefaultPageSize };
+            window._txnPaging[key].page = Math.max(0, page);
+            filterTransactions();
+        };
+        window.txnSetPageSize = function(cat, dir, size) {
+            const key = `${cat}|${dir||''}`;
+            const newSize = (size === 'all') ? 100000 : parseInt(size, 10) || 10;
+            if (!window._txnPaging[key]) window._txnPaging[key] = { page: 0, pageSize: newSize };
+            else window._txnPaging[key].pageSize = newSize;
+            window._txnPaging[key].page = 0;   // back to first page on size change
+            window._txnDefaultPageSize = newSize;
+            filterTransactions();
+        };
+
         function renderGroupedTransactions(txnList) {
             if (!txnList || txnList.length === 0)
                 return '<p class="text-gray-400 text-center py-12">No transactions found.</p>';
 
             return TXN_GROUPS.map(g => {
-                const rows = txnList.filter(t =>
+                // Sort within each group by date DESC (newest first), then by
+                // txnID DESC as a tiebreaker so same-day entries stay stable.
+                // Previously rows were rendered in insertion order (oldest at
+                // the top of a long list) — Easu asked for newest-first with
+                // pagination.
+                const allRows = txnList.filter(t =>
                     t.txnCategory === g.cat && (g.dir === null || t.txnDirection === g.dir)
-                );
-                if (rows.length === 0) return '';
+                ).sort((a,b) => {
+                    const dA = (a.txnDate || ''), dB = (b.txnDate || '');
+                    if (dA !== dB) return dB.localeCompare(dA);        // newer date first
+                    return (b.txnID || '').localeCompare(a.txnID || ''); // newer ID first
+                });
+                if (allRows.length === 0) return '';
+
+                // Paging
+                const paging = _txnGetPaging(g);
+                const pageSize = paging.pageSize || window._txnDefaultPageSize;
+                const totalPages = Math.max(1, Math.ceil(allRows.length / pageSize));
+                if (paging.page >= totalPages) paging.page = totalPages - 1; // clamp after filter change
+                const startIdx = paging.page * pageSize;
+                const endIdx   = Math.min(startIdx + pageSize, allRows.length);
+                const rows = allRows.slice(startIdx, endIdx);
+
                 // Only the Invoice group gets a Balance Due column — that's where
                 // payment tracking happens. Other categories use the standard layout.
                 const isInvoiceGroup = g.cat === 'INVOICE';
                 const showAmountCol = ['QUOTATION','PO','CREDIT_NOTE','INVOICE'].includes(g.cat);
+                const catEsc = g.cat, dirEsc = g.dir || '';
+
+                // Pagination controls — shown only when there's more than one page.
+                // Rendering "all" via a very large pageSize lets the pageSize
+                // dropdown express "Show all" without special-casing everywhere.
+                const showPager = allRows.length > 10;   // dropdown visible when meaningfully useful
+                const pagerHTML = showPager ? `
+                    <div class="px-4 py-2 border-t border-gray-100 bg-gray-50 flex items-center justify-between flex-wrap gap-2 text-xs text-gray-600">
+                        <div>Showing <strong>${startIdx + 1}–${endIdx}</strong> of <strong>${allRows.length}</strong></div>
+                        <div class="flex items-center gap-1.5">
+                            <button onclick="txnGoToPage('${catEsc}','${dirEsc}',0)" ${paging.page===0?'disabled':''}
+                                class="px-2 py-1 rounded border ${paging.page===0?'text-gray-300 border-gray-200':'text-indigo-700 border-indigo-200 hover:bg-indigo-50'}" title="First">⏮</button>
+                            <button onclick="txnGoToPage('${catEsc}','${dirEsc}',${paging.page-1})" ${paging.page===0?'disabled':''}
+                                class="px-2 py-1 rounded border ${paging.page===0?'text-gray-300 border-gray-200':'text-indigo-700 border-indigo-200 hover:bg-indigo-50'}" title="Previous">◀ Prev</button>
+                            <span class="px-2 py-1 rounded bg-white border border-gray-200">Page <strong>${paging.page+1}</strong> of <strong>${totalPages}</strong></span>
+                            <button onclick="txnGoToPage('${catEsc}','${dirEsc}',${paging.page+1})" ${paging.page>=totalPages-1?'disabled':''}
+                                class="px-2 py-1 rounded border ${paging.page>=totalPages-1?'text-gray-300 border-gray-200':'text-indigo-700 border-indigo-200 hover:bg-indigo-50'}" title="Next">Next ▶</button>
+                            <button onclick="txnGoToPage('${catEsc}','${dirEsc}',${totalPages-1})" ${paging.page>=totalPages-1?'disabled':''}
+                                class="px-2 py-1 rounded border ${paging.page>=totalPages-1?'text-gray-300 border-gray-200':'text-indigo-700 border-indigo-200 hover:bg-indigo-50'}" title="Last">⏭</button>
+                            <span class="mx-1 text-gray-300">|</span>
+                            <label class="text-gray-500">Per page:</label>
+                            <select onchange="txnSetPageSize('${catEsc}','${dirEsc}',this.value)"
+                                class="px-2 py-1 rounded border border-gray-200 bg-white text-xs">
+                                ${[10,25,50,100].map(n => `<option value="${n}"${pageSize===n?' selected':''}>${n}</option>`).join('')}
+                                <option value="all"${pageSize>=100000?' selected':''}>All</option>
+                            </select>
+                        </div>
+                    </div>` : '';
+
                 return `
                 <div class="bg-white rounded-2xl shadow-sm mb-4 overflow-hidden">
                     <div class="${g.color} px-4 py-2 flex justify-between items-center">
                         <span class="text-white font-semibold text-sm">${g.label}</span>
-                        <span class="bg-white bg-opacity-20 text-white text-xs px-2 py-0.5 rounded-full">${rows.length}</span>
+                        <span class="bg-white bg-opacity-20 text-white text-xs px-2 py-0.5 rounded-full">${allRows.length}</span>
                     </div>
                     <div class="overflow-x-auto">
                         <table class="w-full">
@@ -9693,6 +9774,7 @@
                             <tbody>${rows.map(t => txnRow(t, isInvoiceGroup)).join('')}</tbody>
                         </table>
                     </div>
+                    ${pagerHTML}
                 </div>`;
             }).join('');
         }
@@ -9700,6 +9782,16 @@
         function filterTransactions() {
             const q      = (document.getElementById('txnSearchInput')?.value || '').toLowerCase();
             const status = document.getElementById('txnFilterStatus')?.value || '';
+            // Reset every group's page to 0 when the user changes the search
+            // query or the status filter — otherwise, if they were on page 5
+            // of Invoices and search collapses the result set to 3 rows, the
+            // table shows nothing until they manually click ⏮. We snapshot
+            // the last-known filters and only reset when they actually change.
+            const filterKey = q + '\u0001' + status;
+            if (window._lastTxnFilterKey !== filterKey) {
+                Object.keys(window._txnPaging || {}).forEach(k => { window._txnPaging[k].page = 0; });
+                window._lastTxnFilterKey = filterKey;
+            }
             const filtered = transactions.filter(t => {
                 const matchQ = !q ||
                     t.txnID.toLowerCase().includes(q) ||
@@ -13132,6 +13224,148 @@
             };
         }
 
+        // ════════════════════════════════════════════════════════════════
+        // TWO-STAGE VERIFICATION FOR TAX ENTRIES (TDS + GST INPUT)
+        // ────────────────────────────────────────────────────────────────
+        // Stage 1 — OFFICE staff clicks 👤 Office Verify on each row after
+        //           checking amount / section / PAN / vendor against the
+        //           source bill. Stamps `taxOfficeVerified{At,By}`.
+        // Stage 2 — CA clicks 👔 CA Certify on each row (or bulk-all in
+        //           header) after reviewing. Stamps `taxCACertified{At,By}`
+        //           and can leave `taxCANotes` via prompt.
+        //
+        // Both flags live directly on the source expense record (or director-
+        // expense record for GST-Dir rows). We deliberately use `taxOffice…`
+        // and `taxCA…` field names — NOT `tdsOffice…` — so the SAME two
+        // flags work whether the entry is a TDS row or a GST-Input row.
+        // A single expense may appear on both TDS and GST panels for a given
+        // month, and it should carry one verification state, not two.
+        // ════════════════════════════════════════════════════════════════
+
+        async function _taxToggleOfficeVerify(expID, isDirector) {
+            const list = isDirector ? directorExpenses : expenses;
+            const idKey = isDirector ? 'deID' : 'expID';
+            const e = (list||[]).find(x => x[idKey] === expID);
+            if (!e) { alert('Entry not found.'); return; }
+            const already = !!e.taxOfficeVerified;
+            if (already && !confirm(`Un-verify this entry?\n\nThis will clear the office verification stamp (${e.taxOfficeVerifiedBy||'—'} on ${(e.taxOfficeVerifiedAt||'').substring(0,10)}). CA certification (if any) will also be cleared, since verification must precede certification.`)) return;
+            if (already) {
+                delete e.taxOfficeVerified;
+                delete e.taxOfficeVerifiedBy;
+                delete e.taxOfficeVerifiedAt;
+                // Cascade: if office verify is undone, CA cert is invalid too
+                delete e.taxCACertified;
+                delete e.taxCACertifiedBy;
+                delete e.taxCACertifiedAt;
+                delete e.taxCANotes;
+            } else {
+                e.taxOfficeVerified   = true;
+                e.taxOfficeVerifiedBy = (typeof currentUser !== 'undefined' && currentUser?.name) || 'User';
+                e.taxOfficeVerifiedAt = new Date().toISOString();
+            }
+            try {
+                await saveData(isDirector ? 'directorExpenses' : 'expenses', list);
+                renderView();
+                _showToast(already ? 'Office verification cleared' : '✓ Office-verified — awaiting CA certification', '#0891b2', 3500);
+            } catch(err) { alert('Save failed: '+err.message); }
+        }
+
+        async function _taxToggleCACertify(expID, isDirector) {
+            const list = isDirector ? directorExpenses : expenses;
+            const idKey = isDirector ? 'deID' : 'expID';
+            const e = (list||[]).find(x => x[idKey] === expID);
+            if (!e) { alert('Entry not found.'); return; }
+            if (!e.taxOfficeVerified && !e.taxCACertified) {
+                if (!confirm('This entry has NOT been office-verified yet.\n\nCA certification normally follows office verification — the office confirms the entry is correct, then the CA certifies the tax liability for payment.\n\nProceed anyway with direct CA certification?')) return;
+            }
+            const already = !!e.taxCACertified;
+            if (already) {
+                if (!confirm(`Un-certify this entry?\n\nThis will clear the CA certification stamp (${e.taxCACertifiedBy||'—'} on ${(e.taxCACertifiedAt||'').substring(0,10)}).`)) return;
+                delete e.taxCACertified;
+                delete e.taxCACertifiedBy;
+                delete e.taxCACertifiedAt;
+                delete e.taxCANotes;
+            } else {
+                const note = prompt('CA notes / remark for this entry (optional — e.g. "Section correct, PAN verified against TRACES"):', e.taxCANotes || '') || '';
+                e.taxCACertified   = true;
+                e.taxCACertifiedBy = (typeof currentUser !== 'undefined' && currentUser?.name) || 'CA';
+                e.taxCACertifiedAt = new Date().toISOString();
+                if (note.trim()) e.taxCANotes = note.trim();
+            }
+            try {
+                await saveData(isDirector ? 'directorExpenses' : 'expenses', list);
+                renderView();
+                _showToast(already ? 'CA certification cleared' : '✓✓ CA-certified — liability approved for payment', '#15803d', 3500);
+            } catch(err) { alert('Save failed: '+err.message); }
+        }
+
+        // Bulk-verify all rows in the current panel (invoked from panel header)
+        async function _taxBulkOfficeVerify(mode, month, year) {
+            // mode: 'tds' | 'gst'
+            const d = getTaxPeriodData(month, year);
+            const targets = mode === 'tds'
+                ? d.tdsExpenses.filter(e => !e.taxOfficeVerified)
+                : d.gstInputExps.filter(e => !e.taxOfficeVerified);
+            if (targets.length === 0) { alert('Nothing to verify — every entry is already office-verified.'); return; }
+            if (!confirm(`Office-verify ${targets.length} ${mode.toUpperCase()} entr${targets.length===1?'y':'ies'} at once?`)) return;
+            const by = (typeof currentUser !== 'undefined' && currentUser?.name) || 'User';
+            const at = new Date().toISOString();
+            targets.forEach(e => { e.taxOfficeVerified = true; e.taxOfficeVerifiedBy = by; e.taxOfficeVerifiedAt = at; });
+            try {
+                await saveData('expenses', expenses);
+                renderView();
+                _showToast(`✓ ${targets.length} entr${targets.length===1?'y':'ies'} office-verified`, '#0891b2', 3500);
+            } catch(err) { alert('Save failed: '+err.message); }
+        }
+
+        async function _taxBulkCACertify(mode, month, year) {
+            const d = getTaxPeriodData(month, year);
+            const source = mode === 'tds' ? d.tdsExpenses : d.gstInputExps;
+            const officeOK = source.filter(e => e.taxOfficeVerified && !e.taxCACertified);
+            const notVerifiedYet = source.filter(e => !e.taxOfficeVerified && !e.taxCACertified);
+            if (officeOK.length === 0 && notVerifiedYet.length === 0) { alert('Every entry is already CA-certified.'); return; }
+            let extra = '';
+            if (notVerifiedYet.length > 0) {
+                extra = `\n\n⚠ ${notVerifiedYet.length} entr${notVerifiedYet.length===1?'y is':'ies are'} NOT office-verified yet. Only office-verified entries will be certified. Skipping the un-verified ones.`;
+            }
+            if (officeOK.length === 0) { alert('No office-verified entries to certify.' + extra); return; }
+            if (!confirm(`CA-certify all ${officeOK.length} office-verified ${mode.toUpperCase()} entr${officeOK.length===1?'y':'ies'}?${extra}`)) return;
+            const by = (typeof currentUser !== 'undefined' && currentUser?.name) || 'CA';
+            const at = new Date().toISOString();
+            officeOK.forEach(e => { e.taxCACertified = true; e.taxCACertifiedBy = by; e.taxCACertifiedAt = at; });
+            try {
+                await saveData('expenses', expenses);
+                renderView();
+                _showToast(`✓✓ ${officeOK.length} entr${officeOK.length===1?'y':'ies'} CA-certified — approved for payment`, '#15803d', 3500);
+            } catch(err) { alert('Save failed: '+err.message); }
+        }
+
+        // Small badge builder used by TDS + GST tables — same look everywhere
+        function _taxVerifyBadge(e, isDirector) {
+            const idKey = isDirector ? (e.deID||'') : (e.expID||'');
+            const safeId = String(idKey).replace(/'/g,"\\'");
+            const officeOK = !!e.taxOfficeVerified;
+            const caOK     = !!e.taxCACertified;
+            const officeTitle = officeOK
+                ? `Office verified by ${e.taxOfficeVerifiedBy||'—'} on ${(e.taxOfficeVerifiedAt||'').substring(0,10)}. Click to un-verify.`
+                : 'Not office-verified. Click to mark as verified by office staff.';
+            const caTitle = caOK
+                ? `CA-certified by ${e.taxCACertifiedBy||'—'} on ${(e.taxCACertifiedAt||'').substring(0,10)}${e.taxCANotes?'\nNotes: '+e.taxCANotes:''}. Click to un-certify.`
+                : 'Not CA-certified. Certifies liability for payment.';
+            return `<div class="flex flex-col gap-0.5 items-stretch">
+                <button onclick="_taxToggleOfficeVerify('${safeId}',${isDirector?'true':'false'})"
+                    title="${officeTitle.replace(/"/g,'&quot;')}"
+                    class="px-1.5 py-0.5 text-[10px] font-bold rounded border ${officeOK?'bg-cyan-100 border-cyan-400 text-cyan-800':'bg-gray-50 border-gray-300 text-gray-500 hover:bg-cyan-50'}">
+                    ${officeOK?'✓ Office':'👤 Verify'}
+                </button>
+                <button onclick="_taxToggleCACertify('${safeId}',${isDirector?'true':'false'})"
+                    title="${caTitle.replace(/"/g,'&quot;')}"
+                    class="px-1.5 py-0.5 text-[10px] font-bold rounded border ${caOK?'bg-green-100 border-green-400 text-green-800':'bg-gray-50 border-gray-300 text-gray-500 hover:bg-green-50'}">
+                    ${caOK?'✓✓ CA':'👔 Certify'}
+                </button>
+            </div>`;
+        }
+
         function buildTaxDashboard(month, year) {
             const d   = getTaxPeriodData(month, year);
             const fmt = d.fmt;
@@ -13223,6 +13457,7 @@
                             ? `<span class="text-green-700 font-semibold">✅ Paid</span>`
                             : `<span class="text-red-500 font-semibold">⏳ Pending</span>`}
                     </td>
+                    <td class="px-3 py-2 text-xs text-center">${_taxVerifyBadge(e, false)}</td>
                     <td class="px-3 py-2 text-xs text-center">${challan?`<span class="font-mono text-blue-700">${challan}</span>`:'—'}</td>
                     <td class="px-3 py-2 text-xs text-center whitespace-nowrap">
                         <button onclick="openTDSPayModal('${safeId}')"
@@ -13311,15 +13546,32 @@
                     </div>
                     <div class="flex items-center gap-3">
                         <span class="text-white font-bold text-lg">${fmt(d.totalTDSDeducted)}</span>
-                        ${alertBadge(d.tdsDaysLeft, false)}
+                        ${(() => {
+                            // Panel header badge should switch to "Filed / Paid" once
+                            // every TDS entry in this month has been marked paid — was
+                            // previously hardcoded `false`, so the badge kept saying
+                            // "OVERDUE by X days" even after every line was cleared.
+                            const anyEntries = d.tdsExpenses.length > 0;
+                            const allTdsPaid = anyEntries && d.tdsExpenses.every(e => e.tdsPaid);
+                            return alertBadge(d.tdsDaysLeft, allTdsPaid);
+                        })()}
                     </div>
                 </div>
-                <div class="px-5 py-3 bg-red-50 flex flex-wrap gap-4 text-sm border-b border-red-100">
+                <div class="px-5 py-3 bg-red-50 flex flex-wrap gap-4 text-sm border-b border-red-100 items-center">
                     <span>📅 Due Date: <strong>7th ${months[month%12]} ${month===12?year+1:year}</strong></span>
                     <span>📋 Entries: <strong>${d.tdsExpenses.length}</strong></span>
                     <span>✅ Paid: <strong>${d.tdsExpenses.filter(e=>e.tdsPaid).length}</strong></span>
                     <span>⏳ Pending: <strong class="text-red-600">${d.tdsExpenses.filter(e=>!e.tdsPaid).length}</strong></span>
                     <span>💰 Total TDS: <strong>${fmt(d.totalTDSDeducted)}</strong></span>
+                    ${d.tdsExpenses.length ? `
+                    <span class="ml-2 pl-3 border-l border-red-200 flex items-center gap-2">
+                        <span title="Office-verified entries — office staff have checked amount/section/PAN">👤 Office: <strong class="text-cyan-700">${d.tdsExpenses.filter(e=>e.taxOfficeVerified).length}/${d.tdsExpenses.length}</strong></span>
+                        <span title="CA-certified entries — approved for payment">👔 CA: <strong class="text-green-700">${d.tdsExpenses.filter(e=>e.taxCACertified).length}/${d.tdsExpenses.length}</strong></span>
+                    </span>
+                    <span class="ml-auto flex gap-1.5">
+                        <button onclick="_taxBulkOfficeVerify('tds',${month},${year})" class="px-2.5 py-1 text-xs rounded border bg-cyan-50 border-cyan-300 text-cyan-800 hover:bg-cyan-100" title="Office-verify every row at once">👤 Verify All</button>
+                        <button onclick="_taxBulkCACertify('tds',${month},${year})" class="px-2.5 py-1 text-xs rounded border bg-green-50 border-green-300 text-green-800 hover:bg-green-100" title="CA-certify every office-verified row at once">👔 Certify All</button>
+                    </span>` : ''}
                 </div>
                 ${d.tdsExpenses.length ? `
                 <div class="overflow-x-auto">
@@ -13337,6 +13589,7 @@
                                 <th class="px-3 py-2 text-center">TDS %</th>
                                 <th class="px-3 py-2 text-right">TDS Amt</th>
                                 <th class="px-3 py-2 text-center">Status</th>
+                                <th class="px-3 py-2 text-center">Verification</th>
                                 <th class="px-3 py-2 text-center">Challan No</th>
                                 <th class="px-3 py-2 text-center">Action</th>
                             </tr>
@@ -13346,7 +13599,7 @@
                             <tr>
                                 <td colspan="9" class="px-3 py-2 text-xs font-bold text-right text-red-800">TOTAL TDS TO DEPOSIT:</td>
                                 <td class="px-3 py-2 text-sm font-bold text-right text-red-800">${fmt(d.totalTDSDeducted)}</td>
-                                <td colspan="3"></td>
+                                <td colspan="4"></td>
                             </tr>
                         </tfoot>
                     </table>
@@ -13425,6 +13678,7 @@
                     <td class="px-3 py-2 text-xs text-right">${fmt(e.sgst||0)}</td>
                     <td class="px-3 py-2 text-xs text-right">${fmt(e.igst||0)}</td>
                     <td class="px-3 py-2 text-xs text-right font-bold text-amber-700">${fmt(tax)}</td>
+                    <td class="px-3 py-2 text-xs text-center">${_taxVerifyBadge(e, false)}</td>
                 </tr>`;
             }).join('');
 
@@ -13464,16 +13718,28 @@
                     <div class="flex items-center gap-2">
                         <button onclick="openGSTR2BMatchModal(${month}, ${year})" class="px-3 py-1.5 bg-white text-purple-700 rounded-lg text-xs font-bold hover:bg-purple-50" title="Confirm which ITC bills are reflected in your GSTR-2B portal view">📋 GSTR-2B Match</button>
                         <div class="text-right">
-                            ${alertBadge(d.gstDaysLeft, false)}
+                            ${alertBadge(d.gstDaysLeft, d.gstPaymentStatus === 'paid')}
                             <p class="text-white text-xs mt-1">Due: 20th ${months[month%12]} ${month===12?year+1:year}</p>
                         </div>
                     </div>
                 </div>
 
                 <!-- GST Input table -->
-                <div class="px-5 py-2 bg-amber-50 flex items-center justify-between border-b">
-                    <span class="text-xs font-bold text-amber-700 uppercase">📥 Input Tax Credit Details (Expenses)</span>
-                    <span class="text-xs text-amber-600">${d.gstInputExps.length} bills + ${d.dirITCEligible.length} dir${d.rcmExps.length?' + '+d.rcmExps.length+' RCM':''} · ${fmt(d.combinedITCTotal)} total ITC</span>
+                <div class="px-5 py-2 bg-amber-50 flex items-center justify-between border-b flex-wrap gap-2">
+                    <div class="flex items-center gap-3 flex-wrap">
+                        <span class="text-xs font-bold text-amber-700 uppercase">📥 Input Tax Credit Details (Expenses)</span>
+                        <span class="text-xs text-amber-600">${d.gstInputExps.length} bills + ${d.dirITCEligible.length} dir${d.rcmExps.length?' + '+d.rcmExps.length+' RCM':''} · ${fmt(d.combinedITCTotal)} total ITC</span>
+                        ${d.gstInputExps.length ? `
+                        <span class="pl-3 border-l border-amber-200 flex items-center gap-2 text-xs">
+                            <span title="Office-verified — office staff have checked amount/GSTIN/HSN">👤 <strong class="text-cyan-700">${d.gstInputExps.filter(e=>e.taxOfficeVerified).length}/${d.gstInputExps.length}</strong></span>
+                            <span title="CA-certified — approved for ITC claim">👔 <strong class="text-green-700">${d.gstInputExps.filter(e=>e.taxCACertified).length}/${d.gstInputExps.length}</strong></span>
+                        </span>` : ''}
+                    </div>
+                    ${d.gstInputExps.length ? `
+                    <div class="flex gap-1.5">
+                        <button onclick="_taxBulkOfficeVerify('gst',${month},${year})" class="px-2.5 py-1 text-xs rounded border bg-cyan-50 border-cyan-300 text-cyan-800 hover:bg-cyan-100" title="Office-verify every ITC bill">👤 Verify All</button>
+                        <button onclick="_taxBulkCACertify('gst',${month},${year})" class="px-2.5 py-1 text-xs rounded border bg-green-50 border-green-300 text-green-800 hover:bg-green-100" title="CA-certify every office-verified ITC bill">👔 Certify All</button>
+                    </div>` : ''}
                 </div>
                 ${(d.gstInputExps.length || d.dirITCEligible.length || d.rcmExps.length) ? `
                 <div class="overflow-x-auto">
@@ -13490,6 +13756,7 @@
                                 <th class="px-3 py-2 text-right">SGST</th>
                                 <th class="px-3 py-2 text-right">IGST</th>
                                 <th class="px-3 py-2 text-right">ITC / Tax</th>
+                                <th class="px-3 py-2 text-center">Verification</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -13509,10 +13776,11 @@
                                     <td class="px-3 py-2 text-xs text-right text-indigo-600">${fmt(de.sgstAmt||de.sgst||0)}</td>
                                     <td class="px-3 py-2 text-xs text-right text-indigo-600">${fmt(de.igstAmt||de.igst||0)}</td>
                                     <td class="px-3 py-2 text-xs text-right font-bold text-indigo-700">${fmt(itc)}</td>
+                                    <td class="px-3 py-2 text-xs text-center">${_taxVerifyBadge(de, true)}</td>
                                 </tr>`;
                             }).join('')}
                             ${d.rcmExps.length ? `
-                            <tr class="bg-orange-100"><td colspan="10" class="px-3 py-1.5 text-xs font-bold text-orange-900">
+                            <tr class="bg-orange-100"><td colspan="11" class="px-3 py-1.5 text-xs font-bold text-orange-900">
                                 🔄 Reverse Charge (RCM) — ITC available against your own RCM liability (same amount as RCM Liability below)
                             </td></tr>
                             ${d.rcmExps.map(e => {
@@ -13528,6 +13796,7 @@
                                     <td class="px-3 py-2 text-xs text-right text-orange-700">${fmt(e.sgst||0)}</td>
                                     <td class="px-3 py-2 text-xs text-right text-orange-700">${fmt(e.igst||0)}</td>
                                     <td class="px-3 py-2 text-xs text-right font-bold text-orange-800">${fmt(tax)}</td>
+                                    <td class="px-3 py-2 text-xs text-center">${_taxVerifyBadge(e, false)}</td>
                                 </tr>`;
                             }).join('')}` : ''}
                         </tbody>
@@ -13538,6 +13807,7 @@
                                 <td class="px-3 py-2 text-right text-amber-800">${fmt(d.gstInputSGST)}</td>
                                 <td class="px-3 py-2 text-right text-amber-800">${fmt(d.gstInputIGST)}</td>
                                 <td class="px-3 py-2 text-right text-amber-800 bg-amber-200">${fmt(d.combinedITCTotal)}</td>
+                                <td></td>
                             </tr>
                         </tfoot>
                     </table>
