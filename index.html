@@ -15281,15 +15281,38 @@
 
             if (d.tdsExpenses.length) {
                 // Section breakdown
+                // Group by the full catalog id (SAL-GOVT vs SAL-OTH vs SAL-PEN)
+                // rather than oldCode alone — otherwise every 192-series entry
+                // collapses into one bucket and picks whichever variant appears
+                // first in the catalog (SAL-GOVT / TRACES 1001), even when the
+                // records are actually SAL-OTH / 1002. Falls back through
+                // oldCode+tracesCode, oldCode alone, and finally a literal
+                // "— Unspecified —" bucket so legacy records without a
+                // classified id still render.
                 const _pdfBySection = {};
                 d.tdsExpenses.forEach(e => {
-                    const sec = e.tdsSection || '— Unspecified —';
-                    (_pdfBySection[sec] = _pdfBySection[sec] || []).push(e);
+                    let key;
+                    if (e.tdsSectionID && TDS_SECTION_BY_ID[e.tdsSectionID]) {
+                        key = e.tdsSectionID;
+                    } else if (e.tdsSection && e.tdsTracesCode) {
+                        const hit = TDS_SECTIONS.find(s => s.oldCode === e.tdsSection && s.tracesCode === e.tdsTracesCode);
+                        key = hit ? hit.id : (e.tdsSection + '-' + e.tdsTracesCode);
+                    } else if (e.tdsSection) {
+                        // Fall back to oldCode alone — for sections that have
+                        // only one variant this is unambiguous
+                        const hits = TDS_SECTIONS.filter(s => s.oldCode === e.tdsSection);
+                        key = (hits.length === 1) ? hits[0].id : e.tdsSection;
+                    } else {
+                        key = '— Unspecified —';
+                    }
+                    (_pdfBySection[key] = _pdfBySection[key] || []).push(e);
                 });
-                const _catalogOrder = [...new Set(TDS_SECTIONS.map(s => s.oldCode))];
+                // Preserve catalog ordering so the report reads in the same
+                // sequence as the on-screen tax list.
+                const _catalogOrder = TDS_SECTIONS.map(s => s.id);
                 const _orderedSections = [
-                    ..._catalogOrder.filter(c => _pdfBySection[c]),
-                    ...Object.keys(_pdfBySection).filter(s => !_catalogOrder.includes(s)).sort()
+                    ..._catalogOrder.filter(id => _pdfBySection[id]),
+                    ...Object.keys(_pdfBySection).filter(k => !_catalogOrder.includes(k)).sort()
                 ];
 
                 doc.autoTable({startY:y, margin:{left:ML,right:MR}, theme:'grid',
@@ -15308,7 +15331,12 @@
                     body:_orderedSections.map(sec => {
                         const items  = _pdfBySection[sec];
                         const subTot = items.reduce((s,e) => s+(parseFloat(e.tdsAmt)||0), 0);
-                        const meta   = TDS_SECTIONS.find(s => s.oldCode === sec);
+                        // Resolve meta by id first (right for the new grouping),
+                        // then fall back to the string parsed from key,
+                        // then finally oldCode-only for legacy records.
+                        const meta = TDS_SECTION_BY_ID[sec]
+                            || TDS_SECTIONS.find(s => (s.oldCode + '-' + s.tracesCode) === sec)
+                            || TDS_SECTIONS.find(s => s.oldCode === sec);
                         const secLabel = meta
                             ? (meta.newCode + (meta.tracesCode ? '-' + meta.tracesCode : ''))
                             : sec;
@@ -31579,13 +31607,44 @@ Automated WFH alert — ${company} Attendance System.`;
             const rows = [];
 
             // 1) Transactions (Invoices/PO/Proforma) — money IN when marked paid/received
+            // Field is `paymentsReceived` (array of {date, amount, mode, refNo, remarks})
+            // NOT `payments` — previous code used the wrong name so invoice
+            // receipts never appeared in the bank ledger even when the invoice
+            // was tagged to this bank account.
             (transactions||[]).forEach(t => {
                 if (t.bankAccountId !== bankId) return;
-                const received = (t.payments||[]).reduce((s,p)=>s+(+p.amount||0),0);
-                if (received > 0) {
-                    (t.payments||[]).forEach(p => {
-                        rows.push({ date:p.date||t.txnDate||'', desc:`${t.txnID} — ${t.partyName||''} (payment received)`, credit:+p.amount||0, debit:0, src:'Transactions' });
+                const pays = t.paymentsReceived || [];
+                pays.forEach(p => {
+                    const amt = +p.amount || 0;
+                    if (amt <= 0) return;
+                    const modeStr = p.mode ? ` · ${p.mode}` : '';
+                    const refStr  = p.refNo ? ` · Ref ${p.refNo}` : '';
+                    rows.push({
+                        date: p.date || t.txnDate || '',
+                        desc: `${t.txnID||'INV'} — ${t.partyName||t.clientName||''} (payment received)${modeStr}${refStr}`,
+                        credit: amt, debit: 0, src: 'Transactions'
                     });
+                });
+                // Legacy fallback — invoice was flipped to status='Paid' but
+                // paymentsReceived was left empty (older records before the
+                // prompt-on-mark-paid dialog was added). Use the invoice date
+                // and the full net-of-TDS amount so the bank ledger stays
+                // complete, and stamp the description with "(legacy)" so the
+                // user can see which rows need cleanup.
+                if (pays.length === 0 && t.status === 'Paid') {
+                    const items = t.items || [];
+                    const sub = items.reduce((s,it) => s + (+it.taxableAmt || 0), 0);
+                    const tax = items.reduce((s,it) => s + (+it.cgstAmt||0) + (+it.sgstAmt||0) + (+it.igstAmt||0), 0);
+                    const gross = sub + tax;
+                    const tdsFromClient = +t.tdsFromClient || 0;
+                    const netReceived = Math.max(0, gross - tdsFromClient);
+                    if (netReceived > 0) {
+                        rows.push({
+                            date: t.txnDate || '',
+                            desc: `${t.txnID||'INV'} — ${t.partyName||t.clientName||''} (payment received · legacy — no date on record)`,
+                            credit: netReceived, debit: 0, src: 'Transactions'
+                        });
+                    }
                 }
             });
 
