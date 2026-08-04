@@ -2749,63 +2749,95 @@
         if (!r) { showToast('⚠ Request not found'); return; }
 
         const shareText = _fundReqShareText(r);
-        // Loading toast while we rasterise the receipt
-        showToast('🖼️ Preparing share…');
 
-        // 1) Build the hidden receipt DOM and rasterise it
-        let pngBlob = null, pngFile = null;
+        // Show the chooser modal IMMEDIATELY — predictable UX. On the first
+        // build the "Download image" button and preview area are in a
+        // "generating…" state; once html2canvas finishes rasterising the
+        // receipt (~500ms), we update the same modal in place with the
+        // preview and enable the button. If image capture fails, WhatsApp
+        // / Email / Copy Text still work — the tech always has something
+        // to click. This replaces the previous "try navigator.share first,
+        // fall back to modal" flow, which on some browsers appeared to do
+        // nothing at all (navigator.share returned silently without any
+        // visible share sheet).
+        _openShareChooser(r, shareText, null, null);
+
+        // Rasterise the receipt in the background
         try {
             const html2canvas = await _loadHtml2Canvas();
             const receipt = _buildFundReqReceiptDOM(r);
             document.body.appendChild(receipt);
-            // Wait a paint tick so fonts/emojis lay out before capture
             await new Promise(res => requestAnimationFrame(res));
             const canvas = await html2canvas(receipt, {
                 backgroundColor: '#ffffff',
-                scale: 2,           // sharper on retina — file stays ~200-400 KB
+                scale: 2,
                 useCORS: true,
                 logging: false
             });
             receipt.remove();
-            pngBlob = await new Promise(res => canvas.toBlob(res, 'image/png', 0.95));
-            if (pngBlob) {
-                pngFile = new File([pngBlob], `FundRequest_${r.requestID}.png`, { type: 'image/png' });
-            }
+            const pngBlob = await new Promise(res => canvas.toBlob(res, 'image/png', 0.95));
+            const pngFile = pngBlob ? new File([pngBlob], `FundRequest_${r.requestID}.png`, { type: 'image/png' }) : null;
+            _updateShareChooserPreview(pngBlob, pngFile, r.requestID);
         } catch(err) {
-            console.warn('Image capture failed — falling back to text share', err);
+            console.warn('Image capture failed — text-only share still works', err);
             document.getElementById('fundReqReceiptCapture')?.remove();
+            _updateShareChooserPreview(null, null, r.requestID, err?.message || 'preview unavailable');
         }
+    }
 
-        // 2) Prefer native Web Share API with the image attached (best UX
-        //    on modern mobile — opens WhatsApp / Email / Drive / SMS etc.)
-        const shareTitle = `Fund Request ${r.requestID}`;
-        try {
-            if (pngFile && navigator.canShare && navigator.canShare({ files: [pngFile] })) {
-                await navigator.share({ title: shareTitle, text: shareText, files: [pngFile] });
-                showToast('✓ Shared');
-                return;
+    // Update the preview & Download button after html2canvas finishes
+    function _updateShareChooserPreview(pngBlob, pngFile, reqID, errMsg) {
+        const modal = document.getElementById('shareChooserModal');
+        if (!modal) return;
+        window._shareBlob = pngBlob;
+        window._sharePngFile = pngFile;
+        window._shareFilename = `FundRequest_${reqID}.png`;
+
+        // Replace the "generating…" placeholder with the actual preview
+        const previewSlot = modal.querySelector('#shareChooserPreview');
+        if (previewSlot) {
+            if (pngBlob) {
+                const url = URL.createObjectURL(pngBlob);
+                previewSlot.innerHTML = `<img src="${url}" style="width:100%;max-height:220px;object-fit:contain;border:1px solid #e5e7eb;border-radius:8px"/>`;
+            } else {
+                previewSlot.innerHTML = `<div style="padding:20px;text-align:center;border:1px dashed #fca5a5;border-radius:8px;color:#991b1b;font-size:12px;background:#fef2f2">⚠ Preview unavailable${errMsg?': '+errMsg:''} — text share still works</div>`;
             }
-        } catch(e) {
-            // User cancelled or share failed — fall through to the chooser
-            if (e?.name === 'AbortError') return;
-            console.warn('navigator.share with file failed', e);
         }
 
-        // 3) Text-only Web Share fallback (some browsers support text but
-        //    not files — still opens native share sheet)
-        try {
-            if (navigator.share) {
-                await navigator.share({ title: shareTitle, text: shareText });
-                showToast('✓ Shared');
-                return;
+        // Enable/relabel the Download button
+        const dlBtn = modal.querySelector('#shareChooserDownload');
+        if (dlBtn) {
+            if (pngBlob) {
+                dlBtn.disabled = false;
+                dlBtn.style.opacity = '1';
+                dlBtn.style.cursor = 'pointer';
+                dlBtn.innerHTML = '<span style="font-size:20px">💾</span> Download Image';
+            } else {
+                dlBtn.disabled = true;
+                dlBtn.style.opacity = '.4';
+                dlBtn.style.cursor = 'not-allowed';
+                dlBtn.innerHTML = '<span style="font-size:20px">💾</span> Image unavailable';
             }
-        } catch(e) {
-            if (e?.name === 'AbortError') return;
-            console.warn('navigator.share text failed', e);
         }
 
-        // 4) Manual chooser modal — WhatsApp, Email, Copy, Download image
-        _openShareChooser(r, shareText, pngBlob, pngFile);
+        // Enable/hide the Native Share button based on file support
+        const nsBtn = modal.querySelector('#shareChooserNative');
+        if (nsBtn) {
+            const canFileShare = pngFile && navigator.canShare && navigator.canShare({ files: [pngFile] });
+            if (canFileShare) {
+                nsBtn.disabled = false;
+                nsBtn.style.opacity = '1';
+                nsBtn.style.cursor = 'pointer';
+                nsBtn.innerHTML = '<span style="font-size:20px">📲</span> Share with image…';
+            } else if (navigator.share) {
+                nsBtn.disabled = false;
+                nsBtn.style.opacity = '1';
+                nsBtn.style.cursor = 'pointer';
+                nsBtn.innerHTML = '<span style="font-size:20px">📲</span> Share text…';
+            } else {
+                nsBtn.style.display = 'none';   // hide on browsers without any Web Share
+            }
+        }
     }
 
     function _openShareChooser(r, shareText, pngBlob, pngFile) {
@@ -2816,20 +2848,37 @@
         modal.style.cssText = 'position:fixed;inset:0;z-index:20000;background:rgba(0,0,0,0.55);display:flex;align-items:flex-end;justify-content:center;padding:0';
         const whatsappURL = 'https://wa.me/?text=' + encodeURIComponent(shareText);
         const mailSubject = `Fund Request ${r.requestID}`;
-        const mailBody = shareText.replace(/\*/g, '');   // plain — mailto doesn't render markdown
+        const mailBody = shareText.replace(/\*/g, '');
         const mailtoURL = `mailto:?subject=${encodeURIComponent(mailSubject)}&body=${encodeURIComponent(mailBody)}`;
-        const imgURL = pngBlob ? URL.createObjectURL(pngBlob) : '';
-        const imgPreview = imgURL
-            ? `<div style="padding:10px 16px 0;background:#f8fafc"><img src="${imgURL}" style="width:100%;max-height:220px;object-fit:contain;border:1px solid #e5e7eb;border-radius:8px"/></div>`
-            : '';
+
+        // Native Share button — its capability + label is set later by
+        // _updateShareChooserPreview once we know whether files can be shared.
+        // Show a "Share text…" default so the button is functional even before
+        // the image finishes rendering.
+        const nativeShareBtn = navigator.share ? `
+            <button id="shareChooserNative" onclick="_shareNativeInvoke()"
+               style="grid-column:1 / -1;display:flex;align-items:center;justify-content:center;gap:8px;padding:14px 12px;background:#0f172a;color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer">
+               <span style="font-size:20px">📲</span> Share via phone…
+            </button>` : '';
+
         modal.innerHTML = `
-        <div style="width:100%;max-width:440px;background:#fff;border-radius:16px 16px 0 0;box-shadow:0 -8px 24px rgba(0,0,0,0.15);animation:slideUp .25s ease-out">
-            <div style="padding:14px 16px;border-bottom:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center">
-                <div style="font-size:15px;font-weight:700;color:#0f172a">📤 Share fund request</div>
+        <div style="width:100%;max-width:440px;background:#fff;border-radius:16px 16px 0 0;box-shadow:0 -8px 24px rgba(0,0,0,0.15);animation:slideUp .25s ease-out;max-height:92vh;overflow-y:auto">
+            <div style="padding:14px 16px;border-bottom:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;background:#fff;z-index:1">
+                <div>
+                    <div style="font-size:15px;font-weight:700;color:#0f172a">📤 Share fund request</div>
+                    <div style="font-size:11px;color:#64748b;font-family:monospace;margin-top:1px">${r.requestID}</div>
+                </div>
                 <button onclick="document.getElementById('shareChooserModal').remove()" style="background:none;border:none;font-size:22px;color:#64748b;cursor:pointer;padding:0;line-height:1">✕</button>
             </div>
-            ${imgPreview}
+            <!-- Preview slot — starts as "generating..." placeholder, replaced when html2canvas done -->
+            <div id="shareChooserPreview" style="padding:10px 16px 0">
+                <div style="padding:38px 20px;text-align:center;border:1px dashed #cbd5e1;border-radius:8px;color:#64748b;font-size:12px;background:#f8fafc">
+                    <div style="display:inline-block;width:26px;height:26px;border:3px solid #cbd5e1;border-top-color:#0d7c66;border-radius:50%;animation:spin 0.8s linear infinite"></div>
+                    <div style="margin-top:8px">Generating preview…</div>
+                </div>
+            </div>
             <div style="padding:14px 16px;display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                ${nativeShareBtn}
                 <a href="${whatsappURL}" target="_blank" rel="noopener"
                    onclick="setTimeout(()=>document.getElementById('shareChooserModal')?.remove(),300)"
                    style="display:flex;align-items:center;justify-content:center;gap:8px;padding:14px 12px;background:#25d366;color:#fff;border-radius:10px;font-size:14px;font-weight:700;text-decoration:none">
@@ -2844,24 +2893,55 @@
                    style="display:flex;align-items:center;justify-content:center;gap:8px;padding:14px 12px;background:#f1f5f9;color:#0f172a;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer">
                    <span style="font-size:20px">📋</span> Copy Text
                 </button>
-                <button onclick="_shareDownloadImage()"
-                   ${pngBlob ? '' : 'disabled style="opacity:.4;cursor:not-allowed;"'}
-                   style="display:flex;align-items:center;justify-content:center;gap:8px;padding:14px 12px;background:#f1f5f9;color:#0f172a;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer">
-                   <span style="font-size:20px">💾</span> ${pngBlob ? 'Download Image' : 'Image unavailable'}
+                <button id="shareChooserDownload" onclick="_shareDownloadImage()" disabled
+                   style="display:flex;align-items:center;justify-content:center;gap:8px;padding:14px 12px;background:#f1f5f9;color:#0f172a;border:none;border-radius:10px;font-size:14px;font-weight:700;opacity:.4;cursor:not-allowed">
+                   <span style="font-size:20px">💾</span> Generating…
                 </button>
             </div>
             <div style="padding:8px 16px 16px;font-size:11px;color:#64748b;text-align:center">
-                On WhatsApp/Email: image is not auto-attached — download it first and attach manually if you need the screenshot.
+                Tip: WhatsApp Web / Email opens with a formatted text message. To attach the image, use "Share via phone" on mobile, or Download Image then attach manually.
             </div>
         </div>
-        <style>@keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}</style>`;
+        <style>@keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}@keyframes spin{to{transform:rotate(360deg)}}</style>`;
         document.body.appendChild(modal);
-        // Stash so the button handlers can reach them (avoid stringifying blob into inline HTML)
+
+        // Stash so the button handlers can reach them
         window._shareText = shareText;
         window._shareBlob = pngBlob;
+        window._sharePngFile = pngFile;
         window._shareFilename = `FundRequest_${r.requestID}.png`;
+        window._shareRequestID = r.requestID;
+
         // Click outside to close
         modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+
+        // If pngBlob was provided upfront (unlikely with the new flow but
+        // supported for future callers), populate the preview immediately.
+        if (pngBlob) _updateShareChooserPreview(pngBlob, pngFile, r.requestID);
+    }
+
+    // Invoke navigator.share — called by the "Share via phone" button in the
+    // chooser modal. Uses whatever payload is currently ready: file if
+    // rasterised, else text-only.
+    async function _shareNativeInvoke() {
+        try {
+            const title = `Fund Request ${window._shareRequestID||''}`;
+            const text = window._shareText || '';
+            const file = window._sharePngFile;
+            if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+                await navigator.share({ title, text, files: [file] });
+            } else if (navigator.share) {
+                await navigator.share({ title, text });
+            } else {
+                showToast('⚠ Native share not supported — use WhatsApp / Email buttons');
+                return;
+            }
+            document.getElementById('shareChooserModal')?.remove();
+            showToast('✓ Shared');
+        } catch(e) {
+            if (e?.name === 'AbortError') return;   // user cancelled — silent
+            showToast('⚠ Share failed: ' + (e?.message || 'try WhatsApp/Email'));
+        }
     }
 
     async function _shareCopyText() {
