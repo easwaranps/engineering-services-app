@@ -2089,9 +2089,9 @@
                     const proj = (p.projectName || p.projectRef || p.linkedProjectRef || '');
                     const expCount = (p.allocations||[]).length || 0;
                     return `
-                    <div style="padding:12px 16px;border-top:1px solid #f0fdf4;cursor:pointer" onclick="switchView('projexp')">
+                    <div style="padding:12px 16px;border-top:1px solid #f0fdf4">
                         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">
-                            <div style="flex:1;min-width:0">
+                            <div style="flex:1;min-width:0;cursor:pointer" onclick="switchView('projexp')">
                                 <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:2px">
                                     <span style="font-size:13px;font-weight:700;color:#0d7c66;font-family:monospace">Fund  ${p.poolID}</span>
                                     ${tech ? `<span style="font-size:12px;font-weight:600;color:#1f2937">· ${tech}</span>` : ''}
@@ -2101,9 +2101,14 @@
                                     Disb ${p.disbursedDate||'—'} · ${fmt2(total)} from ${p.bankName||'bank'}${expCount?' · '+expCount+' expense'+(expCount===1?'':'s'):''}
                                 </div>
                             </div>
-                            <span style="font-size:18px;color:#d1d5db;margin-left:8px">›</span>
+                            <div style="display:flex;align-items:center;gap:6px;margin-left:8px">
+                                <button onclick="event.stopPropagation();sharePool('${p.poolID}')"
+                                    title="Share this fund/pool via WhatsApp / Email"
+                                    style="padding:4px 8px;border:1px solid #bbf7d0;background:#f0fdf4;color:#065f46;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap">📤 Share</button>
+                                <span style="font-size:18px;color:#d1d5db">›</span>
+                            </div>
                         </div>
-                        <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
+                        <div style="display:flex;align-items:center;gap:10px;margin-top:6px;cursor:pointer" onclick="switchView('projexp')">
                             <div style="flex:1;height:6px;background:#e5e7eb;border-radius:3px;overflow:hidden">
                                 <div style="height:100%;width:${pct}%;background:${barColor};border-radius:3px;transition:width .3s"></div>
                             </div>
@@ -2558,6 +2563,15 @@
             closeFundReqModal();
             renderView();
             showToast(_frMode === 'resubmit' ? '🔄 Request resubmitted to office' : '📤 Fund request submitted to office');
+            // Immediately offer to share the just-submitted request. The tech
+            // often wants to WhatsApp a screenshot to the office as a heads-up
+            // right after clicking Submit — surfacing the share modal here
+            // saves them from having to find the request card and then click
+            // Share separately. Small delay (350 ms) lets the toast + modal
+            // close animations finish so the share sheet slides in cleanly.
+            setTimeout(() => {
+                try { shareFundRequest(newReq.requestID); } catch(e) { /* silent — share is optional */ }
+            }, 350);
         } catch(err) {
             // Rollback in-memory if save failed
             fundRequests = fundRequests.filter(r => r.requestID !== newReq.requestID);
@@ -2941,6 +2955,129 @@
         } catch(e) {
             if (e?.name === 'AbortError') return;   // user cancelled — silent
             showToast('⚠ Share failed: ' + (e?.message || 'try WhatsApp/Email'));
+        }
+    }
+
+    // ── SHARE POOL / FUND ─────────────────────────────────────────
+    // Every tech sees pools in the Active Pools list regardless of who
+    // originally submitted the fund request that created each pool, so this
+    // is the universal share path — one Share button per pool row triggers
+    // this. The receipt includes disbursed amount/date/bank, current
+    // balance, and — if we can find it — the source fund request's purpose
+    // and requester (via poolID linkage, or a legacy match on amount+tech).
+    function _poolShareText(pool, srcReq) {
+        const co = (typeof settings !== 'undefined' && settings?.companyName) || 'IMSE Tech Services';
+        let bal = 0, spent = 0, total = parseFloat(pool.amount || pool.disbursedAmt || 0);
+        try { const b = _fieldComputePoolBalance(pool); bal = b.balance||0; spent = b.spent||0; total = b.totalDisbursed||total; } catch(e){}
+        const lines = [
+            `📤 *FUND POOL* — ${co}`,
+            '',
+            `*Pool ID:* \`${pool.poolID}\``,
+            `*Disbursed:* ₹${total.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}${pool.disbursedDate?' on '+pool.disbursedDate:''}`,
+            pool.bankName ? `*From bank:* ${pool.bankName}` : '',
+            (pool.technician || pool.techName) ? `*Technician:* ${pool.technician||pool.techName}` : '',
+            (pool.projectName || pool.projectRef) ? `*Project:* ${pool.projectName||pool.projectRef}` : '',
+            '',
+            `*Spent:* ₹${spent.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}`,
+            `*Balance:* ₹${bal.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}`,
+        ];
+        if (srcReq) {
+            lines.push('', `*Source Request:* \`${srcReq.requestID}\``);
+            if (srcReq.purpose)         lines.push(`*Purpose:* ${srcReq.purpose}`);
+            if (srcReq.requestedByName) lines.push(`*Requested by:* ${srcReq.requestedByName}`);
+        }
+        lines.push('', '_Sent from EASY Field App_');
+        return lines.filter(l => l !== null && l !== undefined && l !== false).join('\n');
+    }
+
+    function _buildPoolReceiptDOM(pool, srcReq) {
+        const co = (typeof settings !== 'undefined' && settings?.companyName) || 'IMSE Tech Services';
+        let bal = 0, spent = 0, total = parseFloat(pool.amount || pool.disbursedAmt || 0);
+        try { const b = _fieldComputePoolBalance(pool); bal = b.balance||0; spent = b.spent||0; total = b.totalDisbursed||total; } catch(e){}
+        const pct = total > 0 ? Math.min(100, Math.round(spent/total*100)) : 0;
+        const barColor = pct > 90 ? '#dc2626' : pct > 70 ? '#f59e0b' : '#16a34a';
+        const balColor = bal < 500 ? '#dc2626' : bal < 1000 ? '#f59e0b' : '#15803d';
+        const div = document.createElement('div');
+        div.id = 'fundReqReceiptCapture';
+        div.style.cssText = 'position:fixed;left:-9999px;top:0;width:720px;background:#fff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:0;box-sizing:border-box';
+        const escHtml = s => (s||'').toString().replace(/</g,'&lt;');
+        const srcBlock = srcReq ? `
+            <div style="margin-top:16px;padding:14px 16px;background:#f0f9ff;border-left:4px solid #0284c7;border-radius:6px">
+                <div style="font-size:12px;font-weight:600;color:#075985;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Source Fund Request</div>
+                <div style="font-size:14px;color:#0c4a6e;line-height:1.6">
+                    <div><b>${escHtml(srcReq.requestID)}</b>${srcReq.requestedByName?' · requested by <b>'+escHtml(srcReq.requestedByName)+'</b>':''}</div>
+                    ${srcReq.purpose?`<div style="margin-top:4px">${escHtml(srcReq.purpose)}</div>`:''}
+                </div>
+            </div>` : '';
+        div.innerHTML = `
+            <div style="background:linear-gradient(135deg,#0d7c66,#15803d);padding:20px 24px;color:#fff">
+                <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#bbf7d0;margin-bottom:4px">Fund Pool</div>
+                <div style="font-size:22px;font-weight:800;line-height:1.2">${escHtml(co)}</div>
+                <div style="font-size:13px;color:#a7f3d0;margin-top:6px;font-family:monospace">${escHtml(pool.poolID)}</div>
+            </div>
+            <div style="padding:24px;text-align:center;border-bottom:1px solid #e5e7eb">
+                <div style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Current Balance</div>
+                <div style="font-size:38px;font-weight:800;color:${balColor};line-height:1">₹${bal.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+                <div style="margin-top:14px;font-size:13px;color:#64748b">
+                    <b>${pct}%</b> spent — ₹${spent.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})} of ₹${total.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}
+                </div>
+                <div style="margin-top:10px;height:8px;background:#e5e7eb;border-radius:4px;overflow:hidden">
+                    <div style="height:100%;width:${pct}%;background:${barColor};border-radius:4px"></div>
+                </div>
+            </div>
+            <div style="padding:20px 24px">
+                <div style="display:grid;grid-template-columns:130px 1fr;gap:8px 16px;font-size:14px">
+                    <div style="color:#64748b;font-weight:600">Disbursed</div>
+                    <div style="color:#0f172a"><b>₹${total.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}</b>${pool.disbursedDate?' on '+escHtml(pool.disbursedDate):''}</div>
+                    ${pool.bankName ? `<div style="color:#64748b;font-weight:600">From bank</div><div style="color:#0f172a">${escHtml(pool.bankName)}</div>` : ''}
+                    ${pool.transferRefNo ? `<div style="color:#64748b;font-weight:600">Transfer Ref</div><div style="color:#0f172a;font-family:monospace;font-size:13px">${escHtml(pool.transferRefNo)}</div>` : ''}
+                    ${(pool.technician||pool.techName) ? `<div style="color:#64748b;font-weight:600">Technician</div><div style="color:#0f172a;font-weight:600">${escHtml(pool.technician||pool.techName)}</div>` : ''}
+                    ${(pool.projectName||pool.projectRef||pool.linkedProjectRef) ? `<div style="color:#64748b;font-weight:600">Project</div><div style="color:#0f172a">${escHtml(pool.projectName||pool.projectRef||pool.linkedProjectRef)}</div>` : ''}
+                </div>
+                ${srcBlock}
+            </div>
+            <div style="padding:12px 24px;background:#f8fafc;border-top:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center;font-size:11px;color:#64748b">
+                <div>Generated ${new Date().toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'})}</div>
+                <div style="font-weight:600">EASY Field App</div>
+            </div>`;
+        return div;
+    }
+
+    async function sharePool(poolID) {
+        const pool = (fundPools||[]).find(p => p.poolID === poolID);
+        if (!pool) { showToast('⚠ Pool not found'); return; }
+        // Try to link back to the originating fund request so the receipt
+        // shows purpose + requester. Falls back to legacy amount+tech match
+        // for pools created before requestID linkage was introduced.
+        let srcReq = (fundRequests||[]).find(r => r.poolID === poolID);
+        if (!srcReq) {
+            const cand = (fundRequests||[]).filter(r => r.status === 'Disbursed'
+                && (+r.disbursedAmount||0) === (+pool.amount||0)
+                && r.requestedBy === (pool.technicianID||pool.staffID||''));
+            if (cand.length === 1) srcReq = cand[0];
+        }
+
+        const shareText = _poolShareText(pool, srcReq);
+        const pseudoReq = { requestID: pool.poolID };   // gives the modal a header line
+        _openShareChooser(pseudoReq, shareText, null, null);
+
+        try {
+            const html2canvas = await _loadHtml2Canvas();
+            const receipt = _buildPoolReceiptDOM(pool, srcReq);
+            document.body.appendChild(receipt);
+            await new Promise(res => requestAnimationFrame(res));
+            const canvas = await html2canvas(receipt, {
+                backgroundColor:'#ffffff', scale:2, useCORS:true, logging:false
+            });
+            receipt.remove();
+            const pngBlob = await new Promise(res => canvas.toBlob(res, 'image/png', 0.95));
+            const pngFile = pngBlob ? new File([pngBlob], `Pool_${pool.poolID}.png`, {type:'image/png'}) : null;
+            window._shareFilename = `Pool_${pool.poolID}.png`;
+            _updateShareChooserPreview(pngBlob, pngFile, pool.poolID);
+        } catch(err) {
+            console.warn('Pool image capture failed', err);
+            document.getElementById('fundReqReceiptCapture')?.remove();
+            _updateShareChooserPreview(null, null, pool.poolID, err?.message || 'preview unavailable');
         }
     }
 
