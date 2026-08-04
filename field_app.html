@@ -2010,13 +2010,18 @@
                 const lbl = s==='Pending'?'Pending — awaiting office':s==='Approved'?'Approved — awaiting bank transfer':s==='Disbursed'?'Disbursed — funds received':s==='Rejected'?'Rejected: '+(lastReq.rejectReason||'No reason'):'Cancelled by you';
                 reqStatusInfo = {color:col,bg,icon:ico,label:lbl};
                 const bs = "padding:4px 10px;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap";
+                // Universal "📤 Share" button — available regardless of status
+                // so techs can WhatsApp / Email a snapshot of the request at
+                // any point (pending → chasing office, disbursed → confirming
+                // receipt, rejected → forwarding for a second review, etc.).
+                const shareBtn = `<button onclick="shareFundRequest('${lastReq.requestID}')" style="${bs};background:rgba(0,0,0,.08);color:${col}" title="Share via WhatsApp / Email / other apps">📤 Share</button>`;
                 if (s==='Pending') {
-                    reqActions = `<button onclick="editFundRequest('${lastReq.requestID}')" style="${bs};background:rgba(0,0,0,.08);color:${col}">✏️ Edit</button><button onclick="cancelFundRequest('${lastReq.requestID}')" style="${bs};background:rgba(0,0,0,.08);color:${col}">Cancel</button>`;
+                    reqActions = `${shareBtn}<button onclick="editFundRequest('${lastReq.requestID}')" style="${bs};background:rgba(0,0,0,.08);color:${col}">✏️ Edit</button><button onclick="cancelFundRequest('${lastReq.requestID}')" style="${bs};background:rgba(0,0,0,.08);color:${col}">Cancel</button>`;
                 } else if (s==='Rejected'||s==='Cancelled') {
-                    reqActions = `<button onclick="resubmitFundRequest('${lastReq.requestID}')" style="${bs};background:#0d7c66;color:#fff">🔄 Resubmit</button>`;
+                    reqActions = `${shareBtn}<button onclick="resubmitFundRequest('${lastReq.requestID}')" style="${bs};background:#0d7c66;color:#fff">🔄 Resubmit</button>`;
                 } else if (s==='Approved'||s==='Disbursed') {
                     const pc=(lastReq.correctionRequests||[]).filter(c=>!c.resolvedAt).length;
-                    reqActions = pc>0?`<span style="font-size:10px;padding:2px 8px;background:rgba(0,0,0,.06);border-radius:5px">📨 Correction pending (${pc})</span>`:`<button onclick="requestFundCorrection('${lastReq.requestID}')" style="${bs};background:rgba(0,0,0,.08);color:${col}">📨 Request Correction</button>`;
+                    reqActions = pc>0?`${shareBtn}<span style="font-size:10px;padding:2px 8px;background:rgba(0,0,0,.06);border-radius:5px">📨 Correction pending (${pc})</span>`:`${shareBtn}<button onclick="requestFundCorrection('${lastReq.requestID}')" style="${bs};background:rgba(0,0,0,.08);color:${col}">📨 Request Correction</button>`;
                 }
                 editBadge = (lastReq.editHistory&&lastReq.editHistory.length)?`<span style="font-size:9px;opacity:.7;margin-left:6px">✎</span>`:'';
             } catch(e) { console.warn('Fund pool render error:',e); reqStatusInfo=null; }
@@ -2590,6 +2595,303 @@
         } catch(err) {
             showToast('⚠ Save failed');
         }
+    }
+
+    // ── SHARE FUND REQUEST — image + text via WhatsApp / Email / native share ──
+    // Field techs often need to forward a request outside the app — e.g. ping
+    // the office on WhatsApp when a Pending request has been sitting a while,
+    // or send a Disbursed confirmation to a project superintendent.
+    //
+    // Approach:
+    //  1. Build a hidden styled "receipt" div in the DOM with the full request
+    //  2. Rasterise it to PNG via html2canvas (lazy-loaded from cdnjs)
+    //  3. Try navigator.share({files:[PNG]}) — modern Android/iOS opens the
+    //     native share sheet with WhatsApp, Gmail, Drive, etc. as targets
+    //  4. Fall back to a chooser modal offering:
+    //       - WhatsApp text link (wa.me)
+    //       - Email link (mailto:)
+    //       - Copy text to clipboard
+    //       - Download PNG (for old browsers that can't share files)
+    let _html2canvasLoading = null;
+    async function _loadHtml2Canvas() {
+        if (window.html2canvas) return window.html2canvas;
+        if (_html2canvasLoading) return _html2canvasLoading;
+        _html2canvasLoading = new Promise((res, rej) => {
+            const s = document.createElement('script');
+            s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+            s.onload = () => res(window.html2canvas);
+            s.onerror = () => rej(new Error('Failed to load html2canvas'));
+            document.head.appendChild(s);
+        });
+        return _html2canvasLoading;
+    }
+
+    // Text-only summary — used in WhatsApp/email fallbacks AND as the caption
+    // that accompanies the image in a Web Share API call.
+    function _fundReqShareText(r) {
+        const requester = (staffList||[]).find(s => s.staffID === r.requestedBy)?.name || r.requestedByName || 'Unknown';
+        const statusEmoji = r.status === 'Pending' ? '⏳'
+                          : r.status === 'Approved' ? '✅'
+                          : r.status === 'Disbursed' ? '💸'
+                          : r.status === 'Rejected' ? '❌'
+                          : r.status === 'Cancelled' ? '🚫' : '•';
+        const statusDetail = r.status === 'Pending' ? 'awaiting office review'
+                           : r.status === 'Approved' ? 'awaiting bank transfer'
+                           : r.status === 'Disbursed' ? `funds received on ${r.disbursedDate||''}`
+                           : r.status === 'Rejected' ? `reason: ${r.rejectReason||'not stated'}`
+                           : r.status === 'Cancelled' ? (r.cancelledReason||'cancelled by tech')
+                           : '';
+        // Company name — best-effort pull from any known settings source.
+        const co = (typeof settings !== 'undefined' && settings?.companyName)
+                || 'IMSE Tech Services';
+        const lines = [
+            `📤 *FUND REQUEST* — ${co}`,
+            '',
+            `*Request ID:* \`${r.requestID}\``,
+            `*Requested by:* ${requester}`,
+            `*Amount:* ₹${(+r.requestedAmount||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}`,
+            `*Date:* ${r.requestedDate||''}${r.requestedTime?' '+r.requestedTime:''}`,
+            r.project ? `*Project:* ${r.project}` : '',
+            `*Purpose:* ${r.purpose||'—'}`,
+            r.notes ? `*Notes:* ${r.notes}` : '',
+            '',
+            `*Status:* ${statusEmoji} ${r.status} — ${statusDetail}`,
+        ];
+        if (r.status === 'Disbursed') {
+            lines.push('', `*Disbursed:* ₹${(+r.disbursedAmount||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}${r.disbursedDate?' on '+r.disbursedDate:''}${r.transferRefNo?' · Ref '+r.transferRefNo:''}`);
+        }
+        lines.push('', '_Sent from EASY Field App_');
+        return lines.filter(l => l !== null && l !== undefined).join('\n');
+    }
+
+    // Build the hidden DOM receipt used for the screenshot. Kept off-screen
+    // (position:fixed, left:-9999px) so it doesn't flash on the user's view.
+    // Sized for a comfortable phone-share aspect ratio (~ 720x width).
+    function _buildFundReqReceiptDOM(r) {
+        const requester = (staffList||[]).find(s => s.staffID === r.requestedBy)?.name || r.requestedByName || 'Unknown';
+        const co = (typeof settings !== 'undefined' && settings?.companyName) || 'IMSE Tech Services';
+        const statusColor = r.status === 'Pending' ? '#92400e'
+                          : r.status === 'Approved' ? '#1e40af'
+                          : r.status === 'Disbursed' ? '#065f46'
+                          : r.status === 'Rejected' ? '#991b1b' : '#475569';
+        const statusBg    = r.status === 'Pending' ? '#fef3c7'
+                          : r.status === 'Approved' ? '#dbeafe'
+                          : r.status === 'Disbursed' ? '#d1fae5'
+                          : r.status === 'Rejected' ? '#fee2e2' : '#f1f5f9';
+        const statusIcon  = r.status === 'Pending' ? '⏳'
+                          : r.status === 'Approved' ? '✅'
+                          : r.status === 'Disbursed' ? '💸'
+                          : r.status === 'Rejected' ? '❌' : '⊘';
+        const div = document.createElement('div');
+        div.id = 'fundReqReceiptCapture';
+        div.style.cssText = 'position:fixed;left:-9999px;top:0;width:720px;background:#fff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:0;box-sizing:border-box';
+        const disbursedBlock = r.status === 'Disbursed' ? `
+            <div style="margin-top:16px;padding:14px 16px;background:#ecfdf5;border-left:4px solid #059669;border-radius:6px">
+                <div style="font-size:12px;font-weight:600;color:#065f46;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Disbursement</div>
+                <div style="font-size:14px;color:#065f46">
+                    <b>₹${(+r.disbursedAmount||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}</b> transferred on <b>${r.disbursedDate||'—'}</b>
+                    ${r.transferRefNo ? `<br/><span style="font-family:monospace;font-size:12px">Ref: ${r.transferRefNo}</span>` : ''}
+                    ${r.disbursedToBank ? `<br/><span style="font-size:12px">To: ${r.disbursedToBank}${r.disbursedToIFSC?' · '+r.disbursedToIFSC:''}</span>` : ''}
+                </div>
+            </div>` : '';
+        const rejectedBlock = r.status === 'Rejected' && r.rejectReason ? `
+            <div style="margin-top:16px;padding:14px 16px;background:#fef2f2;border-left:4px solid #dc2626;border-radius:6px">
+                <div style="font-size:12px;font-weight:600;color:#991b1b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Rejection Reason</div>
+                <div style="font-size:14px;color:#7f1d1d">${(r.rejectReason||'').replace(/</g,'&lt;')}</div>
+            </div>` : '';
+        const notesBlock = r.notes ? `
+            <div style="margin-top:14px">
+                <div style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Notes / Remarks</div>
+                <div style="font-size:14px;color:#334155;line-height:1.5">${(r.notes||'').replace(/</g,'&lt;')}</div>
+            </div>` : '';
+        div.innerHTML = `
+            <!-- Header strip -->
+            <div style="background:linear-gradient(135deg,#0d7c66,#15803d);padding:20px 24px;color:#fff">
+                <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#bbf7d0;margin-bottom:4px">Fund Request</div>
+                <div style="font-size:22px;font-weight:800;line-height:1.2">${co.replace(/</g,'&lt;')}</div>
+                <div style="font-size:12px;color:#a7f3d0;margin-top:6px;font-family:monospace">${r.requestID}</div>
+            </div>
+            <!-- Amount hero -->
+            <div style="padding:24px;text-align:center;border-bottom:1px solid #e5e7eb">
+                <div style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Requested Amount</div>
+                <div style="font-size:38px;font-weight:800;color:#0f172a;line-height:1">₹${(+r.requestedAmount||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+                <div style="margin-top:14px;display:inline-block;padding:6px 14px;background:${statusBg};color:${statusColor};border-radius:20px;font-size:13px;font-weight:700">${statusIcon} ${r.status}</div>
+            </div>
+            <!-- Details grid -->
+            <div style="padding:20px 24px">
+                <div style="display:grid;grid-template-columns:110px 1fr;gap:8px 16px;font-size:14px">
+                    <div style="color:#64748b;font-weight:600">Requested by</div>
+                    <div style="color:#0f172a;font-weight:600">${requester.replace(/</g,'&lt;')}</div>
+
+                    <div style="color:#64748b;font-weight:600">Date</div>
+                    <div style="color:#0f172a">${r.requestedDate||'—'}${r.requestedTime?' at '+r.requestedTime:''}</div>
+
+                    ${r.project ? `<div style="color:#64748b;font-weight:600">Project</div><div style="color:#0f172a">${(r.project||'').replace(/</g,'&lt;')}</div>` : ''}
+
+                    <div style="color:#64748b;font-weight:600">Purpose</div>
+                    <div style="color:#0f172a;line-height:1.5">${(r.purpose||'—').replace(/</g,'&lt;')}</div>
+                </div>
+                ${notesBlock}
+                ${disbursedBlock}
+                ${rejectedBlock}
+            </div>
+            <!-- Footer -->
+            <div style="padding:12px 24px;background:#f8fafc;border-top:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center;font-size:11px;color:#64748b">
+                <div>Generated ${new Date().toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'})}</div>
+                <div style="font-weight:600">EASY Field App</div>
+            </div>
+        `;
+        return div;
+    }
+
+    async function shareFundRequest(reqID) {
+        const r = fundRequests.find(x => x.requestID === reqID);
+        if (!r) { showToast('⚠ Request not found'); return; }
+
+        const shareText = _fundReqShareText(r);
+        // Loading toast while we rasterise the receipt
+        showToast('🖼️ Preparing share…');
+
+        // 1) Build the hidden receipt DOM and rasterise it
+        let pngBlob = null, pngFile = null;
+        try {
+            const html2canvas = await _loadHtml2Canvas();
+            const receipt = _buildFundReqReceiptDOM(r);
+            document.body.appendChild(receipt);
+            // Wait a paint tick so fonts/emojis lay out before capture
+            await new Promise(res => requestAnimationFrame(res));
+            const canvas = await html2canvas(receipt, {
+                backgroundColor: '#ffffff',
+                scale: 2,           // sharper on retina — file stays ~200-400 KB
+                useCORS: true,
+                logging: false
+            });
+            receipt.remove();
+            pngBlob = await new Promise(res => canvas.toBlob(res, 'image/png', 0.95));
+            if (pngBlob) {
+                pngFile = new File([pngBlob], `FundRequest_${r.requestID}.png`, { type: 'image/png' });
+            }
+        } catch(err) {
+            console.warn('Image capture failed — falling back to text share', err);
+            document.getElementById('fundReqReceiptCapture')?.remove();
+        }
+
+        // 2) Prefer native Web Share API with the image attached (best UX
+        //    on modern mobile — opens WhatsApp / Email / Drive / SMS etc.)
+        const shareTitle = `Fund Request ${r.requestID}`;
+        try {
+            if (pngFile && navigator.canShare && navigator.canShare({ files: [pngFile] })) {
+                await navigator.share({ title: shareTitle, text: shareText, files: [pngFile] });
+                showToast('✓ Shared');
+                return;
+            }
+        } catch(e) {
+            // User cancelled or share failed — fall through to the chooser
+            if (e?.name === 'AbortError') return;
+            console.warn('navigator.share with file failed', e);
+        }
+
+        // 3) Text-only Web Share fallback (some browsers support text but
+        //    not files — still opens native share sheet)
+        try {
+            if (navigator.share) {
+                await navigator.share({ title: shareTitle, text: shareText });
+                showToast('✓ Shared');
+                return;
+            }
+        } catch(e) {
+            if (e?.name === 'AbortError') return;
+            console.warn('navigator.share text failed', e);
+        }
+
+        // 4) Manual chooser modal — WhatsApp, Email, Copy, Download image
+        _openShareChooser(r, shareText, pngBlob, pngFile);
+    }
+
+    function _openShareChooser(r, shareText, pngBlob, pngFile) {
+        const existing = document.getElementById('shareChooserModal');
+        if (existing) existing.remove();
+        const modal = document.createElement('div');
+        modal.id = 'shareChooserModal';
+        modal.style.cssText = 'position:fixed;inset:0;z-index:20000;background:rgba(0,0,0,0.55);display:flex;align-items:flex-end;justify-content:center;padding:0';
+        const whatsappURL = 'https://wa.me/?text=' + encodeURIComponent(shareText);
+        const mailSubject = `Fund Request ${r.requestID}`;
+        const mailBody = shareText.replace(/\*/g, '');   // plain — mailto doesn't render markdown
+        const mailtoURL = `mailto:?subject=${encodeURIComponent(mailSubject)}&body=${encodeURIComponent(mailBody)}`;
+        const imgURL = pngBlob ? URL.createObjectURL(pngBlob) : '';
+        const imgPreview = imgURL
+            ? `<div style="padding:10px 16px 0;background:#f8fafc"><img src="${imgURL}" style="width:100%;max-height:220px;object-fit:contain;border:1px solid #e5e7eb;border-radius:8px"/></div>`
+            : '';
+        modal.innerHTML = `
+        <div style="width:100%;max-width:440px;background:#fff;border-radius:16px 16px 0 0;box-shadow:0 -8px 24px rgba(0,0,0,0.15);animation:slideUp .25s ease-out">
+            <div style="padding:14px 16px;border-bottom:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center">
+                <div style="font-size:15px;font-weight:700;color:#0f172a">📤 Share fund request</div>
+                <button onclick="document.getElementById('shareChooserModal').remove()" style="background:none;border:none;font-size:22px;color:#64748b;cursor:pointer;padding:0;line-height:1">✕</button>
+            </div>
+            ${imgPreview}
+            <div style="padding:14px 16px;display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                <a href="${whatsappURL}" target="_blank" rel="noopener"
+                   onclick="setTimeout(()=>document.getElementById('shareChooserModal')?.remove(),300)"
+                   style="display:flex;align-items:center;justify-content:center;gap:8px;padding:14px 12px;background:#25d366;color:#fff;border-radius:10px;font-size:14px;font-weight:700;text-decoration:none">
+                   <span style="font-size:20px">💬</span> WhatsApp
+                </a>
+                <a href="${mailtoURL}"
+                   onclick="setTimeout(()=>document.getElementById('shareChooserModal')?.remove(),300)"
+                   style="display:flex;align-items:center;justify-content:center;gap:8px;padding:14px 12px;background:#3b82f6;color:#fff;border-radius:10px;font-size:14px;font-weight:700;text-decoration:none">
+                   <span style="font-size:20px">✉️</span> Email
+                </a>
+                <button onclick="_shareCopyText()"
+                   style="display:flex;align-items:center;justify-content:center;gap:8px;padding:14px 12px;background:#f1f5f9;color:#0f172a;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer">
+                   <span style="font-size:20px">📋</span> Copy Text
+                </button>
+                <button onclick="_shareDownloadImage()"
+                   ${pngBlob ? '' : 'disabled style="opacity:.4;cursor:not-allowed;"'}
+                   style="display:flex;align-items:center;justify-content:center;gap:8px;padding:14px 12px;background:#f1f5f9;color:#0f172a;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer">
+                   <span style="font-size:20px">💾</span> ${pngBlob ? 'Download Image' : 'Image unavailable'}
+                </button>
+            </div>
+            <div style="padding:8px 16px 16px;font-size:11px;color:#64748b;text-align:center">
+                On WhatsApp/Email: image is not auto-attached — download it first and attach manually if you need the screenshot.
+            </div>
+        </div>
+        <style>@keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}</style>`;
+        document.body.appendChild(modal);
+        // Stash so the button handlers can reach them (avoid stringifying blob into inline HTML)
+        window._shareText = shareText;
+        window._shareBlob = pngBlob;
+        window._shareFilename = `FundRequest_${r.requestID}.png`;
+        // Click outside to close
+        modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+    }
+
+    async function _shareCopyText() {
+        try {
+            await navigator.clipboard.writeText(window._shareText || '');
+            showToast('✓ Text copied to clipboard');
+        } catch(e) {
+            // Legacy fallback for iOS < 13 / older Android
+            const ta = document.createElement('textarea');
+            ta.value = window._shareText || '';
+            ta.style.position = 'fixed'; ta.style.left = '-9999px';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); showToast('✓ Text copied'); }
+            catch(err) { showToast('⚠ Copy failed — long-press the preview to copy manually'); }
+            ta.remove();
+        }
+    }
+
+    function _shareDownloadImage() {
+        if (!window._shareBlob) { showToast('⚠ Image not ready'); return; }
+        const url = URL.createObjectURL(window._shareBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = window._shareFilename || 'FundRequest.png';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+        showToast('✓ Image downloaded — attach it from your gallery');
     }
 
     // ── EDIT: open modal pre-filled with this Pending request's values ──
