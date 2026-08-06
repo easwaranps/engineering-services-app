@@ -10012,10 +10012,30 @@
                 // then fetch after a short debounce (only if the user is
                 // still hovering — avoids firing a Drive API call for every
                 // row the mouse quickly passes over while scanning a table).
+                //
+                // View-only PIN sessions have no accessToken, so the API
+                // fetch would fail silently. In that case we swap the
+                // debounced fetch for direct cookie-authenticated Drive
+                // URLs (iframe /preview for PDFs, lh3 CDN for images) —
+                // these render via the browser's normal Google session
+                // and don't need any Bearer token.
                 box.dataset.driveId = driveId;
-                box.innerHTML = `<div style="width:160px;height:90px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#f9fafb;border-radius:6px;color:#6b7280"><span style="font-size:22px">⏳</span><span style="font-size:10px;margin-top:4px">Loading preview…</span></div>`;
-                clearTimeout(_voucherHoverTimer);
-                _voucherHoverTimer = setTimeout(() => _fetchDriveVoucherPreview(driveId, mime, label), 350);
+                if (!window.accessToken) {
+                    // No OAuth token — go straight to cookie-based URL,
+                    // no debounce/fetch needed, no cache required (the
+                    // browser handles caching for us).
+                    const looksPdf = (mime||'') === 'application/pdf';
+                    if (looksPdf) {
+                        box.innerHTML = `<iframe src="https://drive.google.com/file/d/${driveId}/preview" style="width:min(88vw,1300px);height:min(88vh,1300px);border:1px solid #e5e7eb;border-radius:6px;display:block" title="voucher"></iframe>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label} (Drive preview — sign in to Google in this browser if it doesn't render)</div>`:''}`;
+                    } else {
+                        box.innerHTML = `<img src="https://lh3.googleusercontent.com/d/${driveId}=w1600" style="max-width:min(88vw,1300px);max-height:min(88vh,1300px);display:block;border-radius:6px"
+                            onerror="this.parentElement.innerHTML='&lt;div style=\\'width:200px;height:70px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#fef2f2;border-radius:6px;color:#b91c1c;padding:8px\\'&gt;&lt;span style=\\'font-size:20px\\'&gt;⚠️&lt;/span&gt;&lt;span style=\\'font-size:10px;margin-top:4px;text-align:center\\'&gt;Preview needs Google sign-in in this browser&lt;/span&gt;&lt;/div&gt;'"/>${label?`<div style="font-size:10px;color:#6b7280;margin-top:4px;text-align:center">${label}</div>`:''}`;
+                    }
+                } else {
+                    box.innerHTML = `<div style="width:160px;height:90px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#f9fafb;border-radius:6px;color:#6b7280"><span style="font-size:22px">⏳</span><span style="font-size:10px;margin-top:4px">Loading preview…</span></div>`;
+                    clearTimeout(_voucherHoverTimer);
+                    _voucherHoverTimer = setTimeout(() => _fetchDriveVoucherPreview(driveId, mime, label), 350);
+                }
             } else {
                 box.innerHTML = `<div style="width:160px;height:70px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#f9fafb;border-radius:6px;color:#9ca3af"><span style="font-size:22px">📎</span><span style="font-size:10px;margin-top:4px">No preview available — click View to open</span></div>`;
             }
@@ -11148,14 +11168,44 @@
             window._lbCurrentName = a.name || 'attachment';
 
             if (a.driveFileId) {
-                // Drive-stored file — use Drive viewer
+                // Drive-stored file — use Drive viewer.
+                //
+                // Two auth paths for private Drive files:
+                //   (1) API fetch with Bearer accessToken — high-quality blob,
+                //       full editing rights. Requires the user to have signed
+                //       in via the app's OAuth flow (accessToken set).
+                //   (2) Drive's cookie-based CDN URLs — /preview for PDFs,
+                //       lh3.googleusercontent.com for images. Requires only
+                //       that the user be signed into Google in the SAME
+                //       browser (usual desktop / mobile case), no OAuth token
+                //       needed. Sufficient for read-only viewing.
+                //
+                // View-only PIN sessions (external auditor, viewing kiosk)
+                // don't run OAuth so accessToken is null — using path (1)
+                // failed silently. We now use path (2) whenever accessToken
+                // isn't available, so their attachments render just like
+                // for signed-in users. If neither the API nor the cookie
+                // works (user isn't signed into Google at all, or wasn't
+                // granted file access), a friendly "Open in Drive" link is
+                // still offered.
                 const isPdf = a.type === 'pdf';
+                const noToken = !window.accessToken;
                 if (isPdf) {
                     content.innerHTML = `<iframe src="${driveViewUrl(a.driveFileId, true)}" style="width:85vw;height:80vh;border:none;background:#fff;border-radius:4px" title="${a.name||''}"></iframe>`;
                     // Drive's direct-download link — works without an extra
                     // fetch, unlike the embedded viewer URL used for display.
                     window._lbCurrentUrl = `https://drive.google.com/uc?export=download&id=${a.driveFileId}`;
+                } else if (noToken) {
+                    // View-only / no-OAuth path: use Drive's CDN thumbnail
+                    // (=w2000 requests a large size; server caps at native).
+                    // No async fetch, no accessToken needed — just <img>.
+                    const cdnUrl = `https://lh3.googleusercontent.com/d/${a.driveFileId}=w2000`;
+                    content.innerHTML =
+                        `<img src="${cdnUrl}" style="max-width:100%;max-height:80vh;object-fit:contain;border-radius:4px" alt="${a.name||''}"
+                              onerror="this.parentElement.innerHTML='&lt;div style=\\'color:#fca5a5;text-align:center;padding:40px\\'&gt;⚠ Could not load image (you may need to sign into Google in this browser)&lt;br/&gt;&lt;a href=&quot;https://drive.google.com/file/d/${a.driveFileId}/view&quot; target=&quot;_blank&quot; style=\\'color:#93c5fd;margin-top:8px;display:inline-block\\'&gt;Open in Drive ↗&lt;/a&gt;&lt;/div&gt;'"/>`;
+                    window._lbCurrentUrl = cdnUrl;
                 } else {
+                    // Signed-in path: high-res API fetch (existing behaviour).
                     // Show loading spinner then fetch full-res blob
                     content.innerHTML = `<div style="color:#fff;text-align:center;padding:40px"><div style="font-size:32px;margin-bottom:12px">⏳</div>Loading from Drive…</div>`;
                     try {
@@ -11167,9 +11217,13 @@
                             window._lbCurrentUrl = blobUrl;
                         }
                     } catch(e) {
+                        // Failed with token — try the cookie CDN fallback before giving up
+                        const cdnUrl = `https://lh3.googleusercontent.com/d/${a.driveFileId}=w2000`;
                         if (document.getElementById('expLbContent'))
                             document.getElementById('expLbContent').innerHTML =
-                                `<div style="color:#fca5a5;text-align:center;padding:40px">❌ Could not load file from Drive.<br/><small>${e.message}</small><br/><a href="https://drive.google.com/file/d/${a.driveFileId}/view" target="_blank" style="color:#93c5fd;margin-top:8px;display:inline-block">Open in Drive ↗</a></div>`;
+                                `<img src="${cdnUrl}" style="max-width:100%;max-height:80vh;object-fit:contain;border-radius:4px" alt="${a.name||''}"
+                                      onerror="this.parentElement.innerHTML='&lt;div style=\\'color:#fca5a5;text-align:center;padding:40px\\'&gt;❌ Could not load file from Drive.&lt;br/&gt;&lt;small&gt;${e.message.replace(/'/g,'')}&lt;/small&gt;&lt;br/&gt;&lt;a href=&quot;https://drive.google.com/file/d/${a.driveFileId}/view&quot; target=&quot;_blank&quot; style=\\'color:#93c5fd;margin-top:8px;display:inline-block\\'&gt;Open in Drive ↗&lt;/a&gt;&lt;/div&gt;'"/>`;
+                        window._lbCurrentUrl = cdnUrl;
                     }
                 }
             } else if (a.data) {
