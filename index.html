@@ -7552,8 +7552,18 @@
         }
         function _voIsBlockedHandler(fn) {
             if (!fn) return false;
-            // Always allowed — read / navigation / UI-chrome actions
-            if (/^(view|close|switch|filter|render|refresh|search|sort|page|export|download|print|show|hide|toggle\w*Section|open\w*(History|Detail|Preview|Statement)|openInvoicePaymentsModal|poolReconciliationPDF|dirExpStatementPDF|generatePaySlipPDF|handleSignOut|_)/.test(fn)) return false;
+            // Always allowed — read / navigation / UI-chrome actions.
+            //   • `toggle\w*Detail` — row-expand handlers (toggleExpDetail,
+            //     toggleDirExpDetail) that only show/hide the details row.
+            //     Previously matched by the `^toggle` block below, preventing
+            //     view-only users from expanding a bill to see the Voucher /
+            //     Bills action buttons — the whole reason they can't access
+            //     the tally voucher preview in Bills & Expenses.
+            //   • `openExpTallyVoucher` etc — voucher/attachment viewers.
+            //     They open a modal but the modal's Save/Delete write actions
+            //     are already blocked at the saveData central guard, so
+            //     opening the modal in read-only mode is safe.
+            if (/^(view|close|switch|filter|render|refresh|search|sort|page|export|download|print|show|hide|toggle\w*(Section|Detail)|open\w*(History|Detail|Preview|Statement|Voucher|Attachment|Photo|Bill)|openInvoicePaymentsModal|poolReconciliationPDF|dirExpStatementPDF|generatePaySlipPDF|handleSignOut|_)/.test(fn)) return false;
             // Blocked — write / mutate verbs
             if (/^(save|delete|remove|edit|add|create|new|duplicat|insert|update|upload|attach|approve|reject|settle|disburse|revers|reopen|undo|renew|mark|assign|fill|attGrid|import|sync|record|apply|post|clear|reset|set[A-Z]|toggle)/.test(fn)) return true;
             // Modal openers in this app are data-entry forms — blocked
