@@ -6416,9 +6416,12 @@
                 // Vertical divider between columns
                 if(i<2){doc.setDrawColor(200,200,200);doc.setLineWidth(0.3);doc.line(x+colW,fY,x+colW,fY+SIG_H);}
             });
-            // Page number centred at bottom
+            // Company + build tag centred at bottom. Page number moved to
+            // top-right corner (see finalisation loop) — the old placement
+            // at fY+18.5 (~y=293mm) sat inside most printers' 5-8mm bottom
+            // physical margin and got silently clipped on printouts.
             doc.setFontSize(6.5);doc.setFont('helvetica','italic');doc.setTextColor(130,130,130);
-            doc.text(co+' — Page '+p+' of '+total+'  ·  '+_PDF_BUILD,PW/2,fY+18.5,{align:'center'});
+            doc.text(co+'  ·  '+_PDF_BUILD,PW/2,fY+18.5,{align:'center'});
         }
 
         // Page 1
@@ -6549,7 +6552,20 @@
                         return '• ' + content.replace(/<[^>]+>/g, '').trim() + '\n';
                     });
                 });
-                // Block elements → newlines, then strip remaining tags
+                // Block elements → newlines, then strip remaining tags.
+                // Also strip zero-width and control Unicode characters that
+                // frequently hitch-hike on text copy-pasted from Word/PDF/
+                // Google Docs — they collapse visually in the browser but
+                // jsPDF renders each one as a real character-cell, causing
+                // the "letter-spaced" appearance on random lines (e.g. the
+                // artefact seen on Details line 4 in the July report).
+                //   \u00A0 — non-breaking space (renders as space, but some
+                //            engines add an extra character advance)
+                //   \u200B / \u200C / \u200D — zero-width space / non-joiner /
+                //            joiner (invisible but occupy a glyph slot)
+                //   \u200E / \u200F — LTR / RTL marks
+                //   \u2028 / \u2029 — line/paragraph separator
+                //   \uFEFF — BOM / zero-width no-break space
                 return html
                     .replace(/<\/p>|<br\s*\/?>/gi, '\n')
                     .replace(/<[^>]+>/g, '')
@@ -6557,6 +6573,13 @@
                     .replace(/&amp;/g, '&')
                     .replace(/&lt;/g, '<')
                     .replace(/&gt;/g, '>')
+                    .replace(/\u00A0/g, ' ')
+                    .replace(/[\u200B-\u200F\u2028\u2029\uFEFF]/g, '')
+                    // Collapse runs of horizontal whitespace within a line
+                    // (leftovers from justified-text tabs, letter-spacing CSS
+                    // that emitted spaces on paste, etc.) — never crosses
+                    // newlines so paragraph structure is preserved.
+                    .replace(/[ \t]{2,}/g, ' ')
                     .replace(/\n{3,}/g, '\n\n')
                     .trim();
             };
@@ -6567,10 +6590,16 @@
              {title:'Recommendations',            text:_rtToText(d.recommendations),col:[21,128,61]}
             ].filter(s=>s.text&&s.text.trim()).forEach(s=>{
                 if(y+16>CONTENT_BOTTOM){doc.addPage();drawPageHeader();y=42;}
+                // Explicit halign:'left' + overflow:'linebreak' — under some
+                // jsPDF-autotable versions, individual lines could get auto-
+                // justified (letter spread wide across the cell) when the
+                // line was close to the cell-width boundary. Locking these
+                // options prevents that behaviour so paragraphs render with
+                // consistent left-flush wrapping.
                 doc.autoTable({startY:y,margin:{top:42,left:ML,right:MR,bottom:SIG_H+FOOTER_SAFETY+2},theme:'grid',
-                    styles:{fontSize:8.5,cellPadding:3},
-                    headStyles:{fillColor:s.col,textColor:[255,255,255],fontStyle:'bold',fontSize:8},
-                    head:[[s.title]],body:[[s.text]],columnStyles:{0:{cellWidth:CW}},
+                    styles:{fontSize:8.5,cellPadding:3,halign:'left',overflow:'linebreak',valign:'top'},
+                    headStyles:{fillColor:s.col,textColor:[255,255,255],fontStyle:'bold',fontSize:8,halign:'left'},
+                    head:[[s.title]],body:[[s.text]],columnStyles:{0:{cellWidth:CW,halign:'left'}},
                     didDrawPage:(data)=>{ if(data.pageNumber>1) drawPageHeader(); }
                 });
                 y=doc.lastAutoTable.finalY+3;
@@ -6798,9 +6827,20 @@
             });
         }
 
-        // Apply header + signature footer on all pages
+        // Apply header + top-right page number + signature footer on all pages
         const total=doc.getNumberOfPages();
-        for(let p=1;p<=total;p++){doc.setPage(p);drawPageHeader();drawSignatureFooter(p,total);}
+        for(let p=1;p<=total;p++){
+            doc.setPage(p);
+            drawPageHeader();
+            // Top-right page numbering — sits above the header separator,
+            // well within any printer's safe margin (physical unprintable
+            // area on most home/office printers is ~3-8mm on each edge).
+            // Placed at y=8 (13mm above the header title band) and right-
+            // aligned at PW-MR so it lines up with the right content edge.
+            doc.setFontSize(8);doc.setFont('helvetica','bold');doc.setTextColor(15,58,95);
+            doc.text('Page '+p+' of '+total, PW-MR, 8, {align:'right'});
+            drawSignatureFooter(p,total);
+        }
 
         const safe=(wl.project||'WorkReport').replace(/\s+/g,'_').replace(/[^a-zA-Z0-9_-]/g,'');
         const filename = entryIDFilter
