@@ -10753,8 +10753,20 @@
                         : `<span class="text-xs text-gray-300">—</span>`}
                 </td>
                 <td class="px-3 py-2 text-right whitespace-nowrap" onclick="event.stopPropagation()">
-                    <div class="flex items-center justify-end gap-1">
+                    <div class="flex items-center justify-end gap-1 flex-wrap">
                         ${attachCount > 0 ? `<button onclick="viewExpPhotoById('${safeId}',0)" class="text-blue-500 hover:text-blue-700 text-xs">📎${attachCount}</button>` : ''}
+                        ${/* Verify badge + button surfaced from the expanded ACTIONS
+                            block into the collapsed row so pending records can be
+                            verified in one click without having to expand each row.
+                            Kept before Edit so the "verify then edit" reading order
+                            matches the maker-checker workflow. The badge is always
+                            shown (small pill — Verified / Legacy / Pending Verify);
+                            the button only renders when action is actually needed
+                            (unverified AND user has permission to verify) so
+                            already-verified rows stay clean. */
+                          ''}
+                        ${_renderVerifyBadge(e)}
+                        ${_renderVerifyButton(e, `verifyRecord('expense','${safeId}')`)}
                         <button onclick="editExpenseById('${safeId}')" class="text-indigo-600 hover:text-indigo-800 text-xs font-medium">Edit</button>
                         <button onclick="deleteExpense('${safeId}')" class="text-red-500 hover:text-red-700 text-xs">Del</button>
                     </div>
