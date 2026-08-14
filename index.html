@@ -10744,7 +10744,29 @@
                     ${_ledgerBadge(e.ledgerAccountId)}
                 </td>
                 <td class="px-3 py-2 text-right font-semibold">${fmt(e.balanceAmt ?? e.netPayable)}</td>
-                <td class="px-3 py-2 text-center"><span class="px-2 py-0.5 rounded-full text-xs ${statusCls}">${e.payStatus}</span></td>
+                <td class="px-3 py-2 text-center">
+                    <span class="px-2 py-0.5 rounded-full text-xs ${statusCls}">${e.payStatus}</span>
+                    ${(() => {
+                        // Payment date sits below the status pill so accountants
+                        // can see WHEN a bill was cleared without expanding the
+                        // row. Two shapes in the data:
+                        //   • Multi-instalment bills (`paymentsMade` array) —
+                        //     the last chronological date represents the "fully
+                        //     paid" moment. For Partial-status bills, this is
+                        //     the most recent instalment.
+                        //   • Single-payment bills — `payDate` on the record.
+                        // Pending bills show nothing (no date to show yet).
+                        if (e.payStatus === 'Pending') return '';
+                        let dt = '';
+                        if ((e.paymentsMade||[]).length > 0) {
+                            const dates = e.paymentsMade.map(p => p.date).filter(Boolean).sort();
+                            dt = dates[dates.length - 1] || '';
+                        }
+                        if (!dt) dt = e.payDate || '';
+                        if (!dt) return '';
+                        return `<div class="text-[10px] text-gray-500 mt-0.5" title="${e.payStatus==='Partial'?'Last instalment date':'Paid on'}">${dt}</div>`;
+                    })()}
+                </td>
                 <td class="px-3 py-2 text-center" style="max-width:120px;width:120px;overflow:hidden">
                     ${(() => {
                         if (!tallyDone) return `<span class="text-xs text-gray-300">—</span>`;
