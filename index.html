@@ -4972,6 +4972,25 @@
 
                 settings        = (settingsData && typeof settingsData === 'object' && !Array.isArray(settingsData))
                                 ? settingsData : {};
+                // ── One-time migration: unify the two Sheet-ID keys ──
+                // Older installs may hold different values in `googleSheetsId`
+                // (set by Settings screen) and `spreadsheetId` (set by the
+                // sync flow's auto-discovery). Once one exists but not the
+                // other, copy across so every downstream reader sees the
+                // same ID. When BOTH exist and differ, googleSheetsId (the
+                // user's explicit choice via Settings) wins.
+                if (settings.googleSheetsId && !settings.spreadsheetId) {
+                    settings.spreadsheetId = settings.googleSheetsId;
+                } else if (settings.spreadsheetId && !settings.googleSheetsId) {
+                    settings.googleSheetsId = settings.spreadsheetId;
+                } else if (settings.googleSheetsId && settings.spreadsheetId
+                           && settings.googleSheetsId !== settings.spreadsheetId) {
+                    console.warn('Sheet ID drift detected — using googleSheetsId (Settings) as authoritative:', {
+                        googleSheetsId: settings.googleSheetsId,
+                        spreadsheetId:  settings.spreadsheetId
+                    });
+                    settings.spreadsheetId = settings.googleSheetsId;
+                }
                 expenses        = Array.isArray(expData)     ? expData      : [];
                 bankAccounts    = Array.isArray(bankData)    ? bankData     : getDefaultBankAccounts();
                 // Chart of Accounts — loaded independently (additive feature,
@@ -6651,7 +6670,17 @@
                 btn.disabled = true;
 
                 const SHEET_NAMES = ['ApprovedTxns', 'AllTransactions', 'ProformaInvoices', 'Parties', 'Settings', 'Expenses', 'Staff', 'Attendance', 'WFHLog', 'Payslips', 'ProjectExpenses', 'FieldExpenses', 'FundRequests', 'WorkLogs', 'DailyEntries', 'Calibrations', 'DirectorExpenses', 'StaffDocuments', 'WageRevisions'];
-                let spreadsheetId = settings.spreadsheetId;
+
+                // Historically the app tracked the target sheet under TWO
+                // distinct settings keys — `googleSheetsId` (written by the
+                // Settings screen) and `spreadsheetId` (written by this sync
+                // flow's auto-discovery). They could drift out of sync: the
+                // user set one ID in Settings, but the Transactions page's
+                // "Google Sheet" button read from the other and opened the
+                // wrong sheet. Unify by preferring the user-configured value
+                // over the auto-discovered one, and by mirroring both keys
+                // after every mutation.
+                let spreadsheetId = settings.googleSheetsId || settings.spreadsheetId;
 
                 // Step 1: Verify saved ID still works
                 if (spreadsheetId) {
@@ -6663,6 +6692,7 @@
                         console.warn('Saved spreadsheet ID invalid, will search Drive...');
                         spreadsheetId = null;
                         settings.spreadsheetId = null;
+                        settings.googleSheetsId = null;
                     }
                 }
 
@@ -6687,6 +6717,7 @@
                                 if (found.files && found.files.length > 0) {
                                     spreadsheetId = found.files[0].id;
                                     settings.spreadsheetId = spreadsheetId;
+                                    settings.googleSheetsId = spreadsheetId;  // mirror — keeps Settings UI + Transactions button consistent
                                     await saveData('settings', settings);
                                     console.log('Found spreadsheet:', spreadsheetId, found.files[0].name);
                                     // If found in root Drive (not in app folder), move it in
@@ -6727,6 +6758,7 @@
                     const created = await createRes.json();
                     spreadsheetId = created.spreadsheetId;
                     settings.spreadsheetId = spreadsheetId;
+                    settings.googleSheetsId = spreadsheetId;  // mirror — see rationale above
                     await saveData('settings', settings);
                     console.log('Created new spreadsheet:', spreadsheetId);
 
@@ -9275,7 +9307,12 @@
         }
 
         function renderTransactions(content) {
-            const sheetsId  = settings.spreadsheetId;
+            // Prefer the user-configured Settings value over the sync-flow's
+            // auto-discovered `spreadsheetId` — otherwise this button can
+            // silently point at a different sheet than the one shown in
+            // Settings (e.g. an auto-created "EASY EMS Data" sheet from a
+            // prior sync run, while Settings shows the user's real target).
+            const sheetsId  = settings.googleSheetsId || settings.spreadsheetId;
             const sheetsUrl = sheetsId ? `https://docs.google.com/spreadsheets/d/${sheetsId}` : null;
 
             content.innerHTML = `
@@ -19572,7 +19609,14 @@
                     punctualityIncentiveGood:    parseFloat(document.getElementById('settPunctualityGood')?.value)||0,
                     wfhBacklogDays:   parseInt(document.getElementById('settWFHBacklog')?.value)||30,
                     pinExpiryDays:    parseInt(document.getElementById('settPinExpiry')?.value) ?? settings.pinExpiryDays ?? 30,
-                    spreadsheetId: settings.spreadsheetId, // Preserve spreadsheet ID
+                    spreadsheetId: settings.spreadsheetId, // Preserve — legacy key
+                    // MUST also preserve googleSheetsId. Only preserving
+                    // spreadsheetId (as this block used to) silently dropped
+                    // the user-configured Sheet ID on every general Settings
+                    // save, letting the two keys drift. See migration in
+                    // loadDataFromDrive() and mirror rationale in
+                    // syncToGoogleSheets() step 0.
+                    googleSheetsId: settings.googleSheetsId || settings.spreadsheetId,
                     logoData: settings.logoData || null,   // Preserve logo
                     // Preserve old bank fields if they exist (for backward compatibility with old PDFs)
                     bankName: settings.bankName || '',
@@ -36199,10 +36243,12 @@ Automated WFH alert — ${company} Attendance System.`;
         // ════════════════════════════════════════════════════════════════
         // GOOGLE SHEETS SYNC — one-way push from BMS JSON to a shared Sheet
         // ────────────────────────────────────────────────────────────────
-        // The user maintains a separate "Engineering Services Data" Google Sheet
-        // with 19 tabs (Parties, AllTransactions, Expenses, Staff, WorkLogs,
-        // DailyEntries, Attendance, etc.). This module pushes each in-memory
-        // dataset into the corresponding tab, replacing its contents.
+        // The user maintains a separate "EASY EMS Data" Google Sheet (ID
+        // 1qJaofeM7RQwK4Q6da2Tk8a0wkuNA79eCIwKY46VqgTQ, formerly named
+        // "Engineering Services Data" — renamed on 27 Aug 2026, same ID).
+        // The sheet has 19 tabs (Parties, AllTransactions, Expenses, Staff,
+        // WorkLogs, DailyEntries, Attendance, etc.). This module pushes each
+        // in-memory dataset into the corresponding tab, replacing its contents.
         //
         // Trigger: manual ("Sync to Google Sheets" button in Settings) — NOT
         // automatic on every save. Sync touches all tabs and can take a
@@ -36698,6 +36744,10 @@ Automated WFH alert — ${company} Attendance System.`;
             if (!el) return;
             const v = (el.value || '').trim();
             settings.googleSheetsId = v || DEFAULT_SHEETS_ID;
+            // Mirror to the legacy `spreadsheetId` key so the sync flow and
+            // any UI still reading the old key pick up the newly-typed value
+            // immediately (see rationale in syncToGoogleSheets step 0).
+            settings.spreadsheetId = settings.googleSheetsId;
             try {
                 await saveData('settings', settings);
                 if (typeof showToast === 'function') showToast('✓ Sheet ID saved');
