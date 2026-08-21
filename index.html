@@ -1727,6 +1727,21 @@
         // expiryDate within 30 days (or already expired) for renewal action.
         let companyDocuments = [];
 
+        // ── Letters module — cover letters (attached to outgoing invoices)
+        //    and "to whom so ever" returnable-tools letters (issued when
+        //    technicians take company tools on a project trip). Both stored
+        //    as JSON collections in Drive, one file each. See renderLetters()
+        //    and the Letters tab for the UI. Ref numbers follow the format
+        //    `IMSE/<code>/<FY>/CL###` (cover — <code> is the client's short
+        //    code) or `IMSE/RT/<FY>/###` (tools — no client code since these
+        //    are addressed "To Whom So Ever"). Sequence numbers auto-increment
+        //    from settings.coverLetterNextNo / .toolsLetterNextNo, both
+        //    editable in Settings so legacy paper-issued letters can pick up
+        //    from N+1. Manual Ref entry on the modal overrides auto-gen so
+        //    historical letters can be back-filled with their original refs.
+        let coverLetters = [];
+        let returnableToolsLetters = [];
+
         // Preset categories — covers ~95% of petty cash uses. "OTHER" lets the user
         // free-text a category for the rest.
         const PETTY_CASH_CATEGORIES = [
@@ -3792,6 +3807,8 @@
                 { type: 'pettyCashStatements',   getMem: () => pettyCashStatements,   setMem: (d) => { pettyCashStatements = d; } },
                 { type: 'gstCashLedgerSnapshots', getMem: () => gstCashLedgerSnapshots, setMem: (d) => { gstCashLedgerSnapshots = d; } },
                 { type: 'companyDocuments',       getMem: () => companyDocuments,       setMem: (d) => { companyDocuments = d; } },
+                { type: 'coverLetters',           getMem: () => coverLetters,           setMem: (d) => { coverLetters = d; } },
+                { type: 'returnableToolsLetters', getMem: () => returnableToolsLetters, setMem: (d) => { returnableToolsLetters = d; } },
                 { type: 'parties',         getMem: () => parties,         setMem: (d) => { parties = d; } },
                 { type: 'bankAccounts',    getMem: () => bankAccounts,    setMem: (d) => { bankAccounts = d; } },
                 { type: 'settings',        getMem: () => settings,        setMem: (d) => { settings = d; } }
@@ -5075,6 +5092,14 @@
 
                 let cdocData      = await loadFileFromDrive('companyDocuments.json');
                 companyDocuments  = Array.isArray(cdocData) ? cdocData : [];
+
+                // Letters module — load both collections (each has its own JSON
+                // file so cover letters and tools letters can grow independently
+                // without one bloating the other's diffs).
+                let clData        = await loadFileFromDrive('coverLetters.json');
+                coverLetters      = Array.isArray(clData) ? clData : [];
+                let rtlData       = await loadFileFromDrive('returnableToolsLetters.json');
+                returnableToolsLetters = Array.isArray(rtlData) ? rtlData : [];
 
                 console.log('✅ Data loaded — transactions:', transactions.length,
                     '| parties:', parties.length,
@@ -7380,6 +7405,7 @@
                             ${_canAccess('mis')?`<button onclick="switchView('mis')" class="px-4 py-2 rounded-lg ${currentView === 'mis' ? 'bg-green-100 text-green-700' : 'text-gray-600 hover:bg-gray-100'}">📊 MIS Report</button>`:''}
                             ${_canAccess('parties')?`<button onclick="switchView('parties')" class="px-4 py-2 rounded-lg ${currentView === 'parties' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Parties</button>`:''}
                             ${_canAccess('docs')?`<button onclick="switchView('docs')" class="px-4 py-2 rounded-lg ${currentView === 'docs' ? 'bg-purple-100 text-purple-700' : 'text-gray-600 hover:bg-gray-100'}" title="Company documents, certificates, insurance policies">📄 Documents${(()=>{const c=_countDocsExpiringOrExpired();return c>0?` <span class="ml-1 px-1.5 py-0.5 bg-red-500 text-white rounded-full text-xs font-bold" title="${c} document(s) need attention">${c}</span>`:'';})()}</button>`:''}
+                            ${_canAccess('docs')?`<button onclick="switchView('letters')" class="px-4 py-2 rounded-lg ${currentView === 'letters' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}" title="Cover letters for invoices, Returnable Tools letters for site trips">✉️ Letters</button>`:''}
                             ${_canAccess('settings')||!_bmsSession?`<button onclick="switchView('settings')" class="px-4 py-2 rounded-lg ${currentView === 'settings' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Settings</button>`:''}
                         </div>
                     </div>
@@ -7517,6 +7543,7 @@
             ]},
             { view:'parties',      label:'Parties' },
             { view:'docs',         label:'Documents' },
+            { view:'letters',      label:'Letters' },
             { view:'settings',     label:'Settings' },
             { view:'auditlog',     label:'Audit Log' },
         ];
@@ -7716,6 +7743,7 @@
             else if (currentView === 'mis')      renderMIS(content);
             else if (currentView === 'parties') renderParties(content);
             else if (currentView === 'docs')    renderCompanyDocuments(content);
+            else if (currentView === 'letters') renderLetters(content);
             else if (currentView === 'settings') renderSettings(content);
         }
 
@@ -9491,7 +9519,8 @@
                             : /* Locked + Settings says no override — show lock indicator + Copy only (safe action) */ `
                            <span class="text-xs text-gray-500 italic mr-1" title="Record is finalised (${t.status}) — Edit/Delete locked. Enable 'Allow Finalised Transaction Override' in Settings to unlock.">🔒 ${t.status}</span>
                            ${t.txnCategory === 'INVOICE' ? `<button onclick="openInvoicePaymentsModal('${t.txnID}')" class="text-indigo-600 hover:text-indigo-800 text-xs font-medium mr-1" title="${(t.paymentsReceived||[]).length===0?'⚠ No payment date recorded — click to add':'Edit payment records'}">💳 ${(t.paymentsReceived||[]).length===0?'<span style=color:#dc2626>Add Payment</span>':'Payments'}</button>` : ''}
-                           <button onclick="duplicateTransaction('${t.txnID}')" class="text-teal-600 hover:text-teal-800 text-xs font-medium" title="Create a new transaction as a copy of this one">📋 Copy</button>`)
+                           <button onclick="duplicateTransaction('${t.txnID}')" class="text-teal-600 hover:text-teal-800 text-xs font-medium" title="Create a new transaction as a copy of this one">📋 Copy</button>
+                           ${t.txnCategory === 'INVOICE' ? `<button onclick="openCoverLetterModal(null,{invoiceID:'${t.txnID}'})" class="text-purple-600 hover:text-purple-800 text-xs font-medium ml-1" title="Create a cover letter with supporting-documents list for this invoice">✉️ Cover</button>` : ''}`)
                         : `${t.txnCategory === 'PROFORMA_INVOICE' && t.status === 'Approved' && !t.convertedToInvoice
                             ? `<button onclick='convertToInvoice(${tJson})' class="text-green-700 hover:text-green-900 mr-2 text-xs font-bold bg-green-50 px-2 py-1 rounded border border-green-300" title="Convert to Final Invoice">✓ Convert to Invoice</button>`
                             : ''}
@@ -9500,6 +9529,7 @@
                             : ''}
                            <button onclick='editTransaction(${tJson})' class="text-indigo-600 hover:text-indigo-800 mr-1 text-xs font-medium">Edit</button>
                            <button onclick="duplicateTransaction('${t.txnID}')" class="text-teal-600 hover:text-teal-800 mr-1 text-xs font-medium" title="Create a new ${(t.txnCategory||'transaction').toLowerCase().replace('_',' ')} as a copy of this one">📋 Copy</button>
+                           ${t.txnCategory === 'INVOICE' ? `<button onclick="openCoverLetterModal(null,{invoiceID:'${t.txnID}'})" class="text-purple-600 hover:text-purple-800 mr-1 text-xs font-medium" title="Create a cover letter with supporting-documents list for this invoice">✉️ Cover</button>` : ''}
                            ${['QUOTATION','ENQUIRY','INVOICE','PO','CREDIT_NOTE','DELIVERY_NOTE'].includes(t.txnCategory) && ['Sent','Approved','Completed','Paid','Issued','Acknowledged','Invoiced','Quote Received','Closed'].includes(t.status)
                                ? `<span class="text-xs text-gray-400 italic" title="${t.txnCategory.charAt(0)+t.txnCategory.slice(1).toLowerCase().replace(/_/g,' ')} is ${t.status} — Delete is blocked. Change status to Draft first if deletion is genuinely needed.">🔒 ${t.status}</span>`
                                : `<button onclick="deleteTransaction('${t.txnID}')" class="text-red-600 hover:text-red-800 text-xs font-medium">Del</button>`
@@ -20147,6 +20177,7 @@
                         <td class="px-3 py-2 text-right whitespace-nowrap">
                             ${(s.documents||[]).length>0 ? `<button onclick="viewStaffDocsModal('${s.staffID}')" title="${(s.documents||[]).length} document(s)" class="inline-flex items-center text-xs font-medium px-1.5 py-0.5 mr-2 bg-teal-100 text-teal-700 hover:bg-teal-200 rounded-md">📎 ${(s.documents||[]).length}</button>` : ''}
                             <button onclick="viewStaff('${s.staffID}')" class="text-blue-600 hover:text-blue-800 text-xs font-medium mr-2" title="View staff details (read-only)">View</button>
+                            <button onclick="openToolsLetterModal(null,{staffID:'${s.staffID}'})" class="text-teal-600 hover:text-teal-800 text-xs font-medium mr-2" title="Create Returnable Tools letter for this staff — Aadhar auto-fills">✉️ Tools</button>
                             ${settings.allowStaffEdit ? `<button onclick="editStaff('${s.staffID}')" class="text-indigo-600 hover:text-indigo-800 text-xs font-medium mr-2" title="Edit staff details">Edit</button>` : `<span class="text-gray-300 text-xs mr-2" title="Edit locked — enable in Settings">🔒 Edit</span>`}
                             ${settings.allowStaffDelete ? `<button onclick="deleteStaff('${s.staffID}')" class="text-red-600 hover:text-red-800 text-xs" title="Delete staff">Del</button>` : `<span class="text-gray-300 text-xs" title="Delete locked — enable in Settings">🔒 Del</span>`}
                         </td>
@@ -33540,6 +33571,1094 @@ Automated WFH alert — ${company} Attendance System.`;
                 renderView();
             } catch (e) { alert('Could not save: ' + (e.message || e)); }
         }
+
+        // ═════════════════════════════════════════════════════════════════
+        // LETTERS MODULE — Cover Letters + Returnable Tools Letters
+        // ═════════════════════════════════════════════════════════════════
+        // Two formal letter types generated from templates and stored as
+        // structured records:
+        //   • Cover Letters — attached to outgoing invoices, list all
+        //     supporting docs (invoice copy, PO, work reports, ticket
+        //     copies, approval emails, etc.). Ref format
+        //     `IMSE/<clientCode>/<FY>/CL###`.
+        //   • Returnable Tools Letters — issued to a technician for a
+        //     project trip, listing tools they hand-carry that must return
+        //     afterwards. Addressed "To Whom So Ever". Ref format
+        //     `IMSE/RT/<FY>/###` (no client code — universal recipient).
+        //
+        // Both modules share:
+        //   - Add / Edit / Delete / ↑↓ reorder line items
+        //   - Multi-line textareas so descriptions wrap naturally
+        //   - Editable Ref No field (auto-generated when blank, manual
+        //     entry allowed for back-filling historical paper letters)
+        //   - Sequence starts from settings.coverLetterNextNo /
+        //     .toolsLetterNextNo — set to N+1 before creating the first
+        //     in-app letter after paper-issued predecessors
+        //   - PDF generation matching the two sample templates supplied
+        //     by Easu (logo top-left, Date/Place top-right, table body,
+        //     signatory block).
+
+        // ── Helpers ──
+        // Named `_lettersFYLabel` (not `_fyLabel`) to avoid colliding with
+        // the pre-existing pool `_fyLabel` at line 7772, which has different
+        // semantics: pool takes a 4-char fy code ("2526") and returns
+        // "FY 2025-26"; letters take a date and return "26-27". Different
+        // input, different output — sharing the name would silently break
+        // pool ID display.
+        function _lettersFYLabel(dateStr) {
+            // Indian FY: April - March. `2026-08-19` -> `26-27`, `2026-02-05` -> `25-26`.
+            const d = dateStr ? new Date(dateStr) : new Date();
+            const y = d.getFullYear();
+            const m = d.getMonth() + 1;
+            const start = (m >= 4) ? y : y - 1;
+            return String(start).slice(-2) + '-' + String(start + 1).slice(-2);
+        }
+
+        function _nextCoverLetterRef(partyID, letterDate) {
+            const p = (parties || []).find(x => x.id === partyID || x.partyID === partyID);
+            const code = (p && (p.clientCode || '')).trim().toUpperCase() || 'XXX';
+            const fy   = _lettersFYLabel(letterDate);
+            const seq  = parseInt(settings.coverLetterNextNo, 10) || 1;
+            const num  = String(seq).padStart(3, '0');
+            return `IMSE/${code}/${fy}/CL${num}`;
+        }
+
+        function _nextToolsLetterRef(letterDate) {
+            const fy   = _lettersFYLabel(letterDate);
+            const seq  = parseInt(settings.toolsLetterNextNo, 10) || 1;
+            const num  = String(seq).padStart(3, '0');
+            return `IMSE/RT/${fy}/${num}`;
+        }
+
+        function _lettersFmtDate(iso) {
+            if (!iso) return '';
+            const d = new Date(iso);
+            if (isNaN(d)) return iso;
+            return `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`;
+        }
+
+        // ── Main tab renderer with sub-tabs ──
+        function renderLetters(content) {
+            if (!window._lettersTab) window._lettersTab = 'cover';
+            const tab = window._lettersTab;
+            content.innerHTML = `
+                <div class="max-w-6xl mx-auto">
+                    <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
+                        <div>
+                            <h2 class="text-2xl font-bold text-gray-800">✉️ Letters</h2>
+                            <p class="text-sm text-gray-500 mt-1">Formal letters generated by the app — cover letters for outgoing invoices, and Returnable Tools letters for site trips.</p>
+                        </div>
+                        <div class="flex gap-2">
+                            <button onclick="openLettersNumberingModal()" class="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 text-sm" title="Numbering — set starting number if letters were issued on paper before app rollout">🔢</button>
+                            ${tab === 'cover'
+                                ? `<button onclick="openCoverLetterModal()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold">+ New Cover Letter</button>`
+                                : `<button onclick="openToolsLetterModal()" class="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-sm font-semibold">+ New Tools Letter</button>`}
+                        </div>
+                    </div>
+                    <div class="flex gap-2 mb-4 border-b border-gray-200">
+                        <button onclick="window._lettersTab='cover';renderView()"
+                            class="px-4 py-2 text-sm font-semibold border-b-2 ${tab==='cover'?'border-indigo-600 text-indigo-700':'border-transparent text-gray-500 hover:text-gray-700'}">
+                            📄 Cover Letters <span class="ml-1 text-xs text-gray-400">(${(coverLetters||[]).length})</span>
+                        </button>
+                        <button onclick="window._lettersTab='tools';renderView()"
+                            class="px-4 py-2 text-sm font-semibold border-b-2 ${tab==='tools'?'border-teal-600 text-teal-700':'border-transparent text-gray-500 hover:text-gray-700'}">
+                            🔧 Tools Letters <span class="ml-1 text-xs text-gray-400">(${(returnableToolsLetters||[]).length})</span>
+                        </button>
+                    </div>
+                    <div id="lettersListArea"></div>
+                </div>
+            `;
+            if (tab === 'cover') _renderCoverLettersList();
+            else _renderToolsLettersList();
+        }
+
+        function _renderCoverLettersList() {
+            const el = document.getElementById('lettersListArea');
+            const q = (window._lettersSearch || '').toLowerCase().trim();
+            const list = (coverLetters || [])
+                .slice()
+                .sort((a,b) => (b.letterDate||'').localeCompare(a.letterDate||''))
+                .filter(l => {
+                    if (!q) return true;
+                    return (l.refNo||'').toLowerCase().includes(q)
+                        || (l.partyName||'').toLowerCase().includes(q)
+                        || (l.subject||'').toLowerCase().includes(q)
+                        || (l.invoiceID||'').toLowerCase().includes(q);
+                });
+            el.innerHTML = `
+                <div class="mb-3">
+                    <input type="text" placeholder="Search by ref / party / subject / invoice…" value="${(window._lettersSearch||'').replace(/"/g,'&quot;')}"
+                        oninput="window._lettersSearch=this.value;_renderCoverLettersList()"
+                        class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                </div>
+                ${list.length === 0
+                    ? `<div class="bg-white border border-dashed border-gray-300 rounded-xl p-10 text-center">
+                        <p class="text-gray-400 text-sm">No cover letters yet.</p>
+                        <p class="text-gray-400 text-xs mt-1">Click "+ New Cover Letter" above, or from any invoice row use the "+ Cover Letter" button.</p>
+                       </div>`
+                    : `<div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                        <table class="w-full text-sm">
+                            <thead class="bg-gray-50 text-xs text-gray-500 uppercase tracking-wider">
+                                <tr>
+                                    <th class="px-4 py-2 text-left">Ref No</th>
+                                    <th class="px-4 py-2 text-left">Date</th>
+                                    <th class="px-4 py-2 text-left">Client</th>
+                                    <th class="px-4 py-2 text-left">Invoice</th>
+                                    <th class="px-4 py-2 text-left">Subject</th>
+                                    <th class="px-4 py-2 text-center">Items</th>
+                                    <th class="px-4 py-2 text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${list.map(l => `
+                                <tr class="border-t hover:bg-indigo-50">
+                                    <td class="px-4 py-2 font-mono text-xs text-indigo-700">${(l.refNo||'').replace(/</g,'&lt;')}</td>
+                                    <td class="px-4 py-2 text-gray-600 whitespace-nowrap">${_lettersFmtDate(l.letterDate)}</td>
+                                    <td class="px-4 py-2 text-gray-800">${(l.partyName||'—').replace(/</g,'&lt;').substring(0,40)}${(l.partyName||'').length>40?'…':''}</td>
+                                    <td class="px-4 py-2 font-mono text-xs text-gray-500">${(l.invoiceID||'').replace(/</g,'&lt;')}</td>
+                                    <td class="px-4 py-2 text-gray-700 text-xs">${(l.subject||'').replace(/</g,'&lt;').substring(0,60)}${(l.subject||'').length>60?'…':''}</td>
+                                    <td class="px-4 py-2 text-center text-xs text-gray-500">${(l.supportingDocs||[]).length}</td>
+                                    <td class="px-4 py-2 text-right whitespace-nowrap">
+                                        <button onclick="generateCoverLetterPDF('${l.letterID}')" class="text-blue-600 hover:text-blue-800 text-xs mr-2" title="Download PDF">📄 PDF</button>
+                                        <button onclick="openCoverLetterModal('${l.letterID}')" class="text-indigo-600 hover:text-indigo-800 text-xs mr-2">Edit</button>
+                                        <button onclick="deleteCoverLetter('${l.letterID}')" class="text-red-500 hover:text-red-700 text-xs">Del</button>
+                                    </td>
+                                </tr>`).join('')}
+                            </tbody>
+                        </table>
+                       </div>`}
+            `;
+        }
+
+        function _renderToolsLettersList() {
+            const el = document.getElementById('lettersListArea');
+            const q = (window._lettersSearch || '').toLowerCase().trim();
+            const list = (returnableToolsLetters || [])
+                .slice()
+                .sort((a,b) => (b.letterDate||'').localeCompare(a.letterDate||''))
+                .filter(l => {
+                    if (!q) return true;
+                    return (l.refNo||'').toLowerCase().includes(q)
+                        || (l.staffName||'').toLowerCase().includes(q)
+                        || (l.vessel||'').toLowerCase().includes(q)
+                        || (l.port||'').toLowerCase().includes(q);
+                });
+            el.innerHTML = `
+                <div class="mb-3">
+                    <input type="text" placeholder="Search by ref / technician / vessel / port…" value="${(window._lettersSearch||'').replace(/"/g,'&quot;')}"
+                        oninput="window._lettersSearch=this.value;_renderToolsLettersList()"
+                        class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                </div>
+                ${list.length === 0
+                    ? `<div class="bg-white border border-dashed border-gray-300 rounded-xl p-10 text-center">
+                        <p class="text-gray-400 text-sm">No tools letters yet.</p>
+                        <p class="text-gray-400 text-xs mt-1">Click "+ New Tools Letter" above, or from any staff record use the "+ Tools Letter" button.</p>
+                       </div>`
+                    : `<div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                        <table class="w-full text-sm">
+                            <thead class="bg-gray-50 text-xs text-gray-500 uppercase tracking-wider">
+                                <tr>
+                                    <th class="px-4 py-2 text-left">Ref No</th>
+                                    <th class="px-4 py-2 text-left">Date</th>
+                                    <th class="px-4 py-2 text-left">Technician</th>
+                                    <th class="px-4 py-2 text-left">Vessel</th>
+                                    <th class="px-4 py-2 text-left">Port</th>
+                                    <th class="px-4 py-2 text-center">Tools</th>
+                                    <th class="px-4 py-2 text-center">Status</th>
+                                    <th class="px-4 py-2 text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${list.map(l => {
+                                    const statusCls = l.status === 'Returned' ? 'bg-green-100 text-green-700'
+                                                    : l.status === 'Partial'   ? 'bg-amber-100 text-amber-700'
+                                                    :                            'bg-blue-100 text-blue-700';
+                                    return `
+                                    <tr class="border-t hover:bg-teal-50">
+                                        <td class="px-4 py-2 font-mono text-xs text-teal-700">${(l.refNo||'').replace(/</g,'&lt;')}</td>
+                                        <td class="px-4 py-2 text-gray-600 whitespace-nowrap">${_lettersFmtDate(l.letterDate)}</td>
+                                        <td class="px-4 py-2 text-gray-800">${(l.staffName||'—').replace(/</g,'&lt;')}</td>
+                                        <td class="px-4 py-2 text-gray-700 text-xs">${(l.vessel||'—').replace(/</g,'&lt;')}</td>
+                                        <td class="px-4 py-2 text-gray-700 text-xs">${(l.port||'—').replace(/</g,'&lt;')}</td>
+                                        <td class="px-4 py-2 text-center text-xs text-gray-500">${(l.tools||[]).length}</td>
+                                        <td class="px-4 py-2 text-center"><span class="px-2 py-0.5 rounded-full text-xs ${statusCls}">${l.status||'Issued'}</span></td>
+                                        <td class="px-4 py-2 text-right whitespace-nowrap">
+                                            <button onclick="generateToolsLetterPDF('${l.letterID}')" class="text-blue-600 hover:text-blue-800 text-xs mr-2" title="Download PDF">📄 PDF</button>
+                                            <button onclick="openToolsLetterModal('${l.letterID}')" class="text-indigo-600 hover:text-indigo-800 text-xs mr-2">Edit</button>
+                                            <button onclick="deleteToolsLetter('${l.letterID}')" class="text-red-500 hover:text-red-700 text-xs">Del</button>
+                                        </td>
+                                    </tr>`;
+                                }).join('')}
+                            </tbody>
+                        </table>
+                       </div>`}
+            `;
+        }
+
+        // ── COVER LETTER MODAL ─────────────────────────────────────
+        function openCoverLetterModal(letterID, prefill) {
+            const existing = letterID ? (coverLetters||[]).find(l => l.letterID === letterID) : null;
+            const l = existing || {
+                letterID: 'CL-' + Date.now(),
+                refNo: '',
+                letterDate: new Date().toISOString().slice(0,10),
+                place: settings.city || 'Mumbai',
+                invoiceID: (prefill && prefill.invoiceID) || '',
+                partyID: (prefill && prefill.partyID) || '',
+                partyName: (prefill && prefill.partyName) || '',
+                partyAddress: (prefill && prefill.partyAddress) || '',
+                subject: (prefill && prefill.subject) || '',
+                supportingDocs: (prefill && prefill.supportingDocs) || [],
+            };
+            window._editingCoverLetter = JSON.parse(JSON.stringify(l));  // working copy
+            _renderCoverLetterModal(!!existing);
+        }
+
+        function _renderCoverLetterModal(isEdit) {
+            const l = window._editingCoverLetter;
+            // If invoiceID is set and we haven't yet auto-seeded supporting docs,
+            // build the first two rows automatically (invoice + PO if present).
+            if (l.invoiceID && (!l.supportingDocs || l.supportingDocs.length === 0)) {
+                const inv = (transactions||[]).find(t => t.txnID === l.invoiceID);
+                if (inv) {
+                    const seed = [];
+                    seed.push({ description: `Original Invoice No :${inv.txnID} dated ${_lettersFmtDate(inv.txnDate)}.` });
+                    if (inv.poNo) seed.push({ description: `Copy of Purchase Order No : ${inv.poNo}${inv.poDate?' dated '+_lettersFmtDate(inv.poDate):''}` });
+                    l.supportingDocs = seed;
+                }
+            }
+            const partiesForSel = (parties||[])
+                .filter(p => p.type === 'Client' || p.type === 'Both' || !p.type)
+                .sort((a,b) => (a.name||'').localeCompare(b.name||''));
+            const invoicesForSel = (transactions||[])
+                .filter(t => (t.type||'').includes('INVOICE') || (t.category||'') === 'INVOICE')
+                .sort((a,b) => (b.txnDate||'').localeCompare(a.txnDate||''))
+                .slice(0, 200);
+            const modalHtml = `
+                <div id="coverLetterModal" class="modal show">
+                    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl m-4 max-h-[92vh] overflow-y-auto">
+                        <div class="bg-gradient-to-r from-indigo-600 to-purple-600 p-5 text-white flex justify-between items-center sticky top-0 z-10">
+                            <div>
+                                <h3 class="text-lg font-bold">📄 ${isEdit?'Edit':'New'} Cover Letter</h3>
+                                <p class="text-xs opacity-80 mt-0.5">Formal covering letter listing supporting documents sent along with an invoice</p>
+                            </div>
+                            <button onclick="closeCoverLetterModal()" class="text-white text-2xl font-bold leading-none">✕</button>
+                        </div>
+                        <div class="p-5 space-y-4">
+                            <!-- Ref / Date / Place row -->
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">Ref No. <span class="text-gray-400 font-normal">(auto if blank)</span></label>
+                                    <input type="text" id="clRefNo" value="${(l.refNo||'').replace(/"/g,'&quot;')}" placeholder="Auto — IMSE/CODE/FY/CL###" class="w-full px-3 py-2 border rounded-lg text-sm font-mono"/>
+                                    <p class="text-[10px] text-gray-400 mt-1">Leave blank to auto-generate; type a value to back-fill a historical letter's original ref.</p>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">Date <span class="text-red-500">*</span></label>
+                                    <input type="date" id="clDate" value="${l.letterDate||''}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">Place</label>
+                                    <input type="text" id="clPlace" value="${(l.place||'').replace(/"/g,'&quot;')}" placeholder="Mumbai" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                                </div>
+                            </div>
+                            <!-- Invoice link -->
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-600 mb-1">Linked Invoice <span class="text-gray-400 font-normal">(optional — pre-fills party & first supporting-docs row)</span></label>
+                                <select id="clInvoice" onchange="_clOnInvoicePicked()" class="w-full px-3 py-2 border rounded-lg text-sm">
+                                    <option value="">— No invoice link —</option>
+                                    ${invoicesForSel.map(t => `<option value="${t.txnID}" ${t.txnID===l.invoiceID?'selected':''}>${t.txnID} — ${(t.clientName||t.partyName||'').substring(0,40)} — ${_lettersFmtDate(t.txnDate)}</option>`).join('')}
+                                </select>
+                            </div>
+                            <!-- Party -->
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">Client / Party <span class="text-red-500">*</span></label>
+                                    <select id="clParty" onchange="_clOnPartyPicked()" class="w-full px-3 py-2 border rounded-lg text-sm">
+                                        <option value="">— Select client —</option>
+                                        ${partiesForSel.map(p => {
+                                            const pid = p.id || p.partyID;
+                                            const code = p.clientCode ? ` [${p.clientCode}]` : '';
+                                            return `<option value="${pid}" ${pid===l.partyID?'selected':''}>${(p.name||'').replace(/</g,'&lt;')}${code}</option>`;
+                                        }).join('')}
+                                    </select>
+                                    <p id="clPartyCodeHint" class="text-[10px] mt-1"></p>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">Party Address <span class="text-red-500">*</span></label>
+                                    <textarea id="clPartyAddress" rows="3" class="w-full px-3 py-2 border rounded-lg text-sm">${(l.partyAddress||'').replace(/</g,'&lt;')}</textarea>
+                                </div>
+                            </div>
+                            <!-- Subject / body intro -->
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-600 mb-1">Subject <span class="text-red-500">*</span> <span class="text-gray-400 font-normal">(what the invoice is for — appears in the body paragraph)</span></label>
+                                <textarea id="clSubject" rows="3" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="VISHVA VIJETA: Main Engine unit #5 & 6 decarbonisation work and additional work on Main Engine fuel system unit # 5 & 6 ICU problem rectification work carried out at Mangalore.">${(l.subject||'').replace(/</g,'&lt;')}</textarea>
+                            </div>
+                            <!-- Supporting docs table -->
+                            <div class="bg-indigo-50 border border-indigo-200 rounded-xl p-4">
+                                <div class="flex items-center justify-between mb-2">
+                                    <p class="text-xs font-semibold text-indigo-800">📎 SUPPORTING DOCUMENTS (numbered list on the letter body)</p>
+                                    <button onclick="_clAddDocRow()" class="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-xs font-semibold">+ Add Row</button>
+                                </div>
+                                <div id="clDocsRows" class="space-y-2"></div>
+                            </div>
+                        </div>
+                        <div class="p-5 border-t border-gray-200 flex justify-end gap-3 sticky bottom-0 bg-white">
+                            <button onclick="closeCoverLetterModal()" class="px-5 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+                            ${isEdit?`<button onclick="generateCoverLetterPDF(_editingCoverLetter.letterID,true)" class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold">💾 Save & PDF</button>`:''}
+                            <button onclick="saveCoverLetter()" class="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold">💾 Save</button>
+                        </div>
+                    </div>
+                </div>`;
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            _clRenderDocRows();
+            _clUpdatePartyCodeHint();
+        }
+
+        function closeCoverLetterModal() {
+            document.getElementById('coverLetterModal')?.remove();
+            window._editingCoverLetter = null;
+        }
+
+        // Render supporting-doc rows. Each row is a textarea (multi-line, wraps
+        // naturally on the PDF) with ↑ ↓ ✕ controls to reorder / delete.
+        function _clRenderDocRows() {
+            const wrap = document.getElementById('clDocsRows');
+            if (!wrap) return;
+            const rows = window._editingCoverLetter.supportingDocs || [];
+            if (rows.length === 0) {
+                wrap.innerHTML = `<p class="text-xs text-indigo-400 italic text-center py-3">No rows yet — click "+ Add Row" to add supporting documents.</p>`;
+                return;
+            }
+            wrap.innerHTML = rows.map((r,i) => `
+                <div class="flex items-start gap-2 bg-white p-2 rounded border border-indigo-100">
+                    <div class="flex-shrink-0 w-8 pt-2 text-center text-xs font-mono font-semibold text-indigo-700">${String(i+1).padStart(2,'0')}.</div>
+                    <textarea rows="2" oninput="_clUpdateRow(${i},this.value)" placeholder="e.g. Original Invoice No :INV2627028 dated 18.08.2026."
+                        class="flex-1 px-2 py-1 border border-indigo-200 rounded text-xs font-mono resize-y">${(r.description||'').replace(/</g,'&lt;')}</textarea>
+                    <div class="flex-shrink-0 flex flex-col gap-1 pt-1">
+                        <button onclick="_clMoveRow(${i},-1)" ${i===0?'disabled':''} title="Move up"
+                            class="w-7 h-6 bg-white border border-indigo-200 rounded text-indigo-600 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-indigo-50 text-xs">↑</button>
+                        <button onclick="_clMoveRow(${i},1)" ${i===rows.length-1?'disabled':''} title="Move down"
+                            class="w-7 h-6 bg-white border border-indigo-200 rounded text-indigo-600 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-indigo-50 text-xs">↓</button>
+                    </div>
+                    <button onclick="_clDeleteRow(${i})" title="Delete row"
+                        class="flex-shrink-0 w-7 h-7 mt-1 bg-red-50 border border-red-200 rounded text-red-600 hover:bg-red-100 text-xs">✕</button>
+                </div>
+            `).join('');
+        }
+
+        function _clAddDocRow() {
+            window._editingCoverLetter.supportingDocs = window._editingCoverLetter.supportingDocs || [];
+            window._editingCoverLetter.supportingDocs.push({ description: '' });
+            _clRenderDocRows();
+        }
+        function _clDeleteRow(i) {
+            window._editingCoverLetter.supportingDocs.splice(i, 1);
+            _clRenderDocRows();
+        }
+        function _clMoveRow(i, dir) {
+            const arr = window._editingCoverLetter.supportingDocs;
+            const j = i + dir;
+            if (j < 0 || j >= arr.length) return;
+            [arr[i], arr[j]] = [arr[j], arr[i]];
+            _clRenderDocRows();
+        }
+        function _clUpdateRow(i, val) {
+            window._editingCoverLetter.supportingDocs[i].description = val;
+        }
+
+        function _clOnInvoicePicked() {
+            const invId = document.getElementById('clInvoice').value;
+            if (!invId) return;
+            const inv = (transactions||[]).find(t => t.txnID === invId);
+            if (!inv) return;
+            const l = window._editingCoverLetter;
+            l.invoiceID = invId;
+            // Try to resolve the party from the invoice
+            const partyName = inv.clientName || inv.partyName;
+            const partyByName = (parties||[]).find(p => p.name === partyName);
+            if (partyByName) {
+                const pid = partyByName.id || partyByName.partyID;
+                document.getElementById('clParty').value = pid;
+                l.partyID = pid;
+                l.partyName = partyByName.name;
+                document.getElementById('clPartyAddress').value = partyByName.address || partyByName.billingAddress || '';
+                l.partyAddress = document.getElementById('clPartyAddress').value;
+            }
+            // Populate subject from invoice's own subject field if empty
+            if (!document.getElementById('clSubject').value && inv.subject) {
+                document.getElementById('clSubject').value = inv.subject;
+                l.subject = inv.subject;
+            }
+            // Seed supporting docs (only if empty — don't overwrite user edits)
+            if (!l.supportingDocs || l.supportingDocs.length === 0) {
+                const seed = [];
+                seed.push({ description: `Original Invoice No :${inv.txnID} dated ${_lettersFmtDate(inv.txnDate)}.` });
+                if (inv.poNo) seed.push({ description: `Copy of Purchase Order No : ${inv.poNo}${inv.poDate?' dated '+_lettersFmtDate(inv.poDate):''}` });
+                l.supportingDocs = seed;
+                _clRenderDocRows();
+            }
+            _clUpdatePartyCodeHint();
+        }
+
+        function _clOnPartyPicked() {
+            const pid = document.getElementById('clParty').value;
+            const l = window._editingCoverLetter;
+            l.partyID = pid;
+            if (!pid) { l.partyName = ''; return; }
+            const p = (parties||[]).find(x => (x.id||x.partyID) === pid);
+            if (p) {
+                l.partyName = p.name || '';
+                if (!document.getElementById('clPartyAddress').value) {
+                    document.getElementById('clPartyAddress').value = p.address || p.billingAddress || '';
+                    l.partyAddress = document.getElementById('clPartyAddress').value;
+                }
+            }
+            _clUpdatePartyCodeHint();
+        }
+
+        // Show/enable a client-code assignment path for the selected party.
+        // If the party has no `clientCode` yet, we cannot auto-generate a
+        // proper Ref No — nudge the user to set one (Option A workflow: prompt
+        // on demand). Also shown when a code exists so they can update it.
+        function _clUpdatePartyCodeHint() {
+            const hintEl = document.getElementById('clPartyCodeHint');
+            const l = window._editingCoverLetter;
+            if (!hintEl) return;
+            if (!l.partyID) { hintEl.innerHTML = ''; return; }
+            const p = (parties||[]).find(x => (x.id||x.partyID) === l.partyID);
+            if (!p) { hintEl.innerHTML = ''; return; }
+            if (p.clientCode) {
+                hintEl.innerHTML = `<span class="text-green-600">✓ Client code: <strong>${p.clientCode}</strong></span>
+                    <button onclick="_clPromptForClientCode(true)" class="ml-2 text-indigo-600 hover:underline">change</button>`;
+            } else {
+                hintEl.innerHTML = `<span class="text-amber-600">⚠ No client code set — Ref No auto-gen will use "XXX" until you set one.</span>
+                    <button onclick="_clPromptForClientCode(false)" class="ml-2 text-indigo-600 hover:underline font-semibold">Set now</button>`;
+            }
+        }
+
+        async function _clPromptForClientCode(isChange) {
+            const l = window._editingCoverLetter;
+            const p = (parties||[]).find(x => (x.id||x.partyID) === l.partyID);
+            if (!p) return;
+            const current = p.clientCode || '';
+            const nu = prompt(
+                `Short client code for "${p.name}" (used in Ref No format IMSE/CODE/FY/CL###).\n\n` +
+                `Typically 2-4 uppercase letters — e.g. SCI for Shipping Corporation of India, OLY for Olympia.\n\n` +
+                (isChange ? `Current: ${current}` : `Party has no code yet.`),
+                current
+            );
+            if (nu === null) return;   // cancelled
+            const code = nu.trim().toUpperCase();
+            if (!code) { alert('Client code cannot be blank.'); return; }
+            if (!/^[A-Z0-9]{1,8}$/.test(code)) {
+                alert('Use 1-8 uppercase letters/digits only (e.g. SCI, OLY, MSC).');
+                return;
+            }
+            p.clientCode = code;
+            p.updatedAt = new Date().toISOString();
+            try {
+                await saveData('parties', parties);
+                _showToast('✓ Client code saved: ' + code);
+                _clUpdatePartyCodeHint();
+            } catch(e) { alert('Could not save: ' + e.message); }
+        }
+
+        async function saveCoverLetter() {
+            const l = window._editingCoverLetter;
+            const refNo   = document.getElementById('clRefNo').value.trim();
+            const date    = document.getElementById('clDate').value;
+            const place   = document.getElementById('clPlace').value.trim();
+            const partyID = document.getElementById('clParty').value;
+            const address = document.getElementById('clPartyAddress').value.trim();
+            const subject = document.getElementById('clSubject').value.trim();
+            const invoiceID = document.getElementById('clInvoice').value;
+            if (!date)    { alert('Date is required'); return; }
+            if (!partyID) { alert('Please select the client / party'); return; }
+            if (!address) { alert('Party address is required'); return; }
+            if (!subject) { alert('Subject is required'); return; }
+            const party = (parties||[]).find(p => (p.id||p.partyID) === partyID);
+            if (!party) { alert('Party not found — refresh and retry.'); return; }
+            // Auto-generate ref if blank. If a ref *is* provided, we don't
+            // touch the sequence counter — user is back-filling a historical
+            // letter with its original paper ref, not consuming an in-app slot.
+            let finalRef = refNo;
+            let consumedAutoSeq = false;
+            let partyClientCodeSaved = false;
+            if (!finalRef) {
+                // Option A: prompt inline for a client code if the party
+                // doesn't have one yet. Saves back to the party record so
+                // every future letter for this client auto-uses it — no
+                // re-prompting on subsequent letters. Empty / cancel keeps
+                // the "XXX" placeholder so the user can still proceed and
+                // fix the ref later.
+                if (!party.clientCode) {
+                    const suggested = (party.name || '')
+                        .replace(/\b(pvt|private|ltd|limited|inc|corp|corporation|company|co|and|the|of|for)\b/gi, '')
+                        .replace(/[^A-Za-z]/g, '')
+                        .toUpperCase()
+                        .slice(0, 3) || 'XXX';
+                    const entered = prompt(
+                        `Short code for "${party.name}"?\n\nUsed in cover letter Ref No — e.g. SCI for Shipping Corporation of India, OLY for Olympia. 3–5 uppercase letters recommended.\n\nSaved to the party record so future letters for this client auto-use it.\n\nLeave blank to insert "XXX" placeholder for now (you can set the code later in Parties tab).`,
+                        suggested
+                    );
+                    if (entered === null) return;   // user cancelled the whole save
+                    const cleaned = (entered || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+                    if (cleaned) {
+                        party.clientCode = cleaned;
+                        partyClientCodeSaved = true;
+                    }
+                }
+                finalRef = _nextCoverLetterRef(partyID, date);
+                consumedAutoSeq = true;
+            }
+            l.refNo        = finalRef;
+            l.letterDate   = date;
+            l.place        = place;
+            l.partyID      = partyID;
+            l.partyName    = party.name || '';
+            l.partyAddress = address;
+            l.subject      = subject;
+            l.invoiceID    = invoiceID;
+            l.updatedAt    = new Date().toISOString();
+            l.updatedBy    = (typeof currentUser !== 'undefined' && currentUser?.name) || 'User';
+            // Strip empty supporting-doc rows before save
+            l.supportingDocs = (l.supportingDocs||[]).filter(r => (r.description||'').trim());
+            // Insert or update
+            const idx = (coverLetters||[]).findIndex(x => x.letterID === l.letterID);
+            if (idx >= 0) {
+                coverLetters[idx] = l;
+            } else {
+                l.createdAt = l.updatedAt;
+                l.createdBy = l.updatedBy;
+                coverLetters.push(l);
+            }
+            // Advance the counter only if we actually consumed an auto slot
+            if (consumedAutoSeq) {
+                settings.coverLetterNextNo = (parseInt(settings.coverLetterNextNo,10) || 1) + 1;
+            }
+            try {
+                await saveData('coverLetters', coverLetters);
+                if (consumedAutoSeq) await saveData('settings', settings);
+                if (partyClientCodeSaved) await saveData('parties', parties);
+                closeCoverLetterModal();
+                renderView();
+                _showToast('✓ Cover letter saved: ' + finalRef, '#4f46e5', 4000);
+            } catch(e) { alert('Save failed: ' + e.message); }
+        }
+
+        async function deleteCoverLetter(letterID) {
+            const l = (coverLetters||[]).find(x => x.letterID === letterID);
+            if (!l) return;
+            if (!confirm(`Delete cover letter ${l.refNo}?\n\nThis cannot be undone. The Ref No won't be reused (the sequence counter stays where it is).`)) return;
+            coverLetters = coverLetters.filter(x => x.letterID !== letterID);
+            try {
+                await saveData('coverLetters', coverLetters);
+                renderView();
+                _showToast('🗑️ Cover letter deleted');
+            } catch(e) { alert('Delete failed: ' + e.message); }
+        }
+
+        // ── TOOLS LETTER MODAL ─────────────────────────────────────
+        function openToolsLetterModal(letterID, prefill) {
+            const existing = letterID ? (returnableToolsLetters||[]).find(l => l.letterID === letterID) : null;
+            const l = existing || {
+                letterID: 'RTL-' + Date.now(),
+                refNo: '',
+                letterDate: new Date().toISOString().slice(0,10),
+                place: settings.city || 'Mumbai',
+                staffID: (prefill && prefill.staffID) || '',
+                staffName: (prefill && prefill.staffName) || '',
+                aadharNo: (prefill && prefill.aadharNo) || '',
+                vessel: (prefill && prefill.vessel) || '',
+                port: (prefill && prefill.port) || '',
+                workDescription: (prefill && prefill.workDescription) || '',
+                projectID: (prefill && prefill.projectID) || '',
+                tools: [],
+                status: 'Issued',
+                returnedDate: '',
+            };
+            window._editingToolsLetter = JSON.parse(JSON.stringify(l));
+            _renderToolsLetterModal(!!existing);
+        }
+
+        function _renderToolsLetterModal(isEdit) {
+            const l = window._editingToolsLetter;
+            const staffForSel = (staff||[])
+                .filter(s => s.active !== false)
+                .sort((a,b) => (a.name||'').localeCompare(b.name||''));
+            const modalHtml = `
+                <div id="toolsLetterModal" class="modal show">
+                    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl m-4 max-h-[92vh] overflow-y-auto">
+                        <div class="bg-gradient-to-r from-teal-600 to-emerald-600 p-5 text-white flex justify-between items-center sticky top-0 z-10">
+                            <div>
+                                <h3 class="text-lg font-bold">🔧 ${isEdit?'Edit':'New'} Returnable Tools Letter</h3>
+                                <p class="text-xs opacity-80 mt-0.5">"To Whom So Ever It May Concern" — tools issued to a technician for a project trip</p>
+                            </div>
+                            <button onclick="closeToolsLetterModal()" class="text-white text-2xl font-bold leading-none">✕</button>
+                        </div>
+                        <div class="p-5 space-y-4">
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">Ref No. <span class="text-gray-400 font-normal">(auto if blank)</span></label>
+                                    <input type="text" id="rtRefNo" value="${(l.refNo||'').replace(/"/g,'&quot;')}" placeholder="Auto — IMSE/RT/FY/###" class="w-full px-3 py-2 border rounded-lg text-sm font-mono"/>
+                                    <p class="text-[10px] text-gray-400 mt-1">Leave blank to auto-generate; type a value to back-fill a historical letter.</p>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">Date <span class="text-red-500">*</span></label>
+                                    <input type="date" id="rtDate" value="${l.letterDate||''}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">Place</label>
+                                    <input type="text" id="rtPlace" value="${(l.place||'').replace(/"/g,'&quot;')}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">Technician <span class="text-red-500">*</span></label>
+                                    <select id="rtStaff" onchange="_rtOnStaffPicked()" class="w-full px-3 py-2 border rounded-lg text-sm">
+                                        <option value="">— Select technician —</option>
+                                        ${staffForSel.map(s => `<option value="${s.staffID}" ${s.staffID===l.staffID?'selected':''}>${(s.name||'').replace(/</g,'&lt;')}${s.empCode?' ('+s.empCode+')':''}</option>`).join('')}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">Aadhar No <span class="text-gray-400 font-normal">(auto-pulled from Staff record)</span></label>
+                                    <input type="text" id="rtAadhar" value="${(l.aadharNo||'').replace(/"/g,'&quot;')}" placeholder="e.g. 807065484073" class="w-full px-3 py-2 border rounded-lg text-sm font-mono"/>
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">Vessel <span class="text-red-500">*</span></label>
+                                    <input type="text" id="rtVessel" value="${(l.vessel||'').replace(/"/g,'&quot;')}" placeholder="e.g. SCI CHENNAI" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">Port <span class="text-red-500">*</span></label>
+                                    <input type="text" id="rtPort" value="${(l.port||'').replace(/"/g,'&quot;')}" placeholder="e.g. Kandla" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-600 mb-1">Work Description <span class="text-red-500">*</span></label>
+                                <textarea id="rtWork" rows="2" placeholder="e.g. Main Engine decarb & renewal of Liner seal ring work"
+                                    class="w-full px-3 py-2 border rounded-lg text-sm">${(l.workDescription||'').replace(/</g,'&lt;')}</textarea>
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">Status</label>
+                                    <select id="rtStatus" onchange="_rtOnStatusChange()" class="w-full px-3 py-2 border rounded-lg text-sm">
+                                        <option value="Issued"  ${(l.status||'Issued')==='Issued'?'selected':''}>Issued — with technician</option>
+                                        <option value="Partial" ${l.status==='Partial'?'selected':''}>Partial — some tools returned</option>
+                                        <option value="Returned" ${l.status==='Returned'?'selected':''}>Returned — all tools back</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-600 mb-1">Return Date <span class="text-gray-400 font-normal">(when applicable)</span></label>
+                                    <input type="date" id="rtReturnDate" value="${l.returnedDate||''}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                                </div>
+                            </div>
+                            <!-- Tools table -->
+                            <div class="bg-teal-50 border border-teal-200 rounded-xl p-4">
+                                <div class="flex items-center justify-between mb-2">
+                                    <p class="text-xs font-semibold text-teal-800">🧰 TOOLS ISSUED (returnable — must come back after project)</p>
+                                    <button onclick="_rtAddToolRow()" class="px-3 py-1 bg-teal-600 hover:bg-teal-700 text-white rounded text-xs font-semibold">+ Add Row</button>
+                                </div>
+                                <div id="rtToolsRows" class="space-y-2"></div>
+                            </div>
+                        </div>
+                        <div class="p-5 border-t border-gray-200 flex justify-end gap-3 sticky bottom-0 bg-white">
+                            <button onclick="closeToolsLetterModal()" class="px-5 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+                            ${isEdit?`<button onclick="generateToolsLetterPDF(_editingToolsLetter.letterID,true)" class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold">💾 Save & PDF</button>`:''}
+                            <button onclick="saveToolsLetter()" class="px-5 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-sm font-semibold">💾 Save</button>
+                        </div>
+                    </div>
+                </div>`;
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            _rtRenderToolRows();
+        }
+
+        function closeToolsLetterModal() {
+            document.getElementById('toolsLetterModal')?.remove();
+            window._editingToolsLetter = null;
+        }
+
+        function _rtRenderToolRows() {
+            const wrap = document.getElementById('rtToolsRows');
+            if (!wrap) return;
+            const rows = window._editingToolsLetter.tools || [];
+            if (rows.length === 0) {
+                wrap.innerHTML = `<p class="text-xs text-teal-400 italic text-center py-3">No tools added yet — click "+ Add Row".</p>`;
+                return;
+            }
+            const commonUnits = ['Nos', 'Sets', 'Kg', 'Meters', 'Litres', 'Pcs'];
+            wrap.innerHTML = rows.map((r,i) => `
+                <div class="flex items-start gap-2 bg-white p-2 rounded border border-teal-100">
+                    <div class="flex-shrink-0 w-8 pt-2 text-center text-xs font-mono font-semibold text-teal-700">${i+1}</div>
+                    <textarea rows="1" oninput="_rtUpdateRow(${i},'description',this.value)" placeholder="e.g. High pressure hose 2 Meter long"
+                        class="flex-1 px-2 py-1 border border-teal-200 rounded text-xs resize-y">${(r.description||'').replace(/</g,'&lt;')}</textarea>
+                    <input type="number" min="0" step="0.01" value="${r.qty||''}" oninput="_rtUpdateRow(${i},'qty',this.value)" placeholder="Qty"
+                        class="flex-shrink-0 w-20 px-2 py-1 border border-teal-200 rounded text-xs text-right"/>
+                    <input list="rtUnitsList" value="${(r.unit||'Nos').replace(/"/g,'&quot;')}" oninput="_rtUpdateRow(${i},'unit',this.value)" placeholder="Unit"
+                        class="flex-shrink-0 w-24 px-2 py-1 border border-teal-200 rounded text-xs"/>
+                    <div class="flex-shrink-0 flex flex-col gap-1">
+                        <button onclick="_rtMoveRow(${i},-1)" ${i===0?'disabled':''} title="Move up"
+                            class="w-7 h-6 bg-white border border-teal-200 rounded text-teal-600 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-teal-50 text-xs">↑</button>
+                        <button onclick="_rtMoveRow(${i},1)" ${i===rows.length-1?'disabled':''} title="Move down"
+                            class="w-7 h-6 bg-white border border-teal-200 rounded text-teal-600 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-teal-50 text-xs">↓</button>
+                    </div>
+                    <button onclick="_rtDeleteRow(${i})" title="Delete row"
+                        class="flex-shrink-0 w-7 h-7 mt-1 bg-red-50 border border-red-200 rounded text-red-600 hover:bg-red-100 text-xs">✕</button>
+                </div>
+            `).join('') + `<datalist id="rtUnitsList">${commonUnits.map(u=>`<option value="${u}">`).join('')}</datalist>`;
+        }
+
+        function _rtAddToolRow() {
+            window._editingToolsLetter.tools = window._editingToolsLetter.tools || [];
+            window._editingToolsLetter.tools.push({ description: '', qty: 1, unit: 'Nos' });
+            _rtRenderToolRows();
+        }
+        function _rtDeleteRow(i) { window._editingToolsLetter.tools.splice(i,1); _rtRenderToolRows(); }
+        function _rtMoveRow(i, dir) {
+            const arr = window._editingToolsLetter.tools;
+            const j = i + dir;
+            if (j < 0 || j >= arr.length) return;
+            [arr[i], arr[j]] = [arr[j], arr[i]];
+            _rtRenderToolRows();
+        }
+        function _rtUpdateRow(i, field, val) {
+            const row = window._editingToolsLetter.tools[i];
+            if (field === 'qty') row[field] = parseFloat(val) || 0;
+            else row[field] = val;
+        }
+        function _rtOnStaffPicked() {
+            const sid = document.getElementById('rtStaff').value;
+            const l = window._editingToolsLetter;
+            l.staffID = sid;
+            if (!sid) return;
+            const s = (staff||[]).find(x => x.staffID === sid);
+            if (s) {
+                l.staffName = s.name || '';
+                // Auto-fill Aadhar. Check a few known field names to be safe.
+                const aadhar = s.aadharNo || s.aadhar || s.aadhaar || '';
+                if (aadhar) {
+                    document.getElementById('rtAadhar').value = aadhar;
+                    l.aadharNo = aadhar;
+                }
+            }
+        }
+        function _rtOnStatusChange() {
+            const st = document.getElementById('rtStatus').value;
+            const rd = document.getElementById('rtReturnDate');
+            if (st === 'Returned' && !rd.value) rd.value = new Date().toISOString().slice(0,10);
+        }
+
+        async function saveToolsLetter() {
+            const l = window._editingToolsLetter;
+            const refNo   = document.getElementById('rtRefNo').value.trim();
+            const date    = document.getElementById('rtDate').value;
+            const place   = document.getElementById('rtPlace').value.trim();
+            const staffID = document.getElementById('rtStaff').value;
+            const aadhar  = document.getElementById('rtAadhar').value.trim();
+            const vessel  = document.getElementById('rtVessel').value.trim();
+            const port    = document.getElementById('rtPort').value.trim();
+            const work    = document.getElementById('rtWork').value.trim();
+            const status  = document.getElementById('rtStatus').value;
+            const returnedDate = document.getElementById('rtReturnDate').value;
+            if (!date)    { alert('Date is required'); return; }
+            if (!staffID) { alert('Please select the technician'); return; }
+            if (!vessel)  { alert('Vessel is required'); return; }
+            if (!port)    { alert('Port is required'); return; }
+            if (!work)    { alert('Work description is required'); return; }
+            const s = (staff||[]).find(x => x.staffID === staffID);
+            let finalRef = refNo, consumedAutoSeq = false;
+            if (!finalRef) {
+                finalRef = _nextToolsLetterRef(date);
+                consumedAutoSeq = true;
+            }
+            l.refNo           = finalRef;
+            l.letterDate      = date;
+            l.place           = place;
+            l.staffID         = staffID;
+            l.staffName       = s?.name || l.staffName || '';
+            l.aadharNo        = aadhar;
+            l.vessel          = vessel;
+            l.port            = port;
+            l.workDescription = work;
+            l.status          = status;
+            l.returnedDate    = returnedDate;
+            l.updatedAt       = new Date().toISOString();
+            l.updatedBy       = (typeof currentUser !== 'undefined' && currentUser?.name) || 'User';
+            l.tools = (l.tools||[]).filter(r => (r.description||'').trim());
+            const idx = (returnableToolsLetters||[]).findIndex(x => x.letterID === l.letterID);
+            if (idx >= 0) {
+                returnableToolsLetters[idx] = l;
+            } else {
+                l.createdAt = l.updatedAt;
+                l.createdBy = l.updatedBy;
+                returnableToolsLetters.push(l);
+            }
+            if (consumedAutoSeq) {
+                settings.toolsLetterNextNo = (parseInt(settings.toolsLetterNextNo,10) || 1) + 1;
+            }
+            try {
+                await saveData('returnableToolsLetters', returnableToolsLetters);
+                if (consumedAutoSeq) await saveData('settings', settings);
+                closeToolsLetterModal();
+                renderView();
+                _showToast('✓ Tools letter saved: ' + finalRef, '#0d9488', 4000);
+            } catch(e) { alert('Save failed: ' + e.message); }
+        }
+
+        async function deleteToolsLetter(letterID) {
+            const l = (returnableToolsLetters||[]).find(x => x.letterID === letterID);
+            if (!l) return;
+            if (!confirm(`Delete tools letter ${l.refNo}?\n\nThis cannot be undone. The Ref No won't be reused.`)) return;
+            returnableToolsLetters = returnableToolsLetters.filter(x => x.letterID !== letterID);
+            try {
+                await saveData('returnableToolsLetters', returnableToolsLetters);
+                renderView();
+                _showToast('🗑️ Tools letter deleted');
+            } catch(e) { alert('Delete failed: ' + e.message); }
+        }
+
+        // ── PDF: COVER LETTER ─────────────────────────────────────────
+        // Matches the sample template — logo top-left, Ref/Date/Place top-
+        // right, To: block, Dear Sir intro paragraph containing subject,
+        // numbered list (01., 02., …) with wrapping description per row,
+        // signatory footer. Automatic page break with header repeat.
+        async function generateCoverLetterPDF(letterID, saveFirst) {
+            if (saveFirst) await saveCoverLetter();
+            const l = (coverLetters||[]).find(x => x.letterID === letterID);
+            if (!l) { alert('Cover letter not found'); return; }
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+            const PW = 210, PH = 297;
+            const ML = 20, MR = 20;
+            const CW = PW - ML - MR;
+
+            // Attempt to embed the company logo (from settings.companyLogo, if uploaded).
+            const drawHeader = () => {
+                const logo = settings.companyLogo || '';
+                if (logo) {
+                    try { doc.addImage(logo, 'PNG', ML, 10, 35, 20); } catch(e) {}
+                } else {
+                    doc.setFontSize(22); doc.setFont('helvetica','bold'); doc.setTextColor(30,64,175);
+                    doc.text((settings.companyName||'IMSE').toUpperCase(), ML, 22);
+                    doc.setTextColor(0,0,0);
+                }
+                // Ref / Date / Place — top right
+                const rightX = PW - MR;
+                doc.setFontSize(10); doc.setFont('helvetica','normal'); doc.setTextColor(0,0,0);
+                doc.text('Ref No.:', rightX - 60, 20);
+                doc.text('Date:',    rightX - 60, 28);
+                doc.text('Place:',   rightX - 60, 34);
+                doc.setFont('helvetica','normal');
+                doc.text(l.refNo || '', rightX - 43, 20);
+                doc.text(_lettersFmtDate(l.letterDate), rightX - 43, 28);
+                doc.text(l.place || '',  rightX - 43, 34);
+                // Underline the ref no + date + place values
+                doc.setDrawColor(0,0,0);
+                doc.line(rightX - 43, 21, rightX - 2, 21);
+                doc.line(rightX - 43, 29, rightX - 2, 29);
+                doc.line(rightX - 43, 35, rightX - 2, 35);
+            };
+
+            drawHeader();
+            let y = 50;
+            // To: block
+            doc.setFontSize(10); doc.setFont('helvetica','normal'); doc.setTextColor(0,0,0);
+            doc.text('To,', ML, y); y += 6;
+            const addrLines = (l.partyName + '\n' + (l.partyAddress||'')).split(/\n+/).filter(Boolean);
+            addrLines.forEach(line => {
+                const wrapped = doc.splitTextToSize(line, CW - 10);
+                wrapped.forEach(w => { doc.text(w, ML + 8, y); y += 5; });
+            });
+            y += 5;
+            doc.text('Dear Sir,', ML, y); y += 8;
+            // Body intro paragraph
+            const intro = `Please find herewith summary of supporting documents attached for the ${l.subject || ''}`;
+            const introLines = doc.splitTextToSize(intro, CW - 12);
+            introLines.forEach(line => { doc.text(line, ML + 8, y); y += 5; });
+            y += 4;
+            // Numbered supporting-docs list
+            (l.supportingDocs||[]).forEach((row, i) => {
+                const num = String(i+1).padStart(2,'0') + '.';
+                const desc = (row.description||'').replace(/\r/g,'');
+                // Wrap the description. Indent all wrapped lines under the description
+                // start position (past the numeric prefix).
+                const wrapped = doc.splitTextToSize(desc, CW - 20);
+                if (y + wrapped.length * 5 > PH - 25) {
+                    doc.addPage();
+                    drawHeader();
+                    y = 50;
+                }
+                doc.text(num, ML + 4, y);
+                wrapped.forEach((w, k) => { doc.text(w, ML + 14, y); y += 5; });
+                y += 2;   // little gap between items
+            });
+            // Signatory footer — leave space if it doesn't fit, else add page.
+            if (y + 30 > PH - 15) { doc.addPage(); drawHeader(); y = 50; }
+            y += 10;
+            doc.setFontSize(10); doc.setFont('helvetica','normal');
+            doc.text('For ' + (settings.companyName||'IMSE Tech - Services Pvt Ltd'), ML, y);
+            y += 20;
+            doc.text('Authorized Signatory', ML, y);
+            doc.save('CoverLetter_' + (l.refNo||l.letterID).replace(/[^\w\-]/g,'_') + '.pdf');
+        }
+
+        // ── PDF: TOOLS LETTER ─────────────────────────────────────────
+        async function generateToolsLetterPDF(letterID, saveFirst) {
+            if (saveFirst) await saveToolsLetter();
+            const l = (returnableToolsLetters||[]).find(x => x.letterID === letterID);
+            if (!l) { alert('Tools letter not found'); return; }
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+            const PW = 210, PH = 297;
+            const ML = 20, MR = 20;
+            const CW = PW - ML - MR;
+
+            // Logo top-left
+            const logo = settings.companyLogo || '';
+            if (logo) {
+                try { doc.addImage(logo, 'PNG', ML, 10, 35, 20); } catch(e) {}
+            } else {
+                doc.setFontSize(22); doc.setFont('helvetica','bold'); doc.setTextColor(30,64,175);
+                doc.text((settings.companyName||'IMSE').toUpperCase(), ML, 22);
+                doc.setTextColor(0,0,0);
+            }
+            // Date / Place top-right
+            const rightX = PW - MR;
+            doc.setFontSize(10); doc.setFont('helvetica','normal'); doc.setTextColor(0,0,0);
+            doc.text('Date:-',  rightX - 45, 20);
+            doc.text('Place:-', rightX - 45, 28);
+            doc.text(_lettersFmtDate(l.letterDate), rightX - 25, 20);
+            doc.text(l.place || '', rightX - 25, 28);
+            // Ref No — optional, subtle (sample doesn't show one but keeps traceability)
+            if (l.refNo) {
+                doc.setFontSize(8); doc.setTextColor(120,120,120);
+                doc.text('Ref: ' + l.refNo, ML, 32);
+                doc.setTextColor(0,0,0);
+            }
+            // Heading
+            doc.setFontSize(15); doc.setFont('helvetica','bold');
+            const heading = 'TO WHOM SO EVER IT MAY CONCERN';
+            doc.text(heading, PW/2, 55, { align: 'center' });
+            // Underline
+            const hw = doc.getTextWidth(heading);
+            doc.setLineWidth(0.4);
+            doc.line((PW - hw)/2, 57, (PW + hw)/2, 57);
+            // Body
+            let y = 68;
+            doc.setFontSize(10); doc.setFont('helvetica','normal');
+            const body = `This is to confirm that we have engaged ${l.staffName || '_____'}, Aadhar no: ${l.aadharNo || '_____'} to carryout ${l.workDescription || 'repair work'} on board vessel ${l.vessel || '_____'} at ${l.port || '_____'} port. He will be hand carrying the below mentioned RETURNABLE TOOLS, we confirm that these tools are not for sale or re sale. After completion of work all tools will be returned back to our works.`;
+            const bodyLines = doc.splitTextToSize(body, CW);
+            bodyLines.forEach(line => { doc.text(line, ML, y); y += 5; });
+            y += 3;
+            doc.text('Details of Tools and Machine as follows.', ML, y); y += 8;
+            // Tools table via autoTable
+            const rows = (l.tools||[]).map((r,i) => [
+                String(i+1),
+                r.description || '',
+                r.qty !== undefined && r.qty !== '' ? String(r.qty) : '',
+                r.unit || ''
+            ]);
+            // Pad to at least 8 rows (matches sample's empty trailing rows for manual annotation)
+            while (rows.length < 8) rows.push(['', '', '', '']);
+            doc.autoTable({
+                startY: y, margin: { left: ML, right: MR }, theme: 'grid',
+                styles: { fontSize: 10, cellPadding: 2.5, textColor: [0,0,0], lineColor: [0,0,0], lineWidth: 0.2 },
+                headStyles: { fillColor: [240,240,240], textColor: [0,0,0], halign: 'center', fontStyle: 'bold' },
+                head: [['S.No', 'Description', 'Qty', 'Unit']],
+                body: rows,
+                columnStyles: {
+                    0: { cellWidth: 18, halign: 'center' },
+                    1: { cellWidth: CW - 18 - 22 - 22 },
+                    2: { cellWidth: 22, halign: 'center' },
+                    3: { cellWidth: 22, halign: 'center' }
+                }
+            });
+            y = doc.lastAutoTable.finalY + 15;
+            // Signatory block
+            if (y > PH - 40) { doc.addPage(); y = 30; }
+            doc.setFontSize(11); doc.setFont('helvetica','bold');
+            doc.text('For ' + (settings.companyName||'IMSE Tech - Services Pvt Ltd'), ML, y);
+            y += 25;
+            doc.setFont('helvetica','normal'); doc.setFontSize(10);
+            doc.text('Authorised Signatory', ML, y);
+            doc.save('ToolsLetter_' + (l.refNo||l.letterID).replace(/[^\w\-]/g,'_') + '.pdf');
+        }
+
+        // ── Numbering modal — set starting number for each series ──
+        // Used when letters were issued on paper before the app rolled out;
+        // sets the "next number" that auto-generation will consume for the
+        // very next letter. E.g. paper letters up through CL008 → set to 9
+        // and the first in-app cover letter becomes CL009.
+        function openLettersNumberingModal() {
+            const existing = document.getElementById('lettersNumberingModal');
+            if (existing) existing.remove();
+            const coverNext = parseInt(settings.coverLetterNextNo, 10) || 1;
+            const toolsNext = parseInt(settings.toolsLetterNextNo, 10) || 1;
+            // What ref would the NEXT auto-gen produce right now? Preview so
+            // the user can eyeball whether the setting is right.
+            const today = new Date().toISOString().slice(0, 10);
+            const coverPreview = `IMSE/<code>/${_lettersFYLabel(today)}/CL${String(coverNext).padStart(3, '0')}`;
+            const toolsPreview = `IMSE/RT/${_lettersFYLabel(today)}/${String(toolsNext).padStart(3, '0')}`;
+            const modal = document.createElement('div');
+            modal.id = 'lettersNumberingModal';
+            modal.className = 'modal show';
+            modal.style.zIndex = '15000';
+            modal.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full m-4">
+                <div class="bg-gray-800 text-white p-4 rounded-t-2xl flex justify-between items-center">
+                    <h3 class="text-lg font-bold">🔢 Letters Numbering</h3>
+                    <button onclick="document.getElementById('lettersNumberingModal').remove()" class="text-white text-2xl leading-none">✕</button>
+                </div>
+                <div class="p-5 space-y-5">
+                    <p class="text-xs text-gray-500">
+                        Set the next number the app should use for auto-generated Ref Nos.
+                        Useful when letters were issued on paper before the app rolled out —
+                        set the counter to <em>your last paper number + 1</em> so the app picks
+                        up the series cleanly. You can also override the Ref No on any
+                        individual letter (leave the modal's Ref No field blank to auto-gen,
+                        or type an explicit ref to back-fill a historical letter).
+                    </p>
+                    <div>
+                        <label class="block text-sm font-semibold mb-1">Cover Letter — Next Number</label>
+                        <input type="number" id="_setCoverNextNo" value="${coverNext}" min="1" step="1" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        <p class="text-[11px] text-gray-500 mt-1">Next auto-gen ref: <code class="bg-gray-100 px-1 py-0.5 rounded">${coverPreview}</code></p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold mb-1">Tools Letter — Next Number</label>
+                        <input type="number" id="_setToolsNextNo" value="${toolsNext}" min="1" step="1" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        <p class="text-[11px] text-gray-500 mt-1">Next auto-gen ref: <code class="bg-gray-100 px-1 py-0.5 rounded">${toolsPreview}</code></p>
+                    </div>
+                </div>
+                <div class="p-4 border-t flex justify-end gap-2">
+                    <button onclick="document.getElementById('lettersNumberingModal').remove()" class="px-4 py-2 border rounded-lg text-sm">Cancel</button>
+                    <button onclick="_saveLettersNumbering()" class="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold">💾 Save</button>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+        }
+
+        async function _saveLettersNumbering() {
+            const coverN = parseInt(document.getElementById('_setCoverNextNo').value, 10);
+            const toolsN = parseInt(document.getElementById('_setToolsNextNo').value, 10);
+            if (!coverN || coverN < 1 || !toolsN || toolsN < 1) {
+                alert('Both counters must be positive numbers.');
+                return;
+            }
+            settings.coverLetterNextNo = coverN;
+            settings.toolsLetterNextNo = toolsN;
+            try {
+                await saveData('settings', settings);
+                document.getElementById('lettersNumberingModal')?.remove();
+                renderView();
+                _showToast('✓ Numbering saved', '#4f46e5', 3000);
+            } catch(e) { alert('Save failed: ' + e.message); }
+        }
+
+        // ────────────────────────────────────────────────────────────
+        // End Letters module
+        // ────────────────────────────────────────────────────────────
+
 
         function viewPCAttachments(txnID) {
             const t = (pettyCashTransactions || []).find(x => x.txnID === txnID);
