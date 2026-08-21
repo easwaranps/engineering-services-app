@@ -13650,8 +13650,412 @@
                         class="inline-block px-1.5 py-0.5 text-[10px] font-bold rounded border ${caOK?'bg-green-50 border-green-200 text-green-700':'bg-transparent border-transparent text-gray-400'}">
                         ${caOK?'✓✓ CA':'—'}
                     </span>`;
-            return `<div class="flex flex-col gap-0.5 items-stretch">${officeCell}${caCell}</div>`;
+            // Query button + status — see _taxAuditQueryCell for state machine
+            const queryCell = _taxAuditQueryCell(e, sourceType, safeId, canVerify);
+            return `<div class="flex flex-col gap-0.5 items-stretch">${officeCell}${caCell}${queryCell}</div>`;
         }
+
+        // ═════════════════════════════════════════════════════════════════
+        // AUDIT QUERY / CORRECTION WORKFLOW — maker-checker back-and-forth
+        //
+        // Purpose: let the auditor (verifier / CA) raise a written query on
+        // a specific TDS or GST record when they spot something to fix,
+        // instead of just refusing to Verify silently. The maker (regular
+        // user) sees the query on their next login, corrects the underlying
+        // record, ticks "Corrected" with an optional note, and the auditor
+        // then reviews and Verifies (or re-opens the query).
+        //
+        // Data model added to each expense/txn/dir-expense record:
+        //   taxAuditQuery: { text, raisedBy, raisedAt }
+        //   taxAuditCorrection: { correctionMade, correctedBy, correctedAt, correctionNote }
+        //   taxAuditHistory: [ { round, query, correction, verifiedAt, verifiedBy } ]
+        //     ↑ frozen snapshot of each completed round of Q&A. Every fresh
+        //       verification (or clearing) pushes the current query+correction
+        //       pair onto this history array so the audit trail survives
+        //       across multiple rounds.
+        //
+        // States rendered by _taxAuditQueryCell:
+        //   1. No query, not verified          → "📝 Raise Query" button (auditor)
+        //   2. No query, verified              → nothing (row is clean)
+        //   3. Query, not corrected            → amber badge + "✓ Correct" button (maker)
+        //   4. Query, corrected                → green badge + "🔍 Review" button (auditor)
+        // ═════════════════════════════════════════════════════════════════
+
+        function _taxAuditQueryCell(e, sourceType, safeId, canVerify) {
+            const q = e.taxAuditQuery;
+            const c = e.taxAuditCorrection;
+            const hasQuery = q && q.text;
+            const isCorrected = hasQuery && c && c.correctionMade;
+            const officeOK = !!e.taxOfficeVerified;
+
+            // State 2 — nothing raised and already verified: keep row clean
+            if (!hasQuery && officeOK) return '';
+
+            // State 1 — no query, not verified: show "Raise Query" nudge for auditor
+            if (!hasQuery) {
+                if (!canVerify) return '';   // only auditors initiate queries
+                return `<button onclick="openTaxAuditQueryModal('${safeId}','${sourceType}')"
+                        title="Ask the maker to correct something before you Verify. They'll see the query on their next login."
+                        class="px-1.5 py-0.5 text-[10px] font-bold rounded border bg-gray-50 border-gray-300 text-gray-500 hover:bg-amber-50 hover:border-amber-300 hover:text-amber-700">
+                        📝 Query
+                    </button>`;
+            }
+
+            // State 3 — query open, not corrected: amber badge + Correct button
+            if (!isCorrected) {
+                const qTruncated = q.text.length > 60 ? q.text.substring(0,57)+'…' : q.text;
+                const rBy   = q.raisedBy   || '—';
+                const rDate = (q.raisedAt||'').substring(0,10);
+                return `<button onclick="openTaxAuditQueryModal('${safeId}','${sourceType}')"
+                        title="Query from ${rBy} on ${rDate}: ${q.text.replace(/"/g,'&quot;')}"
+                        class="px-1.5 py-0.5 text-[10px] font-semibold rounded border text-left bg-amber-100 border-amber-400 text-amber-900 hover:bg-amber-200"
+                        style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                        ⚠ Query: ${qTruncated.replace(/</g,'&lt;')}
+                    </button>`;
+            }
+
+            // State 4 — corrected, awaiting auditor review
+            const cBy   = c.correctedBy || '—';
+            const cDate = (c.correctedAt||'').substring(0,10);
+            const noteHint = c.correctionNote ? ('\nNote: ' + c.correctionNote) : '';
+            return `<button onclick="openTaxAuditQueryModal('${safeId}','${sourceType}')"
+                    title="Corrected by ${cBy} on ${cDate}${noteHint.replace(/"/g,'&quot;')}\n\nClick to review and Verify."
+                    class="px-1.5 py-0.5 text-[10px] font-bold rounded border bg-blue-100 border-blue-400 text-blue-900 hover:bg-blue-200">
+                    ✓ Corrected — review
+                </button>`;
+        }
+
+        // ═════════════════════════════════════════════════════════════════
+        //  Audit-Query Modal — the workflow surface for _taxAuditQueryCell
+        // ─────────────────────────────────────────────────────────────────
+        //  Shared modal for all three sourceTypes (expense / directorExpense /
+        //  projectItem — same shape as verifyRecord). Renders one of three UIs
+        //  based on the current query/correction state so both auditor and
+        //  maker use the same entry point:
+        //
+        //   • State 1  no query yet          → Textarea + "📝 Raise Query"
+        //                                       (auditor-only view; the button
+        //                                       to open this state is only
+        //                                       rendered when canVerify=true)
+        //   • State 3  query open, uncorrected
+        //                → Show query (read-only) + correction-note textarea
+        //                  + "✓ Mark as Corrected"  (maker action)
+        //                + "🗑 Withdraw Query"      (auditor action)
+        //   • State 4  corrected, awaiting review
+        //                → Show query + correction (read-only)
+        //                + "✓ Verify & Close"       (auditor action —
+        //                   archives the round to taxAuditHistory and stamps
+        //                   verified=true so the row goes green)
+        //                + "↻ Re-open Query"        (auditor action — clears
+        //                   the correction so maker can try again)
+        //                + "📎 Add note"            (either party — appends
+        //                   to correctionNote so a back-and-forth thread
+        //                   builds up within the current round)
+        //
+        //  History: every Verify & Close pushes the current round onto
+        //  taxAuditHistory[] before clearing, so multi-round Q&A threads
+        //  are auditable forever.
+        // ═════════════════════════════════════════════════════════════════
+
+        // Locate the target record across the three tax-eligible collections.
+        // Returns { rec, save } — save() persists the parent collection back
+        // to Drive. Returns null on lookup failure.
+        function _findTaxRecord(safeId, sourceType) {
+            if (sourceType === 'expense') {
+                const rec = (expenses||[]).find(e => e.expID === safeId);
+                if (!rec) return null;
+                return { rec, save: () => saveData('expenses', expenses),
+                         collectionLabel: 'Expenses', concurKey: 'expenses',
+                         concurArgs: [{ id: safeId, idKey: 'expID' }] };
+            }
+            if (sourceType === 'directorExpense') {
+                const rec = (directorExpenses||[]).find(d => d.deID === safeId);
+                if (!rec) return null;
+                return { rec, save: () => saveData('directorExpenses', directorExpenses),
+                         collectionLabel: 'Director Expenses', concurKey: 'directorExpenses',
+                         concurArgs: [{ id: safeId, idKey: 'deID' }] };
+            }
+            if (sourceType === 'projectItem') {
+                // safeId here is "projID::itemID" — same convention used by
+                // the verify button on project rows.
+                const [projID, itemID] = String(safeId).split('::');
+                const proj = (projectExpenses||[]).find(p => p.projExpID === projID);
+                if (!proj) return null;
+                const rec = (proj.items||[]).find(i => i.itemID === itemID);
+                if (!rec) return null;
+                return { rec, save: () => saveData('projectExpenses', projectExpenses),
+                         collectionLabel: 'Project Items', concurKey: 'projectExpenses',
+                         concurArgs: [{ id: projID, idKey: 'projExpID' },
+                                       { id: itemID, idKey: 'itemID', container: 'items' }] };
+            }
+            return null;
+        }
+
+        function _closeTaxAuditModal() {
+            document.getElementById('taxAuditQueryModal')?.remove();
+        }
+
+        function openTaxAuditQueryModal(safeId, sourceType) {
+            const ctx = _findTaxRecord(safeId, sourceType);
+            if (!ctx) { alert('Record not found — it may have been deleted or you may need to refresh.'); return; }
+            const e = ctx.rec;
+            const q = e.taxAuditQuery;
+            const c = e.taxAuditCorrection;
+            const hasQuery = q && q.text;
+            const isCorrected = hasQuery && c && c.correctionMade;
+            const canVerify = _canUserVerify(e);           // reuse existing perm gate
+            const history = e.taxAuditHistory || [];
+
+            // Shared header + record identifier
+            const idLabel = sourceType === 'expense' ? (e.billLogRefNo || e.expID)
+                          : sourceType === 'directorExpense' ? (e.deID)
+                          : safeId;
+            const descLabel = (e.description || e.vendorName || e.staffName || e.expenseType || '—').substring(0, 80);
+
+            // ── Build the body based on state ──
+            let bodyHtml = '';
+            let footerActions = '';
+
+            if (!hasQuery) {
+                // State 1 — Auditor raising a fresh query
+                if (!canVerify) {
+                    bodyHtml = `<div class="p-6 text-center text-gray-500">
+                        <p class="text-sm">No query has been raised on this entry.</p>
+                        <p class="text-xs mt-2 text-gray-400">Only reviewers (auditor role) can raise queries.</p>
+                    </div>`;
+                    footerActions = `<button onclick="_closeTaxAuditModal()" class="px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50">Close</button>`;
+                } else {
+                    bodyHtml = `
+                    <div class="p-5 space-y-3">
+                        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Raise a query</div>
+                        <p class="text-sm text-gray-600">Ask the maker to correct something before you Verify. They'll see the query on their next login and either mark it as corrected (with an optional note) or you can withdraw it.</p>
+                        <textarea id="_taqText" rows="4" placeholder="e.g. PAN number seems wrong — please verify against the vendor's invoice"
+                            class="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-amber-400 focus:border-amber-400"></textarea>
+                    </div>`;
+                    footerActions = `
+                        <button onclick="_closeTaxAuditModal()" class="px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+                        <button onclick="_saveTaxAuditQuery('${safeId}','${sourceType}')"
+                            class="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-sm font-semibold">
+                            📝 Raise Query
+                        </button>`;
+                }
+            } else if (!isCorrected) {
+                // State 3 — Query open, awaiting user correction
+                const rBy = q.raisedBy || '—';
+                const rDate = (q.raisedAt || '').substring(0, 16).replace('T', ' ');
+                bodyHtml = `
+                <div class="p-5 space-y-4">
+                    <div class="bg-amber-50 border-l-4 border-amber-500 rounded p-3">
+                        <div class="text-[10px] font-bold text-amber-800 uppercase tracking-wide mb-1">Query raised by ${rBy.replace(/</g,'&lt;')} · ${rDate}</div>
+                        <div class="text-sm text-amber-900 whitespace-pre-wrap">${(q.text||'').replace(/</g,'&lt;')}</div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1">Your correction note <span class="text-gray-400 font-normal">(optional — describe what you fixed)</span></label>
+                        <textarea id="_taqCorrNote" rows="3" placeholder="e.g. Corrected PAN to AAACX0892J as per the vendor's KYC document"
+                            class="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-green-400 focus:border-green-400"></textarea>
+                        <p class="text-[10px] text-gray-400 mt-1">Fix the underlying record first (Edit the ${sourceType==='expense'?'expense':sourceType==='directorExpense'?'director expense':'project item'}), then come back here and click "Mark as Corrected".</p>
+                    </div>
+                </div>`;
+                const withdrawBtn = canVerify
+                    ? `<button onclick="_withdrawTaxAuditQuery('${safeId}','${sourceType}')"
+                        class="px-3 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-sm">
+                        🗑 Withdraw Query
+                    </button>` : '';
+                footerActions = `
+                    ${withdrawBtn}
+                    <button onclick="_closeTaxAuditModal()" class="px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50">Close</button>
+                    <button onclick="_saveTaxCorrection('${safeId}','${sourceType}')"
+                        class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-semibold">
+                        ✓ Mark as Corrected
+                    </button>`;
+            } else {
+                // State 4 — Corrected, awaiting auditor review
+                const rBy = q.raisedBy || '—';
+                const rDate = (q.raisedAt || '').substring(0, 16).replace('T', ' ');
+                const cBy = c.correctedBy || '—';
+                const cDate = (c.correctedAt || '').substring(0, 16).replace('T', ' ');
+                bodyHtml = `
+                <div class="p-5 space-y-3">
+                    <div class="bg-amber-50 border-l-4 border-amber-500 rounded p-3">
+                        <div class="text-[10px] font-bold text-amber-800 uppercase tracking-wide mb-1">Query · ${rBy.replace(/</g,'&lt;')} · ${rDate}</div>
+                        <div class="text-sm text-amber-900 whitespace-pre-wrap">${(q.text||'').replace(/</g,'&lt;')}</div>
+                    </div>
+                    <div class="bg-green-50 border-l-4 border-green-500 rounded p-3">
+                        <div class="text-[10px] font-bold text-green-800 uppercase tracking-wide mb-1">Correction · ${cBy.replace(/</g,'&lt;')} · ${cDate}</div>
+                        <div class="text-sm text-green-900 whitespace-pre-wrap">${c.correctionNote?c.correctionNote.replace(/</g,'&lt;'):'<em class="text-green-700">(marked as corrected — no note added)</em>'}</div>
+                    </div>
+                </div>`;
+                const auditorBtns = canVerify
+                    ? `<button onclick="_reopenTaxAuditQuery('${safeId}','${sourceType}')"
+                        class="px-3 py-2 bg-amber-100 hover:bg-amber-200 text-amber-800 rounded-lg text-sm">
+                        ↻ Re-open Query
+                       </button>
+                       <button onclick="_verifyAndCloseTaxQuery('${safeId}','${sourceType}')"
+                        class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold">
+                        ✓ Verify & Close
+                       </button>` : '';
+                footerActions = `
+                    <button onclick="_closeTaxAuditModal()" class="px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50">Close</button>
+                    ${auditorBtns}`;
+            }
+
+            // History block — shows completed rounds if any
+            const histHtml = (history.length > 0) ? `
+                <div class="border-t border-gray-200 mt-4 pt-3 px-5 pb-4">
+                    <details class="text-xs">
+                        <summary class="cursor-pointer font-semibold text-gray-500 hover:text-gray-700">📚 Audit history · ${history.length} previous round(s)</summary>
+                        <div class="mt-2 space-y-2">
+                            ${history.map((h, i) => `
+                                <div class="bg-gray-50 rounded p-2 border border-gray-200">
+                                    <div class="text-[10px] font-bold text-gray-500 uppercase mb-1">Round ${h.round||i+1} · closed ${(h.verifiedAt||'').substring(0,10)} by ${h.verifiedBy||'—'}</div>
+                                    ${h.query ? `<div class="text-[11px] text-amber-800 mb-1"><b>Q:</b> ${(h.query.text||'').replace(/</g,'&lt;')}</div>` : ''}
+                                    ${h.correction ? `<div class="text-[11px] text-green-800"><b>A:</b> ${h.correction.correctionNote?h.correction.correctionNote.replace(/</g,'&lt;'):'<em>marked corrected without note</em>'}</div>` : ''}
+                                </div>
+                            `).join('')}
+                        </div>
+                    </details>
+                </div>` : '';
+
+            const html = `
+            <div id="taxAuditQueryModal" class="modal show" style="z-index:9500">
+                <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl m-4 max-h-[92vh] overflow-y-auto">
+                    <div class="bg-gradient-to-r from-amber-600 to-orange-600 p-4 text-white flex justify-between items-center sticky top-0 z-10">
+                        <div class="min-w-0">
+                            <h3 class="text-base font-bold">🔍 Audit Query</h3>
+                            <p class="text-xs opacity-80 mt-0.5 truncate">${ctx.collectionLabel} · ${(idLabel||'').replace(/</g,'&lt;')} · ${descLabel.replace(/</g,'&lt;')}</p>
+                        </div>
+                        <button onclick="_closeTaxAuditModal()" class="text-white text-2xl font-bold leading-none flex-shrink-0 ml-3">✕</button>
+                    </div>
+                    ${bodyHtml}
+                    ${histHtml}
+                    <div class="border-t border-gray-200 p-4 bg-gray-50 flex justify-end gap-2 flex-wrap sticky bottom-0">
+                        ${footerActions}
+                    </div>
+                </div>
+            </div>`;
+            document.body.insertAdjacentHTML('beforeend', html);
+        }
+
+        // Helper — return true if the current user can act as verifier
+        // (mirrors the check inside _renderVerifyButton but exposed by name
+        // so the audit-query modal can use it without duplicating logic).
+        function _canUserVerify(rec) {
+            const v = _verifyState(rec);
+            return !(v.isOwnRecord && !v.canSelfVerify);
+        }
+
+        async function _saveTaxAuditQuery(safeId, sourceType) {
+            const ctx = _findTaxRecord(safeId, sourceType);
+            if (!ctx) return;
+            const text = (document.getElementById('_taqText')?.value || '').trim();
+            if (!text) { alert('Query text is required — describe what needs correcting.'); return; }
+            if (await _concurBlockIfStale(ctx.concurKey, ctx.concurArgs)) return;
+            ctx.rec.taxAuditQuery = {
+                text,
+                raisedBy: _currentVerifier(),
+                raisedAt: new Date().toISOString()
+            };
+            // Clear any stale correction from a prior round that never made it
+            // to Verify & Close — safer than leaving mismatched state around.
+            delete ctx.rec.taxAuditCorrection;
+            _stampRecord(ctx.rec);
+            try {
+                await ctx.save();
+                _closeTaxAuditModal();
+                renderView();
+                _showToast('📝 Query raised — maker will see it on their next login');
+            } catch(err) { alert('Save failed: ' + (err.message || 'try again')); }
+        }
+
+        async function _saveTaxCorrection(safeId, sourceType) {
+            const ctx = _findTaxRecord(safeId, sourceType);
+            if (!ctx || !ctx.rec.taxAuditQuery) return;
+            const note = (document.getElementById('_taqCorrNote')?.value || '').trim();
+            if (await _concurBlockIfStale(ctx.concurKey, ctx.concurArgs)) return;
+            ctx.rec.taxAuditCorrection = {
+                correctionMade: true,
+                correctionNote: note,
+                correctedBy: currentUser?.name || currentUser?.email || 'User',
+                correctedAt: new Date().toISOString()
+            };
+            _stampRecord(ctx.rec);
+            try {
+                await ctx.save();
+                _closeTaxAuditModal();
+                renderView();
+                _showToast('✓ Marked as corrected — auditor will review');
+            } catch(err) { alert('Save failed: ' + (err.message || 'try again')); }
+        }
+
+        async function _withdrawTaxAuditQuery(safeId, sourceType) {
+            if (!confirm('Withdraw this query? The maker will no longer see it. Nothing is added to history — use this when the query was raised in error.')) return;
+            const ctx = _findTaxRecord(safeId, sourceType);
+            if (!ctx) return;
+            if (await _concurBlockIfStale(ctx.concurKey, ctx.concurArgs)) return;
+            delete ctx.rec.taxAuditQuery;
+            delete ctx.rec.taxAuditCorrection;
+            _stampRecord(ctx.rec);
+            try {
+                await ctx.save();
+                _closeTaxAuditModal();
+                renderView();
+                _showToast('🗑 Query withdrawn');
+            } catch(err) { alert('Save failed: ' + (err.message || 'try again')); }
+        }
+
+        async function _reopenTaxAuditQuery(safeId, sourceType) {
+            if (!confirm('Re-open the query? The correction is cleared and the maker is asked to try again. The original query text remains.')) return;
+            const ctx = _findTaxRecord(safeId, sourceType);
+            if (!ctx) return;
+            if (await _concurBlockIfStale(ctx.concurKey, ctx.concurArgs)) return;
+            delete ctx.rec.taxAuditCorrection;
+            _stampRecord(ctx.rec);
+            try {
+                await ctx.save();
+                _closeTaxAuditModal();
+                renderView();
+                _showToast('↻ Query re-opened — maker will see it again');
+            } catch(err) { alert('Save failed: ' + (err.message || 'try again')); }
+        }
+
+        // Auditor's "Verify & Close" — archives the round to history and
+        // stamps the record verified. Same downstream effect as verifyRecord
+        // but here we also snapshot the Q&A so the audit trail survives.
+        async function _verifyAndCloseTaxQuery(safeId, sourceType) {
+            const ctx = _findTaxRecord(safeId, sourceType);
+            if (!ctx || !ctx.rec.taxAuditQuery) return;
+            const rec = ctx.rec;
+            const v = _verifyState(rec);
+            if (v.isOwnRecord && !v.canSelfVerify) {
+                alert('Self-verification is disabled — a different user must Verify.');
+                return;
+            }
+            const note = window.prompt('Optional verification note (press OK to confirm, Cancel to abort):', '');
+            if (note === null) return;
+            if (await _concurBlockIfStale(ctx.concurKey, ctx.concurArgs)) return;
+            // Snapshot the round
+            rec.taxAuditHistory = rec.taxAuditHistory || [];
+            rec.taxAuditHistory.push({
+                round: rec.taxAuditHistory.length + 1,
+                query: rec.taxAuditQuery,
+                correction: rec.taxAuditCorrection || null,
+                verifiedAt: new Date().toISOString(),
+                verifiedBy: _currentVerifier()
+            });
+            delete rec.taxAuditQuery;
+            delete rec.taxAuditCorrection;
+            // Apply the verification stamp using the shared helper so the row
+            // goes green in the same way as a plain Verify.
+            _applyVerifyStamp(rec, (note||'').trim());
+            _stampRecord(rec);
+            try {
+                await ctx.save();
+                _closeTaxAuditModal();
+                renderView();
+                _showToast('✓ Verified & closed — round archived to history');
+            } catch(err) { alert('Save failed: ' + (err.message || 'try again')); }
+        }
+
 
         function buildTaxDashboard(month, year) {
             const d   = getTaxPeriodData(month, year);
