@@ -33657,17 +33657,22 @@ Automated WFH alert — ${company} Attendance System.`;
         function _findPartyByInvoiceName(invPartyName) {
             if (!invPartyName) return null;
             const parties_ = parties || [];
+            // Party record schema uses `partyName` (not `name`) and `partyType`
+            // (not `type`) — using the wrong keys caused this whole matcher
+            // to return null every time even for perfect literal matches, and
+            // the dropdown rendered blank labels because `p.name` was undefined.
+            const nameOf = p => p.partyName || p.name || '';
             // 1. Exact literal match (fast path — most invoices link cleanly)
-            let hit = parties_.find(p => p.name === invPartyName);
+            let hit = parties_.find(p => nameOf(p) === invPartyName);
             if (hit) return hit;
             // 2. Case + whitespace-insensitive match
             const raw = invPartyName.trim().toUpperCase().replace(/\s+/g, ' ');
-            hit = parties_.find(p => (p.name||'').trim().toUpperCase().replace(/\s+/g,' ') === raw);
+            hit = parties_.find(p => nameOf(p).trim().toUpperCase().replace(/\s+/g,' ') === raw);
             if (hit) return hit;
             // 3. Normalised match (strips LTD/LIMITED/PVT/M/s./punctuation)
             const norm = _normalizePartyName(invPartyName);
             if (!norm) return null;
-            hit = parties_.find(p => _normalizePartyName(p.name) === norm);
+            hit = parties_.find(p => _normalizePartyName(nameOf(p)) === norm);
             return hit || null;
         }
 
@@ -33874,8 +33879,8 @@ Automated WFH alert — ${company} Attendance System.`;
                     // prefix, whitespace/punctuation differences.
                     const p = _findPartyByInvoiceName(invPartyName);
                     if (p) {
-                        l.partyID = p.id || p.partyID;
-                        l.partyName = p.name || '';
+                        l.partyID = p.partyID || p.id;
+                        l.partyName = p.partyName || p.name || '';
                         l.partyAddress = l.partyAddress || p.address || p.billingAddress || '';
                     } else if (invPartyName) {
                         // No party match — still capture the name so PDF has
@@ -33887,8 +33892,16 @@ Automated WFH alert — ${company} Attendance System.`;
                 }
             }
             const partiesForSel = (parties||[])
-                .filter(p => p.type === 'Client' || p.type === 'Both' || !p.type)
-                .sort((a,b) => (a.name||'').localeCompare(b.name||''));
+                // Party record uses `partyType` (Client / Vendor / Both /
+                // Staff / Bank). Also honour the legacy `type` field just in
+                // case old records use it. Empty/missing type still shows
+                // (better false-positive than false-negative — user can pick
+                // any party even if type isn't set).
+                .filter(p => {
+                    const t = p.partyType || p.type || '';
+                    return t === 'Client' || t === 'Both' || !t;
+                })
+                .sort((a,b) => (a.partyName||a.name||'').localeCompare(b.partyName||b.name||''));
             // Field name is `txnCategory` — earlier `t.type/t.category` matched
             // zero records, leaving the dropdown empty and any prefill invoiceID
             // never appearing as a selectable option.
@@ -33945,9 +33958,10 @@ Automated WFH alert — ${company} Attendance System.`;
                                     <select id="clParty" onchange="_clOnPartyPicked()" class="w-full px-3 py-2 border rounded-lg text-sm">
                                         <option value="">— Select client —</option>
                                         ${partiesForSel.map(p => {
-                                            const pid = p.id || p.partyID;
+                                            const pid = p.partyID || p.id;
+                                            const nm  = p.partyName || p.name || '(unnamed)';
                                             const code = p.clientCode ? ` [${p.clientCode}]` : '';
-                                            return `<option value="${pid}" ${pid===l.partyID?'selected':''}>${(p.name||'').replace(/</g,'&lt;')}${code}</option>`;
+                                            return `<option value="${pid}" ${pid===l.partyID?'selected':''}>${nm.replace(/</g,'&lt;')}${code}</option>`;
                                         }).join('')}
                                     </select>
                                     <p id="clPartyCodeHint" class="text-[10px] mt-1"></p>
@@ -34047,10 +34061,10 @@ Automated WFH alert — ${company} Attendance System.`;
             const partyName = inv.clientName || inv.partyName;
             const partyByName = _findPartyByInvoiceName(partyName);
             if (partyByName) {
-                const pid = partyByName.id || partyByName.partyID;
+                const pid = partyByName.partyID || partyByName.id;
                 document.getElementById('clParty').value = pid;
                 l.partyID = pid;
-                l.partyName = partyByName.name;
+                l.partyName = partyByName.partyName || partyByName.name || '';
                 document.getElementById('clPartyAddress').value = partyByName.address || partyByName.billingAddress || '';
                 l.partyAddress = document.getElementById('clPartyAddress').value;
             } else if (partyName) {
@@ -34080,9 +34094,9 @@ Automated WFH alert — ${company} Attendance System.`;
             const l = window._editingCoverLetter;
             l.partyID = pid;
             if (!pid) { l.partyName = ''; return; }
-            const p = (parties||[]).find(x => (x.id||x.partyID) === pid);
+            const p = (parties||[]).find(x => (x.partyID||x.id) === pid);
             if (p) {
-                l.partyName = p.name || '';
+                l.partyName = p.partyName || p.name || '';
                 if (!document.getElementById('clPartyAddress').value) {
                     document.getElementById('clPartyAddress').value = p.address || p.billingAddress || '';
                     l.partyAddress = document.getElementById('clPartyAddress').value;
@@ -34100,7 +34114,7 @@ Automated WFH alert — ${company} Attendance System.`;
             const l = window._editingCoverLetter;
             if (!hintEl) return;
             if (!l.partyID) { hintEl.innerHTML = ''; return; }
-            const p = (parties||[]).find(x => (x.id||x.partyID) === l.partyID);
+            const p = (parties||[]).find(x => (x.partyID||x.id) === l.partyID);
             if (!p) { hintEl.innerHTML = ''; return; }
             if (p.clientCode) {
                 hintEl.innerHTML = `<span class="text-green-600">✓ Client code: <strong>${p.clientCode}</strong></span>
@@ -34113,11 +34127,12 @@ Automated WFH alert — ${company} Attendance System.`;
 
         async function _clPromptForClientCode(isChange) {
             const l = window._editingCoverLetter;
-            const p = (parties||[]).find(x => (x.id||x.partyID) === l.partyID);
+            const p = (parties||[]).find(x => (x.partyID||x.id) === l.partyID);
             if (!p) return;
             const current = p.clientCode || '';
+            const displayName = p.partyName || p.name || 'this party';
             const nu = prompt(
-                `Short client code for "${p.name}" (used in Ref No format IMSE/CODE/FY/CL###).\n\n` +
+                `Short client code for "${displayName}" (used in Ref No format IMSE/CODE/FY/CL###).\n\n` +
                 `Typically 2-4 uppercase letters — e.g. SCI for Shipping Corporation of India, OLY for Olympia.\n\n` +
                 (isChange ? `Current: ${current}` : `Party has no code yet.`),
                 current
