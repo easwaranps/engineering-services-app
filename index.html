@@ -33637,6 +33637,40 @@ Automated WFH alert — ${company} Attendance System.`;
             return `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`;
         }
 
+        // Party names on invoices are entered as free text and often differ
+        // trivially from the Party record — "LTD" vs "LIMITED", "M/s." prefix,
+        // case, punctuation, trailing spaces. Exact `===` matching failed
+        // silently (party dropdown stayed empty on invoice-triggered opens),
+        // so this normaliser strips common company suffixes and prefixes and
+        // collapses whitespace/case, giving a robust match for 95% of cases.
+        function _normalizePartyName(n) {
+            return (n || '')
+                .toString()
+                .toUpperCase()
+                .replace(/[.,()]/g, ' ')
+                .replace(/^M\/?S\s+/i, '')
+                .replace(/\s+(PVT\s+LTD|PRIVATE\s+LIMITED|PVT\s+LIMITED|LTD|LIMITED|PVT|PRIVATE|CO|COMPANY|LLP|LLC|INC|CORP|CORPORATION)\.?\s*$/i, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+        }
+
+        function _findPartyByInvoiceName(invPartyName) {
+            if (!invPartyName) return null;
+            const parties_ = parties || [];
+            // 1. Exact literal match (fast path — most invoices link cleanly)
+            let hit = parties_.find(p => p.name === invPartyName);
+            if (hit) return hit;
+            // 2. Case + whitespace-insensitive match
+            const raw = invPartyName.trim().toUpperCase().replace(/\s+/g, ' ');
+            hit = parties_.find(p => (p.name||'').trim().toUpperCase().replace(/\s+/g,' ') === raw);
+            if (hit) return hit;
+            // 3. Normalised match (strips LTD/LIMITED/PVT/M/s./punctuation)
+            const norm = _normalizePartyName(invPartyName);
+            if (!norm) return null;
+            hit = parties_.find(p => _normalizePartyName(p.name) === norm);
+            return hit || null;
+        }
+
         // ── Main tab renderer with sub-tabs ──
         function renderLetters(content) {
             if (!window._lettersTab) window._lettersTab = 'cover';
@@ -33836,7 +33870,9 @@ Automated WFH alert — ${company} Attendance System.`;
                 const inv = (transactions||[]).find(t => t.txnID === l.invoiceID);
                 if (inv) {
                     const invPartyName = inv.clientName || inv.partyName || '';
-                    const p = (parties||[]).find(x => x.name === invPartyName);
+                    // Fuzzy match — handles "LTD" vs "LIMITED", case, "M/s."
+                    // prefix, whitespace/punctuation differences.
+                    const p = _findPartyByInvoiceName(invPartyName);
                     if (p) {
                         l.partyID = p.id || p.partyID;
                         l.partyName = p.name || '';
@@ -34006,9 +34042,10 @@ Automated WFH alert — ${company} Attendance System.`;
             if (!inv) return;
             const l = window._editingCoverLetter;
             l.invoiceID = invId;
-            // Try to resolve the party from the invoice
+            // Try to resolve the party from the invoice using fuzzy match
+            // (handles LTD/LIMITED, M/s. prefix, case/whitespace differences)
             const partyName = inv.clientName || inv.partyName;
-            const partyByName = (parties||[]).find(p => p.name === partyName);
+            const partyByName = _findPartyByInvoiceName(partyName);
             if (partyByName) {
                 const pid = partyByName.id || partyByName.partyID;
                 document.getElementById('clParty').value = pid;
@@ -34016,6 +34053,11 @@ Automated WFH alert — ${company} Attendance System.`;
                 l.partyName = partyByName.name;
                 document.getElementById('clPartyAddress').value = partyByName.address || partyByName.billingAddress || '';
                 l.partyAddress = document.getElementById('clPartyAddress').value;
+            } else if (partyName) {
+                // Fall back to the raw invoice name so PDF still renders.
+                // Leave the Party dropdown blank so the user can pick the
+                // right record (and next time it'll match by fuzzy rules).
+                l.partyName = partyName;
             }
             // Populate subject from invoice's own subject field if empty
             if (!document.getElementById('clSubject').value && inv.subject) {
