@@ -33827,13 +33827,46 @@ Automated WFH alert — ${company} Attendance System.`;
                     l.supportingDocs = seed;
                 }
             }
+            // Derive party from the linked invoice — happens when the modal
+            // was opened via the "✉️ Cover" button on an invoice row (prefill
+            // contains only invoiceID, not party fields). Also fills subject
+            // when blank. Mirrors _clOnInvoicePicked but runs before render so
+            // the dropdowns and hint text populate correctly on first paint.
+            if (l.invoiceID && !l.partyID) {
+                const inv = (transactions||[]).find(t => t.txnID === l.invoiceID);
+                if (inv) {
+                    const invPartyName = inv.clientName || inv.partyName || '';
+                    const p = (parties||[]).find(x => x.name === invPartyName);
+                    if (p) {
+                        l.partyID = p.id || p.partyID;
+                        l.partyName = p.name || '';
+                        l.partyAddress = l.partyAddress || p.address || p.billingAddress || '';
+                    } else if (invPartyName) {
+                        // No party match — still capture the name so PDF has
+                        // something to render. User can pick the right party
+                        // from the dropdown afterwards.
+                        l.partyName = invPartyName;
+                    }
+                    if (!l.subject && inv.subject) l.subject = inv.subject;
+                }
+            }
             const partiesForSel = (parties||[])
                 .filter(p => p.type === 'Client' || p.type === 'Both' || !p.type)
                 .sort((a,b) => (a.name||'').localeCompare(b.name||''));
-            const invoicesForSel = (transactions||[])
-                .filter(t => (t.type||'').includes('INVOICE') || (t.category||'') === 'INVOICE')
+            // Field name is `txnCategory` — earlier `t.type/t.category` matched
+            // zero records, leaving the dropdown empty and any prefill invoiceID
+            // never appearing as a selectable option.
+            let invoicesForSel = (transactions||[])
+                .filter(t => (t.txnCategory||'') === 'INVOICE')
                 .sort((a,b) => (b.txnDate||'').localeCompare(a.txnDate||''))
                 .slice(0, 200);
+            // Ensure the currently-linked invoice is always in the list —
+            // otherwise older invoices (outside the top-200 window) won't show
+            // as selected on edit, and the user thinks their linkage was lost.
+            if (l.invoiceID && !invoicesForSel.some(t => t.txnID === l.invoiceID)) {
+                const linkedInv = (transactions||[]).find(t => t.txnID === l.invoiceID);
+                if (linkedInv) invoicesForSel = [linkedInv, ...invoicesForSel];
+            }
             const modalHtml = `
                 <div id="coverLetterModal" class="modal show">
                     <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl m-4 max-h-[92vh] overflow-y-auto">
