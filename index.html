@@ -5170,10 +5170,29 @@
                 // for View Only sessions (e.g. external auditor) regardless
                 // of which buttons happen to be visible. Other roles are
                 // completely unaffected.
+                //
+                // NARROW EXEMPTION for the audit workflow: View Only holds
+                // `tax.certify` permission, which grants:
+                //   • Raising / withdrawing / re-opening / resolving audit
+                //     queries on tax entries
+                //   • CA-certifying tax entries (row-level 👔 Certify button)
+                // These write to a small set of specific fields on records in
+                // `expenses` / `directorExpenses` / `transactions` — nothing
+                // else. When a tax-audit helper is about to save, it sets
+                // `window._taxAuditWritePermit = true` inside a try/finally so
+                // the guard here waves through only that specific save. Every
+                // other saveData call from a View Only session still blocks.
                 if (ENABLE_LOGIN && _bmsSession && _bmsSession.role === 'View Only' && appUsers.length > 0) {
-                    console.warn(`🔒 Write blocked (View Only session): saveData('${type}')`);
-                    _showToast('🔒 View Only access — changes are not saved. Contact Admin for edit rights.', '#b45309', 4500);
-                    return;
+                    const TAX_AUDIT_TYPES = new Set(['expenses','directorExpenses','transactions','projectExpenses']);
+                    const permitted = window._taxAuditWritePermit === true && TAX_AUDIT_TYPES.has(type);
+                    if (!permitted) {
+                        console.warn(`🔒 Write blocked (View Only session): saveData('${type}')`);
+                        _showToast('🔒 View Only access — changes are not saved. Contact Admin for edit rights.', '#b45309', 4500);
+                        return;
+                    }
+                    // Permitted — log it so the audit trail shows every
+                    // tax-audit write under the View Only session.
+                    console.log(`✓ Tax-audit write permitted (View Only + tax.certify): saveData('${type}')`);
                 }
                 if (!accessToken) {
                     alert('Session expired. Please sign in again.');
@@ -7634,7 +7653,16 @@
             //     They open a modal but the modal's Save/Delete write actions
             //     are already blocked at the saveData central guard, so
             //     opening the modal in read-only mode is safe.
-            if (/^(view|close|switch|filter|render|refresh|search|sort|page|export|download|print|show|hide|toggle\w*(Section|Detail)|open\w*(History|Detail|Preview|Statement|Voucher|Attachment|Photo|Bill)|openInvoicePaymentsModal|poolReconciliationPDF|dirExpStatementPDF|generatePaySlipPDF|handleSignOut|_)/.test(fn)) return false;
+            //   • `openTaxAuditQueryModal` — the audit-query workflow modal.
+            //     Auditor role (View Only) needs to open it to raise / resolve
+            //     queries and Certify tax entries; without this exemption the
+            //     `open\w*Modal$` pattern below silently blocks the ⚠ Query /
+            //     📝 Query / ✓ Corrected review buttons, and the auditor sees
+            //     "View Only — this action is disabled" every click. The
+            //     permission gate (`_canAccessSub('tax','certify')`) still
+            //     applies at button-render time inside the modal — non-CA
+            //     roles just see the read-only history view.
+            if (/^(view|close|switch|filter|render|refresh|search|sort|page|export|download|print|show|hide|toggle\w*(Section|Detail)|open\w*(History|Detail|Preview|Statement|Voucher|Attachment|Photo|Bill)|openInvoicePaymentsModal|openTaxAuditQueryModal|poolReconciliationPDF|dirExpStatementPDF|generatePaySlipPDF|handleSignOut|_)/.test(fn)) return false;
             // Blocked — write / mutate verbs
             if (/^(save|delete|remove|edit|add|create|new|duplicat|insert|update|upload|attach|approve|reject|settle|disburse|revers|reopen|undo|renew|mark|assign|fill|attGrid|import|sync|record|apply|post|clear|reset|set[A-Z]|toggle)/.test(fn)) return true;
             // Modal openers in this app are data-entry forms — blocked
@@ -13570,7 +13598,11 @@
                 }
             }
             try {
-                await saveData(saveKey, list);
+                // Wrap in the tax-audit permit so a View Only auditor
+                // (who holds tax.certify permission) can actually persist
+                // the certify stamp — same narrow exemption used by the
+                // audit-query modal handlers. Non-audit roles are unaffected.
+                await _taxAuditSave(() => saveData(saveKey, list));
                 renderView();
                 _showToast(already ? 'CA certification cleared' : '✓✓ CA-certified — liability approved for payment', '#15803d', 3500);
             } catch(err) { alert('Save failed: '+err.message); }
@@ -13883,6 +13915,21 @@
             document.getElementById('taxAuditQueryModal')?.remove();
         }
 
+        // Wrap saveData so the central View-Only guard exempts THIS specific
+        // save. Auditor role (View Only + tax.certify) uses these save calls
+        // for the audit-query workflow and CA certify — the permit is set
+        // JUST before the save, cleared immediately after (even on error),
+        // so it never leaks to other unrelated saves that might happen to
+        // execute during the same tick.
+        async function _taxAuditSave(saveFn) {
+            window._taxAuditWritePermit = true;
+            try {
+                return await saveFn();
+            } finally {
+                window._taxAuditWritePermit = false;
+            }
+        }
+
         function openTaxAuditQueryModal(safeId, sourceType) {
             const ctx = _findTaxRecord(safeId, sourceType);
             if (!ctx) { alert('Record not found — it may have been deleted or you may need to refresh.'); return; }
@@ -14057,7 +14104,7 @@
             delete ctx.rec.taxAuditCorrection;
             _stampRecord(ctx.rec);
             try {
-                await ctx.save();
+                await _taxAuditSave(ctx.save);
                 _closeTaxAuditModal();
                 renderView();
                 _showToast('📝 Query raised — maker will see it on their next login');
@@ -14077,7 +14124,7 @@
             };
             _stampRecord(ctx.rec);
             try {
-                await ctx.save();
+                await _taxAuditSave(ctx.save);
                 _closeTaxAuditModal();
                 renderView();
                 _showToast('✓ Marked as corrected — auditor will review & certify');
@@ -14093,7 +14140,7 @@
             delete ctx.rec.taxAuditCorrection;
             _stampRecord(ctx.rec);
             try {
-                await ctx.save();
+                await _taxAuditSave(ctx.save);
                 _closeTaxAuditModal();
                 renderView();
                 _showToast('🗑 Query withdrawn');
@@ -14108,7 +14155,7 @@
             delete ctx.rec.taxAuditCorrection;
             _stampRecord(ctx.rec);
             try {
-                await ctx.save();
+                await _taxAuditSave(ctx.save);
                 _closeTaxAuditModal();
                 renderView();
                 _showToast('↻ Query re-opened — maker will see it again');
@@ -14156,7 +14203,7 @@
             if (note.trim()) rec.taxCANotes = note.trim();
             _stampRecord(rec);
             try {
-                await ctx.save();
+                await _taxAuditSave(ctx.save);
                 _closeTaxAuditModal();
                 renderView();
                 _showToast('✓✓ Certified & closed — round archived to audit history');
