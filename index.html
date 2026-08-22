@@ -32404,45 +32404,31 @@ Automated WFH alert — ${company} Attendance System.`;
                 }
             });
 
-            // 2b) Petty Cash REPLENISHMENTS — money OUT of the bank when the
-            //     imprest float is topped up. Individual EXPENSE items inside
-            //     petty cash draw against the float, NOT the bank, so they
-            //     stay excluded (no double-count). REPLENISHMENT is the only
-            //     petty-cash event that appears on the actual bank statement,
-            //     and now shows here too so bank-vs-statement reconciliation
-            //     matches. Uses `fromBankAccountID` (note capital D — the
-            //     field name in pettyCashTransactions.json).
-            (pettyCashTransactions||[]).forEach(pc => {
-                if (pc.txnType !== 'REPLENISHMENT') return;
-                if (pc.fromBankAccountID !== bankId) return;
-                const amt = +pc.amount || 0;
-                if (amt <= 0) return;
-                const office = (pettyCashOffices||[]).find(o => o.officeID === pc.officeID);
-                const officeLabel = office?.officeName || pc.officeID || 'Office';
-                rows.push({
-                    date: pc.txnDate || '',
-                    desc: `Petty Cash Replenishment — ${officeLabel}${pc.transferRef?' · Ref '+pc.transferRef:''}`,
-                    credit: 0, debit: amt, src: 'Petty Cash'
-                });
-            });
-
-            // 2c) Fund Pool disbursements — money OUT when a field-technician
-            //     pool is funded from a bank. Individual expenses charged
-            //     against the pool draw down the pool balance, not the bank,
-            //     so they stay excluded. Only the initial disbursement to
-            //     the pool is a real bank debit.
-            (fundPools||[]).forEach(p => {
-                const disbBankId = p.disbursedFromBankId || null;
-                const legacyName = !disbBankId && nameMatches(p.disbursedFromBank);
-                if (disbBankId !== bankId && !legacyName) return;
-                const amt = +p.amount || +p.disbursedAmount || 0;
-                if (amt <= 0) return;
-                rows.push({
-                    date: (p.disbursedAt||'').split('T')[0] || p.disbursementDate || p.createdAt?.split('T')[0] || '',
-                    desc: `Fund Pool Disbursement — ${p.poolID||''}${p.paidByName?' → '+p.paidByName:''}${p.purpose?' · '+p.purpose:''}`,
-                    credit: 0, debit: amt, src: 'Fund Pools'
-                });
-            });
+            // ── Petty Cash Replenishments & Fund Pool Disbursements are
+            //    intentionally EXCLUDED from the bank ledger (removed 2026-08-19
+            //    after Easu flagged double-counting) ──
+            //
+            // The user's actual money-movement flow is:
+            //   1. Office raises a Payment Request (PR) that includes petty-cash
+            //      replenishment or pool-funding as one of its bill items.
+            //   2. The PR is disbursed → block (2) above already records the
+            //      full PR amount as a Debit against the source bank.
+            //   3. The replenishment / disbursement records themselves are
+            //      internal float-tracking, NOT independent bank events.
+            //
+            // Aggregating them here again as separate rows caused every
+            // petty-cash / pool transfer to appear TWICE in the ledger — once
+            // as part of the PR, once as a standalone row — inflating Total
+            // Out and breaking the reconciliation against the actual bank
+            // statement. The individual petty-cash spending and pool spending
+            // still live in their own modules (they draw from the float, not
+            // the bank, so they don't belong here either).
+            //
+            // If Petty Cash / Fund Pool ever needs to be shown here again for
+            // installations that DON'T route them through a PR (i.e. direct
+            // bank transfer straight to the imprest holder), the aggregators
+            // can be restored via a settings toggle — see the earlier version
+            // in git history for the exact blocks.
 
             // Regular Expenses / Bills paid directly from a bank account
             // (Supplier, Statutory, Salary, etc.) — OUT.
@@ -32630,7 +32616,7 @@ Automated WFH alert — ${company} Attendance System.`;
             <div class="mb-6 flex items-center justify-between flex-wrap gap-3">
                 <div>
                     <h2 class="text-2xl font-bold text-gray-800">🏦 Bank</h2>
-                    <p class="text-xs text-gray-400 mt-1">Read-only view — aggregates Transactions (invoice payments received), AR Historical Invoice receipts, Payment Requests, Expenses/Bills (final Net Payable, by Paid Date), Interbank transfers, Petty Cash <em>replenishments</em>, and Fund Pool <em>disbursements</em> — everything that touches this bank account and should appear on its bank statement. Individual petty-cash expenses and pool spending stay in their own modules (they draw from the float, not the bank). Nothing here writes data.</p>
+                    <p class="text-xs text-gray-400 mt-1">Read-only view — aggregates Transactions (invoice payments received), AR Historical Invoice receipts, Payment Requests, Expenses/Bills (final Net Payable, by Paid Date), and Interbank transfers. Petty Cash replenishments and Fund Pool disbursements are <em>excluded</em> — they're paid via Payment Requests which are already counted above, so including them separately would double-count. Individual petty-cash and pool spending stays in their own modules (they draw from the float, not the bank). Nothing here writes data.</p>
                 </div>
             </div>
             <div class="bg-white rounded-xl border p-4 mb-4 flex items-center gap-4 flex-wrap">
