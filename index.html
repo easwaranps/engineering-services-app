@@ -4351,6 +4351,14 @@
                 queuedAt: Date.now(),
                 retries: 0,
                 lastAttempt: 0,
+                // Snapshot the tax-audit write permit at queue time so the
+                // auto-retry (which fires from a different call stack, long
+                // after the try/finally in _taxAuditSave has cleared the
+                // flag) can re-apply the same permission. Without this, a
+                // View Only auditor's first save might be permitted but the
+                // retry gets blocked by the central saveData guard — silent
+                // data loss on any concurrency conflict.
+                taxAuditPermitted: window._taxAuditWritePermit === true,
             };
             _showSaveIndicator(type, 'queued');
             _renderPendingQueueBanner();
@@ -4404,7 +4412,16 @@
                     _renderPendingQueueBanner();
                     // Mark as a forced save (skip freshness prompt) — the user already chose to overwrite
                     _forcedSaveTypes[type] = true;
-                    await saveData(type, dataToSave);
+                    // Re-apply the tax-audit write permit if this entry was
+                    // queued from a permitted context. The try/finally in
+                    // _taxAuditSave cleared the flag after the initial save
+                    // returned, but the retry needs the same permit to get
+                    // past the central View-Only guard in saveData.
+                    if (entry.taxAuditPermitted) {
+                        await _taxAuditSave(() => saveData(type, dataToSave));
+                    } else {
+                        await saveData(type, dataToSave);
+                    }
                     delete _forcedSaveTypes[type];
                     if (typeof showToast === 'function') showToast(`✅ Auto-saved your held changes for ${type}`, 4000);
                 } catch(err) {
