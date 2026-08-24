@@ -18430,6 +18430,16 @@
                 document.getElementById('txnStatus').value    = txn.status;
                 // Document date — defaults to today on new entries, restores from record on edit
                 document.getElementById('txnDate').value      = txn.txnDate || new Date().toISOString().split('T')[0];
+
+                // Refresh totals now that the actual currency is loaded.
+                // Line items were added earlier (line ~18400) while the
+                // currency dropdown still held its default 'INR' — so each
+                // addLineItem call computed and painted totals with the ₹
+                // symbol. Setting .value= programmatically doesn't fire the
+                // onchange handler on the select, so without this explicit
+                // call the totals stay stuck on ₹ even after the dropdown
+                // visibly flips to USD/EUR/etc.
+                if (typeof updateTotals === 'function') updateTotals();
             } else {
                 // New transaction defaults — leave category empty so user selects
                 document.getElementById('txnCategory').value  = '';
