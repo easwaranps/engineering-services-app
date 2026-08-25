@@ -9482,11 +9482,17 @@
             // Amount cell — shown for Quotation, PO, Credit Note, and Invoice
             // (the priced document types). Enquiry and Delivery Note carry no
             // price by design and are left as-is.
+            // Uses the transaction's own currency symbol (t.currency: INR/USD/
+            // EUR/GBP/SGD) — was previously hardcoded to ₹ so a USD quotation
+            // still displayed ₹6,938.40 in the list even though the modal and
+            // PDF showed the correct $. Falls back to ₹ for older records
+            // that predate the currency field.
+            const _rowCurrSymbol = (CURRENCY_SYMBOLS && CURRENCY_SYMBOLS[t.currency]) || '₹';
             let amountCell = '';
             const AMOUNT_CATS = ['QUOTATION','PO','CREDIT_NOTE','INVOICE'];
             if (AMOUNT_CATS.includes(t.txnCategory)) {
                 const amt = calculateTotals(t.items || []).total;
-                const fmtAmt = n => '₹' + (typeof formatNumber === 'function' ? formatNumber(n) : Number(n).toFixed(2));
+                const fmtAmt = n => _rowCurrSymbol + (typeof formatNumber === 'function' ? formatNumber(n) : Number(n).toFixed(2));
                 amountCell = `<td class="px-3 py-2 text-right whitespace-nowrap font-medium">${fmtAmt(amt)}</td>`;
             }
             // Balance-due cell — INVOICE category only. Reads payment history
@@ -9502,7 +9508,8 @@
                 const tdsDeducted = (t.paymentsReceived || []).reduce((s, p) =>
                     s + (parseFloat(p.tdsAmount)||0) + (parseFloat(p.itTdsAmount)||0) + (parseFloat(p.gstTdsAmount)||0), 0);
                 const balance  = +(grandTotal - received - tdsDeducted).toFixed(2);
-                const fmt = n => '₹' + (typeof formatNumber === 'function' ? formatNumber(n) : Number(n).toFixed(2));
+                // Same currency-aware symbol as the Amount cell above.
+                const fmt = n => _rowCurrSymbol + (typeof formatNumber === 'function' ? formatNumber(n) : Number(n).toFixed(2));
                 let chip;
                 if ((t.paymentsReceived||[]).length === 0) {
                     chip = `<span class="text-xs text-gray-400">— no payments —</span>`;
