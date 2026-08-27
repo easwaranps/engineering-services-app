@@ -25316,43 +25316,62 @@ Automated WFH alert — ${company} Attendance System.`;
         function openARInvoiceModal(arID=null) {
             const ex=arID?(arInvoices||[]).find(a=>a.arID===arID):null;
             const clientOptions=[...(parties||[]).map(p=>p.partyName),...(arInvoices||[]).map(a=>a.client)].filter((v,i,arr)=>arr.indexOf(v)===i&&v).map(c=>`<option value="${c}">`).join('');
+            // Working copy of paymentsReceived — migrate legacy single-field
+            // records into an array so the table renders consistently. If
+            // `received > 0` and no paymentsReceived array yet, seed one row
+            // from the legacy fields so nothing is lost on first open.
+            let payments = Array.isArray(ex?.paymentsReceived) ? JSON.parse(JSON.stringify(ex.paymentsReceived)) : [];
+            if (payments.length === 0 && (+ex?.received || 0) > 0) {
+                payments.push({
+                    date: ex.receivedDate || '',
+                    amount: +ex.received || 0,
+                    taxableAmt: 0, tdsPct: 0, tdsAmt: 0,
+                    itTdsPct: 0, itTdsAmt: 0,
+                    gstTdsPct: 0, gstTdsAmt: 0,
+                    remarks: '(migrated from legacy single-payment field)'
+                });
+            }
+            window._arWorkingPayments = payments;
+            const currCode = ex?.currency || 'INR';
+            const currSym = (CURRENCY_SYMBOLS && CURRENCY_SYMBOLS[currCode]) || '₹';
+
             const modal=document.createElement('div');
             modal.id='arInvModal';modal.className='modal show';
             modal.innerHTML=`
-            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-xl m-4 max-h-[90vh] overflow-y-auto">
-                <div class="bg-gradient-to-r from-indigo-600 to-purple-600 p-5 text-white flex justify-between items-center">
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl m-4 max-h-[92vh] overflow-y-auto">
+                <div class="bg-gradient-to-r from-indigo-600 to-purple-600 p-5 text-white flex justify-between items-center sticky top-0 z-10">
                     <h3 class="text-base font-bold">${ex?'Edit':'Add'} Historical Invoice</h3>
                     <button onclick="document.getElementById('arInvModal').remove()" class="text-white text-2xl font-bold">✕</button>
                 </div>
                 <div class="p-5 space-y-3">
-                    <div class="grid grid-cols-2 gap-3">
-                        <div><label class="block text-xs font-semibold text-gray-700 mb-1">Client *</label>
+                    <!-- Row 1: Client + Invoice No + Currency -->
+                    <div class="grid grid-cols-6 gap-3">
+                        <div class="col-span-3"><label class="block text-xs font-semibold text-gray-700 mb-1">Client *</label>
                             <input id="arClient" value="${ex?.client||''}" list="arCL" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Client name"/>
                             <datalist id="arCL">${clientOptions}</datalist>
                         </div>
-                        <div><label class="block text-xs font-semibold text-gray-700 mb-1">Invoice Number *</label>
+                        <div class="col-span-2"><label class="block text-xs font-semibold text-gray-700 mb-1">Invoice Number *</label>
                             <input id="arInvNo" value="${ex?.invoiceNo||''}" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="INV/2024-25/001"/>
                         </div>
+                        <div><label class="block text-xs font-semibold text-gray-700 mb-1">Currency *</label>
+                            <select id="arCurrency" onchange="_arOnCurrencyChange()" class="w-full px-3 py-2 border rounded-lg text-sm">
+                                ${Object.keys(CURRENCY_SYMBOLS || {INR:'₹',USD:'$',EUR:'€',GBP:'£',SGD:'S$'}).map(c => `<option value="${c}" ${c===currCode?'selected':''}>${c} (${(CURRENCY_SYMBOLS||{})[c]||''})</option>`).join('')}
+                            </select>
+                        </div>
                     </div>
-                    <div class="grid grid-cols-2 gap-3">
+                    <!-- Row 2: Invoice Date + Due Date + Invoice Amount -->
+                    <div class="grid grid-cols-3 gap-3">
                         <div><label class="block text-xs font-semibold text-gray-700 mb-1">Invoice Date *</label>
                             <input type="date" id="arInvDate" value="${ex?.invoiceDate||''}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
                         </div>
                         <div><label class="block text-xs font-semibold text-gray-700 mb-1">Due Date</label>
                             <input type="date" id="arDueDate" value="${ex?.dueDate||''}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
                         </div>
-                    </div>
-                    <div class="grid grid-cols-2 gap-3">
-                        <div><label class="block text-xs font-semibold text-gray-700 mb-1">Invoice Amount (₹) *</label>
-                            <input type="number" id="arInvAmt" value="${ex?.invoiceAmt||''}" step="0.01" min="0" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="0.00"/>
-                        </div>
-                        <div><label class="block text-xs font-semibold text-gray-700 mb-1">Amount Received So Far (₹)</label>
-                            <input type="number" id="arReceived" value="${ex?.received||0}" step="0.01" min="0" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="0.00"/>
+                        <div><label class="block text-xs font-semibold text-gray-700 mb-1">Invoice Amount <span id="arAmtCurrLabel" class="font-normal text-gray-400">(${currSym})</span> *</label>
+                            <input type="number" id="arInvAmt" value="${ex?.invoiceAmt||''}" step="0.01" min="0" oninput="_arRecomputeSummary()" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="0.00"/>
                         </div>
                     </div>
-                    <div><label class="block text-xs font-semibold text-gray-700 mb-1">Amount Received Date</label>
-                        <input type="date" id="arReceivedDate" value="${ex?.receivedDate||''}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
-                    </div>
+                    <!-- Bank + Deposit -->
                     <div>
                         <label class="block text-xs font-semibold text-gray-700 mb-1">💰 Deposit to Bank Account <span class="font-normal text-gray-400">(where payment was/is received)</span></label>
                         <select id="arBankAccount" class="w-full px-3 py-2 border rounded-lg text-sm">
@@ -25360,9 +25379,6 @@ Automated WFH alert — ${company} Attendance System.`;
                             ${(bankAccounts||[]).filter(ba => ba.isActive && (ba.type === 'Income' || ba.type === 'Both'))
                                 .map(ba => `<option value="${ba.id}"${(ex?.bankAccountId||'')===ba.id?' selected':''}>${ba.accountName} — ${ba.bankName} (${ba.currency})${ba.accountNo?' ····'+String(ba.accountNo).slice(-4):''}</option>`).join('')}
                             ${(() => {
-                                // Show a stale entry if the invoice was tagged to a bank
-                                // that later became inactive or was type-changed — user
-                                // can still see and re-pick.
                                 const bid = ex?.bankAccountId;
                                 if (!bid) return '';
                                 const active = (bankAccounts||[]).some(ba => ba.id===bid && ba.isActive && (ba.type==='Income'||ba.type==='Both'));
@@ -25371,21 +25387,172 @@ Automated WFH alert — ${company} Attendance System.`;
                                 return stale ? `<option value="${stale.id}" selected style="color:#b45309">⚠ ${stale.accountName} — ${stale.bankName} (inactive/mismatched)</option>` : '';
                             })()}
                         </select>
-                        <p class="text-[10px] text-gray-400 mt-1">Feeds into Bank Reconciliation so this payment appears in the tagged account's ledger.</p>
+                        <p class="text-[10px] text-gray-400 mt-1">Feeds into Bank Reconciliation so payments appear in the tagged account's ledger.</p>
                     </div>
-                    <div><label class="block text-xs font-semibold text-gray-700 mb-1">Description / Work Done</label>
-                        <textarea id="arDesc" class="w-full px-3 py-2 border rounded-lg text-sm" rows="2" placeholder="Brief description of work or service billed...">${ex?.description||''}</textarea>
+                    <!-- Description + PO -->
+                    <div class="grid grid-cols-2 gap-3">
+                        <div><label class="block text-xs font-semibold text-gray-700 mb-1">Description / Work Done</label>
+                            <textarea id="arDesc" class="w-full px-3 py-2 border rounded-lg text-sm" rows="2" placeholder="Brief description of work or service billed...">${ex?.description||''}</textarea>
+                        </div>
+                        <div><label class="block text-xs font-semibold text-gray-700 mb-1">PO / Work Order Reference</label>
+                            <input id="arPORef" value="${ex?.poRef||''}" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="e.g. PO/2024/012"/>
+                        </div>
                     </div>
-                    <div><label class="block text-xs font-semibold text-gray-700 mb-1">PO / Work Order Reference</label>
-                        <input id="arPORef" value="${ex?.poRef||''}" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="e.g. PO/2024/012"/>
+
+                    <!-- ═══ Payments Received table (same shape as regular invoice modal) ═══
+                         Historical invoices previously captured only a single "Amount Received
+                         So Far" number. This mirrors the full table used on regular invoices —
+                         each row records: date, amount received, taxable amount (net of TDS),
+                         TDS/IT-TDS/GST-TDS % + amounts. Sum of all rows' effective settlement
+                         (amount received + TDS deducted) is compared against Invoice Amount to
+                         compute Balance Due. -->
+                    <div class="border-t pt-4 mt-4">
+                        <div class="flex justify-between items-center mb-2">
+                            <div>
+                                <h4 class="text-sm font-bold text-gray-800">💰 Payments Received</h4>
+                                <p class="text-[10px] text-gray-500">Record advance, partial, or final payments against this invoice.</p>
+                            </div>
+                            <button type="button" onclick="_arAddPaymentRow()" class="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-semibold">+ Add Payment</button>
+                        </div>
+                        <!-- Summary tiles -->
+                        <div class="grid grid-cols-3 gap-2 mb-3">
+                            <div class="bg-gray-50 rounded-lg p-2">
+                                <div class="text-[10px] text-gray-500 uppercase font-semibold">Grand Total</div>
+                                <div id="arSumGrand" class="text-sm font-bold text-gray-800">${currSym}0.00</div>
+                            </div>
+                            <div class="bg-green-50 rounded-lg p-2">
+                                <div class="text-[10px] text-green-700 uppercase font-semibold">Received</div>
+                                <div id="arSumReceived" class="text-sm font-bold text-green-700">${currSym}0.00</div>
+                            </div>
+                            <div class="bg-red-50 rounded-lg p-2">
+                                <div class="text-[10px] text-red-700 uppercase font-semibold">Balance Due</div>
+                                <div id="arSumBalance" class="text-sm font-bold text-red-700">${currSym}0.00</div>
+                            </div>
+                        </div>
+                        <div class="overflow-x-auto border border-gray-200 rounded-lg">
+                            <table class="min-w-full text-[11px]">
+                                <thead class="bg-gray-50">
+                                    <tr class="text-gray-500 uppercase">
+                                        <th class="px-2 py-1.5 text-left">Date</th>
+                                        <th class="px-2 py-1.5 text-right">Amount Received <span id="arCurrHdr">(${currCode})</span></th>
+                                        <th class="px-2 py-1.5 text-right">Taxable Amt</th>
+                                        <th class="px-2 py-1.5 text-right">TDS %</th>
+                                        <th class="px-2 py-1.5 text-right">TDS Amt</th>
+                                        <th class="px-2 py-1.5 text-right">IT TDS %</th>
+                                        <th class="px-2 py-1.5 text-right">IT TDS Amt</th>
+                                        <th class="px-2 py-1.5 text-right">GST TDS %</th>
+                                        <th class="px-2 py-1.5 text-right">GST TDS Amt</th>
+                                        <th class="px-2 py-1.5 text-right">Amt Receivable</th>
+                                        <th class="px-2 py-1.5 text-right">Difference</th>
+                                        <th class="px-2 py-1.5"></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="arPaymentsRows"></tbody>
+                            </table>
+                        </div>
                     </div>
-                    <div class="flex justify-end gap-3 pt-2 border-t">
-                        <button onclick="document.getElementById('arInvModal').remove()" class="px-4 py-2 border border-gray-300 text-gray-600 rounded-lg text-sm">Cancel</button>
+
+                    <div class="flex justify-end gap-3 pt-2 border-t sticky bottom-0 bg-white">
+                        <button onclick="document.getElementById('arInvModal').remove();delete window._arWorkingPayments;" class="px-4 py-2 border border-gray-300 text-gray-600 rounded-lg text-sm">Cancel</button>
                         <button onclick="saveARInvoice('${arID||''}')" class="px-5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700">💾 Save Invoice</button>
                     </div>
                 </div>
             </div>`;
             document.body.appendChild(modal);
+            _arRenderPaymentRows();
+            _arRecomputeSummary();
+        }
+
+        // ── AR Payments-Received row management ─────────────────────
+        function _arCurrentCurrency() {
+            const el = document.getElementById('arCurrency');
+            const code = el ? el.value : 'INR';
+            return { code, sym: (CURRENCY_SYMBOLS && CURRENCY_SYMBOLS[code]) || '₹' };
+        }
+        function _arAddPaymentRow() {
+            window._arWorkingPayments = window._arWorkingPayments || [];
+            window._arWorkingPayments.push({
+                date: new Date().toISOString().split('T')[0],
+                amount: 0, taxableAmt: 0,
+                tdsPct: 0, tdsAmt: 0,
+                itTdsPct: 0, itTdsAmt: 0,
+                gstTdsPct: 0, gstTdsAmt: 0,
+                remarks: ''
+            });
+            _arRenderPaymentRows();
+            _arRecomputeSummary();
+        }
+        function _arRemovePaymentRow(idx) {
+            (window._arWorkingPayments || []).splice(idx, 1);
+            _arRenderPaymentRows();
+            _arRecomputeSummary();
+        }
+        function _arUpdatePaymentField(idx, field, val) {
+            const p = (window._arWorkingPayments || [])[idx];
+            if (!p) return;
+            p[field] = (field === 'date' || field === 'remarks') ? val : (parseFloat(val) || 0);
+            // Auto-derive TDS amounts from percentages when % is edited and
+            // amount is present — matches the regular invoice modal's UX.
+            const base = +p.taxableAmt || +p.amount || 0;
+            if (field === 'tdsPct')    p.tdsAmt    = +(base * (+p.tdsPct    || 0) / 100).toFixed(2);
+            if (field === 'itTdsPct')  p.itTdsAmt  = +(base * (+p.itTdsPct  || 0) / 100).toFixed(2);
+            if (field === 'gstTdsPct') p.gstTdsAmt = +(base * (+p.gstTdsPct || 0) / 100).toFixed(2);
+            _arRenderPaymentRows();
+            _arRecomputeSummary();
+        }
+        function _arRenderPaymentRows() {
+            const tbody = document.getElementById('arPaymentsRows');
+            if (!tbody) return;
+            const rows = window._arWorkingPayments || [];
+            const { sym } = _arCurrentCurrency();
+            if (rows.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="12" class="text-center py-3 text-gray-400 text-[11px]">No payments recorded — click <b>+ Add Payment</b> to add one.</td></tr>`;
+                return;
+            }
+            const invAmt = +document.getElementById('arInvAmt')?.value || 0;
+            tbody.innerHTML = rows.map((p, i) => {
+                const tdsTotal = (+p.tdsAmt||0) + (+p.itTdsAmt||0) + (+p.gstTdsAmt||0);
+                const receivable = (+p.amount || 0) + tdsTotal;
+                // Difference = per-row leftover of invoice amount NOT yet settled
+                // by this row (positive = still due after this row; negative =
+                // over-received — likely a data-entry mistake). Shown per-row
+                // for spotcheck; the summary tile at top gives the overall.
+                const diff = invAmt > 0 ? +(invAmt - receivable).toFixed(2) : 0;
+                const diffColor = diff > 0 ? 'text-amber-700' : diff < 0 ? 'text-red-700' : 'text-green-700';
+                return `<tr class="border-t border-gray-100">
+                    <td class="px-1 py-1"><input type="date" value="${p.date||''}" onchange="_arUpdatePaymentField(${i},'date',this.value)" class="w-full px-1.5 py-1 border border-gray-200 rounded text-[11px]"/></td>
+                    <td class="px-1 py-1"><input type="number" step="0.01" value="${p.amount||0}" oninput="_arUpdatePaymentField(${i},'amount',this.value)" class="w-24 text-right px-1.5 py-1 border border-gray-200 rounded text-[11px]"/></td>
+                    <td class="px-1 py-1"><input type="number" step="0.01" value="${p.taxableAmt||0}" oninput="_arUpdatePaymentField(${i},'taxableAmt',this.value)" class="w-24 text-right px-1.5 py-1 border border-gray-200 rounded text-[11px]"/></td>
+                    <td class="px-1 py-1"><input type="number" step="0.01" value="${p.tdsPct||0}" oninput="_arUpdatePaymentField(${i},'tdsPct',this.value)" class="w-14 text-right px-1.5 py-1 border border-gray-200 rounded text-[11px]"/></td>
+                    <td class="px-1 py-1"><input type="number" step="0.01" value="${p.tdsAmt||0}" oninput="_arUpdatePaymentField(${i},'tdsAmt',this.value)" class="w-20 text-right px-1.5 py-1 border border-gray-200 rounded text-[11px]"/></td>
+                    <td class="px-1 py-1"><input type="number" step="0.01" value="${p.itTdsPct||0}" oninput="_arUpdatePaymentField(${i},'itTdsPct',this.value)" class="w-14 text-right px-1.5 py-1 border border-gray-200 rounded text-[11px]"/></td>
+                    <td class="px-1 py-1"><input type="number" step="0.01" value="${p.itTdsAmt||0}" oninput="_arUpdatePaymentField(${i},'itTdsAmt',this.value)" class="w-20 text-right px-1.5 py-1 border border-gray-200 rounded text-[11px]"/></td>
+                    <td class="px-1 py-1"><input type="number" step="0.01" value="${p.gstTdsPct||0}" oninput="_arUpdatePaymentField(${i},'gstTdsPct',this.value)" class="w-14 text-right px-1.5 py-1 border border-gray-200 rounded text-[11px]"/></td>
+                    <td class="px-1 py-1"><input type="number" step="0.01" value="${p.gstTdsAmt||0}" oninput="_arUpdatePaymentField(${i},'gstTdsAmt',this.value)" class="w-20 text-right px-1.5 py-1 border border-gray-200 rounded text-[11px]"/></td>
+                    <td class="px-2 py-1 text-right font-semibold text-gray-700">${sym}${receivable.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+                    <td class="px-2 py-1 text-right font-semibold ${diffColor}">${sym}${diff.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+                    <td class="px-1 py-1 text-center"><button type="button" onclick="_arRemovePaymentRow(${i})" class="text-red-500 hover:text-red-700 text-sm font-bold" title="Remove this row">✕</button></td>
+                </tr>`;
+            }).join('');
+        }
+        function _arRecomputeSummary() {
+            const invAmt = +document.getElementById('arInvAmt')?.value || 0;
+            const rows = window._arWorkingPayments || [];
+            const received = rows.reduce((s, p) => s + (+p.amount || 0), 0);
+            const tdsTotal = rows.reduce((s, p) => s + (+p.tdsAmt||0) + (+p.itTdsAmt||0) + (+p.gstTdsAmt||0), 0);
+            const balance = Math.max(0, +(invAmt - received - tdsTotal).toFixed(2));
+            const { sym } = _arCurrentCurrency();
+            const fmt = n => sym + (+n || 0).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
+            const g = document.getElementById('arSumGrand');    if (g) g.textContent = fmt(invAmt);
+            const r = document.getElementById('arSumReceived'); if (r) r.textContent = fmt(received + tdsTotal);
+            const b = document.getElementById('arSumBalance');  if (b) b.textContent = fmt(balance);
+        }
+        function _arOnCurrencyChange() {
+            const { code, sym } = _arCurrentCurrency();
+            const lbl = document.getElementById('arAmtCurrLabel'); if (lbl) lbl.textContent = `(${sym})`;
+            const hdr = document.getElementById('arCurrHdr');      if (hdr) hdr.textContent = `(${code})`;
+            _arRenderPaymentRows();
+            _arRecomputeSummary();
         }
 
         async function saveARInvoice(arID) {
@@ -25394,22 +25561,32 @@ Automated WFH alert — ${company} Attendance System.`;
             const invDate=document.getElementById('arInvDate')?.value;
             const dueDate=document.getElementById('arDueDate')?.value;
             const invAmt=parseFloat(document.getElementById('arInvAmt')?.value)||0;
-            const received=parseFloat(document.getElementById('arReceived')?.value)||0;
-            const receivedDate=document.getElementById('arReceivedDate')?.value||'';
+            const currency=document.getElementById('arCurrency')?.value||'INR';
             const bankAccountId=document.getElementById('arBankAccount')?.value||'';
             const desc=document.getElementById('arDesc')?.value.trim();
             const poRef=document.getElementById('arPORef')?.value.trim();
+            // Payments come from the working array — deep-copy so we don't
+            // keep a reference to a modal-scoped array that will be nulled.
+            const paymentsReceived = (window._arWorkingPayments || []).map(p => ({...p}));
             if (!client||!invNo||!invDate||!invAmt){alert('Please fill in Client, Invoice Number, Date, and Amount.');return;}
-            const balance=Math.max(0,invAmt-received);
+            const received = paymentsReceived.reduce((s, p) => s + (+p.amount || 0), 0);
+            const tdsDeducted = paymentsReceived.reduce((s, p) => s + (+p.tdsAmt||0) + (+p.itTdsAmt||0) + (+p.gstTdsAmt||0), 0);
+            const balance = Math.max(0, +(invAmt - received - tdsDeducted).toFixed(2));
+            // Keep legacy `received` and `receivedDate` in sync with the array
+            // so any older reports/aggregators that still read those fields
+            // don't break.
+            const legacyReceived = received + tdsDeducted;
+            const lastPaymentDate = paymentsReceived.length ? paymentsReceived.map(p => p.date).filter(Boolean).sort().slice(-1)[0] || '' : '';
             if (arID) {
                 const idx=arInvoices.findIndex(a=>a.arID===arID);
-                if (idx>=0) Object.assign(arInvoices[idx],{client,invoiceNo:invNo,invoiceDate:invDate,dueDate,invoiceAmt:invAmt,received,receivedDate,bankAccountId,balance,description:desc,poRef});
+                if (idx>=0) Object.assign(arInvoices[idx],{client,invoiceNo:invNo,invoiceDate:invDate,dueDate,invoiceAmt:invAmt,currency,paymentsReceived,received:legacyReceived,receivedDate:lastPaymentDate,bankAccountId,balance,description:desc,poRef});
             } else {
-                arInvoices.push({arID:'AR-'+Date.now(),source:'historical',client,invoiceNo:invNo,invoiceDate:invDate,dueDate,invoiceAmt:invAmt,received,receivedDate,bankAccountId,balance,description:desc,poRef,followUps:[],createdAt:new Date().toISOString()});
+                arInvoices.push({arID:'AR-'+Date.now(),source:'historical',client,invoiceNo:invNo,invoiceDate:invDate,dueDate,invoiceAmt:invAmt,currency,paymentsReceived,received:legacyReceived,receivedDate:lastPaymentDate,bankAccountId,balance,description:desc,poRef,followUps:[],createdAt:new Date().toISOString()});
             }
             try {
                 await saveData('arInvoices',arInvoices);
                 document.getElementById('arInvModal').remove();
+                delete window._arWorkingPayments;
                 renderView();
                 _showToast('✓ Invoice saved to AR tracker','#4f46e5',3500);
             } catch(err){alert('Save failed: '+err.message);}
@@ -32437,7 +32614,29 @@ Automated WFH alert — ${company} Attendance System.`;
             let bal = 0;
             (pettyCashTransactions || []).forEach(t => {
                 if (t.officeID !== officeID) return;
-                if (asOfDate && (t.txnDate || '') > asOfDate) return;
+                if (asOfDate) {
+                    // OPENING_BALANCE transactions have special semantics:
+                    // dated 2026-04-01 means "balance at the START of Apr
+                    // 2026" == "balance at the END of Mar 2026". So when
+                    // computing opening for Apr (asOfDate = 2026-03-31),
+                    // the 2026-04-01 opening MUST count — the string
+                    // check `> asOfDate` would otherwise exclude it and
+                    // the Apr statement would show ₹0 opening.
+                    //
+                    // We compare against asOfDate + 1 day for openings only,
+                    // so an OPENING_BALANCE dated on the very-next-day after
+                    // asOfDate is included. Openings dated later than that
+                    // (a subsequent re-set of opening in a later month) are
+                    // still correctly excluded from earlier periods.
+                    if (t.txnType === 'OPENING_BALANCE') {
+                        const nextDay = new Date(asOfDate + 'T00:00:00');
+                        nextDay.setDate(nextDay.getDate() + 1);
+                        const cutoff = nextDay.toISOString().split('T')[0];
+                        if ((t.txnDate || '') > cutoff) return;
+                    } else {
+                        if ((t.txnDate || '') > asOfDate) return;
+                    }
+                }
                 const amt = parseFloat(t.amount) || 0;
                 if (t.txnType === 'EXPENSE')             bal -= amt;
                 else if (t.txnType === 'REPLENISHMENT')  bal += amt;
