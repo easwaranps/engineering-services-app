@@ -32632,6 +32632,15 @@ Automated WFH alert — ${company} Attendance System.`;
                 .filter(t => t.officeID === officeID && t.txnType === 'OPENING_BALANCE')
                 .sort((a, b) => (a.txnDate || '').localeCompare(b.txnDate || ''));
             const earliestOpeningID = openingTxns[0] ? openingTxns[0].txnID : null;
+            // Diagnostic — enable by setting window._pcBalDebug = true in the
+            // console. Logs every OPENING_BALANCE contribution and the final
+            // balance so drift between the stat card and expected opening
+            // can be diagnosed without adding UI. Silent by default.
+            const _dbg = (typeof window !== 'undefined' && window._pcBalDebug === true);
+            if (_dbg) console.log('[_pcOfficeBalance]', {officeID, asOfDate,
+                openingCount: openingTxns.length,
+                earliest: openingTxns[0] && {txnID: openingTxns[0].txnID, date: openingTxns[0].txnDate, amt: openingTxns[0].amount}
+            });
 
             let bal = 0;
             (pettyCashTransactions || []).forEach(t => {
@@ -32648,7 +32657,12 @@ Automated WFH alert — ${company} Attendance System.`;
                             const nextDay = new Date(asOfDate + 'T00:00:00');
                             nextDay.setDate(nextDay.getDate() + 1);
                             const cutoff = nextDay.toISOString().split('T')[0];
-                            if ((t.txnDate || '') > cutoff) return;
+                            if ((t.txnDate || '') > cutoff) {
+                                if (_dbg) console.log('  skip later-opening (after cutoff)', {date: t.txnDate, cutoff});
+                                return;
+                            }
+                        } else if (_dbg) {
+                            console.log('  ✓ include earliest opening (regardless of asOfDate)', {date: t.txnDate, amt: t.amount});
                         }
                     } else {
                         if ((t.txnDate || '') > asOfDate) return;
@@ -32660,6 +32674,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 else if (t.txnType === 'OPENING_BALANCE')bal += amt;
                 else if (t.txnType === 'ADJUSTMENT')     bal += amt;
             });
+            if (_dbg) console.log('  → final balance:', bal.toFixed(2));
             return +bal.toFixed(2);
         }
 
@@ -35964,15 +35979,30 @@ Automated WFH alert — ${company} Attendance System.`;
                                     <th class="px-3 py-2 text-center">✓</th>
                                 </tr>
                             </thead>
-                            <tbody>${txns.map(t => `
+                            <tbody>${txns.map(t => {
+                                // Full type-aware label — earlier the ternary
+                                // lumped OPENING_BALANCE + ADJUSTMENT into a
+                                // generic "💰 Replenishment", so an Opening
+                                // Balance row displayed as Replenishment.
+                                // Fixed by using the same label map used
+                                // elsewhere.
+                                const typeLabel = t.txnType === 'EXPENSE'          ? _pcCategoryLabel(t.category)
+                                                : t.txnType === 'REPLENISHMENT'    ? '💰 Replenishment'
+                                                : t.txnType === 'OPENING_BALANCE'  ? '🏁 Opening Balance'
+                                                : t.txnType === 'ADJUSTMENT'       ? '⚙ Adjustment'
+                                                : (t.txnType || '—');
+                                const isMoneyIn = t.txnType === 'REPLENISHMENT' || t.txnType === 'OPENING_BALANCE'
+                                                  || (t.txnType === 'ADJUSTMENT' && (+t.amount||0) >= 0);
+                                return `
                                 <tr class="border-t">
                                     <td class="px-3 py-2 text-xs">${t.txnDate}</td>
-                                    <td class="px-3 py-2 text-xs">${t.txnType==='EXPENSE'?_pcCategoryLabel(t.category):'💰 Replenishment'}</td>
+                                    <td class="px-3 py-2 text-xs">${typeLabel}</td>
                                     <td class="px-3 py-2 text-xs">${(t.vendor||t.transferRef||'').replace(/</g,'&lt;')}<br/><span class="text-[10px] text-gray-500">${(t.description||t.remarks||'').substring(0,60).replace(/</g,'&lt;')}</span></td>
-                                    <td class="px-3 py-2 text-xs text-right font-semibold ${t.txnType==='EXPENSE'?'text-red-700':'text-green-700'}">${t.txnType==='EXPENSE'?'−':'+'}${fmt(t.amount)}</td>
+                                    <td class="px-3 py-2 text-xs text-right font-semibold ${isMoneyIn?'text-green-700':'text-red-700'}">${isMoneyIn?'+':'−'}${fmt(t.amount)}</td>
                                     <td class="px-3 py-2 text-xs text-center">${(t.attachments||[]).length?`<button onclick="viewPCAttachments('${t.txnID}')" class="text-blue-600 hover:text-blue-800">📎 ${t.attachments.length}</button>`:'—'}</td>
                                     <td class="px-3 py-2 text-xs text-center">${t.verified?'<span class="text-green-600">✓</span>':'<span class="text-amber-500">⏳</span>'}</td>
-                                </tr>`).join('')}
+                                </tr>`;
+                            }).join('')}
                             </tbody>
                         </table>
                     </div>
