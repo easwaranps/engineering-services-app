@@ -32611,28 +32611,45 @@ Automated WFH alert — ${company} Attendance System.`;
         }
 
         function _pcOfficeBalance(officeID, asOfDate = null) {
+            // Identify the earliest OPENING_BALANCE for this office (if any).
+            // Semantics: the FIRST-EVER opening balance recorded represents
+            // the historical carry-forward — cash on hand from before the
+            // app started tracking. It must count in every period, including
+            // ones dated BEFORE the entry itself (because the office had
+            // that cash before the app was told about it).
+            //
+            // Any subsequent OPENING_BALANCE txn (rare — user later corrects
+            // or resets the opening) follows the standard "same-day-or-earlier
+            // vs. asOfDate + 1 day" rule so the correction only applies from
+            // its date forward, not backward.
+            //
+            // Real-world example: Chennai office had no records before May,
+            // opening ₹1,477 recorded on 2026-05-01. User later back-fills
+            // Apr 2026 expenses. Apr's opening (asOfDate = 2026-03-31) MUST
+            // show ₹1,477 (the earliest opening) or Apr's closing goes
+            // artificially negative because the pre-tracking cash is missing.
+            const openingTxns = (pettyCashTransactions || [])
+                .filter(t => t.officeID === officeID && t.txnType === 'OPENING_BALANCE')
+                .sort((a, b) => (a.txnDate || '').localeCompare(b.txnDate || ''));
+            const earliestOpeningID = openingTxns[0] ? openingTxns[0].txnID : null;
+
             let bal = 0;
             (pettyCashTransactions || []).forEach(t => {
                 if (t.officeID !== officeID) return;
                 if (asOfDate) {
-                    // OPENING_BALANCE transactions have special semantics:
-                    // dated 2026-04-01 means "balance at the START of Apr
-                    // 2026" == "balance at the END of Mar 2026". So when
-                    // computing opening for Apr (asOfDate = 2026-03-31),
-                    // the 2026-04-01 opening MUST count — the string
-                    // check `> asOfDate` would otherwise exclude it and
-                    // the Apr statement would show ₹0 opening.
-                    //
-                    // We compare against asOfDate + 1 day for openings only,
-                    // so an OPENING_BALANCE dated on the very-next-day after
-                    // asOfDate is included. Openings dated later than that
-                    // (a subsequent re-set of opening in a later month) are
-                    // still correctly excluded from earlier periods.
                     if (t.txnType === 'OPENING_BALANCE') {
-                        const nextDay = new Date(asOfDate + 'T00:00:00');
-                        nextDay.setDate(nextDay.getDate() + 1);
-                        const cutoff = nextDay.toISOString().split('T')[0];
-                        if ((t.txnDate || '') > cutoff) return;
+                        // Earliest opening → always counted (historical carry-fwd)
+                        if (t.txnID !== earliestOpeningID) {
+                            // Later opening = a mid-period adjustment. Compare
+                            // its date against asOfDate + 1 day so an opening
+                            // dated on the very-first-day of the next month
+                            // (e.g. 2026-05-01) still counts as "start of May"
+                            // = "end of Apr" for May's opening calc.
+                            const nextDay = new Date(asOfDate + 'T00:00:00');
+                            nextDay.setDate(nextDay.getDate() + 1);
+                            const cutoff = nextDay.toISOString().split('T')[0];
+                            if ((t.txnDate || '') > cutoff) return;
+                        }
                     } else {
                         if ((t.txnDate || '') > asOfDate) return;
                     }
