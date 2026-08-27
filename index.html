@@ -2527,6 +2527,7 @@
             if ((year < anchorY) || (year === anchorY && month < anchorM)) {
                 return {
                     lpM, carried, opening,
+                    balanceBF:   0,
                     available:   +(opening + carried).toFixed(1),
                     leaveTaken:  0,
                     lopDays:     0,
@@ -2564,6 +2565,17 @@
             // Values for the REQUESTED month — captured when the loop reaches it
             let thisAvailable = 0, thisLeaveTaken = 0, thisLopDays = 0, thisBreakdown = {};
             let thisEncashed = 0;
+            // Balance brought forward INTO the requested month (i.e. the
+            // runningBalance at the start of the last iteration, before this
+            // month's accrual is added). Displayed in the report's "Carried"
+            // column so the user can see the arithmetic add up:
+            //     Available = Carried + Earned
+            //     Balance   = Available − Leave Taken
+            // For the anchor month, this is the initial opening+carried; the
+            // report chooses to show that under the Opening column instead so
+            // we blank it here (see the assignment inside the anchor-month
+            // branch below).
+            let thisBalanceBF = 0;
 
             for (let step = 0; step < monthsThru; step++) {
                 // Compute this iteration's (y, m)
@@ -2594,12 +2606,18 @@
                     thisLopDays    = lopI;
                     thisBreakdown  = takenObj.breakdown;
                     thisEncashed   = encashedI;
+                    // Anchor month → BF is 0 (the Opening column shows the
+                    // initial credit). Subsequent months → BF is the running
+                    // balance rolled forward from the prior month's settlement.
+                    const isAnchor = (iY === anchorY && iM === anchorM);
+                    thisBalanceBF  = isAnchor ? 0 : +runningBalance.toFixed(1);
                 }
                 runningBalance = nextI;
             }
 
             return {
                 lpM, carried, opening,
+                balanceBF:   thisBalanceBF,            // ← new: balance rolled fwd from prior month (0 at anchor)
                 available:   thisAvailable,
                 leaveTaken:  thisLeaveTaken,
                 lopDays:     thisLopDays,
@@ -21895,7 +21913,7 @@ ${'─'.repeat(50)}
                     <td style="padding:8px 12px;font-weight:600;color:#111;white-space:nowrap">${st.name}</td>
                     <td style="padding:8px 8px;text-align:center;color:#7c3aed">${res.opening>0?res.opening+'d':'—'}</td>
                     <td style="padding:8px 8px;text-align:center;color:#2563eb">${res.lpM}d</td>
-                    <td style="padding:8px 8px;text-align:center;color:#0369a1">${res.carried>0?res.carried+'d':'—'}</td>
+                    <td style="padding:8px 8px;text-align:center;color:#0369a1">${res.balanceBF>0?res.balanceBF+'d':'—'}</td>
                     <td style="padding:8px 8px;text-align:center;font-weight:700;color:#1e40af">${res.available}d</td>
                     <td style="padding:8px 6px;text-align:center;color:#d97706">${cl>0?cl+'d':'—'}</td>
                     <td style="padding:8px 6px;text-align:center;color:#dc2626">${sl>0?sl+'d':'—'}</td>
@@ -22045,7 +22063,7 @@ ${'─'.repeat(50)}
 
                 const lpM        = res.lpM;
                 const opening    = res.opening;
-                const carried    = res.carried;
+                const carried    = res.balanceBF;         // ← use actual balance rolled fwd from prior month
                 const available  = res.available;        // ledger-correct
                 const totalLeave = res.leaveTaken;
                 const balance    = res.nextBalance;      // ledger-correct
