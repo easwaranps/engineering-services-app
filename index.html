@@ -17819,7 +17819,7 @@
                         <button onclick="openWageModal()" class="px-4 py-2 bg-green-600 text-white rounded-xl text-sm hover:bg-green-700 font-semibold">+ Add Revision</button>
                     </div>
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-                        ${staff.filter(s=>s.status==='Active').map(s=>{const isTech=s.staffType==='Technician';const b=parseFloat(s.basicSalary)||0,hP=s.techHRAPct??50,dP=s.techDAPct??65,gP=s.techGPPct??30,v=parseFloat(s.techVariable)||0,fix=b*(hP+dP+gP)/100,dw=isTech?+((b+fix+v)/30).toFixed(2):(s.dailyWage||0),sw=isTech?+((b+fix)/30).toFixed(2):0;return `<div class="bg-green-50 border border-green-200 rounded-xl p-4"><div class="flex justify-between items-start mb-2"><div><p class="font-semibold text-gray-800">${s.name}</p><p class="text-xs text-gray-500">${s.designation||''} · ${s.staffType}</p></div><button onclick="openWageModal('${s.staffID}')" class="text-xs text-green-700 border border-green-300 rounded-lg px-2 py-1 hover:bg-green-100">+ Revise</button></div><div class="grid grid-cols-2 gap-2 text-sm"><div><p class="text-xs text-gray-400">Basic Salary</p><p class="font-bold text-green-700">${b?'₹'+b.toLocaleString('en-IN'):'—'}</p></div><div><p class="text-xs text-gray-400">Daily Wage</p><p class="font-bold text-blue-700">${dw?'₹'+dw.toLocaleString('en-IN',{minimumFractionDigits:2}):'—'}</p></div></div>${isTech?`<div class="text-xs text-gray-400 mt-1">Fixed ₹${fix.toLocaleString('en-IN',{minimumFractionDigits:2})} · Standby ₹${sw.toLocaleString('en-IN',{minimumFractionDigits:2})}/day · HRA ${hP}%+DA ${dP}%+GP ${gP}%</div>`:`<div class="text-xs text-gray-400 mt-1">HRA ${s.hraPct||30}% · DA ${s.daPct||65}% · Carried Leave ${s.carriedLeave||0}d</div>`}</div>`;}).join('')}
+                        ${staff.filter(s=>s.status==='Active').map(s=>{const isTech=s.staffType==='Technician';const b=parseFloat(s.basicSalary)||0,hP=s.techHRAPct??50,dP=s.techDAPct??65,gP=s.techGPPct??30,v=parseFloat(s.techVariable)||0,fix=b*(hP+dP+gP)/100,dw=isTech?+((b+fix+v)/30).toFixed(2):(s.dailyWage||0),sw=isTech?+((b+fix)/30).toFixed(2):0;return `<div class="bg-green-50 border border-green-200 rounded-xl p-4"><div class="flex justify-between items-start mb-2"><div><p class="font-semibold text-gray-800">${s.name}</p><p class="text-xs text-gray-500">${s.designation||''} · ${s.staffType}</p></div><div class="flex gap-1 flex-shrink-0"><button onclick="openCTCStructureModal('${s.staffID}')" class="text-xs text-indigo-700 border border-indigo-300 rounded-lg px-2 py-1 hover:bg-indigo-100" title="View full CTC breakdown & what-if simulator">📊 Structure</button><button onclick="openWageModal('${s.staffID}')" class="text-xs text-green-700 border border-green-300 rounded-lg px-2 py-1 hover:bg-green-100">+ Revise</button></div></div><div class="grid grid-cols-2 gap-2 text-sm"><div><p class="text-xs text-gray-400">Basic Salary</p><p class="font-bold text-green-700">${b?'₹'+b.toLocaleString('en-IN'):'—'}</p></div><div><p class="text-xs text-gray-400">Daily Wage</p><p class="font-bold text-blue-700">${dw?'₹'+dw.toLocaleString('en-IN',{minimumFractionDigits:2}):'—'}</p></div></div>${isTech?`<div class="text-xs text-gray-400 mt-1">Fixed ₹${fix.toLocaleString('en-IN',{minimumFractionDigits:2})} · Standby ₹${sw.toLocaleString('en-IN',{minimumFractionDigits:2})}/day · HRA ${hP}%+DA ${dP}%+GP ${gP}%</div>`:`<div class="text-xs text-gray-400 mt-1">HRA ${s.hraPct||30}% · DA ${s.daPct||65}% · Carried Leave ${s.carriedLeave||0}d</div>`}</div>`;}).join('')}
                     </div>
                 </div>
             `;
@@ -26677,6 +26677,10 @@ Automated WFH alert — ${company} Attendance System.`;
             const targetID=prefillSID||(rev?rev.staffID:null)||(staff[0]?.staffID||'');if(targetID)sel.value=targetID;onWagStaffChange(sel.value);
             if(rev){const fv=(id,v)=>{const el=document.getElementById(id);if(el&&v!=null)el.value=v;};fv('wagDate',rev.effectiveDate);fv('wagBasic',rev.basicSalary);fv('wagVariable',rev.techVariable);fv('wagReason',rev.reason);fv('wagStandbyPct',rev.standbyPct);fv('wagAlPct',rev.alPct);fv('wagTechHRAPct',rev.techHRAPct??50);fv('wagTechDAPct',rev.techDAPct??65);fv('wagTechGPPct',rev.techGPPct??30);fv('wagTechPFPct',rev.techPFPct??12);fv('wagTechESICPct',rev.techESICPct??0.75);fv('wagTechTDS',rev.techTDS);fv('wagHRAPct',rev.hraPct);fv('wagDAPct',rev.daPct);fv('wagGradePay',rev.gradePay);fv('wagConveyance',rev.conveyance);fv('wagMedical',rev.medical);fv('wagOfficeVariable',rev.variable);fv('wagPFPct',rev.pfPct);fv('wagTDSMonthly',rev.tdsMonthly);}
             document.getElementById('wageModal').classList.add('show');
+            // Trigger the 26th-of-month validator so the hint reflects the
+            // currently-loaded date (either today's date on Add, or the
+            // effective date of the revision on Edit).
+            setTimeout(() => { if (typeof _validateWageDate === 'function') _validateWageDate(); }, 50);
         }
         function closeWageModal(){document.getElementById('wageModal').classList.remove('show');_editWageRevID=null;const sel=document.getElementById('wagStaff');if(sel)sel.disabled=false;}
         async function saveWageRevision(e){
@@ -26717,6 +26721,555 @@ Automated WFH alert — ${company} Attendance System.`;
             await saveData('staff',staff);closeWageModal();renderView();
         }
         async function deleteWageRevision(staffID,revID){if(!confirm('Delete this wage revision?'))return;const idx=staff.findIndex(x=>x.staffID===staffID);if(idx<0)return;if(await _concurBlockIfStale('staff',[{id:staffID,idKey:'staffID'}]))return;staff[idx].wageRevisions=(staff[idx].wageRevisions||[]).filter(r=>r.revID!==revID);_stampRecord(staff[idx]);await saveData('staff',staff);renderView();}
+
+        // ════════════════════════════════════════════════════════════════
+        //  CTC STRUCTURE MODULE
+        // ─────────────────────────────────────────────────────────────────
+        //  Renders the full monthly Cost-To-Company breakdown for any staff
+        //  member (office or technician), showing each component's type
+        //  (Basic / % of Basic / Fixed / % of Daily Wage), current value,
+        //  and rupee amount. Includes a live what-if simulator (edit inputs
+        //  → see proposed vs current side-by-side + Δ CTC), a PDF export
+        //  for management approval, and a per-staff revision timeline.
+        //
+        //  Reads staff wage fields (basicSalary, techHRAPct/techDAPct/
+        //  techGPPct, techVariable, gradePay, conveyance, medical, variable
+        //  etc.) — never mutates them. What-if changes stay in a scratch
+        //  object; only the existing "+ Revise" button saves a real
+        //  revision through the existing saveWageRevision flow.
+        //  Zero impact on calcTechWage / calcOfficeWage / payslip logic.
+        // ════════════════════════════════════════════════════════════════
+
+        // Build the CTC breakdown from a staff record. Accepts an optional
+        // `override` object with the same shape as staff fields to compute
+        // proposed values (used by the what-if simulator).
+        function _computeCTC(st, override) {
+            const o = override || {};
+            const g = (k) => o[k] !== undefined ? o[k] : st[k];
+            const basic = +g('basicSalary') || 0;
+            const isTech = st.staffType === 'Technician';
+
+            // Field-day allowance percentages come from settings.wageRates
+            // (used by calcTechWage too — keep the same source of truth).
+            const rates = (settings.wageRates || {});
+            const outstationPct = +(o.outstationPct ?? rates.outstationPct ?? 20);
+            const sailingPct    = +(o.sailingPct    ?? rates.sailingPct    ?? 30);
+            const anchoragePct  = +(o.anchoragePct  ?? rates.anchoragePct  ?? 30);
+
+            // ── Basic-dependent components ──
+            let hraPct, daPct, gpPct;
+            if (isTech) {
+                hraPct = +(g('techHRAPct') ?? 50);
+                daPct  = +(g('techDAPct')  ?? 65);
+                gpPct  = +(g('techGPPct')  ?? 30);
+            } else {
+                hraPct = +(g('hraPct') ?? 30);
+                daPct  = +(g('daPct')  ?? 65);
+                gpPct  = 0; // office uses fixed gradePay ₹, not %
+            }
+            const hra = +(basic * hraPct / 100).toFixed(2);
+            const da  = +(basic * daPct  / 100).toFixed(2);
+            const gp  = isTech
+                ? +(basic * gpPct / 100).toFixed(2)
+                : (+g('gradePay') || 0);
+
+            // ── Fixed amounts (basic-independent) ──
+            const variable   = isTech ? (+g('techVariable') || 0) : (+g('variable') || 0);
+            const travel     = isTech ? 4000 : 0;      // travel default per calcTechWage
+            const conveyance = !isTech ? (+g('conveyance') || 0) : 0;
+            const medical    = !isTech ? (+g('medical')    || 0) : 0;
+            const bonusMonthly = +(basic / 120).toFixed(2);  // Basic÷10 annual → ÷12 monthly
+
+            const fixedAllow = +(hra + da + gp).toFixed(2);
+
+            // Derived rates (technician-only)
+            const dailyWage   = isTech && basic > 0 ? +((basic + fixedAllow + variable) / 30).toFixed(2) : 0;
+            const standbyWage = isTech && basic > 0 ? +((basic + fixedAllow) / 30).toFixed(2) : 0;
+            const hourlyRate  = isTech ? +(dailyWage / 10).toFixed(2) : 0;
+            const otRate      = isTech ? +(hourlyRate * 2).toFixed(2) : 0;
+
+            // Statutory (employer side — added to CTC)
+            const pfPct = +(g(isTech ? 'techPFPct' : 'pfPct') ?? 12);
+            const pfBase = isTech ? (basic + fixedAllow) : (basic + hra + da + medical + conveyance + gp);
+            const pfCappedBase = pfBase > 15000 ? 15000 : pfBase;
+            const pfEmployee = +(pfCappedBase * pfPct / 100).toFixed(2);
+            // Employer PF = 12% (of which 8.33% EPS + 3.67% EPF) — plus ~1% admin (0.5 EDLI + 0.5 admin)
+            const pfEmployer = +(pfCappedBase * 0.13).toFixed(2);
+
+            const esicPct    = +(g('techESICPct') ?? 0.75);
+            const esicBase   = isTech ? (basic + fixedAllow + variable) : (basic + hra + da + gp + conveyance + medical);
+            const esicApplies = esicBase <= 21000;
+            const esicEmployee = esicApplies ? +(esicBase * esicPct / 100).toFixed(2) : 0;
+            const esicEmployer = esicApplies ? +(esicBase * 3.25 / 100).toFixed(2) : 0;
+
+            // Monthly earnings (before deductions, using per-month base — for
+            // office this IS the actual gross; for tech this is the base rate
+            // component before field days / OT which vary per month)
+            const monthlyGross = isTech
+                ? +(basic + fixedAllow + variable + travel).toFixed(2)
+                : +(basic + hra + da + gp + conveyance + medical + variable).toFixed(2);
+
+            const monthlyCTC = +(monthlyGross + pfEmployer + esicEmployer + bonusMonthly).toFixed(2);
+            const annualCTC  = +(monthlyCTC * 12).toFixed(2);
+
+            return {
+                basic, hraPct, hra, daPct, da, gpPct, gp,
+                variable, travel, conveyance, medical, bonusMonthly,
+                fixedAllow, dailyWage, standbyWage, hourlyRate, otRate,
+                outstationPct, sailingPct, anchoragePct,
+                outstationPerDay: isTech ? +(dailyWage * outstationPct / 100).toFixed(2) : 0,
+                sailingPerDay:    isTech ? +(dailyWage * sailingPct    / 100).toFixed(2) : 0,
+                anchoragePerDay:  isTech ? +(dailyWage * anchoragePct  / 100).toFixed(2) : 0,
+                pfPct, pfBase, pfCappedBase, pfEmployee, pfEmployer,
+                esicPct, esicApplies, esicEmployee, esicEmployer,
+                monthlyGross, monthlyCTC, annualCTC,
+                isTech
+            };
+        }
+
+        // Format helpers used by the modal + PDF
+        function _ctcFmt(n) { return '₹' + (+n || 0).toLocaleString('en-IN', {minimumFractionDigits:0, maximumFractionDigits:2}); }
+        function _ctcFmtDelta(n) {
+            const v = +n || 0;
+            const sign = v > 0 ? '+' : (v < 0 ? '' : '');
+            const col  = v > 0 ? '#16a34a' : (v < 0 ? '#dc2626' : '#6b7280');
+            return `<span style="color:${col};font-weight:600">${sign}${_ctcFmt(v)}</span>`;
+        }
+
+        function openCTCStructureModal(staffID) {
+            const st = staff.find(s => s.staffID === staffID);
+            if (!st) { alert('Staff record not found.'); return; }
+            // Working scratch — starts as a snapshot of current values so
+            // the "Proposed" side matches "Current" on first open.
+            window._ctcProposed = {
+                basicSalary: +st.basicSalary || 0,
+                techHRAPct:  st.techHRAPct ?? 50,
+                techDAPct:   st.techDAPct  ?? 65,
+                techGPPct:   st.techGPPct  ?? 30,
+                techVariable: +st.techVariable || 0,
+                techPFPct:   st.techPFPct  ?? 12,
+                techESICPct: st.techESICPct ?? 0.75,
+                hraPct:      st.hraPct ?? 30,
+                daPct:       st.daPct  ?? 65,
+                gradePay:    +st.gradePay || 0,
+                conveyance:  +st.conveyance || 0,
+                medical:     +st.medical || 0,
+                variable:    +st.variable || 0,
+                pfPct:       st.pfPct ?? 12
+            };
+            window._ctcStaffID = staffID;
+
+            const modal = document.createElement('div');
+            modal.id = 'ctcStructureModal';
+            modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;display:flex;align-items:flex-start;justify-content:center;padding-top:20px;overflow-y:auto';
+            modal.innerHTML = `
+                <div style="background:#fff;border-radius:16px;width:min(1200px,98vw);margin-bottom:40px;box-shadow:0 20px 60px rgba(0,0,0,.3)">
+                    <div style="background:linear-gradient(135deg,#4f46e5,#7c3aed);padding:16px 20px;border-radius:16px 16px 0 0;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:5">
+                        <div>
+                            <div style="color:#fff;font-weight:700;font-size:16px">📊 CTC Structure — ${st.name}</div>
+                            <div style="color:#ddd6fe;font-size:12px;margin-top:2px">${st.designation||''} · ${st.staffType||'Staff'} · Staff ID: ${st.staffID}</div>
+                        </div>
+                        <div style="display:flex;gap:8px">
+                            <button onclick="openWageTimelineModal('${staffID}')" style="padding:6px 12px;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);border-radius:8px;font-size:12px;cursor:pointer">📅 Timeline</button>
+                            <button onclick="generateCTCProposalPDF('${staffID}')" style="padding:6px 12px;background:#fff;color:#4f46e5;border:none;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer">📄 Approval PDF</button>
+                            <button onclick="document.getElementById('ctcStructureModal').remove();delete window._ctcProposed;delete window._ctcStaffID" style="color:#fff;font-size:22px;background:none;border:none;cursor:pointer">✕</button>
+                        </div>
+                    </div>
+                    <div id="ctcModalBody" style="padding:20px"></div>
+                </div>`;
+            document.body.appendChild(modal);
+            _ctcRenderBody();
+        }
+
+        function _ctcRenderBody() {
+            const st = staff.find(s => s.staffID === window._ctcStaffID);
+            if (!st) return;
+            const isTech = st.staffType === 'Technician';
+            const cur = _computeCTC(st);
+            const prop = _computeCTC(st, window._ctcProposed);
+            const body = document.getElementById('ctcModalBody');
+            if (!body) return;
+
+            // Build the row for the breakdown table. Each row has a
+            // section label, component name, "type" chip, current value,
+            // proposed value, and delta.
+            const row = (section, name, type, curVal, propVal, curAmt, propAmt, opts={}) => {
+                const delta = (+propAmt || 0) - (+curAmt || 0);
+                const rowStyle = section ? 'background:#f8fafc;font-weight:700;color:#1e293b' : '';
+                if (section) {
+                    return `<tr style="${rowStyle}"><td colspan="6" style="padding:8px 10px;font-size:11px;letter-spacing:0.05em;text-transform:uppercase;color:#4f46e5;border-top:2px solid #e5e7eb">${section}</td></tr>`;
+                }
+                const typeCol = {'Base':'#7c3aed','% of Basic':'#0284c7','Fixed ₹':'#16a34a','% of DW':'#ea580c','Auto':'#6b7280','% of PF-base':'#0284c7','% of Gross':'#0284c7'}[type] || '#6b7280';
+                return `<tr style="border-bottom:1px solid #f1f5f9">
+                    <td style="padding:6px 10px;font-size:12px">${name}</td>
+                    <td style="padding:6px 10px;font-size:10px"><span style="background:${typeCol}22;color:${typeCol};padding:2px 8px;border-radius:10px;font-weight:600">${type}</span></td>
+                    <td style="padding:6px 10px;text-align:right;font-size:12px;color:#64748b">${curVal||'—'}</td>
+                    <td style="padding:6px 10px;text-align:right;font-size:12px;color:#1e293b;font-weight:600">${propVal||'—'}</td>
+                    <td style="padding:6px 10px;text-align:right;font-size:12px;color:#64748b">${_ctcFmt(curAmt)}</td>
+                    <td style="padding:6px 10px;text-align:right;font-size:12px">${opts.noDelta ? '—' : _ctcFmtDelta(delta)}</td>
+                </tr>`;
+            };
+
+            const dCTC = prop.monthlyCTC - cur.monthlyCTC;
+            const dAnnualCTC = prop.annualCTC - cur.annualCTC;
+            const dGross = prop.monthlyGross - cur.monthlyGross;
+            const dCTCPct = cur.monthlyCTC > 0 ? +(dCTC / cur.monthlyCTC * 100).toFixed(2) : 0;
+
+            body.innerHTML = `
+                <!-- Editable inputs (what-if simulator) -->
+                <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:12px 16px;margin-bottom:16px">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+                        <div style="font-weight:700;font-size:13px;color:#334155">🎯 What-If Simulator <span style="font-weight:400;color:#64748b;font-size:11px">— edit any input, see the CTC impact live below</span></div>
+                        <button onclick="_ctcReset()" style="font-size:11px;color:#64748b;background:none;border:1px solid #cbd5e1;border-radius:6px;padding:3px 10px;cursor:pointer">↺ Reset to current</button>
+                    </div>
+                    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
+                        <div><label style="font-size:10px;font-weight:600;color:#64748b">Basic Salary (₹)</label><input type="number" step="0.01" value="${window._ctcProposed.basicSalary}" oninput="_ctcSet('basicSalary',this.value)" style="width:100%;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:12px"/></div>
+                        ${isTech ? `
+                            <div><label style="font-size:10px;font-weight:600;color:#64748b">HRA %</label><input type="number" step="0.01" value="${window._ctcProposed.techHRAPct}" oninput="_ctcSet('techHRAPct',this.value)" style="width:100%;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:12px"/></div>
+                            <div><label style="font-size:10px;font-weight:600;color:#64748b">DA %</label><input type="number" step="0.01" value="${window._ctcProposed.techDAPct}" oninput="_ctcSet('techDAPct',this.value)" style="width:100%;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:12px"/></div>
+                            <div><label style="font-size:10px;font-weight:600;color:#64748b">Grade Pay %</label><input type="number" step="0.01" value="${window._ctcProposed.techGPPct}" oninput="_ctcSet('techGPPct',this.value)" style="width:100%;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:12px"/></div>
+                            <div><label style="font-size:10px;font-weight:600;color:#64748b">Variable ₹</label><input type="number" step="0.01" value="${window._ctcProposed.techVariable}" oninput="_ctcSet('techVariable',this.value)" style="width:100%;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:12px"/></div>
+                            <div><label style="font-size:10px;font-weight:600;color:#64748b">PF %</label><input type="number" step="0.01" value="${window._ctcProposed.techPFPct}" oninput="_ctcSet('techPFPct',this.value)" style="width:100%;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:12px"/></div>
+                            <div><label style="font-size:10px;font-weight:600;color:#64748b">ESIC %</label><input type="number" step="0.01" value="${window._ctcProposed.techESICPct}" oninput="_ctcSet('techESICPct',this.value)" style="width:100%;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:12px"/></div>
+                        ` : `
+                            <div><label style="font-size:10px;font-weight:600;color:#64748b">HRA %</label><input type="number" step="0.01" value="${window._ctcProposed.hraPct}" oninput="_ctcSet('hraPct',this.value)" style="width:100%;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:12px"/></div>
+                            <div><label style="font-size:10px;font-weight:600;color:#64748b">DA %</label><input type="number" step="0.01" value="${window._ctcProposed.daPct}" oninput="_ctcSet('daPct',this.value)" style="width:100%;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:12px"/></div>
+                            <div><label style="font-size:10px;font-weight:600;color:#64748b">Grade Pay ₹</label><input type="number" step="0.01" value="${window._ctcProposed.gradePay}" oninput="_ctcSet('gradePay',this.value)" style="width:100%;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:12px"/></div>
+                            <div><label style="font-size:10px;font-weight:600;color:#64748b">Conveyance ₹</label><input type="number" step="0.01" value="${window._ctcProposed.conveyance}" oninput="_ctcSet('conveyance',this.value)" style="width:100%;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:12px"/></div>
+                            <div><label style="font-size:10px;font-weight:600;color:#64748b">Medical ₹</label><input type="number" step="0.01" value="${window._ctcProposed.medical}" oninput="_ctcSet('medical',this.value)" style="width:100%;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:12px"/></div>
+                            <div><label style="font-size:10px;font-weight:600;color:#64748b">Variable ₹</label><input type="number" step="0.01" value="${window._ctcProposed.variable}" oninput="_ctcSet('variable',this.value)" style="width:100%;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:12px"/></div>
+                            <div><label style="font-size:10px;font-weight:600;color:#64748b">PF %</label><input type="number" step="0.01" value="${window._ctcProposed.pfPct}" oninput="_ctcSet('pfPct',this.value)" style="width:100%;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:12px"/></div>
+                        `}
+                    </div>
+                </div>
+
+                <!-- Breakdown table -->
+                <div style="border:1px solid #e5e7eb;border-radius:12px;overflow:hidden">
+                    <table style="width:100%;border-collapse:collapse">
+                        <thead>
+                            <tr style="background:#eef2ff">
+                                <th style="padding:8px 10px;text-align:left;font-size:11px;color:#3730a3">Component</th>
+                                <th style="padding:8px 10px;text-align:left;font-size:11px;color:#3730a3">Type</th>
+                                <th style="padding:8px 10px;text-align:right;font-size:11px;color:#3730a3">Current Rate</th>
+                                <th style="padding:8px 10px;text-align:right;font-size:11px;color:#3730a3">Proposed Rate</th>
+                                <th style="padding:8px 10px;text-align:right;font-size:11px;color:#3730a3">Current ₹/mo</th>
+                                <th style="padding:8px 10px;text-align:right;font-size:11px;color:#3730a3">Δ ₹/mo</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${row('Earnings — Basic-dependent (auto-scale with Basic)')}
+                            ${row('','Basic Salary','Base','₹'+cur.basic.toLocaleString('en-IN'),'₹'+prop.basic.toLocaleString('en-IN'),cur.basic,prop.basic)}
+                            ${row('','House Rent Allowance (HRA)','% of Basic',cur.hraPct+'%',prop.hraPct+'%',cur.hra,prop.hra)}
+                            ${row('','Dearness Allowance (DA)','% of Basic',cur.daPct+'%',prop.daPct+'%',cur.da,prop.da)}
+                            ${row('','Grade Pay',isTech?'% of Basic':'Fixed ₹',isTech?cur.gpPct+'%':_ctcFmt(cur.gp),isTech?prop.gpPct+'%':_ctcFmt(prop.gp),cur.gp,prop.gp)}
+                            ${row('Earnings — Fixed (basic-independent)')}
+                            ${row('','Variable Allowance','Fixed ₹',_ctcFmt(cur.variable),_ctcFmt(prop.variable),cur.variable,prop.variable)}
+                            ${isTech ? row('','Travel Allowance','Fixed ₹',_ctcFmt(cur.travel),_ctcFmt(prop.travel),cur.travel,prop.travel) : ''}
+                            ${!isTech ? row('','Conveyance','Fixed ₹',_ctcFmt(cur.conveyance),_ctcFmt(prop.conveyance),cur.conveyance,prop.conveyance) : ''}
+                            ${!isTech ? row('','Medical','Fixed ₹',_ctcFmt(cur.medical),_ctcFmt(prop.medical),cur.medical,prop.medical) : ''}
+                            ${isTech ? `
+                                ${row('Field-Day Allowances (% of Daily Wage)')}
+                                ${row('','Outstation Allowance','% of DW',cur.outstationPct+'%',prop.outstationPct+'%',cur.outstationPerDay,prop.outstationPerDay,{noDelta:true})}
+                                ${row('','Sailing Allowance','% of DW',cur.sailingPct+'%',prop.sailingPct+'%',cur.sailingPerDay,prop.sailingPerDay,{noDelta:true})}
+                                ${row('','Anchorage Allowance','% of DW',cur.anchoragePct+'%',prop.anchoragePct+'%',cur.anchoragePerDay,prop.anchoragePerDay,{noDelta:true})}
+                                ${row('Derived Rates (auto)')}
+                                ${row('','Daily Wage','Auto','(B+F+V)/30','(B+F+V)/30',cur.dailyWage,prop.dailyWage,{noDelta:true})}
+                                ${row('','Standby Wage','Auto','(B+F)/30','(B+F)/30',cur.standbyWage,prop.standbyWage,{noDelta:true})}
+                                ${row('','Hourly Rate','Auto','DW/10','DW/10',cur.hourlyRate,prop.hourlyRate,{noDelta:true})}
+                                ${row('','OT Rate (beyond 22:00)','Auto','2 × Hourly','2 × Hourly',cur.otRate,prop.otRate,{noDelta:true})}
+                            ` : ''}
+                            ${row('Employer Liability (adds to CTC)')}
+                            ${row('','Employer PF','% of PF-base','13%','13%',cur.pfEmployer,prop.pfEmployer)}
+                            ${row('','Employer ESIC ' + (cur.esicApplies?'':'(not applicable — gross > ₹21k)'),'% of Gross','3.25%','3.25%',cur.esicEmployer,prop.esicEmployer)}
+                            ${row('','Bonus Accrual','Auto','Basic ÷ 120','Basic ÷ 120',cur.bonusMonthly,prop.bonusMonthly)}
+                            <tr style="background:#f0f9ff;border-top:2px solid #7c3aed">
+                                <td colspan="4" style="padding:10px;font-weight:700;font-size:12px;color:#334155;text-align:right">Monthly Gross Earnings</td>
+                                <td style="padding:10px;text-align:right;font-weight:700;color:#334155;font-size:13px">${_ctcFmt(cur.monthlyGross)}</td>
+                                <td style="padding:10px;text-align:right;font-size:13px">${_ctcFmtDelta(dGross)}</td>
+                            </tr>
+                            <tr style="background:#eef2ff;border-top:1px solid #7c3aed">
+                                <td colspan="4" style="padding:10px;font-weight:800;font-size:13px;color:#3730a3;text-align:right">TOTAL MONTHLY CTC</td>
+                                <td style="padding:10px;text-align:right;font-weight:800;color:#3730a3;font-size:14px">${_ctcFmt(cur.monthlyCTC)}</td>
+                                <td style="padding:10px;text-align:right;font-size:14px">${_ctcFmtDelta(dCTC)}</td>
+                            </tr>
+                            <tr style="background:#4f46e5;color:#fff">
+                                <td colspan="4" style="padding:10px;font-weight:800;font-size:13px;text-align:right">ANNUAL CTC (× 12)</td>
+                                <td style="padding:10px;text-align:right;font-weight:800;font-size:14px">${_ctcFmt(cur.annualCTC)}</td>
+                                <td style="padding:10px;text-align:right;font-size:14px;color:${dAnnualCTC>0?'#fef08a':dAnnualCTC<0?'#fca5a5':'#e2e8f0'};font-weight:700">${dAnnualCTC>0?'+':''}${_ctcFmt(dAnnualCTC)}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Δ CTC banner -->
+                ${Math.abs(dCTC) > 0.01 ? `
+                    <div style="margin-top:16px;padding:12px 16px;background:${dCTC>0?'linear-gradient(135deg,#f0fdf4,#dcfce7)':'linear-gradient(135deg,#fef2f2,#fee2e2)'};border:2px solid ${dCTC>0?'#16a34a':'#dc2626'};border-radius:12px;display:flex;justify-content:space-between;align-items:center">
+                        <div>
+                            <div style="font-weight:700;font-size:13px;color:${dCTC>0?'#166534':'#991b1b'}">Proposed change impacts CTC by ${dCTCPct>=0?'+':''}${dCTCPct}%</div>
+                            <div style="font-size:11px;color:${dCTC>0?'#166534':'#991b1b'};margin-top:2px">${dCTC>0?'Increase':'Reduction'} of ${_ctcFmt(Math.abs(dCTC))}/month · ${_ctcFmt(Math.abs(dAnnualCTC))}/year</div>
+                        </div>
+                        <button onclick="generateCTCProposalPDF('${window._ctcStaffID}')" style="padding:8px 16px;background:${dCTC>0?'#16a34a':'#dc2626'};color:#fff;border:none;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer">📄 Generate Approval PDF</button>
+                    </div>
+                ` : `<div style="margin-top:16px;padding:10px 14px;background:#f8fafc;border:1px dashed #cbd5e1;border-radius:10px;color:#64748b;font-size:12px;text-align:center">Edit any input above to simulate a revision. When you're happy with the numbers, click <b>📄 Approval PDF</b> to prepare the management document.</div>`}
+
+                <div style="margin-top:12px;font-size:10px;color:#94a3b8;text-align:center">
+                    Notes: (1) PF employer contribution shown at 13% (12% + 1% admin/EDLI). (2) Bonus accrual = Basic÷10 annual ÷ 12 months. (3) Field-day allowances and OT are per-day rates — actual monthly impact depends on the technician's attendance for that month.
+                </div>
+            `;
+        }
+
+        function _ctcSet(field, val) {
+            if (!window._ctcProposed) return;
+            window._ctcProposed[field] = parseFloat(val) || 0;
+            _ctcRenderBody();
+        }
+
+        function _ctcReset() {
+            const st = staff.find(s => s.staffID === window._ctcStaffID);
+            if (!st) return;
+            window._ctcProposed = {
+                basicSalary: +st.basicSalary || 0,
+                techHRAPct: st.techHRAPct ?? 50, techDAPct: st.techDAPct ?? 65,
+                techGPPct: st.techGPPct ?? 30, techVariable: +st.techVariable || 0,
+                techPFPct: st.techPFPct ?? 12, techESICPct: st.techESICPct ?? 0.75,
+                hraPct: st.hraPct ?? 30, daPct: st.daPct ?? 65,
+                gradePay: +st.gradePay || 0, conveyance: +st.conveyance || 0,
+                medical: +st.medical || 0, variable: +st.variable || 0,
+                pfPct: st.pfPct ?? 12
+            };
+            _ctcRenderBody();
+        }
+
+        // ── CTC Proposal PDF — management-facing approval document ──
+        async function generateCTCProposalPDF(staffID) {
+            const st = staff.find(s => s.staffID === staffID);
+            if (!st) return;
+            if (!window.jspdf?.jsPDF) { alert('PDF library not loaded — please refresh and try again.'); return; }
+            const { jsPDF } = window.jspdf;
+            const cur = _computeCTC(st);
+            const prop = _computeCTC(st, window._ctcProposed || {});
+            const isTech = st.staffType === 'Technician';
+            const dCTC = prop.monthlyCTC - cur.monthlyCTC;
+            const dAnnual = prop.annualCTC - cur.annualCTC;
+            const dCTCPct = cur.monthlyCTC > 0 ? +(dCTC / cur.monthlyCTC * 100).toFixed(2) : 0;
+            const doc = new jsPDF('p', 'mm', 'a4');
+            const PW = 210, ML = 15, CW = PW - 30;
+            const fmt = n => '₹' + (+n || 0).toLocaleString('en-IN', {minimumFractionDigits:0, maximumFractionDigits:2});
+
+            // ── Header ──
+            doc.setFillColor(79, 70, 229); doc.rect(0, 0, PW, 32, 'F');
+            doc.setFontSize(14); doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255);
+            doc.text('WAGE REVISION PROPOSAL', PW/2, 12, {align:'center'});
+            doc.setFontSize(10); doc.setFont('helvetica','normal'); doc.setTextColor(224,231,255);
+            doc.text(settings.companyName || 'IMSE Tech Services Pvt Ltd', PW/2, 19, {align:'center'});
+            doc.setFontSize(8);
+            doc.text('For management review & approval  ·  Generated: ' + new Date().toLocaleDateString('en-IN'), PW/2, 26, {align:'center'});
+            let y = 40;
+
+            // ── Employee block ──
+            doc.setFillColor(238, 242, 255); doc.rect(ML, y, CW, 22, 'F');
+            doc.setFontSize(11); doc.setFont('helvetica','bold'); doc.setTextColor(55, 48, 163);
+            doc.text('Employee: ' + st.name, ML + 4, y + 7);
+            doc.setFontSize(9); doc.setFont('helvetica','normal'); doc.setTextColor(71,85,105);
+            doc.text('Designation: ' + (st.designation || '—') + '   ·   Staff Type: ' + (st.staffType || '—') + '   ·   ID: ' + st.staffID, ML + 4, y + 13);
+            doc.text('DOJ: ' + (st.dateOfJoining || '—') + '   ·   PAN: ' + (st.pan || '—') + '   ·   Aadhar: ' + (st.aadhar ? '••••' + String(st.aadhar).slice(-4) : '—'), ML + 4, y + 19);
+            y += 28;
+
+            // ── Comparison table ──
+            const tableBody = [];
+            const pushRow = (name, type, curVal, propVal, curAmt, propAmt) => {
+                const delta = (+propAmt || 0) - (+curAmt || 0);
+                tableBody.push([name, type, curVal || '—', propVal || '—', fmt(curAmt), delta === 0 ? '—' : (delta > 0 ? '+' : '') + fmt(delta)]);
+            };
+            const pushSection = (title) => { tableBody.push([{content:title, colSpan:6, styles:{fillColor:[241,245,249], textColor:[55,48,163], fontStyle:'bold', fontSize:8}}]); };
+
+            pushSection('Earnings — Basic-dependent');
+            pushRow('Basic Salary', 'Base', fmt(cur.basic), fmt(prop.basic), cur.basic, prop.basic);
+            pushRow('HRA', '% of Basic', cur.hraPct+'%', prop.hraPct+'%', cur.hra, prop.hra);
+            pushRow('DA', '% of Basic', cur.daPct+'%', prop.daPct+'%', cur.da, prop.da);
+            pushRow('Grade Pay', isTech?'% of Basic':'Fixed', isTech?cur.gpPct+'%':fmt(cur.gp), isTech?prop.gpPct+'%':fmt(prop.gp), cur.gp, prop.gp);
+            pushSection('Earnings — Fixed');
+            pushRow('Variable Allowance', 'Fixed', fmt(cur.variable), fmt(prop.variable), cur.variable, prop.variable);
+            if (isTech) pushRow('Travel Allowance', 'Fixed', fmt(cur.travel), fmt(prop.travel), cur.travel, prop.travel);
+            if (!isTech) pushRow('Conveyance', 'Fixed', fmt(cur.conveyance), fmt(prop.conveyance), cur.conveyance, prop.conveyance);
+            if (!isTech) pushRow('Medical', 'Fixed', fmt(cur.medical), fmt(prop.medical), cur.medical, prop.medical);
+            pushSection('Employer Liability');
+            pushRow('Employer PF (13%)', '% of PF-base', fmt(cur.pfCappedBase)+' base', fmt(prop.pfCappedBase)+' base', cur.pfEmployer, prop.pfEmployer);
+            pushRow('Employer ESIC (3.25%)' + (cur.esicApplies?'':' [N/A]'), '% of Gross', cur.esicApplies?'applies':'N/A', prop.esicApplies?'applies':'N/A', cur.esicEmployer, prop.esicEmployer);
+            pushRow('Bonus Accrual', 'Basic ÷ 120', fmt(cur.bonusMonthly), fmt(prop.bonusMonthly), cur.bonusMonthly, prop.bonusMonthly);
+            // Totals row
+            tableBody.push([{content:'MONTHLY CTC', colSpan:4, styles:{halign:'right', fontStyle:'bold', textColor:[55,48,163], fontSize:10}}, {content:fmt(cur.monthlyCTC), styles:{halign:'right', fontStyle:'bold', fontSize:10}}, {content:(dCTC>=0?'+':'')+fmt(dCTC), styles:{halign:'right', fontStyle:'bold', fontSize:10, textColor:dCTC>0?[22,163,74]:dCTC<0?[220,38,38]:[100,100,100]}}]);
+            tableBody.push([{content:'ANNUAL CTC (× 12)', colSpan:4, styles:{halign:'right', fontStyle:'bold', textColor:[255,255,255], fillColor:[79,70,229], fontSize:11}}, {content:fmt(cur.annualCTC), styles:{halign:'right', fontStyle:'bold', textColor:[255,255,255], fillColor:[79,70,229], fontSize:11}}, {content:(dAnnual>=0?'+':'')+fmt(dAnnual), styles:{halign:'right', fontStyle:'bold', fillColor:[79,70,229], textColor:dAnnual>0?[187,247,208]:dAnnual<0?[254,202,202]:[255,255,255], fontSize:11}}]);
+
+            doc.autoTable({
+                startY: y,
+                head: [['Component','Type','Current','Proposed','Current ₹/mo','Δ ₹/mo']],
+                body: tableBody,
+                theme: 'grid',
+                styles: {fontSize:8, cellPadding:2, overflow:'linebreak', halign:'left', valign:'middle'},
+                headStyles: {fillColor:[79,70,229], textColor:[255,255,255], fontStyle:'bold', halign:'left'},
+                columnStyles: {
+                    0:{cellWidth:55}, 1:{cellWidth:25}, 2:{cellWidth:28, halign:'right'},
+                    3:{cellWidth:28, halign:'right'}, 4:{cellWidth:26, halign:'right'}, 5:{cellWidth:'auto', halign:'right'}
+                },
+                margin: {left:ML, right:ML}
+            });
+            y = doc.lastAutoTable.finalY + 6;
+
+            // ── Impact summary banner ──
+            if (Math.abs(dCTC) > 0.01) {
+                const banC = dCTC > 0 ? [220,252,231] : [254,226,226];
+                const banT = dCTC > 0 ? [22,101,52] : [153,27,27];
+                doc.setFillColor(...banC); doc.rect(ML, y, CW, 14, 'F');
+                doc.setDrawColor(...banT); doc.setLineWidth(0.5); doc.rect(ML, y, CW, 14);
+                doc.setFontSize(10); doc.setFont('helvetica','bold'); doc.setTextColor(...banT);
+                doc.text('CTC IMPACT: ' + (dCTC>0?'+':'') + dCTCPct + '%  (' + (dCTC>0?'+':'') + fmt(dCTC) + '/mo   ·   ' + (dAnnual>0?'+':'') + fmt(dAnnual) + '/year)', ML + 4, y + 9);
+                y += 20;
+            }
+
+            // ── Effective date + justification ──
+            doc.setFontSize(9); doc.setFont('helvetica','bold'); doc.setTextColor(55,48,163);
+            doc.text('Proposed Effective Date:  _______________________________', ML, y);
+            doc.setFont('helvetica','italic'); doc.setFontSize(7); doc.setTextColor(120,120,120);
+            doc.text('(Recommended: 26th of a month, aligning with pay period 26th→25th)', ML, y + 4);
+            y += 12;
+            doc.setFontSize(9); doc.setFont('helvetica','bold'); doc.setTextColor(55,48,163);
+            doc.text('Justification / Reason for Revision:', ML, y);
+            y += 3;
+            doc.setDrawColor(203,213,225); doc.setLineWidth(0.3);
+            for (let i = 0; i < 4; i++) { y += 6; doc.line(ML, y, ML + CW, y); }
+            y += 12;
+
+            // ── Signature block ──
+            const sigW = (CW - 20) / 3;
+            const sigY = Math.max(y, 250);
+            [['Proposed By','HR / Reporting Manager'],['Recommended By','Finance / Accounts'],['Approved By','Director / Management']].forEach((s, i) => {
+                const x = ML + i * (sigW + 10);
+                doc.setDrawColor(150,150,150); doc.setLineWidth(0.3);
+                doc.line(x, sigY, x + sigW, sigY);
+                doc.setFontSize(9); doc.setFont('helvetica','bold'); doc.setTextColor(55,48,163);
+                doc.text(s[0], x + sigW/2, sigY + 5, {align:'center'});
+                doc.setFontSize(7); doc.setFont('helvetica','normal'); doc.setTextColor(107,114,128);
+                doc.text(s[1], x + sigW/2, sigY + 9, {align:'center'});
+                doc.text('Name: _______________', x + sigW/2, sigY + 14, {align:'center'});
+                doc.text('Date:  _______________', x + sigW/2, sigY + 18, {align:'center'});
+            });
+
+            // Save
+            const safeName = (st.name || 'staff').replace(/[^a-zA-Z0-9]/g, '_');
+            doc.save('CTC_Proposal_' + safeName + '_' + new Date().toISOString().split('T')[0] + '.pdf');
+        }
+
+        // ── Wage revision timeline per staff ──
+        function openWageTimelineModal(staffID) {
+            const st = staff.find(s => s.staffID === staffID);
+            if (!st) return;
+            const revs = (st.wageRevisions || []).slice().sort((a,b) => (b.effectiveDate||'').localeCompare(a.effectiveDate||''));
+            const modal = document.createElement('div');
+            modal.id = 'wageTimelineModal';
+            modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;display:flex;align-items:flex-start;justify-content:center;padding-top:40px;overflow-y:auto';
+            const isTech = st.staffType === 'Technician';
+            const fmt = n => '₹' + (+n || 0).toLocaleString('en-IN');
+            modal.innerHTML = `
+                <div style="background:#fff;border-radius:16px;width:min(900px,96vw);margin-bottom:40px;box-shadow:0 20px 60px rgba(0,0,0,.3)">
+                    <div style="background:linear-gradient(135deg,#0891b2,#0e7490);padding:14px 18px;border-radius:16px 16px 0 0;display:flex;justify-content:space-between;align-items:center">
+                        <div>
+                            <div style="color:#fff;font-weight:700;font-size:15px">📅 Wage Revision Timeline — ${st.name}</div>
+                            <div style="color:#cffafe;font-size:11px;margin-top:2px">${revs.length} recorded revision${revs.length===1?'':'s'} · sorted newest first</div>
+                        </div>
+                        <button onclick="document.getElementById('wageTimelineModal').remove()" style="color:#fff;font-size:20px;background:none;border:none;cursor:pointer">✕</button>
+                    </div>
+                    <div style="padding:18px">
+                        ${revs.length === 0 ? `
+                            <div style="text-align:center;padding:40px 20px;color:#94a3b8">
+                                <div style="font-size:32px;margin-bottom:8px">📅</div>
+                                <p style="font-size:13px">No wage revisions recorded yet for this staff member.</p>
+                                <p style="font-size:11px;margin-top:4px">Revisions logged via the "+ Revise" button will appear here.</p>
+                            </div>
+                        ` : `
+                            <table style="width:100%;border-collapse:collapse;font-size:12px">
+                                <thead>
+                                    <tr style="background:#f0f9ff">
+                                        <th style="padding:8px;text-align:left;color:#0c4a6e;font-size:11px">Effective Date</th>
+                                        <th style="padding:8px;text-align:right;color:#0c4a6e;font-size:11px">Basic</th>
+                                        ${isTech ? '<th style="padding:8px;text-align:right;color:#0c4a6e;font-size:11px">HRA%</th><th style="padding:8px;text-align:right;color:#0c4a6e;font-size:11px">DA%</th><th style="padding:8px;text-align:right;color:#0c4a6e;font-size:11px">GP%</th><th style="padding:8px;text-align:right;color:#0c4a6e;font-size:11px">Variable</th>' : '<th style="padding:8px;text-align:right;color:#0c4a6e;font-size:11px">HRA%</th><th style="padding:8px;text-align:right;color:#0c4a6e;font-size:11px">DA%</th><th style="padding:8px;text-align:right;color:#0c4a6e;font-size:11px">Grade Pay</th><th style="padding:8px;text-align:right;color:#0c4a6e;font-size:11px">Variable</th>'}
+                                        <th style="padding:8px;text-align:left;color:#0c4a6e;font-size:11px">Reason</th>
+                                        <th style="padding:8px;text-align:left;color:#0c4a6e;font-size:11px">By</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${revs.map((r, i) => `
+                                        <tr style="border-bottom:1px solid #f1f5f9;${i===0?'background:#f0fdf4':''}">
+                                            <td style="padding:8px"><b>${r.effectiveDate||'—'}</b>${i===0?'<br/><span style="font-size:9px;background:#16a34a;color:#fff;padding:1px 6px;border-radius:8px">CURRENT</span>':''}</td>
+                                            <td style="padding:8px;text-align:right;font-weight:600">${r.basicSalary?fmt(r.basicSalary):'—'}</td>
+                                            ${isTech ? `
+                                                <td style="padding:8px;text-align:right">${r.techHRAPct??'—'}${r.techHRAPct!=null?'%':''}</td>
+                                                <td style="padding:8px;text-align:right">${r.techDAPct??'—'}${r.techDAPct!=null?'%':''}</td>
+                                                <td style="padding:8px;text-align:right">${r.techGPPct??'—'}${r.techGPPct!=null?'%':''}</td>
+                                                <td style="padding:8px;text-align:right">${r.techVariable?fmt(r.techVariable):'—'}</td>
+                                            ` : `
+                                                <td style="padding:8px;text-align:right">${r.hraPct??'—'}${r.hraPct!=null?'%':''}</td>
+                                                <td style="padding:8px;text-align:right">${r.daPct??'—'}${r.daPct!=null?'%':''}</td>
+                                                <td style="padding:8px;text-align:right">${r.gradePay?fmt(r.gradePay):'—'}</td>
+                                                <td style="padding:8px;text-align:right">${r.variable?fmt(r.variable):'—'}</td>
+                                            `}
+                                            <td style="padding:8px;color:#64748b;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(r.reason||'').replace(/"/g,'&quot;')}">${(r.reason||'—').substring(0,40)}</td>
+                                            <td style="padding:8px;font-size:10px;color:#64748b">${r.recordedBy||'—'}<br/>${(r.recordedAt||'').substring(0,10)}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        `}
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
+        // ── 26th-of-month validator for wage-revision effective date ────
+        // Pay period runs 26th → 25th, so a revision effective mid-period
+        // would require proportional-pay math the payslip generator doesn't
+        // do. Nudge the user to the correct date but allow override for
+        // genuine edge cases (retro corrections, DOJ mid-month pro-rating
+        // that HR handles manually).
+        function _validateWageDate() {
+            const el = document.getElementById('wagDate');
+            const hint = document.getElementById('wagDateHint');
+            if (!el || !hint) return;
+            const v = el.value;
+            if (!v) {
+                hint.className = 'text-[10px] text-gray-500 mt-1';
+                hint.textContent = 'Recommended: 26th of a month (pay period runs 26th → 25th).';
+                return;
+            }
+            const d = new Date(v + 'T00:00:00');
+            if (d.getDate() === 26) {
+                hint.className = 'text-[10px] text-green-700 mt-1';
+                hint.textContent = '✓ Aligned with pay-period start.';
+            } else {
+                hint.className = 'text-[10px] text-amber-700 mt-1 font-semibold';
+                hint.textContent = '⚠ Not the 26th — mid-period revision. Full month\'s payslip will use the NEW rate (no proportional split). Change to the 26th unless intentional.';
+            }
+        }
+        async function saveWageRevisionWithDateCheck(e) {
+            if (e && e.preventDefault) e.preventDefault();
+            const dateEl = document.getElementById('wagDate');
+            const v = dateEl?.value;
+            if (v) {
+                const d = new Date(v + 'T00:00:00');
+                if (d.getDate() !== 26) {
+                    const monthLabel = d.toLocaleString('en-IN', {month:'long', year:'numeric'});
+                    const proceed = confirm(
+                        '⚠ Wage revision effective date is not the 26th of the month.\n\n' +
+                        'Your pay period runs 26th → 25th. A revision on any other day means the FULL month\'s payslip will use the NEW rate (no proportional split).\n\n' +
+                        'Recommended: change the date to the 26th of ' + monthLabel + ' (or the appropriate month) so the revision aligns with a pay-period start.\n\n' +
+                        'Click OK to proceed with the current date, or Cancel to change it.'
+                    );
+                    if (!proceed) return;
+                }
+            }
+            return saveWageRevision(e);
+        }
         // ════════════════════════════════════════════════════════════════════
         //  MODULE 2 — PROJECT EXPENSES (Food, Travel, Reimbursement)
         // ════════════════════════════════════════════════════════════════════
@@ -41396,7 +41949,21 @@ Automated WFH alert — ${company} Attendance System.`;
             <div class="p-6 space-y-4">
                 <div class="grid grid-cols-2 gap-4">
                     <div><label class="block text-xs font-semibold text-gray-600 mb-1">Staff Member *</label><select id="wagStaff" class="w-full px-3 py-2 border rounded-lg text-sm" required onchange="onWagStaffChange(this.value)"></select></div>
-                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Effective Date *</label><input type="date" id="wagDate" class="w-full px-3 py-2 border rounded-lg text-sm" required/></div>
+                    <div>
+                        <div class="flex justify-between items-baseline mb-1">
+                            <label class="block text-xs font-semibold text-gray-600">Effective Date *</label>
+                            <button type="button" onclick="openCTCStructureModal(document.getElementById('wagStaff').value)" class="text-[10px] text-indigo-700 border border-indigo-300 rounded px-1.5 py-0.5 hover:bg-indigo-50" title="View current CTC breakdown & simulate this revision">📊 Structure</button>
+                        </div>
+                        <input type="date" id="wagDate" onchange="_validateWageDate()" class="w-full px-3 py-2 border rounded-lg text-sm" required/>
+                        <!-- Pay period runs 26th → 25th, so any revision effective
+                             on a non-26th date would fall MID-period and require
+                             proportional pay logic that isn't wired into the
+                             payslip generator. Show a warning immediately when
+                             the user picks an off-cycle date so they can either
+                             correct it or consciously override. Warning is
+                             informational only — save proceeds either way. -->
+                        <p id="wagDateHint" class="text-[10px] text-gray-500 mt-1">Recommended: 26th of a month (pay period runs 26th → 25th).</p>
+                    </div>
                 </div>
                 <div class="grid grid-cols-2 gap-4">
                     <div><label class="block text-xs font-semibold text-gray-600 mb-1">New Basic Salary (₹)</label><input type="number" id="wagBasic" placeholder="0.00" min="0" step="0.01" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
@@ -41432,7 +41999,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 <div><label class="block text-xs font-semibold text-gray-600 mb-1">Reason</label><input type="text" id="wagReason" placeholder="Annual increment / promotion / other" class="w-full px-3 py-2 border rounded-lg text-sm"/></div>
                 <div class="flex gap-3 justify-end pt-2 border-t border-gray-100">
                     <button type="button" onclick="closeWageModal()" class="px-5 py-2 border border-gray-300 rounded-xl text-gray-600 hover:bg-gray-50">Cancel</button>
-                    <button type="button" onclick="saveWageRevision(event)" class="px-6 py-2 bg-green-600 text-white rounded-xl font-semibold hover:bg-green-700">Save</button>
+                    <button type="button" onclick="saveWageRevisionWithDateCheck(event)" class="px-6 py-2 bg-green-600 text-white rounded-xl font-semibold hover:bg-green-700">Save</button>
                 </div>
             </div>
         </div>
