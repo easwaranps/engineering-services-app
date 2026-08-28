@@ -26944,15 +26944,22 @@ Automated WFH alert — ${company} Attendance System.`;
             const row = (section, name, type, curVal, propVal, curAmt, propAmt, opts={}) => {
                 const delta = (+propAmt || 0) - (+curAmt || 0);
                 if (section) {
-                    return `<tr style="background:#f8fafc;font-weight:700;color:#1e293b"><td colspan="6" style="padding:8px 10px;font-size:11px;letter-spacing:0.05em;text-transform:uppercase;color:#4f46e5;border-top:2px solid #e5e7eb">${section}</td></tr>`;
+                    return `<tr style="background:#f8fafc;font-weight:700;color:#1e293b"><td colspan="7" style="padding:8px 10px;font-size:11px;letter-spacing:0.05em;text-transform:uppercase;color:#4f46e5;border-top:2px solid #e5e7eb">${section}</td></tr>`;
                 }
                 const typeCol = {'Base':'#7c3aed','% of Basic':'#0284c7','Fixed ₹':'#16a34a','% of DW':'#ea580c','Auto':'#6b7280','% of PF-base':'#0284c7','% of Gross':'#0284c7'}[type] || '#6b7280';
+                // Highlight the Proposed ₹/mo cell if it differs from Current
+                // so at-a-glance the user can spot exactly which lines moved.
+                const propAmtChanged = Math.abs(delta) > 0.01;
+                const propAmtStyle = propAmtChanged
+                    ? `color:${delta>0?'#166534':'#991b1b'};font-weight:700;background:${delta>0?'#f0fdf4':'#fef2f2'}`
+                    : 'color:#64748b';
                 return `<tr style="border-bottom:1px solid #f1f5f9">
                     <td style="padding:6px 10px;font-size:12px">${name}</td>
                     <td style="padding:6px 10px;font-size:10px"><span style="background:${typeCol}22;color:${typeCol};padding:2px 8px;border-radius:10px;font-weight:600">${type}</span></td>
                     <td style="padding:6px 10px;text-align:right;font-size:12px;color:#64748b">${curVal||'—'}</td>
                     <td style="padding:6px 10px;text-align:right;font-size:12px;color:#1e293b;font-weight:600">${propVal||'—'}</td>
                     <td style="padding:6px 10px;text-align:right;font-size:12px;color:#64748b">${_ctcFmt(curAmt)}</td>
+                    <td style="padding:6px 10px;text-align:right;font-size:12px;${propAmtStyle}">${_ctcFmt(propAmt)}</td>
                     <td style="padding:6px 10px;text-align:right;font-size:12px">${opts.noDelta ? '—' : _ctcFmtDelta(delta)}</td>
                 </tr>`;
             };
@@ -26972,6 +26979,7 @@ Automated WFH alert — ${company} Attendance System.`;
                                 <th style="padding:8px 10px;text-align:right;font-size:11px;color:#3730a3">Current Rate</th>
                                 <th style="padding:8px 10px;text-align:right;font-size:11px;color:#3730a3">Proposed Rate</th>
                                 <th style="padding:8px 10px;text-align:right;font-size:11px;color:#3730a3">Current ₹/mo</th>
+                                <th style="padding:8px 10px;text-align:right;font-size:11px;color:#3730a3">Proposed ₹/mo</th>
                                 <th style="padding:8px 10px;text-align:right;font-size:11px;color:#3730a3">Δ ₹/mo</th>
                             </tr>
                         </thead>
@@ -27004,16 +27012,19 @@ Automated WFH alert — ${company} Attendance System.`;
                             <tr style="background:#f0f9ff;border-top:2px solid #7c3aed">
                                 <td colspan="4" style="padding:10px;font-weight:700;font-size:12px;color:#334155;text-align:right">Monthly Gross Earnings</td>
                                 <td style="padding:10px;text-align:right;font-weight:700;color:#334155;font-size:13px">${_ctcFmt(cur.monthlyGross)}</td>
+                                <td style="padding:10px;text-align:right;font-weight:700;color:${Math.abs(dGross)>0.01?(dGross>0?'#166534':'#991b1b'):'#334155'};font-size:13px;background:${Math.abs(dGross)>0.01?(dGross>0?'#f0fdf4':'#fef2f2'):'transparent'}">${_ctcFmt(prop.monthlyGross)}</td>
                                 <td style="padding:10px;text-align:right;font-size:13px">${_ctcFmtDelta(dGross)}</td>
                             </tr>
                             <tr style="background:#eef2ff;border-top:1px solid #7c3aed">
                                 <td colspan="4" style="padding:10px;font-weight:800;font-size:13px;color:#3730a3;text-align:right">TOTAL MONTHLY CTC</td>
                                 <td style="padding:10px;text-align:right;font-weight:800;color:#3730a3;font-size:14px">${_ctcFmt(cur.monthlyCTC)}</td>
+                                <td style="padding:10px;text-align:right;font-weight:800;font-size:14px;color:${Math.abs(dCTC)>0.01?(dCTC>0?'#166534':'#991b1b'):'#3730a3'};background:${Math.abs(dCTC)>0.01?(dCTC>0?'#f0fdf4':'#fef2f2'):'transparent'}">${_ctcFmt(prop.monthlyCTC)}</td>
                                 <td style="padding:10px;text-align:right;font-size:14px">${_ctcFmtDelta(dCTC)}</td>
                             </tr>
                             <tr style="background:#4f46e5;color:#fff">
                                 <td colspan="4" style="padding:10px;font-weight:800;font-size:13px;text-align:right">ANNUAL CTC (× 12)</td>
                                 <td style="padding:10px;text-align:right;font-weight:800;font-size:14px">${_ctcFmt(cur.annualCTC)}</td>
+                                <td style="padding:10px;text-align:right;font-weight:800;font-size:14px;color:${dAnnualCTC>0?'#bbf7d0':dAnnualCTC<0?'#fecaca':'#fff'}">${_ctcFmt(prop.annualCTC)}</td>
                                 <td style="padding:10px;text-align:right;font-size:14px;color:${dAnnualCTC>0?'#fef08a':dAnnualCTC<0?'#fca5a5':'#e2e8f0'};font-weight:700">${dAnnualCTC>0?'+':''}${_ctcFmt(dAnnualCTC)}</td>
                             </tr>
                         </tbody>
@@ -27097,9 +27108,9 @@ Automated WFH alert — ${company} Attendance System.`;
             const tableBody = [];
             const pushRow = (name, type, curVal, propVal, curAmt, propAmt) => {
                 const delta = (+propAmt || 0) - (+curAmt || 0);
-                tableBody.push([name, type, curVal || '—', propVal || '—', fmt(curAmt), delta === 0 ? '—' : (delta > 0 ? '+' : '') + fmt(delta)]);
+                tableBody.push([name, type, curVal || '—', propVal || '—', fmt(curAmt), fmt(propAmt), delta === 0 ? '—' : (delta > 0 ? '+' : '') + fmt(delta)]);
             };
-            const pushSection = (title) => { tableBody.push([{content:title, colSpan:6, styles:{fillColor:[241,245,249], textColor:[55,48,163], fontStyle:'bold', fontSize:8}}]); };
+            const pushSection = (title) => { tableBody.push([{content:title, colSpan:7, styles:{fillColor:[241,245,249], textColor:[55,48,163], fontStyle:'bold', fontSize:8}}]); };
 
             pushSection('Earnings — Basic-dependent');
             pushRow('Basic Salary', 'Base', fmt(cur.basic), fmt(prop.basic), cur.basic, prop.basic);
@@ -27116,19 +27127,20 @@ Automated WFH alert — ${company} Attendance System.`;
             pushRow('Employer ESIC (3.25%)' + (cur.esicApplies?'':' [N/A]'), '% of Gross', cur.esicApplies?'applies':'N/A', prop.esicApplies?'applies':'N/A', cur.esicEmployer, prop.esicEmployer);
             pushRow('Bonus Accrual', 'Basic ÷ 120', fmt(cur.bonusMonthly), fmt(prop.bonusMonthly), cur.bonusMonthly, prop.bonusMonthly);
             // Totals row
-            tableBody.push([{content:'MONTHLY CTC', colSpan:4, styles:{halign:'right', fontStyle:'bold', textColor:[55,48,163], fontSize:10}}, {content:fmt(cur.monthlyCTC), styles:{halign:'right', fontStyle:'bold', fontSize:10}}, {content:(dCTC>=0?'+':'')+fmt(dCTC), styles:{halign:'right', fontStyle:'bold', fontSize:10, textColor:dCTC>0?[22,163,74]:dCTC<0?[220,38,38]:[100,100,100]}}]);
-            tableBody.push([{content:'ANNUAL CTC (× 12)', colSpan:4, styles:{halign:'right', fontStyle:'bold', textColor:[255,255,255], fillColor:[79,70,229], fontSize:11}}, {content:fmt(cur.annualCTC), styles:{halign:'right', fontStyle:'bold', textColor:[255,255,255], fillColor:[79,70,229], fontSize:11}}, {content:(dAnnual>=0?'+':'')+fmt(dAnnual), styles:{halign:'right', fontStyle:'bold', fillColor:[79,70,229], textColor:dAnnual>0?[187,247,208]:dAnnual<0?[254,202,202]:[255,255,255], fontSize:11}}]);
+            tableBody.push([{content:'MONTHLY CTC', colSpan:4, styles:{halign:'right', fontStyle:'bold', textColor:[55,48,163], fontSize:10}}, {content:fmt(cur.monthlyCTC), styles:{halign:'right', fontStyle:'bold', fontSize:10}}, {content:fmt(prop.monthlyCTC), styles:{halign:'right', fontStyle:'bold', fontSize:10, textColor:Math.abs(dCTC)>0.01?(dCTC>0?[22,101,52]:[153,27,27]):[55,48,163]}}, {content:(dCTC>=0?'+':'')+fmt(dCTC), styles:{halign:'right', fontStyle:'bold', fontSize:10, textColor:dCTC>0?[22,163,74]:dCTC<0?[220,38,38]:[100,100,100]}}]);
+            tableBody.push([{content:'ANNUAL CTC (× 12)', colSpan:4, styles:{halign:'right', fontStyle:'bold', textColor:[255,255,255], fillColor:[79,70,229], fontSize:11}}, {content:fmt(cur.annualCTC), styles:{halign:'right', fontStyle:'bold', textColor:[255,255,255], fillColor:[79,70,229], fontSize:11}}, {content:fmt(prop.annualCTC), styles:{halign:'right', fontStyle:'bold', textColor:dAnnual>0?[187,247,208]:dAnnual<0?[254,202,202]:[255,255,255], fillColor:[79,70,229], fontSize:11}}, {content:(dAnnual>=0?'+':'')+fmt(dAnnual), styles:{halign:'right', fontStyle:'bold', fillColor:[79,70,229], textColor:dAnnual>0?[187,247,208]:dAnnual<0?[254,202,202]:[255,255,255], fontSize:11}}]);
 
             doc.autoTable({
                 startY: y,
-                head: [['Component','Type','Current','Proposed','Current ₹/mo','Δ ₹/mo']],
+                head: [['Component','Type','Current','Proposed','Current ₹/mo','Proposed ₹/mo','Δ ₹/mo']],
                 body: tableBody,
                 theme: 'grid',
                 styles: {fontSize:8, cellPadding:2, overflow:'linebreak', halign:'left', valign:'middle'},
                 headStyles: {fillColor:[79,70,229], textColor:[255,255,255], fontStyle:'bold', halign:'left'},
                 columnStyles: {
-                    0:{cellWidth:55}, 1:{cellWidth:25}, 2:{cellWidth:28, halign:'right'},
-                    3:{cellWidth:28, halign:'right'}, 4:{cellWidth:26, halign:'right'}, 5:{cellWidth:'auto', halign:'right'}
+                    0:{cellWidth:48}, 1:{cellWidth:22}, 2:{cellWidth:24, halign:'right'},
+                    3:{cellWidth:24, halign:'right'}, 4:{cellWidth:24, halign:'right'},
+                    5:{cellWidth:24, halign:'right'}, 6:{cellWidth:'auto', halign:'right'}
                 },
                 margin: {left:ML, right:ML}
             });
