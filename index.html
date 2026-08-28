@@ -7450,23 +7450,35 @@
                                 </button>
                             </div>
                         </div>
-                        <div class="flex gap-2">
-                            <button onclick="switchView('dashboard')" class="px-4 py-2 rounded-lg ${currentView === 'dashboard' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Dashboard</button>
-                            ${_canAccess('transactions')?`<button onclick="switchView('transactions')" class="px-4 py-2 rounded-lg ${currentView === 'transactions' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Transactions</button>`:''}
-                            ${_canAccess('expenses')?`<button onclick="switchView('expenses')" class="px-4 py-2 rounded-lg ${currentView === 'expenses' ? 'bg-orange-100 text-orange-700' : 'text-gray-600 hover:bg-gray-100'}">💸 Expenses</button>`:''}
-                            ${_canAccess('staff')?`<button onclick="switchView('staff')" class="px-4 py-2 rounded-lg ${currentView === 'staff' ? 'bg-teal-100 text-teal-700' : 'text-gray-600 hover:bg-gray-100'}">👥 Staff</button>`:''}
-                            ${_canAccess('projexp')?`<button onclick="switchView('projexp')" class="px-4 py-2 rounded-lg ${currentView === 'projexp' ? 'bg-yellow-100 text-yellow-700' : 'text-gray-600 hover:bg-gray-100'}">🧳 Projects</button>`:''}
-                            ${_canAccess('funds')?`<button onclick="switchView('funds')" class="px-4 py-2 rounded-lg ${currentView === 'funds' ? 'bg-emerald-100 text-emerald-700' : 'text-gray-600 hover:bg-gray-100'}">💰 Funds${(()=>{const p=fundRequests.filter(r=>r.status==='Pending').length;return p>0?` <span class="ml-1 px-1.5 py-0.5 bg-rose-500 text-white rounded-full text-xs font-bold">${p}</span>`:'';})()}</button>`:''}
-                            ${_canAccess('payreq')?`<button onclick="switchView('payreq')" class="px-4 py-2 rounded-lg ${currentView === 'payreq' ? 'bg-cyan-100 text-cyan-700' : 'text-gray-600 hover:bg-gray-100'}">💼 Pay Requests${(()=>{const p=(paymentRequests||[]).filter(r=>r.status==='Draft').length;return p>0?` <span class="ml-1 px-1.5 py-0.5 bg-amber-500 text-white rounded-full text-xs font-bold">${p}</span>`:'';})()}</button>`:''}
-                            ${_canAccess('direxp')?`<button onclick="switchView('direxp')" class="px-4 py-2 rounded-lg ${currentView === 'direxp' ? 'bg-rose-100 text-rose-700' : 'text-gray-600 hover:bg-gray-100'}">👔 Directors</button>`:''}
-                            ${_canAccess('pettycash')?`<button onclick="switchView('pettycash')" class="px-4 py-2 rounded-lg ${currentView === 'pettycash' ? 'bg-amber-100 text-amber-800' : 'text-gray-600 hover:bg-gray-100'}" title="Office petty cash (Chennai / Mumbai)">💵 Petty Cash${(()=>{const u=(pettyCashTransactions||[]).filter(t=>t.txnType==='EXPENSE'&&!t.verified).length;return u>0?` <span class="ml-1 px-1.5 py-0.5 bg-amber-500 text-white rounded-full text-xs font-bold">${u}</span>`:'';})()}</button>`:''}
-                            ${_canAccess('bank')?`<button onclick="switchView('bank')" class="px-4 py-2 rounded-lg ${currentView === 'bank' ? 'bg-sky-100 text-sky-700' : 'text-gray-600 hover:bg-gray-100'}" title="Consolidated view of all bank transactions — read-only, aggregated from existing records">🏦 Bank</button>`:''}
-                            ${_canAccess('tax')?`<button onclick="switchView('tax')" class="px-4 py-2 rounded-lg ${currentView === 'tax' ? 'bg-red-100 text-red-700' : 'text-gray-600 hover:bg-gray-100'}">🧾 Tax</button>`:''}
-                            ${_canAccess('mis')?`<button onclick="switchView('mis')" class="px-4 py-2 rounded-lg ${currentView === 'mis' ? 'bg-green-100 text-green-700' : 'text-gray-600 hover:bg-gray-100'}">📊 MIS Report</button>`:''}
-                            ${_canAccess('parties')?`<button onclick="switchView('parties')" class="px-4 py-2 rounded-lg ${currentView === 'parties' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Parties</button>`:''}
-                            ${_canAccess('docs')?`<button onclick="switchView('docs')" class="px-4 py-2 rounded-lg ${currentView === 'docs' ? 'bg-purple-100 text-purple-700' : 'text-gray-600 hover:bg-gray-100'}" title="Company documents, certificates, insurance policies">📄 Documents${(()=>{const c=_countDocsExpiringOrExpired();return c>0?` <span class="ml-1 px-1.5 py-0.5 bg-red-500 text-white rounded-full text-xs font-bold" title="${c} document(s) need attention">${c}</span>`:'';})()}</button>`:''}
-                            ${_canAccess('docs')?`<button onclick="switchView('letters')" class="px-4 py-2 rounded-lg ${currentView === 'letters' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}" title="Cover letters for invoices, Returnable Tools letters for site trips">✉️ Letters</button>`:''}
-                            ${_canAccess('settings')||!_bmsSession?`<button onclick="switchView('settings')" class="px-4 py-2 rounded-lg ${currentView === 'settings' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Settings</button>`:''}
+                        <!-- Nav tab row — compacted to fit all 16 tabs on
+                             one row on a standard laptop screen. Only
+                             padding (px-4 → px-3) and inter-tab gap (gap-2
+                             → gap-1) are reduced; font size, colours and
+                             active-state styling are unchanged so nothing
+                             looks different other than the density. On
+                             narrower screens flex-wrap lets tabs wrap to a
+                             second row cleanly; horizontal overflow-x-auto
+                             is the last-resort fallback for very narrow
+                             phones. whitespace-nowrap on each button keeps
+                             labels from breaking mid-word ("Pay Requests"
+                             etc. stay on one line). -->
+                        <div class="flex flex-wrap gap-1 overflow-x-auto -mx-1 px-1">
+                            <button onclick="switchView('dashboard')" class="px-3 py-2 rounded-lg whitespace-nowrap ${currentView === 'dashboard' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Dashboard</button>
+                            ${_canAccess('transactions')?`<button onclick="switchView('transactions')" class="px-3 py-2 rounded-lg whitespace-nowrap ${currentView === 'transactions' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Transactions</button>`:''}
+                            ${_canAccess('expenses')?`<button onclick="switchView('expenses')" class="px-3 py-2 rounded-lg whitespace-nowrap ${currentView === 'expenses' ? 'bg-orange-100 text-orange-700' : 'text-gray-600 hover:bg-gray-100'}">💸 Expenses</button>`:''}
+                            ${_canAccess('staff')?`<button onclick="switchView('staff')" class="px-3 py-2 rounded-lg whitespace-nowrap ${currentView === 'staff' ? 'bg-teal-100 text-teal-700' : 'text-gray-600 hover:bg-gray-100'}">👥 Staff</button>`:''}
+                            ${_canAccess('projexp')?`<button onclick="switchView('projexp')" class="px-3 py-2 rounded-lg whitespace-nowrap ${currentView === 'projexp' ? 'bg-yellow-100 text-yellow-700' : 'text-gray-600 hover:bg-gray-100'}">🧳 Projects</button>`:''}
+                            ${_canAccess('funds')?`<button onclick="switchView('funds')" class="px-3 py-2 rounded-lg whitespace-nowrap ${currentView === 'funds' ? 'bg-emerald-100 text-emerald-700' : 'text-gray-600 hover:bg-gray-100'}">💰 Funds${(()=>{const p=fundRequests.filter(r=>r.status==='Pending').length;return p>0?` <span class="ml-1 px-1.5 py-0.5 bg-rose-500 text-white rounded-full text-xs font-bold">${p}</span>`:'';})()}</button>`:''}
+                            ${_canAccess('payreq')?`<button onclick="switchView('payreq')" class="px-3 py-2 rounded-lg whitespace-nowrap ${currentView === 'payreq' ? 'bg-cyan-100 text-cyan-700' : 'text-gray-600 hover:bg-gray-100'}">💼 Pay Requests${(()=>{const p=(paymentRequests||[]).filter(r=>r.status==='Draft').length;return p>0?` <span class="ml-1 px-1.5 py-0.5 bg-amber-500 text-white rounded-full text-xs font-bold">${p}</span>`:'';})()}</button>`:''}
+                            ${_canAccess('direxp')?`<button onclick="switchView('direxp')" class="px-3 py-2 rounded-lg whitespace-nowrap ${currentView === 'direxp' ? 'bg-rose-100 text-rose-700' : 'text-gray-600 hover:bg-gray-100'}">👔 Directors</button>`:''}
+                            ${_canAccess('pettycash')?`<button onclick="switchView('pettycash')" class="px-3 py-2 rounded-lg whitespace-nowrap ${currentView === 'pettycash' ? 'bg-amber-100 text-amber-800' : 'text-gray-600 hover:bg-gray-100'}" title="Office petty cash (Chennai / Mumbai)">💵 Petty Cash${(()=>{const u=(pettyCashTransactions||[]).filter(t=>t.txnType==='EXPENSE'&&!t.verified).length;return u>0?` <span class="ml-1 px-1.5 py-0.5 bg-amber-500 text-white rounded-full text-xs font-bold">${u}</span>`:'';})()}</button>`:''}
+                            ${_canAccess('bank')?`<button onclick="switchView('bank')" class="px-3 py-2 rounded-lg whitespace-nowrap ${currentView === 'bank' ? 'bg-sky-100 text-sky-700' : 'text-gray-600 hover:bg-gray-100'}" title="Consolidated view of all bank transactions — read-only, aggregated from existing records">🏦 Bank</button>`:''}
+                            ${_canAccess('tax')?`<button onclick="switchView('tax')" class="px-3 py-2 rounded-lg whitespace-nowrap ${currentView === 'tax' ? 'bg-red-100 text-red-700' : 'text-gray-600 hover:bg-gray-100'}">🧾 Tax</button>`:''}
+                            ${_canAccess('mis')?`<button onclick="switchView('mis')" class="px-3 py-2 rounded-lg whitespace-nowrap ${currentView === 'mis' ? 'bg-green-100 text-green-700' : 'text-gray-600 hover:bg-gray-100'}">📊 MIS Report</button>`:''}
+                            ${_canAccess('parties')?`<button onclick="switchView('parties')" class="px-3 py-2 rounded-lg whitespace-nowrap ${currentView === 'parties' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Parties</button>`:''}
+                            ${_canAccess('docs')?`<button onclick="switchView('docs')" class="px-3 py-2 rounded-lg whitespace-nowrap ${currentView === 'docs' ? 'bg-purple-100 text-purple-700' : 'text-gray-600 hover:bg-gray-100'}" title="Company documents, certificates, insurance policies">📄 Documents${(()=>{const c=_countDocsExpiringOrExpired();return c>0?` <span class="ml-1 px-1.5 py-0.5 bg-red-500 text-white rounded-full text-xs font-bold" title="${c} document(s) need attention">${c}</span>`:'';})()}</button>`:''}
+                            ${_canAccess('docs')?`<button onclick="switchView('letters')" class="px-3 py-2 rounded-lg whitespace-nowrap ${currentView === 'letters' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}" title="Cover letters for invoices, Returnable Tools letters for site trips">✉️ Letters</button>`:''}
+                            ${_canAccess('settings')||!_bmsSession?`<button onclick="switchView('settings')" class="px-3 py-2 rounded-lg whitespace-nowrap ${currentView === 'settings' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Settings</button>`:''}
                         </div>
                     </div>
                 </nav>
@@ -27088,7 +27100,11 @@ Automated WFH alert — ${company} Attendance System.`;
             const dCTCPct = cur.monthlyCTC > 0 ? +(dCTC / cur.monthlyCTC * 100).toFixed(2) : 0;
             const doc = new jsPDF('p', 'mm', 'a4');
             const PW = 210, ML = 15, CW = PW - 30;
-            const fmt = n => '₹' + (+n || 0).toLocaleString('en-IN', {minimumFractionDigits:0, maximumFractionDigits:2});
+            // Use "Rs." prefix — jsPDF's default Helvetica uses WinAnsi encoding
+            // which drops the ₹ (U+20B9) glyph silently. Every other PDF in
+            // this app uses the same "Rs." convention (invoice, payslip, MIS
+            // reports) so this is consistent.
+            const fmt = n => 'Rs.' + (+n || 0).toLocaleString('en-IN', {minimumFractionDigits:0, maximumFractionDigits:2});
 
             // ── Header ──
             doc.setFillColor(79, 70, 229); doc.rect(0, 0, PW, 32, 'F');
@@ -27137,15 +27153,24 @@ Automated WFH alert — ${company} Attendance System.`;
 
             doc.autoTable({
                 startY: y,
-                head: [['Component','Type','Current','Proposed','Current ₹/mo','Proposed ₹/mo','Δ ₹/mo']],
+                head: [['Component','Type','Current','Proposed','Current /mo','Proposed /mo','Delta /mo']],
                 body: tableBody,
                 theme: 'grid',
-                styles: {fontSize:8, cellPadding:2, overflow:'linebreak', halign:'left', valign:'middle'},
-                headStyles: {fillColor:[79,70,229], textColor:[255,255,255], fontStyle:'bold', halign:'left'},
+                styles: {fontSize:7.5, cellPadding:1.5, overflow:'linebreak', halign:'left', valign:'middle'},
+                headStyles: {fillColor:[79,70,229], textColor:[255,255,255], fontStyle:'bold', halign:'left', fontSize:7.5},
+                // Total budget 180mm (page width 210 − 15 ML − 15 MR). Δ column
+                // widened to 25mm so "+ 25,352.52" (11 chars incl. sign +
+                // "Rs." prefix) fits on a single line at 7.5pt. Numeric
+                // columns also bumped up for larger amounts (7-digit annual
+                // CTC = "Rs.7,75,200").
                 columnStyles: {
-                    0:{cellWidth:48}, 1:{cellWidth:22}, 2:{cellWidth:24, halign:'right'},
-                    3:{cellWidth:24, halign:'right'}, 4:{cellWidth:24, halign:'right'},
-                    5:{cellWidth:24, halign:'right'}, 6:{cellWidth:'auto', halign:'right'}
+                    0:{cellWidth:40},                   // Component
+                    1:{cellWidth:22},                   // Type
+                    2:{cellWidth:22, halign:'right'},   // Current rate
+                    3:{cellWidth:22, halign:'right'},   // Proposed rate
+                    4:{cellWidth:24, halign:'right'},   // Current /mo
+                    5:{cellWidth:25, halign:'right'},   // Proposed /mo
+                    6:{cellWidth:25, halign:'right'}    // Δ /mo (was 'auto' → widened)
                 },
                 margin: {left:ML, right:ML}
             });
@@ -27158,7 +27183,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 doc.setFillColor(...banC); doc.rect(ML, y, CW, 14, 'F');
                 doc.setDrawColor(...banT); doc.setLineWidth(0.5); doc.rect(ML, y, CW, 14);
                 doc.setFontSize(10); doc.setFont('helvetica','bold'); doc.setTextColor(...banT);
-                doc.text('CTC IMPACT: ' + (dCTC>0?'+':'') + dCTCPct + '%  (' + (dCTC>0?'+':'') + fmt(dCTC) + '/mo   ·   ' + (dAnnual>0?'+':'') + fmt(dAnnual) + '/year)', ML + 4, y + 9);
+                doc.text('CTC IMPACT: ' + (dCTC>0?'+':'') + dCTCPct + '%  (' + (dCTC>0?'+':'') + fmt(dCTC) + '/mo   |   ' + (dAnnual>0?'+':'') + fmt(dAnnual) + '/year)', ML + 4, y + 9);
                 y += 20;
             }
 
@@ -27166,7 +27191,7 @@ Automated WFH alert — ${company} Attendance System.`;
             doc.setFontSize(9); doc.setFont('helvetica','bold'); doc.setTextColor(55,48,163);
             doc.text('Proposed Effective Date:  _______________________________', ML, y);
             doc.setFont('helvetica','italic'); doc.setFontSize(7); doc.setTextColor(120,120,120);
-            doc.text('(Recommended: 26th of a month, aligning with pay period 26th→25th)', ML, y + 4);
+            doc.text('(Recommended: 26th of a month, aligning with pay period 26th-25th)', ML, y + 4);
             y += 12;
             doc.setFontSize(9); doc.setFont('helvetica','bold'); doc.setTextColor(55,48,163);
             doc.text('Justification / Reason for Revision:', ML, y);
