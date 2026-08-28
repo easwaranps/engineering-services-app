@@ -26793,8 +26793,12 @@ Automated WFH alert — ${company} Attendance System.`;
             const pfBase = isTech ? (basic + fixedAllow) : (basic + hra + da + medical + conveyance + gp);
             const pfCappedBase = pfBase > 15000 ? 15000 : pfBase;
             const pfEmployee = +(pfCappedBase * pfPct / 100).toFixed(2);
-            // Employer PF = 12% (of which 8.33% EPS + 3.67% EPF) — plus ~1% admin (0.5 EDLI + 0.5 admin)
-            const pfEmployer = +(pfCappedBase * 0.13).toFixed(2);
+            // Employer PF = employee's PF% (12% match — 8.33% EPS + 3.67% EPF)
+            // + 1% admin/EDLI (0.5% EDLI + 0.5% admin — fixed statutory).
+            // Derives from the pfPct field so if the user simulates a
+            // different PF rate, the employer side moves in step.
+            const pfEmployerPct = +(pfPct + 1).toFixed(2);
+            const pfEmployer = +(pfCappedBase * pfEmployerPct / 100).toFixed(2);
 
             const esicPct    = +(g('techESICPct') ?? 0.75);
             const esicBase   = isTech ? (basic + fixedAllow + variable) : (basic + hra + da + gp + conveyance + medical);
@@ -26820,7 +26824,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 outstationPerDay: isTech ? +(dailyWage * outstationPct / 100).toFixed(2) : 0,
                 sailingPerDay:    isTech ? +(dailyWage * sailingPct    / 100).toFixed(2) : 0,
                 anchoragePerDay:  isTech ? +(dailyWage * anchoragePct  / 100).toFixed(2) : 0,
-                pfPct, pfBase, pfCappedBase, pfEmployee, pfEmployer,
+                pfPct, pfEmployerPct, pfBase, pfCappedBase, pfEmployee, pfEmployer,
                 esicPct, esicApplies, esicEmployee, esicEmployer,
                 monthlyGross, monthlyCTC, annualCTC,
                 isTech
@@ -26885,44 +26889,25 @@ Automated WFH alert — ${company} Attendance System.`;
             const st = staff.find(s => s.staffID === window._ctcStaffID);
             if (!st) return;
             const isTech = st.staffType === 'Technician';
-            const cur = _computeCTC(st);
-            const prop = _computeCTC(st, window._ctcProposed);
             const body = document.getElementById('ctcModalBody');
             if (!body) return;
 
-            // Build the row for the breakdown table. Each row has a
-            // section label, component name, "type" chip, current value,
-            // proposed value, and delta.
-            const row = (section, name, type, curVal, propVal, curAmt, propAmt, opts={}) => {
-                const delta = (+propAmt || 0) - (+curAmt || 0);
-                const rowStyle = section ? 'background:#f8fafc;font-weight:700;color:#1e293b' : '';
-                if (section) {
-                    return `<tr style="${rowStyle}"><td colspan="6" style="padding:8px 10px;font-size:11px;letter-spacing:0.05em;text-transform:uppercase;color:#4f46e5;border-top:2px solid #e5e7eb">${section}</td></tr>`;
-                }
-                const typeCol = {'Base':'#7c3aed','% of Basic':'#0284c7','Fixed ₹':'#16a34a','% of DW':'#ea580c','Auto':'#6b7280','% of PF-base':'#0284c7','% of Gross':'#0284c7'}[type] || '#6b7280';
-                return `<tr style="border-bottom:1px solid #f1f5f9">
-                    <td style="padding:6px 10px;font-size:12px">${name}</td>
-                    <td style="padding:6px 10px;font-size:10px"><span style="background:${typeCol}22;color:${typeCol};padding:2px 8px;border-radius:10px;font-weight:600">${type}</span></td>
-                    <td style="padding:6px 10px;text-align:right;font-size:12px;color:#64748b">${curVal||'—'}</td>
-                    <td style="padding:6px 10px;text-align:right;font-size:12px;color:#1e293b;font-weight:600">${propVal||'—'}</td>
-                    <td style="padding:6px 10px;text-align:right;font-size:12px;color:#64748b">${_ctcFmt(curAmt)}</td>
-                    <td style="padding:6px 10px;text-align:right;font-size:12px">${opts.noDelta ? '—' : _ctcFmtDelta(delta)}</td>
-                </tr>`;
-            };
-
-            const dCTC = prop.monthlyCTC - cur.monthlyCTC;
-            const dAnnualCTC = prop.annualCTC - cur.annualCTC;
-            const dGross = prop.monthlyGross - cur.monthlyGross;
-            const dCTCPct = cur.monthlyCTC > 0 ? +(dCTC / cur.monthlyCTC * 100).toFixed(2) : 0;
-
+            // Split into TWO regions so typing in the simulator doesn't
+            // destroy the input element mid-keystroke:
+            //   #ctcSimInputs  — painted ONCE from _ctcRenderBody; never
+            //                    re-touched. Preserves focus and caret.
+            //   #ctcSimResults — re-painted on every _ctcSet(...) via
+            //                    _ctcRenderResults so the table + banner
+            //                    reflect the latest proposed values.
+            // Previously the whole body was recreated on each oninput,
+            // which yanked focus out of the input the user was typing in.
             body.innerHTML = `
-                <!-- Editable inputs (what-if simulator) -->
                 <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:12px 16px;margin-bottom:16px">
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
                         <div style="font-weight:700;font-size:13px;color:#334155">🎯 What-If Simulator <span style="font-weight:400;color:#64748b;font-size:11px">— edit any input, see the CTC impact live below</span></div>
                         <button onclick="_ctcReset()" style="font-size:11px;color:#64748b;background:none;border:1px solid #cbd5e1;border-radius:6px;padding:3px 10px;cursor:pointer">↺ Reset to current</button>
                     </div>
-                    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
+                    <div id="ctcSimInputs" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
                         <div><label style="font-size:10px;font-weight:600;color:#64748b">Basic Salary (₹)</label><input type="number" step="0.01" value="${window._ctcProposed.basicSalary}" oninput="_ctcSet('basicSalary',this.value)" style="width:100%;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:12px"/></div>
                         ${isTech ? `
                             <div><label style="font-size:10px;font-weight:600;color:#64748b">HRA %</label><input type="number" step="0.01" value="${window._ctcProposed.techHRAPct}" oninput="_ctcSet('techHRAPct',this.value)" style="width:100%;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:12px"/></div>
@@ -26942,8 +26927,42 @@ Automated WFH alert — ${company} Attendance System.`;
                         `}
                     </div>
                 </div>
+                <div id="ctcSimResults"></div>
+            `;
+            _ctcRenderResults();
+        }
 
-                <!-- Breakdown table -->
+        function _ctcRenderResults() {
+            const st = staff.find(s => s.staffID === window._ctcStaffID);
+            if (!st) return;
+            const isTech = st.staffType === 'Technician';
+            const cur = _computeCTC(st);
+            const prop = _computeCTC(st, window._ctcProposed);
+            const results = document.getElementById('ctcSimResults');
+            if (!results) return;
+
+            const row = (section, name, type, curVal, propVal, curAmt, propAmt, opts={}) => {
+                const delta = (+propAmt || 0) - (+curAmt || 0);
+                if (section) {
+                    return `<tr style="background:#f8fafc;font-weight:700;color:#1e293b"><td colspan="6" style="padding:8px 10px;font-size:11px;letter-spacing:0.05em;text-transform:uppercase;color:#4f46e5;border-top:2px solid #e5e7eb">${section}</td></tr>`;
+                }
+                const typeCol = {'Base':'#7c3aed','% of Basic':'#0284c7','Fixed ₹':'#16a34a','% of DW':'#ea580c','Auto':'#6b7280','% of PF-base':'#0284c7','% of Gross':'#0284c7'}[type] || '#6b7280';
+                return `<tr style="border-bottom:1px solid #f1f5f9">
+                    <td style="padding:6px 10px;font-size:12px">${name}</td>
+                    <td style="padding:6px 10px;font-size:10px"><span style="background:${typeCol}22;color:${typeCol};padding:2px 8px;border-radius:10px;font-weight:600">${type}</span></td>
+                    <td style="padding:6px 10px;text-align:right;font-size:12px;color:#64748b">${curVal||'—'}</td>
+                    <td style="padding:6px 10px;text-align:right;font-size:12px;color:#1e293b;font-weight:600">${propVal||'—'}</td>
+                    <td style="padding:6px 10px;text-align:right;font-size:12px;color:#64748b">${_ctcFmt(curAmt)}</td>
+                    <td style="padding:6px 10px;text-align:right;font-size:12px">${opts.noDelta ? '—' : _ctcFmtDelta(delta)}</td>
+                </tr>`;
+            };
+
+            const dCTC = prop.monthlyCTC - cur.monthlyCTC;
+            const dAnnualCTC = prop.annualCTC - cur.annualCTC;
+            const dGross = prop.monthlyGross - cur.monthlyGross;
+            const dCTCPct = cur.monthlyCTC > 0 ? +(dCTC / cur.monthlyCTC * 100).toFixed(2) : 0;
+
+            results.innerHTML = `
                 <div style="border:1px solid #e5e7eb;border-radius:12px;overflow:hidden">
                     <table style="width:100%;border-collapse:collapse">
                         <thead>
@@ -26979,7 +26998,7 @@ Automated WFH alert — ${company} Attendance System.`;
                                 ${row('','OT Rate (beyond 22:00)','Auto','2 × Hourly','2 × Hourly',cur.otRate,prop.otRate,{noDelta:true})}
                             ` : ''}
                             ${row('Employer Liability (adds to CTC)')}
-                            ${row('','Employer PF','% of PF-base','13%','13%',cur.pfEmployer,prop.pfEmployer)}
+                            ${row('','Employer PF','% of PF-base',cur.pfEmployerPct+'%',prop.pfEmployerPct+'%',cur.pfEmployer,prop.pfEmployer)}
                             ${row('','Employer ESIC ' + (cur.esicApplies?'':'(not applicable — gross > ₹21k)'),'% of Gross','3.25%','3.25%',cur.esicEmployer,prop.esicEmployer)}
                             ${row('','Bonus Accrual','Auto','Basic ÷ 120','Basic ÷ 120',cur.bonusMonthly,prop.bonusMonthly)}
                             <tr style="background:#f0f9ff;border-top:2px solid #7c3aed">
@@ -27001,19 +27020,16 @@ Automated WFH alert — ${company} Attendance System.`;
                     </table>
                 </div>
 
-                <!-- Δ CTC banner -->
+                <!-- Δ CTC banner (informational only — button is at top-right) -->
                 ${Math.abs(dCTC) > 0.01 ? `
-                    <div style="margin-top:16px;padding:12px 16px;background:${dCTC>0?'linear-gradient(135deg,#f0fdf4,#dcfce7)':'linear-gradient(135deg,#fef2f2,#fee2e2)'};border:2px solid ${dCTC>0?'#16a34a':'#dc2626'};border-radius:12px;display:flex;justify-content:space-between;align-items:center">
-                        <div>
-                            <div style="font-weight:700;font-size:13px;color:${dCTC>0?'#166534':'#991b1b'}">Proposed change impacts CTC by ${dCTCPct>=0?'+':''}${dCTCPct}%</div>
-                            <div style="font-size:11px;color:${dCTC>0?'#166534':'#991b1b'};margin-top:2px">${dCTC>0?'Increase':'Reduction'} of ${_ctcFmt(Math.abs(dCTC))}/month · ${_ctcFmt(Math.abs(dAnnualCTC))}/year</div>
-                        </div>
-                        <button onclick="generateCTCProposalPDF('${window._ctcStaffID}')" style="padding:8px 16px;background:${dCTC>0?'#16a34a':'#dc2626'};color:#fff;border:none;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer">📄 Generate Approval PDF</button>
+                    <div style="margin-top:16px;padding:12px 16px;background:${dCTC>0?'linear-gradient(135deg,#f0fdf4,#dcfce7)':'linear-gradient(135deg,#fef2f2,#fee2e2)'};border:2px solid ${dCTC>0?'#16a34a':'#dc2626'};border-radius:12px">
+                        <div style="font-weight:700;font-size:13px;color:${dCTC>0?'#166534':'#991b1b'}">Proposed change impacts CTC by ${dCTCPct>=0?'+':''}${dCTCPct}%</div>
+                        <div style="font-size:11px;color:${dCTC>0?'#166534':'#991b1b'};margin-top:2px">${dCTC>0?'Increase':'Reduction'} of ${_ctcFmt(Math.abs(dCTC))}/month · ${_ctcFmt(Math.abs(dAnnualCTC))}/year — click <b>📄 Approval PDF</b> at the top-right to generate the management document.</div>
                     </div>
-                ` : `<div style="margin-top:16px;padding:10px 14px;background:#f8fafc;border:1px dashed #cbd5e1;border-radius:10px;color:#64748b;font-size:12px;text-align:center">Edit any input above to simulate a revision. When you're happy with the numbers, click <b>📄 Approval PDF</b> to prepare the management document.</div>`}
+                ` : `<div style="margin-top:16px;padding:10px 14px;background:#f8fafc;border:1px dashed #cbd5e1;border-radius:10px;color:#64748b;font-size:12px;text-align:center">Edit any input above to simulate a revision. When you're happy with the numbers, click <b>📄 Approval PDF</b> at the top-right to prepare the management document.</div>`}
 
                 <div style="margin-top:12px;font-size:10px;color:#94a3b8;text-align:center">
-                    Notes: (1) PF employer contribution shown at 13% (12% + 1% admin/EDLI). (2) Bonus accrual = Basic÷10 annual ÷ 12 months. (3) Field-day allowances and OT are per-day rates — actual monthly impact depends on the technician's attendance for that month.
+                    Notes: (1) Employer PF = employee PF% + 1% admin/EDLI (statutory). (2) Bonus accrual = Basic÷10 annual ÷ 12 months. (3) Field-day allowances and OT are per-day rates — actual monthly impact depends on the technician's attendance for that month.
                 </div>
             `;
         }
@@ -27021,7 +27037,9 @@ Automated WFH alert — ${company} Attendance System.`;
         function _ctcSet(field, val) {
             if (!window._ctcProposed) return;
             window._ctcProposed[field] = parseFloat(val) || 0;
-            _ctcRenderBody();
+            // Only re-paint the results region — leaves the inputs alone so
+            // focus + caret stay in place and typing works continuously.
+            _ctcRenderResults();
         }
 
         function _ctcReset() {
@@ -27094,7 +27112,7 @@ Automated WFH alert — ${company} Attendance System.`;
             if (!isTech) pushRow('Conveyance', 'Fixed', fmt(cur.conveyance), fmt(prop.conveyance), cur.conveyance, prop.conveyance);
             if (!isTech) pushRow('Medical', 'Fixed', fmt(cur.medical), fmt(prop.medical), cur.medical, prop.medical);
             pushSection('Employer Liability');
-            pushRow('Employer PF (13%)', '% of PF-base', fmt(cur.pfCappedBase)+' base', fmt(prop.pfCappedBase)+' base', cur.pfEmployer, prop.pfEmployer);
+            pushRow('Employer PF ('+cur.pfEmployerPct+'%)', '% of PF-base', fmt(cur.pfCappedBase)+' base', fmt(prop.pfCappedBase)+' base', cur.pfEmployer, prop.pfEmployer);
             pushRow('Employer ESIC (3.25%)' + (cur.esicApplies?'':' [N/A]'), '% of Gross', cur.esicApplies?'applies':'N/A', prop.esicApplies?'applies':'N/A', cur.esicEmployer, prop.esicEmployer);
             pushRow('Bonus Accrual', 'Basic ÷ 120', fmt(cur.bonusMonthly), fmt(prop.bonusMonthly), cur.bonusMonthly, prop.bonusMonthly);
             // Totals row
