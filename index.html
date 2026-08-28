@@ -26791,7 +26791,12 @@ Automated WFH alert — ${company} Attendance System.`;
             // Statutory (employer side — added to CTC)
             const pfPct = +(g(isTech ? 'techPFPct' : 'pfPct') ?? 12);
             const pfBase = isTech ? (basic + fixedAllow) : (basic + hra + da + medical + conveyance + gp);
-            const pfCappedBase = pfBase > 15000 ? 15000 : pfBase;
+            // PF cap of ₹15,000/month applies to OFFICE staff only (matches
+            // _calcOfficePF at line 1811). TECHNICIAN PF has no cap — the
+            // full base is used (matches _calcTechPF at line 1816). Same
+            // convention as the existing wage code so CTC numbers reconcile
+            // with monthly payslips.
+            const pfCappedBase = isTech ? pfBase : (pfBase > 15000 ? 15000 : pfBase);
             const pfEmployee = +(pfCappedBase * pfPct / 100).toFixed(2);
             // Employer PF = employee's PF% (12% match — 8.33% EPS + 3.67% EPF)
             // + 1% admin/EDLI (0.5% EDLI + 0.5% admin — fixed statutory).
@@ -27040,7 +27045,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 ` : `<div style="margin-top:16px;padding:10px 14px;background:#f8fafc;border:1px dashed #cbd5e1;border-radius:10px;color:#64748b;font-size:12px;text-align:center">Edit any input above to simulate a revision. When you're happy with the numbers, click <b>📄 Approval PDF</b> at the top-right to prepare the management document.</div>`}
 
                 <div style="margin-top:12px;font-size:10px;color:#94a3b8;text-align:center">
-                    Notes: (1) Employer PF = employee PF% + 1% admin/EDLI (statutory). (2) Bonus accrual = Basic÷10 annual ÷ 12 months. (3) Field-day allowances and OT are per-day rates — actual monthly impact depends on the technician's attendance for that month.
+                    Notes: (1) Employer PF = employee PF% + 1% admin/EDLI (statutory). PF-base capped at ₹15,000 for OFFICE staff only; technician PF has no cap (matches monthly payslip logic). (2) Bonus accrual = Basic÷10 annual ÷ 12 months. (3) Field-day allowances and OT are per-day rates — actual monthly impact depends on the technician's attendance for that month.
                 </div>
             `;
         }
