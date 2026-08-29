@@ -2641,6 +2641,92 @@
         // Keep old name as alias for payslip code that calls computeLeaveForMonth
         function computeLeaveForMonth(st, year, month) { return _calcOfficeLeave(st, year, month); }
 
+        // ── Late Arrival Summary ─────────────────────────────────────────
+        //  Reads the office staff member's attendance records for a given
+        //  pay period (26th → 25th) and returns:
+        //    - lateMinutesRaw    : sum of lateMinutes across all days
+        //    - lateMinutesNet    : after subtracting grace per late day
+        //    - lateHoursNet      : lateMinutesNet ÷ 60, rounded UP to
+        //                          the nearest 15-min (0.25 hr) block
+        //    - hourlyRate        : dailyWage ÷ standardWorkdayHours
+        //    - expectedDeduction : lateHoursNet × hourlyRate
+        //    - lateDays          : count of days with any lateness > grace
+        //    - lateBreakdown[]   : per-day array {date, rawMins, netMins}
+        //    - deductionMode     : Off / Warning / Apply
+        //
+        //  Settings inputs (all with defaults):
+        //    - settings.lateDeductionMode          'Off' | 'Warning' | 'Apply'
+        //    - settings.lateGraceMinutesPerDay     default 15
+        //    - settings.standardWorkdayHours       default 8
+        //
+        //  Only applies to Office staff (skips Technicians — different
+        //  wage model, no clock-in based lateness).
+        // ─────────────────────────────────────────────────────────────────
+        function _computeLateSummary(st, periodYear, periodMonth) {
+            const isOffice = (st.staffType || 'Office') !== 'Technician';
+            const mode = settings.lateDeductionMode || 'Off';
+            const grace = +(settings.lateGraceMins ?? 15);
+            const workdayHrs = +(settings.standardWorkdayHours ?? 8) || 8;
+
+            // Pay period bounds: <periodMonth> refers to the month
+            // containing the 25th (period-end day). Start is the 26th of
+            // the previous calendar month. Matches _calcOfficeLeave etc.
+            const pM = periodMonth === 1 ? 12 : periodMonth - 1;
+            const pY = periodMonth === 1 ? periodYear - 1 : periodYear;
+            const ppStart = new Date(pY,       pM - 1,          26).getTime();
+            const ppEnd   = new Date(periodYear, periodMonth - 1, 25, 23, 59, 59).getTime();
+
+            const inPeriod = (dateStr) => {
+                if (!dateStr) return false;
+                const t = new Date(dateStr + 'T00:00:00').getTime();
+                return t >= ppStart && t <= ppEnd;
+            };
+
+            const attn = (st.attendance || []).filter(a => inPeriod(a.date) && a.status !== 'WFH');
+            let lateMinutesRaw = 0, lateMinutesNet = 0, lateDays = 0;
+            const lateBreakdown = [];
+            attn.forEach(a => {
+                const raw = +(a.lateMinutes || 0);
+                if (raw <= 0) return;
+                lateMinutesRaw += raw;
+                // Per-day grace: only minutes beyond `grace` count for deduction
+                const net = Math.max(0, raw - grace);
+                if (net > 0) lateDays++;
+                lateMinutesNet += net;
+                lateBreakdown.push({ date: a.date, rawMins: raw, netMins: net });
+            });
+
+            // Round net late-hours UP to nearest 15-min block (common office
+            // practice — partial blocks charge as full quarter-hours).
+            const rawHours = lateMinutesNet / 60;
+            const lateHoursNet = Math.ceil(rawHours * 4) / 4;
+
+            // Hourly rate = daily wage ÷ configured workday hours.
+            // Daily wage is stored on staff record (kept in sync with wage
+            // revisions — same field the payslip uses for LOP).
+            const dailyWage = +st.dailyWage || 0;
+            const hourlyRate = workdayHrs > 0 ? +(dailyWage / workdayHrs).toFixed(2) : 0;
+            const expectedDeduction = +(lateHoursNet * hourlyRate).toFixed(2);
+
+            return {
+                applies:            isOffice && mode !== 'Off',
+                deductionMode:      mode,                // 'Off' | 'Warning' | 'Apply'
+                graceMinutesPerDay: grace,
+                standardWorkdayHrs: workdayHrs,
+                lateMinutesRaw,
+                lateMinutesNet,
+                lateHoursNet,
+                lateDays,
+                dailyWage,
+                hourlyRate,
+                expectedDeduction,
+                lateBreakdown,
+                // Whether to actually subtract from salary (Warning = show only)
+                deductFromSalary:   isOffice && mode === 'Apply' && expectedDeduction > 0,
+                projectedOnly:      isOffice && mode === 'Warning' && expectedDeduction > 0,
+            };
+        }
+
         function computeOfficeSalary(st, op) {
             const basic=+st.basicSalary||0,hraPct=+(st.hraPct??30),daPct=+(st.daPct??65);
             const hra=basic*hraPct/100,da=basic*daPct/100,gp=+st.gradePay||0,cv=+st.conveyance||0,med=+st.medical||0,vr=+st.variable||0;
@@ -2708,17 +2794,29 @@
             const lopBase=basic+hra+da+med+gp+cv+bonus;
             const lopA=+(lopDays*(lopBase/periodDays)).toFixed(2);
             const addlD=+op.addlDeduction||0;
+            // ── Late Arrival Deduction ──
+            // Computed via _computeLateSummary above. Three modes:
+            //   Off      → not shown, not deducted (invisible)
+            //   Warning  → shown on payslip as "projected — not deducted",
+            //              lateDedAmt = 0 (byte-identical to legacy math)
+            //   Apply    → shown on payslip AND lateDedAmt subtracted
+            // Payslip caller can override via op.lateDedAmt if needed
+            // (rare — e.g. HR waives one month's deduction after a review).
+            const lateSummary = _computeLateSummary(st, op.periodYear, op.periodMonth);
+            const lateDedAmt = op.lateDedAmt != null
+                ? +op.lateDedAmt
+                : (lateSummary.deductFromSalary ? lateSummary.expectedDeduction : 0);
             // ── Loan deductions ──
             // Compute total of non-loan deductions first, then check what's available
             // for loan EMI. If salary is too low to cover the EMI, deferral logic in
             // computeLoanDeductions skips the deduction for this period.
-            const otherDed = pf.pfAmt + esicAmt + ptAmt + tds + lopA + addlD;
+            const otherDed = pf.pfAmt + esicAmt + ptAmt + tds + lopA + addlD + lateDedAmt;
             const availableForLoan = gross - otherDed;
             const loanDeductions = computeLoanDeductions(st, op.periodMonth, op.periodYear, availableForLoan);
             const loanTotal = loanDeductions.reduce((s, ld) => s + (parseFloat(ld.deductionAmount) || 0), 0);
             const totD = otherDed + loanTotal;
             const net = gross - totD;
-            return{basic,hra,hraPct,da,daPct,gradePay:gp,conveyance:cv,medical:med,bonus,variable:vr,addlAllow:addlA,gross,grossWithVar,grossExclVar,pfPct,pfGross:pf.pfGross,pfAmt:pf.pfAmt,pfCapped:pf.pfCapped,esicPct,esicAmt,esicWaived,ptAmt,ptApplies,isFebruary,isMarchFY,gender,tdsAmt:tds,leavePerMonth:lpM,carriedLeave:carried,leaveOpening:leaveResult.opening||0,available,leaveTaken:leaveTakenFinal,lopDays,lopAmt:lopA,leaveBalance:lbal,addlDed:addlD,loanDeductions,loanTotal,totalDed:totD,netPay:net,periodDays,periodLabel};
+            return{basic,hra,hraPct,da,daPct,gradePay:gp,conveyance:cv,medical:med,bonus,variable:vr,addlAllow:addlA,gross,grossWithVar,grossExclVar,pfPct,pfGross:pf.pfGross,pfAmt:pf.pfAmt,pfCapped:pf.pfCapped,esicPct,esicAmt,esicWaived,ptAmt,ptApplies,isFebruary,isMarchFY,gender,tdsAmt:tds,leavePerMonth:lpM,carriedLeave:carried,leaveOpening:leaveResult.opening||0,available,leaveTaken:leaveTakenFinal,lopDays,lopAmt:lopA,leaveBalance:lbal,addlDed:addlD,lateDedAmt,lateSummary,loanDeductions,loanTotal,totalDed:totD,netPay:net,periodDays,periodLabel};
         }
 
         function onPaySlipStaffChange(staffID){
@@ -2850,7 +2948,27 @@
             const pfLbl=`PF ${c.pfPct}% `+(c.pfCapped?`(PF Gross ₹${Math.round(c.pfGross).toLocaleString('en-IN')} → cap ₹15k)`:`(PF Gross ₹${Math.round(c.pfGross).toLocaleString('en-IN')})`);
             const esicThresh=21000,esicNote=c.esicWaived?`ESIC – NIL (Wages ₹${Math.round(c.grossWithVar).toLocaleString('en-IN')} > ₹21,000)`:`ESIC – 0.75% of Wages ₹${Math.round(c.grossWithVar).toLocaleString('en-IN')} (≤ ₹21,000)`;
             const ptNote=c.ptApplies?`PT${c.isFebruary?' (Feb ₹300)':''} – ₹${c.ptAmt} (${c.gender}, gross ₹${Math.round(c.gross).toLocaleString('en-IN')} > ${c.gender==='Female'?'₹25,000':'₹10,000'})`:(`PT – NIL (${c.gender}: gross ₹${Math.round(c.gross).toLocaleString('en-IN')} ≤ ${c.gender==='Female'?'₹25,000':'₹10,000'})`);
-            const dr=[{n:pfLbl,a:c.pfAmt,s:true,col:'#1d4ed8',nil:false},{n:esicNote,a:c.esicAmt,s:true,col:c.esicWaived?'#9ca3af':'#0e7490',nil:c.esicWaived},{n:ptNote,a:c.ptAmt,s:true,col:c.ptApplies?'#7c3aed':'#9ca3af',nil:!c.ptApplies},{n:'TDS',a:c.tdsAmt,s:c.tdsAmt>0,col:'#b45309',nil:false},{n:`Loss of Pay – ${c.lopDays}d (LOP Base÷${c.periodDays} period days)`,a:c.lopAmt,s:c.lopDays>0,col:'#dc2626',nil:false},{n:op.addlDeductionRemark?'Other: '+op.addlDeductionRemark:'Other Ded.',a:c.addlDed,s:c.addlDed>0,col:'#4b5563',nil:false}].filter(r=>r.s||r.nil);
+            // Base deduction rows
+            const _drBase = [{n:pfLbl,a:c.pfAmt,s:true,col:'#1d4ed8',nil:false},{n:esicNote,a:c.esicAmt,s:true,col:c.esicWaived?'#9ca3af':'#0e7490',nil:c.esicWaived},{n:ptNote,a:c.ptAmt,s:true,col:c.ptApplies?'#7c3aed':'#9ca3af',nil:!c.ptApplies},{n:'TDS',a:c.tdsAmt,s:c.tdsAmt>0,col:'#b45309',nil:false},{n:`Loss of Pay – ${c.lopDays}d (LOP Base÷${c.periodDays} period days)`,a:c.lopAmt,s:c.lopDays>0,col:'#dc2626',nil:false},{n:op.addlDeductionRemark?'Other: '+op.addlDeductionRemark:'Other Ded.',a:c.addlDed,s:c.addlDed>0,col:'#4b5563',nil:false}];
+            // ── Late Arrival row ──
+            // Reads c.lateSummary populated by computeOfficeSalary. Mode
+            // decides whether this is a real deduction (red) or a
+            // projected warning (amber grey — displayed with `nil:true`
+            // styling so the row shows but doesn't count toward TOTAL).
+            const _ls = c.lateSummary;
+            if (_ls && _ls.expectedDeduction > 0) {
+                const _mins = _ls.lateMinutesNet;
+                const _hLabel = _ls.lateHoursNet.toFixed(2) + ' hr';
+                const _rateLabel = 'Rs.' + _ls.hourlyRate.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2}) + '/hr';
+                if (c.lateDedAmt > 0) {
+                    // Mode = Apply → real deduction
+                    _drBase.push({n:`⏱ Late Arrival – ${_ls.lateDays}d, ${_hLabel} net @ ${_rateLabel}`, a:c.lateDedAmt, s:true, col:'#dc2626', nil:false});
+                } else {
+                    // Mode = Warning → projected, not deducted
+                    _drBase.push({n:`⚠ Late Arrival (projected — NOT deducted this cycle) – ${_ls.lateDays}d, ${_hLabel} @ ${_rateLabel} = Rs.${_ls.expectedDeduction.toLocaleString('en-IN',{minimumFractionDigits:2})}`, a:0, s:false, col:'#b45309', nil:true});
+                }
+            }
+            const dr=_drBase.filter(r=>r.s||r.nil);
             // Loan deduction rows — one per active loan that's being deducted this period
             // (or deferred — shown greyed out so user knows why net pay didn't shrink).
             ((c.loanDeductions||[]).forEach(ld => {
@@ -2870,6 +2988,25 @@
                 <div style="background:${lb};border:1px solid ${lc}55;border-radius:10px;padding:10px;text-align:center"><div style="font-size:10px;color:#6b7280;font-weight:500;margin-bottom:4px">${c.lopDays>0?'LOP DAYS':'BALANCE'}</div><div style="font-size:18px;font-weight:600;color:${lc}">${c.lopDays>0?c.lopDays+' LOP':c.leaveBalance+' left'}</div></div>
             </div>
             ${c.lopDays>0?`<div style="background:#fef2f2;border:1px solid #dc262644;border-radius:10px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:#dc2626"><strong>⚠️ Loss of Pay:</strong> ${c.leaveTaken} days taken − ${c.available} available = ${c.lopDays} LOP days. LOP deduction = ₹${c.lopAmt.toLocaleString('en-IN',{minimumFractionDigits:2})} (LOP Base ÷ ${c.periodDays} period days × ${c.lopDays} LOP days). Next month carry-forward: 0 days.</div>`:''}
+            ${c.lateSummary && c.lateSummary.expectedDeduction > 0 && !c.lateDedAmt ? `
+                <div style="background:linear-gradient(135deg,#fffbeb,#fef3c7);border:2px solid #d97706;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:#78350f">
+                    <strong>⏱ Late Arrival Summary — deduction not applied this cycle:</strong>
+                    ${c.lateSummary.lateDays} day${c.lateSummary.lateDays===1?'':'s'} late,
+                    ${c.lateSummary.lateMinutesRaw} total minutes late
+                    (${c.lateSummary.graceMinutesPerDay} min grace/day → ${c.lateSummary.lateMinutesNet} net min = ${c.lateSummary.lateHoursNet.toFixed(2)} hr rounded to 15-min blocks).
+                    At hourly rate ₹${c.lateSummary.hourlyRate.toLocaleString('en-IN',{minimumFractionDigits:2})} (daily wage ÷ ${c.lateSummary.standardWorkdayHrs}hr),
+                    <strong>projected deduction would be ₹${c.lateSummary.expectedDeduction.toLocaleString('en-IN',{minimumFractionDigits:2})}.</strong>
+                    Correct late arrivals to avoid this being applied to your salary in future cycles.
+                </div>` : ''}
+            ${c.lateSummary && c.lateDedAmt > 0 ? `
+                <div style="background:linear-gradient(135deg,#fef2f2,#fee2e2);border:2px solid #dc2626;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:#7f1d1d">
+                    <strong>⏱ Late Arrival Deduction Applied:</strong>
+                    ${c.lateSummary.lateDays} day${c.lateSummary.lateDays===1?'':'s'} late,
+                    ${c.lateSummary.lateMinutesRaw} total late minutes
+                    (${c.lateSummary.graceMinutesPerDay} min grace/day → ${c.lateSummary.lateMinutesNet} net min = ${c.lateSummary.lateHoursNet.toFixed(2)} hr rounded to 15-min blocks).
+                    At hourly rate ₹${c.lateSummary.hourlyRate.toLocaleString('en-IN',{minimumFractionDigits:2})},
+                    <strong>deduction = ₹${c.lateDedAmt.toLocaleString('en-IN',{minimumFractionDigits:2})}.</strong>
+                </div>` : ''}
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:10px"><div class="bg-white border border-gray-200 rounded-xl overflow-hidden"><div style="background:#1d4ed8;padding:8px 14px;font-weight:700;font-size:12px;color:#fff">EARNINGS</div><table style="width:100%;border-collapse:collapse;font-size:12px">${er.map(r=>`<tr style="border-bottom:0.5px solid #f3f4f6"><td style="padding:7px 12px;color:#374151">${r.n}</td><td style="padding:7px 12px;text-align:right;font-weight:500">${INR(r.a)}</td></tr>`).join('')}<tr style="background:#eff6ff"><td style="padding:8px 12px;font-weight:700;color:#1d4ed8">GROSS</td><td style="padding:8px 12px;text-align:right;font-weight:700;color:#1d4ed8">${INR(c.gross)}</td></tr></table></div><div class="bg-white border border-gray-200 rounded-xl overflow-hidden"><div style="background:#dc2626;padding:8px 14px;font-weight:700;font-size:12px;color:#fff">DEDUCTIONS</div><table style="width:100%;border-collapse:collapse;font-size:12px">${dr.map(r=>`<tr style="border-bottom:0.5px solid #f3f4f6;${r.nil?'opacity:0.55':''}"><td style="padding:7px 12px;color:#374151;font-size:11px">${r.n}</td><td style="padding:7px 12px;text-align:right;font-weight:500;color:${r.col}">${r.nil?'NIL':INR(r.a)}</td></tr>`).join('')}<tr style="background:#fef2f2"><td style="padding:8px 12px;font-weight:700;color:#dc2626">TOTAL</td><td style="padding:8px 12px;text-align:right;font-weight:700;color:#dc2626">${INR(c.totalDed)}</td></tr></table></div></div>
             <div style="background:linear-gradient(135deg,#0f766e,#0891b2);border-radius:12px;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div><div style="color:#ccfbf1;font-size:12px;font-weight:500">${st.name} · ${monthName}</div><div style="color:#99f6e4;font-size:11px;margin-top:3px">Gross ${INR(c.gross)} − ${INR(c.totalDed)}</div></div><div><span style="color:#99f6e4;font-size:11px;margin-right:6px">NET PAY</span><span style="color:#f0fdfa;font-size:22px;font-weight:700">${INR(c.netPay)}</span></div></div>
             <div class="flex gap-3">
@@ -17309,6 +17446,37 @@
                             <input type="number" id="settWFHBacklog" value="${settings.wfhBacklogDays || 30}" min="1" max="90" class="w-full px-4 py-2 border rounded-lg" placeholder="30"/>
                             <p class="text-xs text-gray-400 mt-1">How many days back the WFH portal date can be set</p>
                         </div>
+
+                        <!-- ═══ Late Arrival Deduction ═══
+                             Admin toggle controlling whether late arrivals
+                             beyond the grace period (set above) translate
+                             into an actual payslip deduction.
+                             • Off       — invisible, no deduction (default)
+                             • Warning   — visible on payslip as projection,
+                                           NOT deducted (staff-facing warning
+                                           so they know it's coming)
+                             • Apply     — visible + deducted from Net Pay
+                             Deduction amount = late hours × hourly rate,
+                             where hourly rate = Daily Wage ÷ workday hours
+                             (default 8), rounded up to nearest 15-min block.
+                             Grace period per day: reuses settLateGrace field. -->
+                        <div class="md:col-span-2 border-t border-gray-200 pt-4 mt-2">
+                            <h4 class="text-base font-semibold mb-3 text-gray-700">⏱ Late Arrival Deduction <span class="text-xs font-normal text-gray-400">— office staff only; uses grace period above</span></h4>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-semibold mb-2">Deduction Mode</label>
+                            <select id="settLateDeductionMode" class="w-full px-4 py-2 border rounded-lg">
+                                <option value="Off"     ${(settings.lateDeductionMode||'Off')==='Off'?'selected':''}>Off — no deduction, no display</option>
+                                <option value="Warning" ${settings.lateDeductionMode==='Warning'?'selected':''}>Warning only — show on payslip, NOT deducted</option>
+                                <option value="Apply"   ${settings.lateDeductionMode==='Apply'?'selected':''}>Apply — deducted from Net Pay</option>
+                            </select>
+                            <p class="text-xs text-gray-400 mt-1">Recommend starting with <strong>Warning</strong> for 1–2 cycles so staff see what's coming, then switch to <strong>Apply</strong>.</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-semibold mb-2">Standard Workday Hours</label>
+                            <input type="number" id="settStandardWorkdayHrs" value="${settings.standardWorkdayHours || 8}" min="1" max="24" step="0.5" class="w-full px-4 py-2 border rounded-lg" placeholder="8"/>
+                            <p class="text-xs text-gray-400 mt-1">Hourly rate = Daily Wage ÷ this value. Late hours are rounded up to 15-min blocks.</p>
+                        </div>
                         <div class="md:col-span-2">
                             <label class="block text-sm font-semibold mb-2">Company Address</label>
                             <textarea id="companyAddress" rows="3" class="w-full px-4 py-2 border rounded-lg">${settings.companyAddress || ''}</textarea>
@@ -20316,6 +20484,10 @@
                     punctualityIncentivePerfect: parseFloat(document.getElementById('settPunctualityPerfect')?.value)||0,
                     punctualityIncentiveGood:    parseFloat(document.getElementById('settPunctualityGood')?.value)||0,
                     wfhBacklogDays:   parseInt(document.getElementById('settWFHBacklog')?.value)||30,
+                    // Late Arrival Deduction — Mode + Standard Workday Hours.
+                    // Grace period reuses lateGraceMins (single source above).
+                    lateDeductionMode: document.getElementById('settLateDeductionMode')?.value || settings.lateDeductionMode || 'Off',
+                    standardWorkdayHours: parseFloat(document.getElementById('settStandardWorkdayHrs')?.value) || settings.standardWorkdayHours || 8,
                     pinExpiryDays:    parseInt(document.getElementById('settPinExpiry')?.value) ?? settings.pinExpiryDays ?? 30,
                     spreadsheetId: settings.spreadsheetId, // Preserve — legacy key
                     // MUST also preserve googleSheetsId. Only preserving
@@ -21078,6 +21250,7 @@
                     +'</div></div>'
                     +tableHTML
                     +_renderPunctualityIncentivePanel(summaryRows, shM, shY)
+                    +_renderLateDeductionPanel(summaryRows, shM, shY)
                     +'</div>';
             })()}
 
@@ -21204,6 +21377,87 @@
                 </div>
                 ${totalRow}
                 ${settingsHint}
+            </div>`;
+        }
+
+        // Companion to _renderPunctualityIncentivePanel — displays each
+        // staff member's late summary and the projected/applied Late
+        // Arrival Deduction for the period. Renders only when the admin
+        // Mode is Warning or Apply — Off = invisible (staff don't want
+        // clutter when the feature isn't in use).
+        function _renderLateDeductionPanel(summaryRows, month, year) {
+            const mode = settings.lateDeductionMode || 'Off';
+            if (mode === 'Off') return '';
+            const MNs = ['January','February','March','April','May','June',
+                         'July','August','September','October','November','December'];
+            const monthLabel = MNs[month-1] + ' ' + year;
+            const grace = +(settings.lateGraceMins ?? 15);
+            const workdayHrs = +(settings.standardWorkdayHours ?? 8) || 8;
+
+            const eligible = summaryRows.filter(r => r.st && r.st.staffType !== 'Technician');
+            if (!eligible.length) return '';
+
+            const results = eligible.map(r => {
+                const summary = _computeLateSummary(r.st, year, month);
+                return { st: r.st, summary };
+            }).filter(x => x.summary.expectedDeduction > 0);
+
+            if (!results.length) {
+                return `<div class="mt-6 bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-2xl p-5">
+                    <h3 class="text-lg font-bold text-emerald-800 mb-1">⏱ Late Arrival Deduction — ${monthLabel}</h3>
+                    <p class="text-sm text-emerald-700">Mode: <strong>${mode}</strong> · Grace: ${grace} min/day · Workday: ${workdayHrs} hr</p>
+                    <p class="text-sm text-emerald-800 mt-2">✓ No office staff have late-arrival deductions this cycle. Well done!</p>
+                </div>`;
+            }
+
+            const totalDed = results.reduce((s, x) => s + x.summary.expectedDeduction, 0);
+            const isApply = mode === 'Apply';
+            const bannerColor = isApply ? 'from-red-50 to-rose-50 border-red-300' : 'from-amber-50 to-orange-50 border-amber-300';
+            const headerColor = isApply ? 'text-red-800' : 'text-amber-800';
+            const badgeColor  = isApply ? 'bg-red-600' : 'bg-amber-600';
+            const badgeText   = isApply ? 'DEDUCTED' : 'PROJECTED';
+
+            const rows = results.map(x => {
+                const s = x.summary;
+                return `<tr class="border-b hover:bg-white/50">
+                    <td class="px-3 py-2 text-sm font-medium">${x.st.name}</td>
+                    <td class="px-3 py-2 text-center text-xs">${s.lateDays}</td>
+                    <td class="px-3 py-2 text-center text-xs">${s.lateMinutesRaw} min</td>
+                    <td class="px-3 py-2 text-center text-xs">${s.lateMinutesNet} min</td>
+                    <td class="px-3 py-2 text-center text-xs font-semibold">${s.lateHoursNet.toFixed(2)} hr</td>
+                    <td class="px-3 py-2 text-right text-xs">₹${s.hourlyRate.toLocaleString('en-IN',{minimumFractionDigits:2})}</td>
+                    <td class="px-3 py-2 text-right text-sm font-bold ${isApply?'text-red-700':'text-amber-700'}">₹${s.expectedDeduction.toLocaleString('en-IN',{minimumFractionDigits:2})}</td>
+                </tr>`;
+            }).join('');
+
+            return `<div class="mt-6 bg-gradient-to-r ${bannerColor} border-2 rounded-2xl p-5">
+                <div class="flex justify-between items-start mb-3">
+                    <div>
+                        <h3 class="text-lg font-bold ${headerColor}">⏱ Late Arrival Deduction — ${monthLabel} <span class="text-xs px-2 py-0.5 ${badgeColor} text-white rounded-full font-semibold ml-1">${badgeText}</span></h3>
+                        <p class="text-xs ${headerColor} mt-1">Mode: <strong>${mode}</strong> · Grace: ${grace} min/day · Workday: ${workdayHrs} hr · Late hrs rounded up to 15-min blocks</p>
+                    </div>
+                    <div class="text-right">
+                        <div class="text-xs ${headerColor}">Total ${isApply?'Deduction':'Projected'}</div>
+                        <div class="text-xl font-bold ${isApply?'text-red-700':'text-amber-700'}">₹${totalDed.toLocaleString('en-IN',{minimumFractionDigits:2})}</div>
+                    </div>
+                </div>
+                ${!isApply?`<p class="text-xs ${headerColor} mb-3 italic">Warning mode — these amounts are shown to staff on their payslips but NOT deducted. Switch Mode to <strong>Apply</strong> in Settings to actually deduct.</p>`:''}
+                <div class="overflow-x-auto bg-white/70 rounded-xl">
+                    <table class="min-w-full text-xs">
+                        <thead class="bg-white/90">
+                            <tr class="text-left border-b border-gray-300">
+                                <th class="px-3 py-2 font-semibold">Staff</th>
+                                <th class="px-3 py-2 text-center font-semibold">Late Days</th>
+                                <th class="px-3 py-2 text-center font-semibold">Total Late (raw)</th>
+                                <th class="px-3 py-2 text-center font-semibold">Net (after grace)</th>
+                                <th class="px-3 py-2 text-center font-semibold">Late Hrs</th>
+                                <th class="px-3 py-2 text-right font-semibold">Hourly Rate</th>
+                                <th class="px-3 py-2 text-right font-semibold">${isApply?'Deduction':'Projected'}</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
             </div>`;
         }
 
