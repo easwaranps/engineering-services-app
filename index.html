@@ -33115,20 +33115,39 @@ Automated WFH alert — ${company} Attendance System.`;
             // We surface the stale claims in the stats line so Easu knows the
             // old PR still has a leftover reference he may want to clean up.
             const billsLockedByPR = new Map();  // expID → prID that holds it
-            const staleClaims     = new Map();  // expID → prID (Partial bills freed from stale locks)
+            const staleClaims     = new Map();  // expID → prID (bills freed from stale locks)
+            const _prDbg = (typeof window !== 'undefined' && window._prDebug === true);
             (paymentRequests || []).forEach(pr => {
                 if (pr.status === 'Cancelled' || pr.status === 'Closed' || pr.status === 'Superseded') return;
                 if (window._prRevisingID && pr.prID === window._prRevisingID) return;  // don't lock the PR being revised
                 (pr.items || []).forEach(it => {
                     if (it.sourceType !== 'expense' || it.paid) return;
                     const srcExp = (expenses || []).find(x => x.expID === it.sourceID);
-                    if (srcExp && srcExp.payStatus === 'Partial') {
-                        // Old PR's claim is stale — payment already recorded on the bill.
-                        // Free the remaining balance to be claimed by the new PR.
+                    // ── Stale-lock release ──
+                    // An old PR "locks" a bill so it can't be double-claimed
+                    // on a new PR. But that lock is only valid while the bill
+                    // genuinely still owes money AGAINST THAT PR. If the
+                    // source bill is:
+                    //   • Partial — some payment recorded on the bill directly,
+                    //               so the old PR's claim is stale; free the
+                    //               remaining balance.
+                    //   • Pending — the bill was NEVER paid through the old PR
+                    //               (the PR was generated but that item was
+                    //               never disbursed). The money is still fully
+                    //               owed, so a NEW PR must be able to claim it.
+                    //               Previously only Partial was freed, so a
+                    //               Pending bill stayed locked to a stale old
+                    //               PR forever and silently vanished from every
+                    //               future PR (the ALFA LAVAL case).
+                    // Only a bill whose payStatus has become 'Paid' (or whose
+                    // PR item is it.paid=true, handled above) stays locked.
+                    if (srcExp && (srcExp.payStatus === 'Partial' || srcExp.payStatus === 'Pending')) {
                         if (!staleClaims.has(it.sourceID)) staleClaims.set(it.sourceID, pr.prID);
+                        if (_prDbg) console.log(`[PR lock] FREED ${it.sourceID} (${srcExp.vendor||srcExp.companyName||srcExp.staffName||'—'}) — payStatus="${srcExp.payStatus}" on stale ${pr.prID} (status=${pr.status}); claimable by new PR`);
                         return;
                     }
                     billsLockedByPR.set(it.sourceID, pr.prID);
+                    if (_prDbg && srcExp) console.log(`[PR lock] LOCKED ${it.sourceID} (${srcExp.vendor||srcExp.companyName||srcExp.staffName||'—'}) — payStatus="${srcExp.payStatus}" to ${pr.prID}`);
                 });
             });
 
@@ -33208,7 +33227,7 @@ Automated WFH alert — ${company} Attendance System.`;
                     const breakdown = Object.entries(byPR).map(([prID,n]) =>
                         `<a href="javascript:void(0)" onclick="closeAdHocPRModal();openPaymentRequestDetail('${prID}')" style="color:#b45309;text-decoration:underline">${prID}</a> (${n})`
                     ).join(', ');
-                    bits.push(`<span style="color:#b45309">${staleClaims.size} Partial bill${staleClaims.size===1?'':'s'} freed from stale PR claim${staleClaims.size===1?'':'s'}: ${breakdown} — consider closing once settled</span>`);
+                    bits.push(`<span style="color:#b45309">${staleClaims.size} bill${staleClaims.size===1?'':'s'} freed from stale PR claim${staleClaims.size===1?'':'s'}: ${breakdown} — consider closing/cancelling the old PR${staleClaims.size===1?'':'s'} once settled</span>`);
                 }
                 if (cntZeroBalance > 0) bits.push(`${cntZeroBalance} skipped (zero balance)`);
                 statsEl.innerHTML = bits.join(' · ');
