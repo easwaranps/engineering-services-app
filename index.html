@@ -32558,10 +32558,37 @@ Automated WFH alert — ${company} Attendance System.`;
         // The gap detector (_prCollectStaffSalaryGaps) checks for missing salary
         // bills and the result is surfaced as a warning banner on the request.
         function _prCollectPendingBills(periodEnd) {
+            // Diagnostic — enable by setting `window._prDebug = true` in the
+            // browser console before clicking "Generate Payment Request".
+            // Logs every expense with its inclusion decision + reason so
+            // missing bills can be traced without extra tooling. Silent by
+            // default (no perf/log noise in normal use).
+            const _dbg = (typeof window !== 'undefined' && window._prDebug === true);
+            if (_dbg) console.log('[_prCollectPendingBills] periodEnd:', periodEnd, '· scanning', (expenses||[]).length, 'expenses');
+
             return (expenses || [])
-                .filter(e => (e.payStatus === 'Pending' || e.payStatus === 'Partial')
-                             && (e.billDate || '') <= periodEnd
-                             && (parseFloat(e.balanceAmt ?? e.netPayable) || 0) > 0)
+                .filter(e => {
+                    const statusOK = (e.payStatus === 'Pending' || e.payStatus === 'Partial');
+                    const dateOK   = (e.billDate || '') <= periodEnd;
+                    const balance  = parseFloat(e.balanceAmt ?? e.netPayable) || 0;
+                    const balanceOK = balance > 0;
+                    const included = statusOK && dateOK && balanceOK;
+                    if (_dbg) {
+                        // Only log borderline / excluded rows to keep the
+                        // console readable — bills that pass all three
+                        // conditions are the norm.
+                        if (!included) {
+                            const reasons = [];
+                            if (!statusOK)  reasons.push(`payStatus="${e.payStatus}" (need Pending or Partial)`);
+                            if (!dateOK)    reasons.push(`billDate="${e.billDate}" > periodEnd "${periodEnd}"`);
+                            if (!balanceOK) reasons.push(`balance=${balance} (balanceAmt=${e.balanceAmt} netPayable=${e.netPayable})`);
+                            console.log('  ✗ EXCLUDED', e.expID, e.vendor || e.staffName || e.companyName || '—', '·', reasons.join('; '));
+                        } else {
+                            console.log('  ✓ included', e.expID, e.vendor || e.staffName || e.companyName || '—', `· balance=${balance}`);
+                        }
+                    }
+                    return included;
+                })
                 .map(e => {
                     const payeeName = e.companyName || e.staffName || e.vendor || '—';
                     const desc = e.description ||
@@ -32571,16 +32598,11 @@ Automated WFH alert — ${company} Attendance System.`;
                     return {
                         itemID:        'BILL-' + e.expID,
                         category:      'BILLS',
-                        billType:      e.billType || '',   // subcategory tag for grouping in the UI
+                        billType:      e.billType || '',
                         sourceID:      e.expID,
                         sourceType:    'expense',
                         description:   `${payeeName} — ${desc}`.trim(),
                         payee:         payeeName,
-                        // Use balanceAmt (Net Payable AFTER PF/PT/ESIC/Other deductions) —
-                        // NOT netPayable (which is only Bill+GST-TDS-CreditNote-Advance,
-                        // before those further deductions). balanceAmt is the actual amount
-                        // that needs to be paid out, matching what Expenses & Bills displays.
-                        // Falls back to netPayable for older records that predate balanceAmt.
                         amount:        +((parseFloat(e.balanceAmt ?? e.netPayable) || 0).toFixed(2)),
                         dueDate:       e.billDate || '',
                         decision:      'Pending',
