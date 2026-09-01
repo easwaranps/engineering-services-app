@@ -27718,6 +27718,8 @@ Automated WFH alert — ${company} Attendance System.`;
             const filterStatus  = window._dirFilter?.status  || '';
             // Tally filter: '' (all) | 'updated' | 'pending' | 'voucher' | 'novoucher'
             const filterTally   = window._dirFilter?.tally   || '';
+            // Payment-mode filter: '' (all) | one of the payMode option values
+            const filterPayMode = window._dirFilter?.payMode || '';
 
             const fmtC = n => '₹'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2});
             const filtered = directorExpenses.filter(d => {
@@ -27749,7 +27751,10 @@ Automated WFH alert — ${company} Attendance System.`;
                     (filterTally === 'pending'   && !d.tallyUpdated) ||
                     (filterTally === 'voucher'   && hasVoucher) ||
                     (filterTally === 'novoucher' && d.tallyUpdated && !hasVoucher);
-                return mDir && mMon && mSrch && mCat && mFrom && mTo && mAmt && mStat && mTally;
+                // Payment-mode match — exact match against d.payMode (default
+                // 'Cash' when unset, mirroring the Payment Mode Summary above).
+                const mPayMode = !filterPayMode || ((d.payMode || 'Cash') === filterPayMode);
+                return mDir && mMon && mSrch && mCat && mFrom && mTo && mAmt && mStat && mTally && mPayMode;
             }).sort((a,b)=>(b.expDate||'').localeCompare(a.expDate||''));
 
             // Monthly totals per director
@@ -27933,6 +27938,10 @@ Automated WFH alert — ${company} Attendance System.`;
                         <option value="pending"   ${filterTally==='pending'  ?'selected':''}>· Pending Tally</option>
                         <option value="voucher"   ${filterTally==='voucher'  ?'selected':''}>📋 With Voucher No</option>
                         <option value="novoucher" ${filterTally==='novoucher'?'selected':''}>⚠ Marked but No Voucher</option>
+                    </select>
+                    <select onchange="window._dirFilter={...(window._dirFilter||{}),payMode:this.value};renderView()" class="px-3 py-2 border rounded-lg text-sm min-w-48" title="Filter by Mode of Payment">
+                        <option value="" ${filterPayMode===''?'selected':''}>All Payment Modes</option>
+                        ${['Cash','G-Pay / UPI','Bank Transfer (NEFT/RTGS/IMPS)','Credit Card','Debit Card','Cheque','Company Card','Personal - To Reimburse'].map(m=>`<option value="${m}" ${filterPayMode===m?'selected':''}>${m}</option>`).join('')}
                     </select>
                     <div class="flex items-center gap-1">
                         <span class="text-xs text-gray-500 whitespace-nowrap">Date from</span>
