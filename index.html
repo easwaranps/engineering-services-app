@@ -7602,13 +7602,10 @@
                         <div class="flex flex-wrap gap-1 overflow-x-auto -mx-1 px-1">
                             <button onclick="switchView('dashboard')" class="px-3 py-2 rounded-lg whitespace-nowrap ${currentView === 'dashboard' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Dashboard</button>
                             ${_canAccess('transactions')?`<button onclick="switchView('transactions')" class="px-3 py-2 rounded-lg whitespace-nowrap ${currentView === 'transactions' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}">Transactions</button>`:''}
-                            ${_canAccess('expenses')?`<button onclick="switchView('expenses')" class="px-3 py-2 rounded-lg whitespace-nowrap ${currentView === 'expenses' ? 'bg-orange-100 text-orange-700' : 'text-gray-600 hover:bg-gray-100'}">💸 Expenses</button>`:''}
+                            ${_canAccess('expenses')||_canAccess('direxp')||_canAccess('projexp')||_canAccess('pettycash')?`<button onclick="switchView(window._lastExpenseSubview||'expenses')" class="px-3 py-2 rounded-lg whitespace-nowrap ${['expenses','direxp','projexp','pettycash'].includes(currentView) ? 'bg-orange-100 text-orange-700' : 'text-gray-600 hover:bg-gray-100'}" title="Business, Director, Project & Petty Cash expenses">💸 Expenses${(()=>{const u=(pettyCashTransactions||[]).filter(t=>t.txnType==='EXPENSE'&&!t.verified).length;return u>0?` <span class="ml-1 px-1.5 py-0.5 bg-amber-500 text-white rounded-full text-xs font-bold">${u}</span>`:'';})()}</button>`:''}
                             ${_canAccess('staff')?`<button onclick="switchView('staff')" class="px-3 py-2 rounded-lg whitespace-nowrap ${currentView === 'staff' ? 'bg-teal-100 text-teal-700' : 'text-gray-600 hover:bg-gray-100'}">👥 Staff</button>`:''}
-                            ${_canAccess('projexp')?`<button onclick="switchView('projexp')" class="px-3 py-2 rounded-lg whitespace-nowrap ${currentView === 'projexp' ? 'bg-yellow-100 text-yellow-700' : 'text-gray-600 hover:bg-gray-100'}">🧳 Projects</button>`:''}
                             ${_canAccess('funds')?`<button onclick="switchView('funds')" class="px-3 py-2 rounded-lg whitespace-nowrap ${currentView === 'funds' ? 'bg-emerald-100 text-emerald-700' : 'text-gray-600 hover:bg-gray-100'}">💰 Funds${(()=>{const p=fundRequests.filter(r=>r.status==='Pending').length;return p>0?` <span class="ml-1 px-1.5 py-0.5 bg-rose-500 text-white rounded-full text-xs font-bold">${p}</span>`:'';})()}</button>`:''}
                             ${_canAccess('payreq')?`<button onclick="switchView('payreq')" class="px-3 py-2 rounded-lg whitespace-nowrap ${currentView === 'payreq' ? 'bg-cyan-100 text-cyan-700' : 'text-gray-600 hover:bg-gray-100'}">💼 Pay Requests${(()=>{const p=(paymentRequests||[]).filter(r=>r.status==='Draft').length;return p>0?` <span class="ml-1 px-1.5 py-0.5 bg-amber-500 text-white rounded-full text-xs font-bold">${p}</span>`:'';})()}</button>`:''}
-                            ${_canAccess('direxp')?`<button onclick="switchView('direxp')" class="px-3 py-2 rounded-lg whitespace-nowrap ${currentView === 'direxp' ? 'bg-rose-100 text-rose-700' : 'text-gray-600 hover:bg-gray-100'}">👔 Directors</button>`:''}
-                            ${_canAccess('pettycash')?`<button onclick="switchView('pettycash')" class="px-3 py-2 rounded-lg whitespace-nowrap ${currentView === 'pettycash' ? 'bg-amber-100 text-amber-800' : 'text-gray-600 hover:bg-gray-100'}" title="Office petty cash (Chennai / Mumbai)">💵 Petty Cash${(()=>{const u=(pettyCashTransactions||[]).filter(t=>t.txnType==='EXPENSE'&&!t.verified).length;return u>0?` <span class="ml-1 px-1.5 py-0.5 bg-amber-500 text-white rounded-full text-xs font-bold">${u}</span>`:'';})()}</button>`:''}
                             ${_canAccess('bank')?`<button onclick="switchView('bank')" class="px-3 py-2 rounded-lg whitespace-nowrap ${currentView === 'bank' ? 'bg-sky-100 text-sky-700' : 'text-gray-600 hover:bg-gray-100'}" title="Consolidated view of all bank transactions — read-only, aggregated from existing records">🏦 Bank</button>`:''}
                             ${_canAccess('tax')?`<button onclick="switchView('tax')" class="px-3 py-2 rounded-lg whitespace-nowrap ${currentView === 'tax' ? 'bg-red-100 text-red-700' : 'text-gray-600 hover:bg-gray-100'}">🧾 Tax</button>`:''}
                             ${_canAccess('mis')?`<button onclick="switchView('mis')" class="px-3 py-2 rounded-lg whitespace-nowrap ${currentView === 'mis' ? 'bg-green-100 text-green-700' : 'text-gray-600 hover:bg-gray-100'}">📊 MIS Report</button>`:''}
@@ -7906,12 +7903,48 @@
             _voSweep();
         })();
 
+        // Sub-tab strip shown at the top of every Expenses sub-view
+        // (Business / Director / Project / Petty Cash). Purely a navigation
+        // convenience — each pill calls the existing switchView() for that
+        // module, so all underlying render/permission/data logic is
+        // unchanged. Pills are hidden per-role via _canAccess, same as the
+        // old top-level tabs were.
+        function _expenseSubTabBar() {
+            const tab = (view, label, icon, badge) => {
+                if (typeof _canAccess === 'function' && !_canAccess(view)) return '';
+                const active = currentView === view;
+                const cls = active
+                    ? 'background:#ea580c;color:#fff;font-weight:700'
+                    : 'background:#fff;color:#7c2d12;border:1px solid #fed7aa';
+                return `<button onclick="switchView('${view}')" style="${cls};padding:7px 16px;border-radius:9px;font-size:13px;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:4px">${icon} ${label}${badge||''}</button>`;
+            };
+            const pcBadge = (() => {
+                const u = (pettyCashTransactions||[]).filter(t=>t.txnType==='EXPENSE'&&!t.verified).length;
+                return u>0?` <span style="margin-left:2px;padding:1px 7px;background:${currentView==='pettycash'?'rgba(255,255,255,.25)':'#f59e0b'};color:${currentView==='pettycash'?'#fff':'#fff'};border-radius:999px;font-size:11px;font-weight:700">${u}</span>`:'';
+            })();
+            const anyAccess = ['expenses','direxp','projexp','pettycash'].some(v => typeof _canAccess !== 'function' || _canAccess(v));
+            if (!anyAccess) return '';
+            return `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px;padding:10px 12px;background:linear-gradient(135deg,#fff7ed,#ffedd5);border:1px solid #fed7aa;border-radius:12px">
+                <span style="align-self:center;font-size:11px;font-weight:700;color:#9a3412;text-transform:uppercase;letter-spacing:0.05em;margin-right:4px">💸 Expenses:</span>
+                ${tab('expenses','Business Expenses','💸')}
+                ${tab('direxp','Director Expenses','👔')}
+                ${tab('projexp','Project Expenses','🧳')}
+                ${tab('pettycash','Petty Cash Expenses','💵',pcBadge)}
+            </div>`;
+        }
+
         function switchView(view) {
             if (ENABLE_LOGIN && _bmsSession && appUsers.length > 0 && !_canAccess(view)) {
                 _showToast(`🚫 Access restricted — your role (${_bmsSession?.role}) cannot access this module. Contact Admin.`, '#dc2626', 4500);
                 return;
             }
             currentView = view;
+            // Remember which expense sub-view was last active so the single
+            // "Expenses" parent nav button can return the user to where they
+            // left off (Business / Director / Project / Petty Cash).
+            if (['expenses','direxp','projexp','pettycash'].includes(view)) {
+                window._lastExpenseSubview = view;
+            }
             // Lock settings when navigating away
             if (view !== 'settings') { settingsUnlocked = false; }
             _updateBrowserTabTitle();
@@ -7973,6 +8006,29 @@
             else if (currentView === 'docs')    renderCompanyDocuments(content);
             else if (currentView === 'letters') renderLetters(content);
             else if (currentView === 'settings') renderSettings(content);
+
+            // ── Expenses sub-tab strip ──
+            // For the 4 grouped expense views, prepend the sub-tab bar so the
+            // user can switch between Business / Director / Project / Petty
+            // Cash without going back to the top nav. Done here (after the
+            // view's own render) as a single injection point — the 4 render
+            // functions are left completely untouched.
+            if (['expenses','direxp','projexp','pettycash'].includes(currentView)) {
+                try {
+                    const bar = document.createElement('div');
+                    bar.innerHTML = _expenseSubTabBar();
+                    if (bar.firstElementChild) {
+                        // Insert just inside the top of the content area, after
+                        // any View-Only banner that may already be prepended.
+                        const voBanner = content.querySelector('div[style*="View Only"]');
+                        if (voBanner && voBanner.nextSibling) {
+                            content.insertBefore(bar.firstElementChild, voBanner.nextSibling);
+                        } else {
+                            content.insertBefore(bar.firstElementChild, content.firstChild);
+                        }
+                    }
+                } catch(e) { console.warn('sub-tab bar inject failed', e); }
+            }
         }
 
         // ════════════════════════════════════════════════════════════════
