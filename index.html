@@ -33601,6 +33601,23 @@ Automated WFH alert — ${company} Attendance System.`;
             return fullPrefix + String(next).padStart(3, '0');
         }
 
+        // Returns the last day of the month IMMEDIATELY BEFORE (year, month)
+        // as a 'YYYY-MM-DD' string, e.g. lastDayOfPriorMonth(2026, 7) →
+        // '2026-06-30'. Built from local date parts, NOT toISOString():
+        // new Date(y, m-1, 0).toISOString() converts to UTC, and for IST
+        // (+5:30) users midnight local becomes 18:30 the PREVIOUS day in UTC,
+        // so '2026-06-30' came out as '2026-06-29' — which silently excluded
+        // every transaction dated on the 30th (e.g. the month-end
+        // replenishment) from the next month's opening carry-forward. That
+        // was the ₹1,690 gap in the Chennai July opening.
+        function lastDayOfPriorMonth(year, month) {
+            const d = new Date(year, month - 1, 0); // day 0 = last day of prev month, in LOCAL time
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${y}-${m}-${day}`;
+        }
+
         function _pcOfficeBalance(officeID, asOfDate = null) {
             // Identify the earliest OPENING_BALANCE for this office (if any).
             // Semantics: the FIRST-EVER opening balance recorded represents
@@ -34324,7 +34341,7 @@ Automated WFH alert — ${company} Attendance System.`;
                                 // the chain stays correct even when an earlier month is
                                 // edited after this statement was verified. Closing derived
                                 // from live-opening + this month's (snapshot) transactions.
-                                const _ldpm = new Date(s.year, s.month - 1, 0).toISOString().split('T')[0];
+                                const _ldpm = lastDayOfPriorMonth(s.year, s.month);
                                 const _openLive = _pcOfficeBalance(s.officeID, _ldpm);
                                 const _closeLive = +(_openLive + (s.totalReplenishments||0) - (s.totalExpenses||0)).toFixed(2);
                                 const _snapDrift = Math.abs((s.openingBalance||0) - _openLive) > 0.01;
@@ -36854,7 +36871,7 @@ Automated WFH alert — ${company} Attendance System.`;
             const expenses = periodTxns.filter(t => t.txnType === 'EXPENSE');
             const replenishments = periodTxns.filter(t => t.txnType === 'REPLENISHMENT');
 
-            const lastDayPriorMonth = new Date(year, month - 1, 0).toISOString().split('T')[0];
+            const lastDayPriorMonth = lastDayOfPriorMonth(year, month);
             const openingBalance = _pcOfficeBalance(officeID, lastDayPriorMonth);
             const totalExpenses = expenses.reduce((s,t) => s + (parseFloat(t.amount)||0), 0);
             const totalReplenishments = replenishments.reduce((s,t) => s + (parseFloat(t.amount)||0), 0);
@@ -36904,7 +36921,7 @@ Automated WFH alert — ${company} Attendance System.`;
             );
             const liveExpenses = livePeriodTxns.filter(t => t.txnType === 'EXPENSE');
             const liveReplen   = livePeriodTxns.filter(t => t.txnType === 'REPLENISHMENT');
-            const lastDayPriorMonth = new Date(s.year, s.month - 1, 0).toISOString().split('T')[0];
+            const lastDayPriorMonth = lastDayOfPriorMonth(s.year, s.month);
             const liveOpening  = _pcOfficeBalance(s.officeID, lastDayPriorMonth);
             const liveExpTotal = liveExpenses.reduce((sum,t) => sum + (parseFloat(t.amount)||0), 0);
             const liveRepTotal = liveReplen.reduce((sum,t)  => sum + (parseFloat(t.amount)||0), 0);
@@ -37271,7 +37288,7 @@ Automated WFH alert — ${company} Attendance System.`;
             const periodTxns = (pettyCashTransactions||[]).filter(t => t.officeID===s.officeID && (t.txnDate||'').startsWith(pfx));
             const expenses = periodTxns.filter(t => t.txnType === 'EXPENSE');
             const replenishments = periodTxns.filter(t => t.txnType === 'REPLENISHMENT');
-            const lastDayPriorMonth = new Date(s.year, s.month - 1, 0).toISOString().split('T')[0];
+            const lastDayPriorMonth = lastDayOfPriorMonth(s.year, s.month);
             const openingBalance = _pcOfficeBalance(s.officeID, lastDayPriorMonth);
             const totalExpenses = expenses.reduce((sum,t) => sum + (parseFloat(t.amount)||0), 0);
             const totalReplenishments = replenishments.reduce((sum,t) => sum + (parseFloat(t.amount)||0), 0);
@@ -37318,7 +37335,7 @@ Automated WFH alert — ${company} Attendance System.`;
             // replenishments come from the statement's own totals (the
             // audited monthly transactions); closing = live-opening + those.
             // Mirrors the same logic in openPCStatementDetail.
-            const _lastDayPriorMonth = new Date(s.year, s.month - 1, 0).toISOString().split('T')[0];
+            const _lastDayPriorMonth = lastDayOfPriorMonth(s.year, s.month);
             const _pdfOpening   = _pcOfficeBalance(s.officeID, _lastDayPriorMonth);
             const _pdfExpenses  = +(s.totalExpenses || 0);
             const _pdfReplen    = +(s.totalReplenishments || 0);
