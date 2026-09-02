@@ -2692,16 +2692,23 @@
             const attn = (st.attendance || []).filter(a => inPeriod(a.date) && a.status !== 'WFH');
             let lateMinutesRaw = 0, lateMinutesNet = 0, lateDays = 0;
             const lateBreakdown = [];
-            attn.forEach(a => {
-                const raw = +(a.lateMinutes || 0);
-                if (raw <= 0) return;
-                lateMinutesRaw += raw;
-                // Per-day grace: only minutes beyond `grace` count for deduction
-                const net = Math.max(0, raw - grace);
-                if (net > 0) lateDays++;
-                lateMinutesNet += net;
-                lateBreakdown.push({ date: a.date, rawMins: raw, netMins: net });
-            });
+            // Flexible staff: skip late accumulation entirely so every late
+            // figure (lateDays, minutes, expectedDeduction) is zero. This
+            // keeps them out of the late-deduction panel (which filters on
+            // expectedDeduction>0) and the payslip banner — not merely
+            // un-deducted, but absent from the late-arrival machinery.
+            if (!isFlexible) {
+                attn.forEach(a => {
+                    const raw = +(a.lateMinutes || 0);
+                    if (raw <= 0) return;
+                    lateMinutesRaw += raw;
+                    // Per-day grace: only minutes beyond `grace` count for deduction
+                    const net = Math.max(0, raw - grace);
+                    if (net > 0) lateDays++;
+                    lateMinutesNet += net;
+                    lateBreakdown.push({ date: a.date, rawMins: raw, netMins: net });
+                });
+            }
 
             // Round net late-hours UP to nearest 15-min block (common office
             // practice — partial blocks charge as full quarter-hours).
@@ -21394,8 +21401,14 @@
                          'July','August','September','October','November','December'];
             const monthLabel = MNs[month-1] + ' ' + year;
 
-            // Only show for office staff (those who have check-in tracking)
-            const eligible = summaryRows.filter(r => r.timedIn > 0 || r.presentDays > 0);
+            // Only show for FIXED office staff (those with check-in tracking
+            // AND a fixed start to be punctual against). Flexible staff have no
+            // fixed start time, so a punctuality rating doesn't apply to them —
+            // exclude them entirely from this panel.
+            const eligible = summaryRows.filter(r =>
+                (r.st.workMode||'Fixed') !== 'Flexible' &&
+                (r.timedIn > 0 || r.presentDays > 0)
+            );
             if (!eligible.length) return '';
 
             // Rating per staff
@@ -21494,7 +21507,7 @@
             const grace = +(settings.lateGraceMins ?? 15);
             const workdayHrs = +(settings.standardWorkdayHours ?? 8) || 8;
 
-            const eligible = summaryRows.filter(r => r.st && r.st.staffType !== 'Technician');
+            const eligible = summaryRows.filter(r => r.st && r.st.staffType !== 'Technician' && (r.st.workMode||'Fixed') !== 'Flexible');
             if (!eligible.length) return '';
 
             const results = eligible.map(r => {
