@@ -21278,7 +21278,7 @@
                     // WFH), now that office days also compute effectiveMins.
                     // Used for flexible-staff hours tracking.
                     const allWorked   = monthAtt.filter(a => ['Present','Half Day','OT','WFH'].includes(a.status));
-                    const deliveredMins = allWorked.reduce((s,a)=>s+(a.effectiveMins||0),0);
+                    const deliveredMins = allWorked.reduce((s,a)=>s+(a.effectiveMins||wfhEffectiveMins(a.wfhSessions||[])),0);
                     const isFlexible  = (st.workMode||'Fixed') === 'Flexible';
                     return { st, isFlexible, deliveredMins, presentDays:presentDays.length, wfhDays:wfhDays.length, wfhEffHours, timedIn:timedIn.length, lateDays:lateDays.length, totalLate, avgLate, maxLate, lateDaysList:lateDays };
                 });
@@ -25118,8 +25118,28 @@ Automated WFH alert — ${company} Attendance System.`;
             };
 
             if (status === 'WFH') {
-                effectiveMins = _deliveredMins(checkIn, checkOut);
+                // Preserve any WFH portal sessions already logged for this
+                // date — the Mark Attendance form must NOT wipe them. If
+                // sessions exist, effectiveMins/checkIn/checkOut are derived
+                // from the sessions (the source of truth), not the form's
+                // single in/out fields (which are usually blank when the
+                // portal was used). Only when there are no sessions do we fall
+                // back to the form's own checkIn/checkOut.
+                const _existingWFH = (staff[idx]?.attendance||[]).find(a =>
+                    a.date === dateVal && a.status === 'WFH' &&
+                    (editAttID ? a.attID === editAttID : true)
+                );
+                const _existingSessions = _existingWFH?.wfhSessions || [];
+                if (_existingSessions.length) {
+                    effectiveMins = wfhEffectiveMins(_existingSessions);
+                    if (!checkIn)  checkIn  = wfhFirstIn(_existingSessions);
+                    if (!checkOut) checkOut = wfhLastOut(_existingSessions);
+                } else {
+                    effectiveMins = _deliveredMins(checkIn, checkOut);
+                }
                 lateMinutes = 0;
+                // Stash so the record built below can carry sessions forward
+                window.__wfhSessionsCarry = _existingSessions;
             } else if (checkIn) {
                 const [sh,sm] = offStart.split(':').map(Number);
                 const [ih,im] = checkIn.split(':').map(Number);
@@ -25159,6 +25179,12 @@ Automated WFH alert — ${company} Attendance System.`;
                 checkIn, checkOut, lateMinutes, effectiveMins,
                 wfhTask: document.getElementById('attWFHTask')?.value||''
             };
+            // Carry WFH portal sessions forward (preserved above) so a form
+            // save on a WFH day never drops the logged sessions.
+            if (status === 'WFH') {
+                newRec.wfhSessions = window.__wfhSessionsCarry || [];
+                delete window.__wfhSessionsCarry;
+            }
             // Level 2 concurrency: attendance records live inside staff[].attendance[].
             // Treat the parent staff record as the lock unit — block + stamp.
             _stampRecord(newRec);
