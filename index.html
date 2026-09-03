@@ -25769,7 +25769,7 @@ Automated WFH alert — ${company} Attendance System.`;
                                 <td class="px-4 py-2.5 text-center">
                                     <div class="flex gap-1 justify-center flex-wrap">
                                         <button onclick="openARFollowUpModal('${a.arID}','${a.source}')" class="px-2 py-1 bg-blue-100 text-blue-700 rounded text-[10px] font-semibold hover:bg-blue-200">+ Follow-up</button>
-                                        ${a.source==='historical'?`<button onclick="openARInvoiceModal('${a.arID}')" class="px-2 py-1 bg-gray-100 text-gray-600 rounded text-[10px] hover:bg-gray-200">Edit</button>`:''}
+                                        ${a.source==='historical'?`<button onclick="openARInvoiceModal('${a.arID}')" class="px-2 py-1 bg-gray-100 text-gray-600 rounded text-[10px] hover:bg-gray-200">Edit</button><button onclick="deleteARInvoice('${a.arID}')" class="px-2 py-1 bg-red-100 text-red-600 rounded text-[10px] font-semibold hover:bg-red-200" title="Delete this historical invoice">🗑</button>`:''}
                                     </div>
                                 </td>
                             </tr>`;
@@ -25779,6 +25779,66 @@ Automated WFH alert — ${company} Attendance System.`;
                 </div>`;
                 }).join('')}
                 ${allAR.length===0?`<div class="bg-white rounded-2xl p-12 text-center text-gray-400 shadow-sm"><div class="text-5xl mb-3">🎉</div><p class="text-lg font-semibold">No outstanding invoices!</p><p class="text-sm mt-1">Add historical unpaid invoices using "+ Add Historical Invoice"</p></div>`:''}
+
+                ${(() => {
+                    // ── Paid / Settled Historical Invoices ──
+                    // The main dashboard above shows only OUTSTANDING invoices
+                    // (balance > 0). A historical invoice entered as fully paid
+                    // has balance 0, so it correctly drops out of the
+                    // outstanding view — but the user still needs to SEE it (to
+                    // confirm the entry landed, or to find and delete a
+                    // duplicate). This section surfaces those settled historical
+                    // invoices with Edit + Delete. App-generated (TXN) invoices
+                    // are not shown here — they're managed from Transactions.
+                    const settled = (arInvoices||[]).filter(a => (a.balance||0) <= 0.01);
+                    if (!settled.length) return '';
+                    const settledTotal = settled.reduce((s,a)=>s+(+a.invoiceAmt||0),0);
+                    const rowsHtml = settled
+                        .sort((a,b)=>(b.invoiceDate||'').localeCompare(a.invoiceDate||''))
+                        .map(a=>`
+                        <tr class="border-b hover:bg-green-50">
+                            <td class="px-4 py-2.5 text-xs font-semibold text-gray-700">${a.invoiceNo||a.arID} <span class="ml-1 text-[9px] bg-amber-100 text-amber-700 px-1 rounded">HIST</span></td>
+                            <td class="px-4 py-2.5 text-xs">${a.client||'—'}</td>
+                            <td class="px-4 py-2.5 text-xs text-gray-500">${a.invoiceDate||'—'}</td>
+                            <td class="px-4 py-2.5 text-xs text-gray-600" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(a.description||'').replace(/"/g,'')}">${a.description||'—'}</td>
+                            <td class="px-4 py-2.5 text-right text-xs">${fmt(a.invoiceAmt)}</td>
+                            <td class="px-4 py-2.5 text-right text-xs text-green-600 font-semibold">${fmt(a.received)}</td>
+                            <td class="px-4 py-2.5 text-center"><span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-100 text-green-700">✓ Settled</span></td>
+                            <td class="px-4 py-2.5 text-center">
+                                <div class="flex gap-1 justify-center">
+                                    <button onclick="openARInvoiceModal('${a.arID}')" class="px-2 py-1 bg-gray-100 text-gray-600 rounded text-[10px] hover:bg-gray-200">Edit</button>
+                                    <button onclick="deleteARInvoice('${a.arID}')" class="px-2 py-1 bg-red-100 text-red-600 rounded text-[10px] font-semibold hover:bg-red-200">🗑 Delete</button>
+                                </div>
+                            </td>
+                        </tr>`).join('');
+                    return `
+                    <div class="bg-white rounded-2xl shadow-sm border border-green-100 overflow-hidden mt-4">
+                        <details>
+                            <summary style="cursor:pointer;list-style:none" class="flex justify-between items-center px-5 py-3 bg-green-50 border-b hover:bg-green-100">
+                                <div>
+                                    <span class="font-bold text-green-800">✓ Paid / Settled Historical Invoices</span>
+                                    <span class="ml-2 text-xs text-gray-500">${settled.length} invoice(s) · fully received — not counted in outstanding above</span>
+                                </div>
+                                <span class="text-sm font-bold text-green-700">${fmt(settledTotal)}</span>
+                            </summary>
+                            <table class="w-full text-sm">
+                                <thead class="bg-gray-50 text-[10px] text-gray-400 uppercase">
+                                    <tr>
+                                        <th class="px-4 py-2 text-left">Invoice No</th>
+                                        <th class="px-4 py-2 text-left">Client</th>
+                                        <th class="px-4 py-2 text-left">Date</th>
+                                        <th class="px-4 py-2 text-left">Description</th>
+                                        <th class="px-4 py-2 text-right">Amount</th>
+                                        <th class="px-4 py-2 text-right">Received</th>
+                                        <th class="px-4 py-2 text-center">Status</th>
+                                        <th class="px-4 py-2 text-center">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>${rowsHtml}</tbody>
+                            </table>
+                        </details>
+                    </div>`;
+                })()}
             </div>`;
         }
 
@@ -26059,6 +26119,20 @@ Automated WFH alert — ${company} Attendance System.`;
                 renderView();
                 _showToast('✓ Invoice saved to AR tracker','#4f46e5',3500);
             } catch(err){alert('Save failed: '+err.message);}
+        }
+
+        async function deleteARInvoice(arID) {
+            const inv = (arInvoices||[]).find(a => a.arID === arID);
+            if (!inv) { alert('Invoice not found.'); return; }
+            const label = `${inv.invoiceNo||arID} — ${inv.client||''} (₹${(+(inv.invoiceAmt||0)).toLocaleString('en-IN')})`;
+            if (!confirm(`Delete this historical invoice?\n\n${label}\n\nThis removes it from the AR tracker permanently. Any payment it recorded that also feeds the Bank tab will no longer show there either. This cannot be undone.`)) return;
+            if (await _concurBlockIfStale('arInvoices', [{ id: arID, idKey: 'arID' }])) return;
+            arInvoices = (arInvoices||[]).filter(a => a.arID !== arID);
+            try {
+                await saveData('arInvoices', arInvoices);
+                renderView();
+                _showToast('🗑 Historical invoice deleted', '#dc2626', 3500);
+            } catch(err) { alert('Delete failed: ' + err.message); }
         }
 
         function openARFollowUpModal(arID,source) {
