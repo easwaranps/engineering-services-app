@@ -23022,6 +23022,7 @@ ${'─'.repeat(50)}
                 const cntOffice={Present:0,WFH:0,Leave:0,HalfDay:0,Holiday:0,Sunday:0};
                 // Total additional WFH-after-office hours accumulated this month (issue 4)
                 let cntWfhAfterOffice = 0;
+                let cntWfhDayMins = 0;   // total delivered minutes on full WFH days
                 const rows=[];
                 dates.forEach((date,i)=>{
                     const key=_attDayKey(date);
@@ -23042,6 +23043,13 @@ ${'─'.repeat(50)}
                         // Issue 4 — sum any WFH-after-office hours stored on the day
                         const h = parseFloat(rec.wfhAfterOfficeHours) || 0;
                         if (h > 0) cntWfhAfterOffice += h;
+                        // Sum full-day WFH delivered hours (from sessions /
+                        // effectiveMins) so the summary shows real hours, not
+                        // just the WFH day count.
+                        if (rec.status === 'WFH') {
+                            cntWfhDayMins += (parseFloat(rec.effectiveMins) || 0)
+                                          || wfhEffectiveMins(rec.wfhSessions || []);
+                        }
                     }
                     const dayName=date.toLocaleDateString('en-IN',{weekday:'short'});
                     const dayDate=date.toLocaleDateString('en-IN',{day:'2-digit',month:'short'});
@@ -23054,10 +23062,25 @@ ${'─'.repeat(50)}
                         rec?.remarks||'—'
                     ];
                     if (isOffice) {
-                        // Insert "WFH Hrs" between Status and Project (index 3).
-                        // Shows the daily WFH-after-office value, or blank when none.
-                        const wfh = parseFloat(rec?.wfhAfterOfficeHours) || 0;
-                        baseRow.splice(3, 0, wfh > 0 ? wfh.toFixed(1)+'h' : '—');
+                        // "WFH Hrs" column between Status and Project (index 3).
+                        // For a WFH-status day: show the full day's delivered
+                        // hours (effectiveMins, falling back to session sum).
+                        // For any other day: show wfhAfterOfficeHours (extra
+                        // hours worked from home after office). Previously it
+                        // always read wfhAfterOfficeHours, so full WFH days —
+                        // where that field is 0 — showed blank despite having
+                        // real logged hours.
+                        let wfhMins = 0;
+                        if (rec && rec.status === 'WFH') {
+                            wfhMins = (parseFloat(rec.effectiveMins) || 0)
+                                   || wfhEffectiveMins(rec.wfhSessions || []);
+                        } else if (rec) {
+                            wfhMins = (parseFloat(rec.wfhAfterOfficeHours) || 0) * 60;
+                        }
+                        const wfhLabel = wfhMins > 0
+                            ? (Math.floor(wfhMins/60)>0 ? Math.floor(wfhMins/60)+'h ' : '') + (wfhMins%60>0 ? (wfhMins%60)+'m' : (Math.floor(wfhMins/60)>0?'':'0m'))
+                            : '—';
+                        baseRow.splice(3, 0, wfhLabel.trim());
                     }
                     rows.push(baseRow);
                 });
@@ -23132,9 +23155,15 @@ ${'─'.repeat(50)}
                         ['Sunday',        cntOffice.Sunday,  [100,116,139]],
                         ['TOTAL WORK',    totalWork,         [15,58,95]]
                     ];
+                    // Show total WFH hours delivered (full WFH days) when any
+                    // were logged — distinguishes hours from the day count.
+                    if (cntWfhDayMins > 0) {
+                        const wh = Math.floor(cntWfhDayMins/60), wm = cntWfhDayMins%60;
+                        summaryData.push(['WFH hrs', wh+'h'+(wm>0?' '+wm+'m':''), [79,70,229]]);
+                    }
                     // Append the WFH-after-office hours total if any were logged (issue 4)
                     if (cntWfhAfterOffice > 0) {
-                        summaryData.push(['+WFH hrs', cntWfhAfterOffice.toFixed(1), [67,56,202]]);
+                        summaryData.push(['+After-office', cntWfhAfterOffice.toFixed(1)+'h', [67,56,202]]);
                     }
                 } else {
                     const eng=cnt.Working+cnt.Outstation+cnt.Anchorage+cnt.Sailing;
@@ -23188,7 +23217,7 @@ ${'─'.repeat(50)}
             if(!staffToExport.length){alert('No staff to export.');return;}
             const dates=_attPeriodDates(shY,shM);
             // One row per day per staff
-            const rows=[['Employee Code','Staff Name','Staff Type','Designation','Staff Status','Date','Day','Attendance Status','WFH Hrs (after office)','Project','Remarks']];
+            const rows=[['Employee Code','Staff Name','Staff Type','Designation','Staff Status','Date','Day','Attendance Status','WFH Hrs (full day)','WFH Hrs (after office)','Project','Remarks']];
             staffToExport.forEach(s=>{
                 const lookup=_attLookup(s.staffID,dates);
                 dates.forEach(date=>{
@@ -23197,6 +23226,11 @@ ${'─'.repeat(50)}
                     const dayName=date.toLocaleDateString('en-IN',{weekday:'long'});
                     const isWE=date.getDay()===0||date.getDay()===6;
                     const wfhAfter = parseFloat(rec?.wfhAfterOfficeHours) || 0;
+                    // Full-day WFH delivered hours (from sessions/effectiveMins)
+                    const wfhDayMins = (rec && rec.status === 'WFH')
+                        ? ((parseFloat(rec.effectiveMins)||0) || wfhEffectiveMins(rec.wfhSessions||[]))
+                        : 0;
+                    const wfhDayHrs = wfhDayMins > 0 ? (wfhDayMins/60).toFixed(2) : '';
                     rows.push([
                         s.staffID||'',
                         s.name,
@@ -23206,6 +23240,7 @@ ${'─'.repeat(50)}
                         key,
                         dayName,
                         rec?rec.status:(isWE?'Weekend':''),
+                        wfhDayHrs,
                         wfhAfter > 0 ? wfhAfter.toFixed(1) : '',
                         rec?.project||'',
                         rec?.remarks||''
