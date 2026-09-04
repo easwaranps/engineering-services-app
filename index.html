@@ -21155,6 +21155,69 @@
         function _attDayKey(date){return _localDateKey(date);}
         function _attLookup(staffID,dates){const st=staff.find(x=>x.staffID===staffID);if(!st)return{};const keys=new Set(dates.map(_attDayKey)),lookup={};(st.attendance||[]).forEach(a=>{if(keys.has(a.date))lookup[a.date]=a;});return lookup;}
 
+        // Like _attLookup but keeps ALL records per date (not last-write-wins).
+        // Needed because a single day can legitimately have BOTH an office
+        // (Present/Half/OT) record AND a WFH record — a split day (office in
+        // the morning, WFH in the afternoon). _attLookup collapses these to
+        // one, which silently dropped the office session from exports.
+        function _attLookupAll(staffID, dates){
+            const st = staff.find(x => x.staffID === staffID);
+            if (!st) return {};
+            const keys = new Set(dates.map(_attDayKey)), lookup = {};
+            (st.attendance || []).forEach(a => {
+                if (!keys.has(a.date)) return;
+                (lookup[a.date] = lookup[a.date] || []).push(a);
+            });
+            return lookup;
+        }
+
+        // Merge all records for one day into a single export/display view.
+        // Combines office hours and WFH hours, and builds a composite status
+        // label ("Present + WFH") when a day has both. Returns null if no
+        // records. This is the source of truth for the CSV/PDF hour columns.
+        function _mergeDayRecords(recs){
+            if (!recs || !recs.length) return null;
+            if (recs.length === 1) {
+                const r = recs[0];
+                const officeMins = ['Present','Half Day','Half Day-Afternoon','OT'].includes(r.status)
+                    ? (parseFloat(r.effectiveMins)||0) : 0;
+                const wfhMins = r.status === 'WFH'
+                    ? ((parseFloat(r.effectiveMins)||0) || wfhEffectiveMins(r.wfhSessions||[])) : 0;
+                const afterMins = (parseFloat(r.wfhAfterOfficeHours)||0) * 60;
+                return {
+                    status: r.status,
+                    officeMins, wfhMins, afterMins,
+                    project: r.project || '',
+                    remarks: r.remarks || '',
+                    single: r
+                };
+            }
+            // Multiple records same day — combine
+            let officeMins = 0, wfhMins = 0, afterMins = 0;
+            const statuses = [], projects = [], remarks = [];
+            recs.forEach(r => {
+                if (['Present','Half Day','Half Day-Afternoon','OT'].includes(r.status)) {
+                    officeMins += (parseFloat(r.effectiveMins)||0);
+                    if (!statuses.includes(r.status)) statuses.push(r.status);
+                } else if (r.status === 'WFH') {
+                    wfhMins += (parseFloat(r.effectiveMins)||0) || wfhEffectiveMins(r.wfhSessions||[]);
+                    if (!statuses.includes('WFH')) statuses.push('WFH');
+                } else {
+                    if (!statuses.includes(r.status)) statuses.push(r.status);
+                }
+                afterMins += (parseFloat(r.wfhAfterOfficeHours)||0) * 60;
+                if (r.project) projects.push(r.project);
+                if (r.remarks) remarks.push(r.remarks);
+            });
+            return {
+                status: statuses.join(' + '),
+                officeMins, wfhMins, afterMins,
+                project: [...new Set(projects)].join('; '),
+                remarks: [...new Set(remarks)].join('; '),
+                single: null
+            };
+        }
+
         function renderAttendanceTab() {
             const MN=['January','February','March','April','May','June','July','August','September','October','November','December'];
             const selID=attGridState.staffID,selSt=staff.find(x=>x.staffID===selID);
@@ -23015,7 +23078,7 @@ ${'─'.repeat(50)}
                 const isOffice = (s.staffType||'').toLowerCase() === 'office';
 
                 // ── Daily attendance table ───────────────────────
-                const lookup=_attLookup(s.staffID,dates);
+                const lookupAll=_attLookupAll(s.staffID,dates);
                 // Counters for BOTH technician-mode statuses and office-mode statuses.
                 // Only the relevant set is shown in the summary footer, based on staff type.
                 const cnt={Working:0,StandBy:0,Outstation:0,Anchorage:0,Sailing:0,ApprovedLeave:0,UnApprovedLeave:0};
@@ -23027,11 +23090,13 @@ ${'─'.repeat(50)}
                 const rows=[];
                 dates.forEach((date,i)=>{
                     const key=_attDayKey(date);
-                    const rec=lookup[key];
-                    // Technician-mode statuses
-                    if(rec&&cnt[rec.status]!==undefined)cnt[rec.status]++;
-                    // Office-mode statuses — map several leave labels into one Leave bucket
-                    if (rec) {
+                    const dayRecs = lookupAll[key] || [];
+                    const merged = _mergeDayRecords(dayRecs);
+                    // Count EACH status present on the day (a split day counts
+                    // toward both Present and WFH). Technician counters use the
+                    // raw status; office counters bucket leave labels.
+                    dayRecs.forEach(rec => {
+                        if(cnt[rec.status]!==undefined)cnt[rec.status]++;
                         const st = rec.status;
                         if (st === 'Present' || st === 'OT')                    cntOffice.Present++;
                         else if (st === 'WFH')                                  cntOffice.WFH++;
@@ -23041,49 +23106,35 @@ ${'─'.repeat(50)}
                         else if (st === 'Leave' || st === 'Casual Leave' ||
                                  st === 'Sick Leave' || st === 'Earned Leave' ||
                                  st === 'Comp Off'   || st === 'Absent')        cntOffice.Leave++;
-                        // Issue 4 — sum any WFH-after-office hours stored on the day
-                        const h = parseFloat(rec.wfhAfterOfficeHours) || 0;
-                        if (h > 0) cntWfhAfterOffice += h;
-                        // Sum full-day WFH delivered hours (from sessions /
-                        // effectiveMins) so the summary shows real hours, not
-                        // just the WFH day count.
-                        if (rec.status === 'WFH') {
-                            cntWfhDayMins += (parseFloat(rec.effectiveMins) || 0)
-                                          || wfhEffectiveMins(rec.wfhSessions || []);
-                        } else if (['Present','Half Day','Half Day-Afternoon','OT'].includes(rec.status)) {
-                            cntOfficeMins += (parseFloat(rec.effectiveMins) || 0);
-                        }
+                    });
+                    if (merged) {
+                        cntWfhAfterOffice += merged.afterMins / 60;
+                        cntWfhDayMins     += merged.wfhMins;
+                        cntOfficeMins     += merged.officeMins;
                     }
                     const dayName=date.toLocaleDateString('en-IN',{weekday:'short'});
                     const dayDate=date.toLocaleDateString('en-IN',{day:'2-digit',month:'short'});
                     const isWE=date.getDay()===0||date.getDay()===6;
+                    // Composite status label — map each part through ATT_FULL,
+                    // join with " + " for split days.
+                    const statusLabel = merged
+                        ? merged.status.split(' + ').map(x=>ATT_FULL[x]||x).join(' + ')
+                        : (isWE?'Weekend':'—');
                     const baseRow = [
                         String(i+1),
                         dayDate+' '+dayName,
-                        rec?(ATT_FULL[rec.status]||rec.status):(isWE?'Weekend':'—'),
-                        rec?.project||'—',
-                        rec?.remarks||'—'
+                        statusLabel,
+                        merged?.project||'—',
+                        merged?.remarks||'—'
                     ];
                     if (isOffice) {
                         // Hours column between Status and Project (index 3).
-                        // Shows delivered hours for ANY worked day:
-                        //   • WFH day        → full-day session hours (effectiveMins/sessions)
-                        //   • Present/Half/OT → office hours (effectiveMins from checkIn→checkOut)
-                        //   • other day      → after-office WFH hours if any
-                        // Previously only WFH days populated, so office days
-                        // with logged in/out showed blank.
-                        let wfhMins = 0;
-                        if (rec && rec.status === 'WFH') {
-                            wfhMins = (parseFloat(rec.effectiveMins) || 0)
-                                   || wfhEffectiveMins(rec.wfhSessions || []);
-                        } else if (rec && ['Present','Half Day','Half Day-Afternoon','OT'].includes(rec.status)) {
-                            wfhMins = (parseFloat(rec.effectiveMins) || 0)
-                                   + (parseFloat(rec.wfhAfterOfficeHours) || 0) * 60;
-                        } else if (rec) {
-                            wfhMins = (parseFloat(rec.wfhAfterOfficeHours) || 0) * 60;
-                        }
-                        const wfhLabel = wfhMins > 0
-                            ? (Math.floor(wfhMins/60)>0 ? Math.floor(wfhMins/60)+'h ' : '') + (wfhMins%60>0 ? (wfhMins%60)+'m' : (Math.floor(wfhMins/60)>0?'':'0m'))
+                        // Shows TOTAL delivered hours for the day: office +
+                        // WFH-day + after-office, all combined. A split day
+                        // (office morning + WFH afternoon) shows the sum.
+                        const totMins = merged ? (merged.officeMins + merged.wfhMins + merged.afterMins) : 0;
+                        const wfhLabel = totMins > 0
+                            ? (Math.floor(totMins/60)>0 ? Math.floor(totMins/60)+'h ' : '') + (totMins%60>0 ? (totMins%60)+'m' : (Math.floor(totMins/60)>0?'':'0m'))
                             : '—';
                         baseRow.splice(3, 0, wfhLabel.trim());
                     }
@@ -23230,23 +23281,15 @@ ${'─'.repeat(50)}
             // One row per day per staff
             const rows=[['Employee Code','Staff Name','Staff Type','Designation','Staff Status','Date','Day','Attendance Status','Office Hrs','WFH Hrs (full day)','WFH Hrs (after office)','Project','Remarks']];
             staffToExport.forEach(s=>{
-                const lookup=_attLookup(s.staffID,dates);
+                const lookupAll=_attLookupAll(s.staffID,dates);
                 dates.forEach(date=>{
                     const key=_attDayKey(date);
-                    const rec=lookup[key];
+                    const merged=_mergeDayRecords(lookupAll[key]);
                     const dayName=date.toLocaleDateString('en-IN',{weekday:'long'});
                     const isWE=date.getDay()===0||date.getDay()===6;
-                    const wfhAfter = parseFloat(rec?.wfhAfterOfficeHours) || 0;
-                    // Full-day WFH delivered hours (from sessions/effectiveMins)
-                    const wfhDayMins = (rec && rec.status === 'WFH')
-                        ? ((parseFloat(rec.effectiveMins)||0) || wfhEffectiveMins(rec.wfhSessions||[]))
-                        : 0;
-                    const wfhDayHrs = wfhDayMins > 0 ? (wfhDayMins/60).toFixed(2) : '';
-                    // Office delivered hours (Present/Half/OT days)
-                    const officeMins = (rec && ['Present','Half Day','Half Day-Afternoon','OT'].includes(rec.status))
-                        ? (parseFloat(rec.effectiveMins)||0)
-                        : 0;
-                    const officeHrs = officeMins > 0 ? (officeMins/60).toFixed(2) : '';
+                    const officeHrs = merged && merged.officeMins > 0 ? (merged.officeMins/60).toFixed(2) : '';
+                    const wfhDayHrs = merged && merged.wfhMins   > 0 ? (merged.wfhMins/60).toFixed(2)   : '';
+                    const wfhAfter  = merged && merged.afterMins > 0 ? (merged.afterMins/60).toFixed(1) : '';
                     rows.push([
                         s.staffID||'',
                         s.name,
@@ -23255,12 +23298,12 @@ ${'─'.repeat(50)}
                         s.status||'Active',
                         key,
                         dayName,
-                        rec?rec.status:(isWE?'Weekend':''),
+                        merged ? merged.status : (isWE?'Weekend':''),
                         officeHrs,
                         wfhDayHrs,
-                        wfhAfter > 0 ? wfhAfter.toFixed(1) : '',
-                        rec?.project||'',
-                        rec?.remarks||''
+                        wfhAfter,
+                        merged?.project||'',
+                        merged?.remarks||''
                     ]);
                 });
             });
