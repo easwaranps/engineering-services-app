@@ -18069,7 +18069,7 @@
                         <button onclick="openWageModal()" class="px-4 py-2 bg-green-600 text-white rounded-xl text-sm hover:bg-green-700 font-semibold">+ Add Revision</button>
                     </div>
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-                        ${staff.filter(s=>s.status==='Active').map(s=>{const isTech=s.staffType==='Technician';const b=parseFloat(s.basicSalary)||0,hP=s.techHRAPct??50,dP=s.techDAPct??65,gP=s.techGPPct??30,v=parseFloat(s.techVariable)||0,fix=b*(hP+dP+gP)/100,dw=isTech?+((b+fix+v)/30).toFixed(2):(s.dailyWage||0),sw=isTech?+((b+fix)/30).toFixed(2):0;return `<div class="bg-green-50 border border-green-200 rounded-xl p-4"><div class="flex justify-between items-start mb-2"><div><p class="font-semibold text-gray-800">${s.name}</p><p class="text-xs text-gray-500">${s.designation||''} · ${s.staffType}${(s.workMode==='Flexible')?' · <span style="background:#ede9fe;color:#6d28d9;padding:1px 6px;border-radius:8px;font-weight:600;font-size:10px">🕘 Flexible</span>':''}</p></div><div class="flex gap-1 flex-shrink-0"><button onclick="openCTCStructureModal('${s.staffID}')" class="text-xs text-indigo-700 border border-indigo-300 rounded-lg px-2 py-1 hover:bg-indigo-100" title="View full CTC breakdown & what-if simulator">📊 Structure</button><button onclick="openWageModal('${s.staffID}')" class="text-xs text-green-700 border border-green-300 rounded-lg px-2 py-1 hover:bg-green-100">+ Revise</button></div></div><div class="grid grid-cols-2 gap-2 text-sm"><div><p class="text-xs text-gray-400">Basic Salary</p><p class="font-bold text-green-700">${b?'₹'+b.toLocaleString('en-IN'):'—'}</p></div><div><p class="text-xs text-gray-400">Daily Wage</p><p class="font-bold text-blue-700">${dw?'₹'+dw.toLocaleString('en-IN',{minimumFractionDigits:2}):'—'}</p></div></div>${isTech?`<div class="text-xs text-gray-400 mt-1">Fixed ₹${fix.toLocaleString('en-IN',{minimumFractionDigits:2})} · Standby ₹${sw.toLocaleString('en-IN',{minimumFractionDigits:2})}/day · HRA ${hP}%+DA ${dP}%+GP ${gP}%</div>`:`<div class="text-xs text-gray-400 mt-1">HRA ${s.hraPct||30}% · DA ${s.daPct||65}% · Carried Leave ${s.carriedLeave||0}d</div>`}</div>`;}).join('')}
+                        ${staff.filter(s=>s.status==='Active').map(s=>{const isTech=s.staffType==='Technician';const b=parseFloat(s.basicSalary)||0,hP=s.techHRAPct??50,dP=s.techDAPct??65,gP=s.techGPPct??30,v=parseFloat(s.techVariable)||0,fix=b*(hP+dP+gP)/100,dw=isTech?+((b+fix+v)/30).toFixed(2):(s.dailyWage||0),sw=isTech?+((b+fix)/30).toFixed(2):0;return `<div class="bg-green-50 border border-green-200 rounded-xl p-4"><div class="flex justify-between items-start mb-2"><div><p class="font-semibold text-gray-800">${s.name}</p><p class="text-xs text-gray-500">${s.designation||''} · ${s.staffType}${(s.workMode==='Flexible')?' · <span style="background:#ede9fe;color:#6d28d9;padding:1px 6px;border-radius:8px;font-weight:600;font-size:10px">🕘 Flexible</span>':''}</p></div><div class="flex gap-1 flex-shrink-0"><button onclick="openCTCStructureModal('${s.staffID}')" class="text-xs text-indigo-700 border border-indigo-300 rounded-lg px-2 py-1 hover:bg-indigo-100" title="View full CTC breakdown & what-if simulator">📊 Structure</button>${isTech?`<button onclick="openGratuityModal('${s.staffID}')" class="text-xs text-emerald-700 border border-emerald-300 rounded-lg px-2 py-1 hover:bg-emerald-100" title="Fixed-term gratuity (Code on Social Security 2020)">🎓 Gratuity</button>`:''}<button onclick="openWageModal('${s.staffID}')" class="text-xs text-green-700 border border-green-300 rounded-lg px-2 py-1 hover:bg-green-100">+ Revise</button></div></div><div class="grid grid-cols-2 gap-2 text-sm"><div><p class="text-xs text-gray-400">Basic Salary</p><p class="font-bold text-green-700">${b?'₹'+b.toLocaleString('en-IN'):'—'}</p></div><div><p class="text-xs text-gray-400">Daily Wage</p><p class="font-bold text-blue-700">${dw?'₹'+dw.toLocaleString('en-IN',{minimumFractionDigits:2}):'—'}</p></div></div>${isTech?`<div class="text-xs text-gray-400 mt-1">Fixed ₹${fix.toLocaleString('en-IN',{minimumFractionDigits:2})} · Standby ₹${sw.toLocaleString('en-IN',{minimumFractionDigits:2})}/day · HRA ${hP}%+DA ${dP}%+GP ${gP}%</div>`:`<div class="text-xs text-gray-400 mt-1">HRA ${s.hraPct||30}% · DA ${s.daPct||65}% · Carried Leave ${s.carriedLeave||0}d</div>`}</div>`;}).join('')}
                     </div>
                 </div>
             `;
@@ -20741,6 +20741,32 @@
                 <button onclick="openStaffModal()" class="px-5 py-2 bg-teal-600 text-white rounded-xl hover:bg-teal-700 font-medium">+ Add Staff</button>
             </div>
 
+            ${(() => {
+                // Contract-renewal alert — fixed-term technicians whose
+                // contract ends within 30 days (or already expired). Purely
+                // informational; nudges timely renewal or gratuity+exit.
+                const expiring = _contractsNearingEnd(30);
+                if (!expiring.length) return '';
+                const items = expiring.map(e => {
+                    const overdue = e.daysLeft < 0;
+                    const label = overdue ? `expired ${Math.abs(e.daysLeft)}d ago` : (e.daysLeft===0?'ends today':`${e.daysLeft}d left`);
+                    const col = overdue ? '#b91c1c' : (e.daysLeft<=7?'#c2410c':'#b45309');
+                    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:#fff;border:1px solid #fde68a;border-radius:8px;margin-bottom:6px">
+                        <div><span style="font-weight:600;color:#78350f">${e.st.name}</span> <span style="color:#9ca3af;font-size:11px">· ${e.st.designation||'Technician'}</span></div>
+                        <div style="display:flex;gap:10px;align-items:center">
+                            <span style="font-size:11px;color:#6b7280">ends ${e.endDate}</span>
+                            <span style="font-size:11px;font-weight:700;color:${col}">${label}</span>
+                            <button onclick="openGratuityModal('${e.st.staffID}')" style="font-size:10px;padding:2px 8px;background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;border-radius:6px;cursor:pointer">🎓 Gratuity</button>
+                            <button onclick="editStaff('${e.st.staffID}')" style="font-size:10px;padding:2px 8px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:6px;cursor:pointer">Renew / Edit</button>
+                        </div>
+                    </div>`;
+                }).join('');
+                return `<div style="background:linear-gradient(135deg,#fffbeb,#fef3c7);border:2px solid #f59e0b;border-radius:14px;padding:14px 16px;margin-bottom:20px">
+                    <div style="font-weight:700;color:#92400e;margin-bottom:8px">📅 Contract Renewal Alert — ${expiring.length} fixed-term technician contract(s) need attention (within 30 days)</div>
+                    ${items}
+                </div>`;
+            })()}
+
             <!-- Sub-tabs — shown based on role permissions (Settings → Role Permissions) -->
             ${(() => {
                 const allowedTabs = ['list','attendance','documents','payslip'].filter(t => _canAccessSub('staff', t));
@@ -20963,6 +20989,15 @@
                                     <div><label class="block text-xs font-semibold text-gray-600 mb-1">15+ Days Extra % <span class="text-gray-400">(of Daily Wage)</span></label><input type="number" id="sThresh15Pct" value="50" min="0" max="200" step="1" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
                                     <div><label class="block text-xs font-semibold text-gray-600 mb-1">20+ Days Extra % <span class="text-gray-400">(of 15-day rate)</span></label><input type="number" id="sThresh20Pct" value="30" min="0" max="200" step="1" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
                                 </div>
+                            </div>
+                            <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+                                <h4 class="text-sm font-bold text-emerald-700 mb-1">📅 Fixed-Term Contract</h4>
+                                <p class="text-xs text-emerald-600 mb-3">For fixed-term technicians on annual renewal. Enables gratuity calculation (Code on Social Security 2020, pro-rata) and renewal alerts. Leave blank for open/permanent engagement.</p>
+                                <div class="grid grid-cols-2 gap-3">
+                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Contract Begin Date</label><input type="date" id="sContractBegin" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                                    <div><label class="block text-xs font-semibold text-gray-600 mb-1">Contract End Date</label><input type="date" id="sContractEnd" class="w-full px-3 py-2 border rounded-lg text-sm bg-white"/></div>
+                                </div>
+                                <p class="text-[10px] text-gray-400 mt-2">Gratuity accrues from Contract Begin. On renewal, update the dates for the new term. Gratuity is paid via Expenses (not payroll) on contract completion.</p>
                             </div>
                             <div class="bg-red-50 border border-red-200 rounded-xl p-4">
                                 <h4 class="text-sm font-bold text-red-700 mb-1">📋 Statutory Deductions</h4>
@@ -23983,6 +24018,8 @@ ${'─'.repeat(50)}
             if (s) {
                 document.getElementById('sType').value       = s.staffType||'Office';
                 const _wm = document.getElementById('sWorkMode'); if (_wm) _wm.value = s.workMode || 'Fixed';
+                const _cb = document.getElementById('sContractBegin'); if (_cb) _cb.value = s.contractBegin || '';
+                const _ce = document.getElementById('sContractEnd');   if (_ce) _ce.value = s.contractEnd   || '';
                 document.getElementById('sName').value       = s.name||'';
                 document.getElementById('sDesignation').value= s.designation||'';
                 document.getElementById('sGender').value = s.gender||'Male';
@@ -24396,6 +24433,8 @@ ${'─'.repeat(50)}
                 empCode:        document.getElementById('sEmpCode')?.value?.trim() || currentStaff?.empCode || '',
                 staffType:      document.getElementById('sType').value,
                 workMode:       document.getElementById('sWorkMode')?.value || 'Fixed',
+                contractBegin:  document.getElementById('sContractBegin')?.value || '',
+                contractEnd:    document.getElementById('sContractEnd')?.value || '',
                 name:           document.getElementById('sName').value,
                 designation:    document.getElementById('sDesignation').value,
                 gender:         document.getElementById('sGender').value || 'Male',
@@ -27454,6 +27493,233 @@ Automated WFH alert — ${company} Attendance System.`;
         // Build the CTC breakdown from a staff record. Accepts an optional
         // `override` object with the same shape as staff fields to compute
         // proposed values (used by the what-if simulator).
+        // ════════════════════════════════════════════════════════════════
+        //  FIXED-TERM GRATUITY MODULE  (Field Technicians)
+        // ─────────────────────────────────────────────────────────────────
+        //  Legal basis: Code on Social Security 2020, Section 53(2) — a
+        //  fixed-term employee is entitled to gratuity on a PRO-RATA basis on
+        //  completion of the fixed term, with NO 5-year minimum.
+        //
+        //  Gratuity wages use the Code on Wages "50% rule":
+        //    wages = max(Basic + DA, 50% of total remuneration)
+        //  i.e. if excluded components (everything except Basic+DA) exceed
+        //  50% of total remuneration, the excess is added back to Basic+DA.
+        //
+        //  Amount = (15 / 26) × gratuity-wages × completed-years (pro-rata).
+        //
+        //  This is a TERMINAL, on-demand calculation — it never touches the
+        //  monthly payslip path (calcTechWage / computeTechWageSlip). When
+        //  actually paid, it is recorded via Expenses (Phase 2), never
+        //  payroll. Reads existing wage fields only; mutates nothing.
+        // ════════════════════════════════════════════════════════════════
+        // Returns fixed-term technicians whose Contract End Date is within
+        // `withinDays` (default 30) or already past. Used for the renewal
+        // alert banner on the Staff view.
+        function _contractsNearingEnd(withinDays = 30) {
+            const today = new Date(); today.setHours(0,0,0,0);
+            const out = [];
+            (staff||[]).forEach(s => {
+                if (s.staffType !== 'Technician' || s.status !== 'Active') return;
+                if (!s.contractEnd) return;
+                const end = new Date(s.contractEnd + 'T00:00:00');
+                const days = Math.floor((end - today) / (1000*60*60*24));
+                if (days <= withinDays) out.push({ st: s, endDate: s.contractEnd, daysLeft: days });
+            });
+            return out.sort((a,b) => a.daysLeft - b.daysLeft);
+        }
+
+        function _computeGratuity(st, asOfDate) {
+            const basic = +st.basicSalary || 0;
+            const hraPct = +(st.techHRAPct ?? 50);
+            const daPct  = +(st.techDAPct  ?? 65);
+            const gpPct  = +(st.techGPPct  ?? 30);
+            const hra = +(basic * hraPct / 100).toFixed(2);
+            const da  = +(basic * daPct  / 100).toFixed(2);
+            const gp  = +(basic * gpPct  / 100).toFixed(2);
+            const variable = +st.techVariable || 0;
+            const travel   = 4000; // matches calcTechWage travel default
+            // Total remuneration = every monthly component.
+            const totalRemun = basic + hra + da + gp + variable + travel;
+            // Base wages under the Code = Basic + DA.
+            const baseWages = basic + da;
+            // Excluded = total minus base wages (i.e. HRA+GP+Variable+Travel).
+            const excluded = totalRemun - baseWages;
+            const halfTotal = totalRemun * 0.5;
+            // 50% rule: if excluded exceeds 50% of total, add the excess back.
+            const excess = excluded > halfTotal ? +(excluded - halfTotal).toFixed(2) : 0;
+            const gratuityWages = +(baseWages + excess).toFixed(2);
+
+            // Completed service — Contract Begin → asOfDate (or Contract End).
+            const begin = st.contractBegin ? new Date(st.contractBegin + 'T00:00:00') : null;
+            const end   = asOfDate ? new Date(asOfDate + 'T00:00:00')
+                        : (st.contractEnd ? new Date(st.contractEnd + 'T00:00:00') : new Date());
+            let years = 0, days = 0;
+            if (begin && end > begin) {
+                days = Math.floor((end - begin) / (1000*60*60*24));
+                years = days / 365.25;
+            }
+            // Pro-rata gratuity: (15/26) × wages × completed years.
+            const perYear = +((15/26) * gratuityWages).toFixed(2);
+            const amount  = +(perYear * years).toFixed(2);
+            // Eligibility note — S.53(2) pays pro-rata on term completion;
+            // a common contractual floor is completion of 1 year.
+            const oneYearMet = years >= 1;
+
+            return {
+                basic, hra, da, gp, variable, travel, totalRemun,
+                baseWages, excluded, halfTotal, excess, gratuityWages,
+                begin: st.contractBegin || '', end: st.contractEnd || '',
+                asOf: asOfDate || st.contractEnd || new Date().toISOString().split('T')[0],
+                days, years, perYear, amount, oneYearMet
+            };
+        }
+
+        function _grFmt(n){ return 'Rs.' + (+n||0).toLocaleString('en-IN',{minimumFractionDigits:0,maximumFractionDigits:2}); }
+        function _grFmtHtml(n){ return '₹' + (+n||0).toLocaleString('en-IN',{minimumFractionDigits:0,maximumFractionDigits:2}); }
+
+        function openGratuityModal(staffID) {
+            const st = staff.find(s => s.staffID === staffID);
+            if (!st) { alert('Staff record not found.'); return; }
+            if (st.staffType !== 'Technician') { alert('Gratuity applies to Field Technicians on fixed-term contracts.'); return; }
+            if (!st.contractBegin) {
+                alert('No Contract Begin Date set for this technician.\n\nAdd Contract Begin & End dates in the staff record (Fixed-Term Contract section) to enable gratuity calculation.');
+                return;
+            }
+            const g = _computeGratuity(st);
+            const modal = document.createElement('div');
+            modal.id = 'gratuityModal';
+            modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;display:flex;align-items:flex-start;justify-content:center;padding-top:24px;overflow-y:auto';
+            modal.onclick = (e)=>{ if(e.target===modal) modal.remove(); };
+            const yrsLabel = g.years.toFixed(2) + ' yr' + (g.days?` (${g.days} days)`:'');
+            modal.innerHTML = `
+                <div style="background:#fff;border-radius:16px;width:min(760px,96vw);margin-bottom:40px;box-shadow:0 20px 60px rgba(0,0,0,.3)">
+                    <div style="background:linear-gradient(135deg,#059669,#047857);padding:16px 20px;border-radius:16px 16px 0 0;display:flex;justify-content:space-between;align-items:center">
+                        <div>
+                            <div style="color:#fff;font-weight:700;font-size:16px">🎓 Gratuity — ${st.name}</div>
+                            <div style="color:#d1fae5;font-size:12px;margin-top:2px">${st.designation||''} · Field Technician · Fixed-Term</div>
+                        </div>
+                        <div style="display:flex;gap:8px">
+                            <button onclick="generateGratuityPDF('${staffID}')" style="padding:6px 12px;background:#fff;color:#047857;border:none;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer">📄 Settlement PDF</button>
+                            <button onclick="document.getElementById('gratuityModal').remove()" style="color:#fff;font-size:22px;background:none;border:none;cursor:pointer">✕</button>
+                        </div>
+                    </div>
+                    <div style="padding:20px">
+                        <!-- Contract period -->
+                        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
+                            <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:10px"><div style="font-size:10px;color:#166534;text-transform:uppercase;font-weight:600">Contract Begin</div><div style="font-size:14px;font-weight:700;color:#14532d">${g.begin||'—'}</div></div>
+                            <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:10px"><div style="font-size:10px;color:#166534;text-transform:uppercase;font-weight:600">Contract End</div><div style="font-size:14px;font-weight:700;color:#14532d">${g.end||'(ongoing)'}</div></div>
+                            <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:10px"><div style="font-size:10px;color:#166534;text-transform:uppercase;font-weight:600">Completed Service</div><div style="font-size:14px;font-weight:700;color:#14532d">${yrsLabel}</div></div>
+                        </div>
+
+                        <!-- Gratuity wages breakdown (50% rule) -->
+                        <div style="border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;margin-bottom:16px">
+                            <div style="background:#ecfdf5;padding:8px 12px;font-weight:700;font-size:12px;color:#065f46;border-bottom:1px solid #d1fae5">Gratuity Wages — Code on Wages 50% rule</div>
+                            <table style="width:100%;border-collapse:collapse;font-size:13px">
+                                <tr style="border-bottom:1px solid #f1f5f9"><td style="padding:6px 12px;color:#475569">Basic</td><td style="padding:6px 12px;text-align:right">${_grFmtHtml(g.basic)}</td></tr>
+                                <tr style="border-bottom:1px solid #f1f5f9"><td style="padding:6px 12px;color:#475569">DA (${st.techDAPct??65}% of Basic)</td><td style="padding:6px 12px;text-align:right">${_grFmtHtml(g.da)}</td></tr>
+                                <tr style="border-bottom:1px solid #f1f5f9"><td style="padding:6px 12px;color:#475569">HRA + Grade Pay + Variable + Travel (excluded)</td><td style="padding:6px 12px;text-align:right">${_grFmtHtml(g.excluded)}</td></tr>
+                                <tr style="border-bottom:1px solid #f1f5f9;background:#fafafa"><td style="padding:6px 12px;color:#475569;font-weight:600">Total Remuneration</td><td style="padding:6px 12px;text-align:right;font-weight:600">${_grFmtHtml(g.totalRemun)}</td></tr>
+                                <tr style="border-bottom:1px solid #f1f5f9"><td style="padding:6px 12px;color:#475569">Base wages (Basic + DA)</td><td style="padding:6px 12px;text-align:right">${_grFmtHtml(g.baseWages)}</td></tr>
+                                <tr style="border-bottom:1px solid #f1f5f9"><td style="padding:6px 12px;color:#475569">50% of Total Remuneration</td><td style="padding:6px 12px;text-align:right">${_grFmtHtml(g.halfTotal)}</td></tr>
+                                <tr style="border-bottom:1px solid #f1f5f9"><td style="padding:6px 12px;color:#475569">Excess of excluded over 50% (added back)</td><td style="padding:6px 12px;text-align:right;color:${g.excess>0?'#b45309':'#9ca3af'}">${g.excess>0?'+ '+_grFmtHtml(g.excess):'—'}</td></tr>
+                                <tr style="background:#ecfdf5;border-top:2px solid #10b981"><td style="padding:8px 12px;font-weight:800;color:#065f46">Gratuity Wages</td><td style="padding:8px 12px;text-align:right;font-weight:800;color:#065f46;font-size:15px">${_grFmtHtml(g.gratuityWages)}</td></tr>
+                            </table>
+                        </div>
+
+                        <!-- Gratuity amount -->
+                        <div style="border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;margin-bottom:16px">
+                            <div style="background:#f0f9ff;padding:8px 12px;font-weight:700;font-size:12px;color:#075985;border-bottom:1px solid #e0f2fe">Gratuity Amount — (15 / 26) × wages × years</div>
+                            <table style="width:100%;border-collapse:collapse;font-size:13px">
+                                <tr style="border-bottom:1px solid #f1f5f9"><td style="padding:6px 12px;color:#475569">15 days' wages (15/26 × gratuity wages)</td><td style="padding:6px 12px;text-align:right">${_grFmtHtml(g.perYear)} / year</td></tr>
+                                <tr style="border-bottom:1px solid #f1f5f9"><td style="padding:6px 12px;color:#475569">Completed service (pro-rata)</td><td style="padding:6px 12px;text-align:right">× ${g.years.toFixed(2)}</td></tr>
+                                <tr style="background:#eff6ff;border-top:2px solid #3b82f6"><td style="padding:10px 12px;font-weight:800;color:#1e40af;font-size:14px">Gratuity Payable</td><td style="padding:10px 12px;text-align:right;font-weight:800;color:#1e40af;font-size:18px">${_grFmtHtml(g.amount)}</td></tr>
+                            </table>
+                        </div>
+
+                        ${!g.oneYearMet ? `<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:#92400e">⚠ Completed service is under 1 year (${g.years.toFixed(2)} yr). The amount shown is pro-rata per S.53(2); confirm your contract's minimum-eligibility terms before paying.</div>` : ''}
+
+                        <div style="background:#f8fafc;border:1px dashed #cbd5e1;border-radius:10px;padding:10px 14px;font-size:11px;color:#64748b">
+                            <strong>Basis:</strong> Code on Social Security 2020, S.53(2) — fixed-term employees receive pro-rata gratuity on completion of the term. Wages per Code on Wages 50% rule. Amount = (15/26) × gratuity wages × completed years. This is an indicative computation — confirm statutory applicability for your establishment/state with a professional. Gratuity is paid via Expenses, not payroll.
+                        </div>
+                    </div>
+                </div>`;
+            document.body.appendChild(modal);
+        }
+
+        async function generateGratuityPDF(staffID) {
+            const st = staff.find(s => s.staffID === staffID);
+            if (!st) return;
+            if (!window.jspdf?.jsPDF) { alert('PDF library not loaded — please refresh and try again.'); return; }
+            const { jsPDF } = window.jspdf;
+            const g = _computeGratuity(st);
+            const doc = new jsPDF('p','mm','a4');
+            const PW=210, ML=15, CW=PW-30;
+            doc.setFillColor(5,150,105); doc.rect(0,0,PW,30,'F');
+            doc.setFontSize(15); doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255);
+            doc.text('GRATUITY SETTLEMENT', PW/2, 12, {align:'center'});
+            doc.setFontSize(9); doc.setFont('helvetica','normal'); doc.setTextColor(209,250,229);
+            doc.text(settings.companyName || 'IMSE Tech Services Pvt Ltd', PW/2, 19, {align:'center'});
+            doc.setFontSize(8);
+            doc.text('Fixed-Term Employee · Code on Social Security 2020 · Generated ' + new Date().toLocaleDateString('en-IN'), PW/2, 25, {align:'center'});
+            let y=40;
+            doc.setFillColor(236,253,245); doc.rect(ML,y,CW,20,'F');
+            doc.setFontSize(11); doc.setFont('helvetica','bold'); doc.setTextColor(6,95,70);
+            doc.text('Employee: '+st.name, ML+4, y+7);
+            doc.setFontSize(9); doc.setFont('helvetica','normal'); doc.setTextColor(71,85,105);
+            doc.text('Designation: '+(st.designation||'—')+'   ·   ID: '+st.staffID, ML+4, y+13);
+            doc.text('Contract: '+(g.begin||'—')+'  to  '+(g.end||'—')+'   ·   Completed: '+g.years.toFixed(2)+' yr', ML+4, y+18);
+            y+=28;
+            doc.autoTable({
+                startY: y,
+                head: [['Gratuity Wages — Code on Wages 50% rule','Amount']],
+                body: [
+                    ['Basic', _grFmt(g.basic)],
+                    ['DA', _grFmt(g.da)],
+                    ['Excluded components (HRA + GP + Variable + Travel)', _grFmt(g.excluded)],
+                    ['Total Remuneration', _grFmt(g.totalRemun)],
+                    ['Base wages (Basic + DA)', _grFmt(g.baseWages)],
+                    ['50% of Total Remuneration', _grFmt(g.halfTotal)],
+                    ['Excess of excluded over 50% (added back)', g.excess>0?'+ '+_grFmt(g.excess):'-'],
+                    [{content:'Gratuity Wages',styles:{fontStyle:'bold',fillColor:[236,253,245]}},{content:_grFmt(g.gratuityWages),styles:{fontStyle:'bold',halign:'right',fillColor:[236,253,245]}}],
+                ],
+                theme:'grid',
+                styles:{fontSize:9,cellPadding:2},
+                headStyles:{fillColor:[5,150,105],textColor:[255,255,255],fontStyle:'bold'},
+                columnStyles:{0:{cellWidth:130},1:{cellWidth:'auto',halign:'right'}},
+                margin:{left:ML,right:ML}
+            });
+            y = doc.lastAutoTable.finalY + 4;
+            doc.autoTable({
+                startY: y,
+                head: [['Gratuity Amount — (15/26) x wages x years','Amount']],
+                body: [
+                    ["15 days' wages per year (15/26 x gratuity wages)", _grFmt(g.perYear)],
+                    ['Completed service (pro-rata)', 'x '+g.years.toFixed(2)],
+                    [{content:'GRATUITY PAYABLE',styles:{fontStyle:'bold',fillColor:[239,246,255],fontSize:11}},{content:_grFmt(g.amount),styles:{fontStyle:'bold',halign:'right',fillColor:[239,246,255],fontSize:11}}],
+                ],
+                theme:'grid',
+                styles:{fontSize:9,cellPadding:2},
+                headStyles:{fillColor:[59,130,246],textColor:[255,255,255],fontStyle:'bold'},
+                columnStyles:{0:{cellWidth:130},1:{cellWidth:'auto',halign:'right'}},
+                margin:{left:ML,right:ML}
+            });
+            y = doc.lastAutoTable.finalY + 8;
+            doc.setFontSize(7.5); doc.setFont('helvetica','italic'); doc.setTextColor(120,120,120);
+            const note = 'Basis: Code on Social Security 2020, Section 53(2) - fixed-term employees receive pro-rata gratuity on completion of the term (no 5-year minimum). Gratuity wages computed per the Code on Wages 50% rule. This is an indicative computation; confirm statutory applicability for your establishment and state with a qualified professional. Gratuity is disbursed via Expenses, not payroll.';
+            doc.text(doc.splitTextToSize(note, CW), ML, y);
+            y += 22;
+            const sigW=(CW-20)/2;
+            [['Prepared By','HR / Accounts'],['Approved By','Director / Management']].forEach((s,i)=>{
+                const x=ML+i*(sigW+20);
+                doc.setDrawColor(150,150,150); doc.setLineWidth(0.3); doc.line(x,y+16,x+sigW,y+16);
+                doc.setFontSize(9); doc.setFont('helvetica','bold'); doc.setTextColor(6,95,70);
+                doc.text(s[0], x+sigW/2, y+21, {align:'center'});
+                doc.setFontSize(7); doc.setFont('helvetica','normal'); doc.setTextColor(107,114,128);
+                doc.text(s[1], x+sigW/2, y+25, {align:'center'});
+            });
+            doc.save('Gratuity_'+(st.name||'tech').replace(/[^a-zA-Z0-9]/g,'_')+'_'+new Date().toISOString().split('T')[0]+'.pdf');
+        }
+
         function _computeCTC(st, override) {
             const o = override || {};
             const g = (k) => o[k] !== undefined ? o[k] : st[k];
