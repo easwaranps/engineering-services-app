@@ -10167,7 +10167,10 @@
                 <div class="bg-white rounded-2xl shadow-sm mb-4 overflow-hidden">
                     <div class="${g.color} px-4 py-2 flex justify-between items-center">
                         <span class="text-white font-semibold text-sm">${g.label}</span>
-                        <span class="bg-white bg-opacity-20 text-white text-xs px-2 py-0.5 rounded-full">${allRows.length}</span>
+                        <div class="flex items-center gap-2">
+                            <button onclick="exportTxnClusterCSV('${g.cat}','${(g.dir||'').replace(/'/g,"\\'")}','${(g.label||'').replace(/'/g,"\\'")}')" class="bg-white bg-opacity-20 hover:bg-opacity-30 text-white text-xs px-2 py-0.5 rounded" title="Export all ${g.label} to CSV (with line items)">📥 CSV</button>
+                            <span class="bg-white bg-opacity-20 text-white text-xs px-2 py-0.5 rounded-full">${allRows.length}</span>
+                        </div>
                     </div>
                     <div class="overflow-x-auto">
                         <table class="w-full">
@@ -10189,6 +10192,52 @@
                     ${pagerHTML}
                 </div>`;
             }).join('');
+        }
+
+        // Export all transactions of one cluster (category + direction) to
+        // CSV — ONE ROW PER TRANSACTION, matching the on-screen cluster table.
+        // Columns: Txn ID, Category, Direction, Party, Currency, Date,
+        // Subject, Amount, Status. Amount is the computed grand total for
+        // priced categories (Quotation / Proforma / PO / Credit Note /
+        // Invoice) and blank for Enquiry / Delivery Note (no price).
+        // NOTE: additional Invoice-specific columns to be added later, for
+        // the INVOICE cluster only.
+        function exportTxnClusterCSV(cat, dir, label) {
+            const list = (transactions||[]).filter(t =>
+                t.txnCategory === cat && ((dir||'') === '' || t.txnDirection === dir)
+            );
+            if (!list.length) { alert('No ' + (label||cat) + ' transactions to export.'); return; }
+            const esc = v => { const s = (v==null?'':String(v)); return '"' + s.replace(/"/g,'""') + '"'; };
+            const priced = ['QUOTATION','PROFORMA_INVOICE','PO','CREDIT_NOTE','INVOICE'].includes(cat);
+
+            const header = ['Txn ID','Category','Direction','Party','Currency','Date','Subject','Amount','Status'];
+            const rows = [header];
+            list.forEach(t => {
+                let amount = '';
+                if (priced && typeof calculateTotals === 'function') {
+                    amount = (calculateTotals(t.items || []).total || 0).toFixed(2);
+                }
+                rows.push([
+                    t.txnID || '',
+                    t.txnCategory || '',
+                    t.txnDirection || '',
+                    t.partyName || '',
+                    t.currency || 'INR',
+                    t.txnDate || '',
+                    t.subject || '',
+                    amount,
+                    t.status || ''
+                ]);
+            });
+            const csv = rows.map(r => r.map(esc).join(',')).join('\r\n');
+            const blob = new Blob(['\ufeff'+csv], {type:'text/csv;charset=utf-8;'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            const safeLabel = (label||cat).replace(/[^a-zA-Z0-9]+/g,'_');
+            a.href = url; a.download = safeLabel + '_' + new Date().toISOString().split('T')[0] + '.csv';
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            if (typeof _showToast==='function') _showToast('📥 Exported ' + list.length + ' ' + (label||cat) + ' to CSV', '#16a34a', 3000);
         }
 
         function filterTransactions() {
