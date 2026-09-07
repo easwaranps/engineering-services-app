@@ -21253,6 +21253,22 @@
             return `${y}-${m}-${d}`;
         }
         function _attDayKey(date){return _localDateKey(date);}
+        // Active office staff for the ATTENDANCE module — excludes
+        // Technicians (tracked separately) AND Directors. Directors are
+        // stored as Office staff with designation "DIRECTOR" but should not
+        // appear in attendance marking/reports/exports. One helper so every
+        // attendance view stays consistent.
+        function _isDirector(s) {
+            return /director/i.test(s.designation || '');
+        }
+        function _attendanceStaff() {
+            return (staff||[]).filter(s =>
+                s.status === 'Active' &&
+                s.staffType !== 'Technician' &&
+                !_isDirector(s)
+            );
+        }
+
         function _attLookup(staffID,dates){const st=staff.find(x=>x.staffID===staffID);if(!st)return{};const keys=new Set(dates.map(_attDayKey)),lookup={};(st.attendance||[]).forEach(a=>{if(keys.has(a.date))lookup[a.date]=a;});return lookup;}
 
         // Like _attLookup but keeps ALL records per date (not last-write-wins).
@@ -21380,7 +21396,7 @@
                     <div class="md:col-span-1"><label class="block text-xs font-semibold text-gray-600 mb-1">Staff Member</label>
                         <select onchange="attGridChangeStaff(this.value)" class="w-full px-3 py-2 border rounded-lg text-sm">
                             <option value="">— All Staff —</option>
-                            ${staff.filter(s=>s.status==='Active').map(s=>`<option value="${s.staffID}" ${s.staffID===selID?'selected':''}>${s.name} (${s.staffType})</option>`).join('')}
+                            ${staff.filter(s=>s.status==='Active' && !_isDirector(s)).map(s=>`<option value="${s.staffID}" ${s.staffID===selID?'selected':''}>${s.name} (${s.staffType})</option>`).join('')}
                         </select></div>
                     <div><label class="block text-xs font-semibold text-gray-600 mb-1">Pay Period Month</label>
                         <select onchange="attGridChangePeriod('periodMonth',this.value)" class="w-full px-3 py-2 border rounded-lg text-sm">
@@ -21405,7 +21421,7 @@
                 const offStart  = settings.officeStartTime || '09:00';
                 const graceMins = parseInt(settings.lateGraceMins)||10;
                 const [sh,sm]   = offStart.split(':').map(Number);
-                const officeStaff = staff.filter(s=>s.status==='Active' && s.staffType!=='Technician');
+                const officeStaff = _attendanceStaff();
                 if (!officeStaff.length) return '';
 
                 // Calendar month (not pay period) for late summary
@@ -21802,7 +21818,7 @@
                                            : (settings.officeStartTime || '09:30');
             const headerEnd   = isSatToday ? (settings.saturdayEnd || '13:30')
                                            : (settings.officeEndTime || '18:00');
-            const officeStaff = staff.filter(s=>s.status==='Active' && s.staffType!=='Technician');
+            const officeStaff = _attendanceStaff();
             if (!officeStaff.length) { alert('No active office staff found.'); return; }
 
             const rows = officeStaff.map(st => {
@@ -21864,7 +21880,7 @@
             const graceMins = parseInt(settings.lateGraceMins) || 10;
             const [sh,sm]   = offStart.split(':').map(Number);
             const [eh,em]   = offEnd.split(':').map(Number);
-            const officeStaff = staff.filter(s=>s.status==='Active' && s.staffType!=='Technician');
+            const officeStaff = _attendanceStaff();
 
             officeStaff.forEach(st => {
                 const statusEl  = overlay.querySelector(`select[data-sid="${st.staffID}"][data-field="status"]`);
@@ -21913,7 +21929,7 @@
             const graceMins   = parseInt(settings.lateGraceMins)||10;
             const [sh,sm]     = offStart.split(':').map(Number);
             const fmt2        = m => { const h=Math.floor(m/60),mn=m%60; return h>0?h+'h '+mn+'m':mn+'m'; };
-            const officeStaff = staff.filter(s=>s.status==='Active' && s.staffType!=='Technician');
+            const officeStaff = _attendanceStaff();
             const todayRecs   = officeStaff.map(st => {
                 const rec = (st.attendance||[]).find(a=>a.date===today);
                 return { name:st.name, rec, late: rec?.status!=='WFH' && rec?.lateMinutes>0 };
@@ -22087,7 +22103,7 @@ ${'─'.repeat(50)}
         // LEAVE REQUEST MODAL + PDF
         // ════════════════════════════════════════════════════════════════
         function openLeaveRequestModal() {
-            const officeStaff = staff.filter(s=>s.status==='Active'&&s.staffType!=='Technician');
+            const officeStaff = _attendanceStaff();
             const modal = document.createElement('div');
             modal.id = 'leaveReqModal';
             modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;display:flex;align-items:center;justify-content:center';
@@ -22312,7 +22328,7 @@ ${'─'.repeat(50)}
         // LEAVE ENCASHMENT MODAL
         // ════════════════════════════════════════════════════════════════
         function openLeaveEncashModal() {
-            const officeStaff = staff.filter(s=>s.status==='Active'&&s.staffType!=='Technician');
+            const officeStaff = _attendanceStaff();
             const modal = document.createElement('div');
             modal.id = 'leaveEncashModal';
             modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;display:flex;align-items:center;justify-content:center';
@@ -22433,7 +22449,7 @@ ${'─'.repeat(50)}
         // ════════════════════════════════════════════════════════════════
         function showLeaveStatusWindow(month, year) {
             const MN=['January','February','March','April','May','June','July','August','September','October','November','December'];
-            const officeStaff = staff.filter(s=>s.status==='Active'&&s.staffType!=='Technician');
+            const officeStaff = _attendanceStaff();
             const fmtD = n => n===0?'—':(+n).toFixed(n%1?1:0)+'d';
             const fmtC = (n,pos,neg) => n>0?`<span style="color:${neg||'#dc2626'};font-weight:700">${n.toFixed(n%1?1:0)}d</span>`:
                                          n<0?`<span style="color:#dc2626;font-weight:700">${n.toFixed(1)}d (LOP)</span>`:
@@ -22560,7 +22576,7 @@ ${'─'.repeat(50)}
                 'Absent':        { short:'AB', color:[127,29,29],  bg:[254,202,202] },
             };
 
-            const officeStaff = staff.filter(s=>s.status==='Active' && s.staffType!=='Technician');
+            const officeStaff = _attendanceStaff();
 
             // ── Header ────────────────────────────────────────────────
             doc.setFillColor(5,150,105); doc.rect(0,0,PW,36,'F');
@@ -22783,7 +22799,7 @@ ${'─'.repeat(50)}
             doc.setFillColor(220,38,38); doc.rect(0,35,210,2,'F');
             let y = 42;
 
-            const officeStaff = staff.filter(s=>s.status==='Active' && s.staffType!=='Technician');
+            const officeStaff = _attendanceStaff();
 
             // Summary table per staff
             const LEAVE_TYPES = ['Casual Leave','Sick Leave','Earned Leave','Comp Off','Leave'];
@@ -24783,7 +24799,7 @@ They will no longer be able to sign in.`)) return;
             const nowHHMM     = new Date().toTimeString().slice(0,5);
             const offStart    = settings.officeStartTime||'09:30';
             const graceMins   = parseInt(settings.lateGraceMins)||10;
-            const officeStaff = staff.filter(s=>s.status==='Active' && s.staffType!=='Technician');
+            const officeStaff = _attendanceStaff();
             if (!officeStaff.length) { alert('No active office staff found.'); return; }
 
             // Build staff card list
@@ -24853,7 +24869,7 @@ They will no longer be able to sign in.`)) return;
             // Refresh the panel for selected staff
             if (_wfhSelectedSID) wfhRenderSessionPanel(_wfhSelectedSID);
             // Update all staff cards to show status for the new date
-            const officeStaff = staff.filter(s=>s.status==='Active'&&s.staffType!=='Technician');
+            const officeStaff = _attendanceStaff();
             officeStaff.forEach(s => {
                 const card = document.getElementById('wfhCard_'+s.staffID);
                 if (!card) return;
@@ -25194,7 +25210,7 @@ Automated WFH alert — ${company} Attendance System.`;
             document.getElementById('attStaff').disabled=false;
             document.getElementById('attDate').value=new Date().toISOString().split('T')[0];
             const sel=document.getElementById('attStaff');
-            sel.innerHTML=staff.filter(s=>s.status==='Active').map(s=>`<option value="${s.staffID}">${s.name} (${s.staffType||'Staff'})</option>`).join('');
+            sel.innerHTML=staff.filter(s=>s.status==='Active' && !_isDirector(s)).map(s=>`<option value="${s.staffID}">${s.name} (${s.staffType||'Staff'})</option>`).join('');
             if(prefillSID)sel.value=prefillSID;
             onAttStaffChange(sel.value);
             document.getElementById('attRemarks').value='';
@@ -25216,7 +25232,7 @@ Automated WFH alert — ${company} Attendance System.`;
             const rec=(st?.attendance||[]).find(a=>a.attID===attID);
             if(!rec)return;
             const sel=document.getElementById('attStaff');
-            sel.innerHTML=staff.filter(s=>s.status==='Active').map(s=>`<option value="${s.staffID}">${s.name} (${s.staffType||'Staff'})</option>`).join('');
+            sel.innerHTML=staff.filter(s=>s.status==='Active' && !_isDirector(s)).map(s=>`<option value="${s.staffID}">${s.name} (${s.staffType||'Staff'})</option>`).join('');
             sel.value=staffID; sel.disabled=true;
             onAttStaffChange(staffID);
             document.getElementById('attDate').value=rec.date;
