@@ -37181,11 +37181,82 @@ Automated WFH alert — ${company} Attendance System.`;
             } catch(e) { alert('Delete failed: ' + e.message); }
         }
 
+        // ── Shared helpers for letter PDFs ───────────────────────────
+        // Place an uploaded image (logo, signature, stamp) inside a max
+        // bounding box while preserving its natural aspect ratio. Uses
+        // jsPDF's getImageProperties() so the drawn dimensions match the
+        // source file's true proportions — no stretching. Returns the
+        // actual {w, h} drawn, or null if the image is missing / invalid.
+        function _fitLetterImg(doc, imgData, x, y, maxW, maxH) {
+            if (!imgData) return null;
+            try {
+                const p = doc.getImageProperties(imgData);
+                const ratio = p.width / p.height;
+                let w = maxW, h = maxW / ratio;
+                if (h > maxH) { h = maxH; w = maxH * ratio; }
+                doc.addImage(imgData, p.fileType || 'PNG', x, y, w, h);
+                return { w, h };
+            } catch (e) { return null; }
+        }
+
+        // Shared letterhead — used by both cover letter and tools letter
+        // PDFs. Layout:
+        //   [logo top-left]  [COMPANY NAME centered in remaining space]
+        //   ─────────────── horizontal rule ───────────────
+        //                                       Ref No.: __________
+        //                                       Date:    __________
+        //                                       Place:   __________
+        // If no logo is uploaded, the company name is centered across the
+        // full width. Font size auto-shrinks if the name is too wide.
+        // Returns the y-coordinate where body content should begin.
+        function _drawLetterHeader(doc, opts) {
+            const { PW, ML, MR, refNo, letterDate, place } = opts;
+            const headY = 10, logoBoxW = 32, logoBoxH = 20;
+            // Logo (top-left, aspect-preserved inside 32 × 20 mm box)
+            const logo = _fitLetterImg(doc, settings.companyLogo, ML, headY, logoBoxW, logoBoxH);
+            // Company name — centered in space to the right of the logo
+            // (or full-width if no logo). Auto-shrinks to fit.
+            const nameLeft  = logo ? (ML + logoBoxW + 4) : ML;
+            const nameRight = PW - MR;
+            const name = (settings.companyName || 'IMSE Tech - Services Pvt Ltd').toUpperCase();
+            doc.setFont('helvetica', 'bold'); doc.setTextColor(30, 64, 175);
+            let fs = 18;
+            doc.setFontSize(fs);
+            while (fs > 10 && doc.getTextWidth(name) > (nameRight - nameLeft - 4)) {
+                fs -= 1; doc.setFontSize(fs);
+            }
+            // Vertically align name baseline near the middle of the logo box
+            const nameY = headY + (logoBoxH / 2) + (fs * 0.35 / 2.83);
+            doc.text(name, (nameLeft + nameRight) / 2, nameY, { align: 'center' });
+            doc.setTextColor(0, 0, 0);
+            // Horizontal rule under the header
+            const ruleY = headY + logoBoxH + 3;
+            doc.setDrawColor(150, 150, 150); doc.setLineWidth(0.4);
+            doc.line(ML, ruleY, PW - MR, ruleY);
+            // Ref / Date / Place — right-aligned block BELOW the header
+            doc.setFontSize(10); doc.setFont('helvetica', 'normal'); doc.setTextColor(0, 0, 0);
+            const labelX = PW - MR - 55;
+            const valueX = PW - MR - 40;
+            let y = ruleY + 6;
+            const drawRow = (label, value) => {
+                doc.text(label, labelX, y);
+                doc.text(value || '', valueX, y);
+                doc.setDrawColor(0, 0, 0); doc.setLineWidth(0.2);
+                doc.line(valueX, y + 1, PW - MR, y + 1);
+                y += 6;
+            };
+            drawRow('Ref No.:', refNo);
+            drawRow('Date:',    letterDate);
+            drawRow('Place:',   place);
+            return y + 4;   // caller starts body content from here
+        }
+
         // ── PDF: COVER LETTER ─────────────────────────────────────────
-        // Matches the sample template — logo top-left, Ref/Date/Place top-
-        // right, To: block, Dear Sir intro paragraph containing subject,
-        // numbered list (01., 02., …) with wrapping description per row,
-        // signatory footer. Automatic page break with header repeat.
+        // Matches the sample template — shared letterhead (logo top-left,
+        // company name centered, Ref/Date/Place below the header rule),
+        // To: block, Dear Sir intro paragraph containing subject, numbered
+        // list (01., 02., …) with wrapping description per row, signatory
+        // footer. Automatic page break with header repeat.
         async function generateCoverLetterPDF(letterID, saveFirst) {
             if (saveFirst) await saveCoverLetter();
             const l = (coverLetters||[]).find(x => x.letterID === letterID);
@@ -37196,35 +37267,18 @@ Automated WFH alert — ${company} Attendance System.`;
             const ML = 20, MR = 20;
             const CW = PW - ML - MR;
 
-            // Attempt to embed the company logo (from settings.companyLogo, if uploaded).
-            const drawHeader = () => {
-                const logo = settings.companyLogo || '';
-                if (logo) {
-                    try { doc.addImage(logo, 'PNG', ML, 10, 35, 20); } catch(e) {}
-                } else {
-                    doc.setFontSize(22); doc.setFont('helvetica','bold'); doc.setTextColor(30,64,175);
-                    doc.text((settings.companyName||'IMSE').toUpperCase(), ML, 22);
-                    doc.setTextColor(0,0,0);
-                }
-                // Ref / Date / Place — top right
-                const rightX = PW - MR;
-                doc.setFontSize(10); doc.setFont('helvetica','normal'); doc.setTextColor(0,0,0);
-                doc.text('Ref No.:', rightX - 60, 20);
-                doc.text('Date:',    rightX - 60, 28);
-                doc.text('Place:',   rightX - 60, 34);
-                doc.setFont('helvetica','normal');
-                doc.text(l.refNo || '', rightX - 43, 20);
-                doc.text(_lettersFmtDate(l.letterDate), rightX - 43, 28);
-                doc.text(l.place || '',  rightX - 43, 34);
-                // Underline the ref no + date + place values
-                doc.setDrawColor(0,0,0);
-                doc.line(rightX - 43, 21, rightX - 2, 21);
-                doc.line(rightX - 43, 29, rightX - 2, 29);
-                doc.line(rightX - 43, 35, rightX - 2, 35);
-            };
+            // Draw the shared letterhead. Called again on every new page
+            // so the header (logo, name, Ref/Date/Place) repeats. Returns
+            // the y-coord where body content should begin — driven by
+            // header height rather than a hard-coded number.
+            const drawHeader = () => _drawLetterHeader(doc, {
+                PW, ML, MR,
+                refNo:      l.refNo || '',
+                letterDate: _lettersFmtDate(l.letterDate),
+                place:      l.place || ''
+            });
 
-            drawHeader();
-            let y = 50;
+            let y = drawHeader();
             // To: block
             doc.setFontSize(10); doc.setFont('helvetica','normal'); doc.setTextColor(0,0,0);
             doc.text('To,', ML, y); y += 6;
@@ -37249,34 +37303,26 @@ Automated WFH alert — ${company} Attendance System.`;
                 const wrapped = doc.splitTextToSize(desc, CW - 20);
                 if (y + wrapped.length * 5 > PH - 25) {
                     doc.addPage();
-                    drawHeader();
-                    y = 50;
+                    y = drawHeader();
                 }
                 doc.text(num, ML + 4, y);
                 wrapped.forEach((w, k) => { doc.text(w, ML + 14, y); y += 5; });
                 y += 2;   // little gap between items
             });
             // Signatory footer — leave space if it doesn't fit, else add page.
-            if (y + 45 > PH - 15) { doc.addPage(); drawHeader(); y = 50; }
+            if (y + 45 > PH - 15) { doc.addPage(); y = drawHeader(); }
             y += 10;
             doc.setFontSize(10); doc.setFont('helvetica','normal');
             doc.text('For ' + (settings.companyName||'IMSE Tech - Services Pvt Ltd'), ML, y);
             // ── Signature + Stamp images (if uploaded in Settings) ──
+            // Aspect ratio preserved for both — each fitted inside a max
+            // box so the uploaded image renders at its natural proportions
+            // (no more stretched/distorted signature).
             const _sigY = y + 3;
-            let _placed = false;
-            try {
-                if (settings.signatureData) {
-                    doc.addImage(settings.signatureData, 'PNG', ML, _sigY, 40, 18);
-                    _placed = true;
-                }
-            } catch(e) { /* bad image data — skip */ }
-            try {
-                if (settings.stampData) {
-                    doc.addImage(settings.stampData, 'PNG', ML + 45, _sigY - 2, 26, 26);
-                    _placed = true;
-                }
-            } catch(e) { /* skip */ }
-            y += _placed ? 24 : 20;
+            const _sig  = _fitLetterImg(doc, settings.signatureData, ML,      _sigY,     45, 22);
+            const _stmp = _fitLetterImg(doc, settings.stampData,     ML + 50, _sigY - 2, 28, 28);
+            const _placedH = Math.max(_sig ? _sig.h : 0, _stmp ? _stmp.h : 0);
+            y += _placedH > 0 ? (_placedH + 4) : 20;
             doc.text('Authorized Signatory', ML, y);
             doc.save('CoverLetter_' + (l.refNo||l.letterID).replace(/[^\w\-]/g,'_') + '.pdf');
         }
@@ -37292,38 +37338,25 @@ Automated WFH alert — ${company} Attendance System.`;
             const ML = 20, MR = 20;
             const CW = PW - ML - MR;
 
-            // Logo top-left
-            const logo = settings.companyLogo || '';
-            if (logo) {
-                try { doc.addImage(logo, 'PNG', ML, 10, 35, 20); } catch(e) {}
-            } else {
-                doc.setFontSize(22); doc.setFont('helvetica','bold'); doc.setTextColor(30,64,175);
-                doc.text((settings.companyName||'IMSE').toUpperCase(), ML, 22);
-                doc.setTextColor(0,0,0);
-            }
-            // Date / Place top-right
-            const rightX = PW - MR;
-            doc.setFontSize(10); doc.setFont('helvetica','normal'); doc.setTextColor(0,0,0);
-            doc.text('Date:-',  rightX - 45, 20);
-            doc.text('Place:-', rightX - 45, 28);
-            doc.text(_lettersFmtDate(l.letterDate), rightX - 25, 20);
-            doc.text(l.place || '', rightX - 25, 28);
-            // Ref No — optional, subtle (sample doesn't show one but keeps traceability)
-            if (l.refNo) {
-                doc.setFontSize(8); doc.setTextColor(120,120,120);
-                doc.text('Ref: ' + l.refNo, ML, 32);
-                doc.setTextColor(0,0,0);
-            }
+            // Shared letterhead — logo top-left, company name centered,
+            // then Ref No / Date / Place block below the header rule.
+            const headerEndY = _drawLetterHeader(doc, {
+                PW, ML, MR,
+                refNo:      l.refNo || '',
+                letterDate: _lettersFmtDate(l.letterDate),
+                place:      l.place || ''
+            });
             // Heading
             doc.setFontSize(15); doc.setFont('helvetica','bold');
             const heading = 'TO WHOM SO EVER IT MAY CONCERN';
-            doc.text(heading, PW/2, 55, { align: 'center' });
+            const headingY = headerEndY + 6;
+            doc.text(heading, PW/2, headingY, { align: 'center' });
             // Underline
             const hw = doc.getTextWidth(heading);
             doc.setLineWidth(0.4);
-            doc.line((PW - hw)/2, 57, (PW + hw)/2, 57);
+            doc.line((PW - hw)/2, headingY + 2, (PW + hw)/2, headingY + 2);
             // Body
-            let y = 68;
+            let y = headingY + 13;
             doc.setFontSize(10); doc.setFont('helvetica','normal');
             const body = `This is to confirm that we have engaged ${l.staffName || '_____'}, Aadhar no: ${l.aadharNo || '_____'} to carryout ${l.workDescription || 'repair work'} on board vessel ${l.vessel || '_____'} at ${l.port || '_____'} port. He will be hand carrying the below mentioned RETURNABLE TOOLS, we confirm that these tools are not for sale or re sale. After completion of work all tools will be returned back to our works.`;
             const bodyLines = doc.splitTextToSize(body, CW);
@@ -37358,25 +37391,14 @@ Automated WFH alert — ${company} Attendance System.`;
             doc.setFontSize(11); doc.setFont('helvetica','bold');
             doc.text('For ' + (settings.companyName||'IMSE Tech - Services Pvt Ltd'), ML, y);
             // ── Signature + Stamp images (if uploaded in Settings) ──
-            // Placed in the gap above "Authorised Signatory". Signature on the
-            // left; stamp to its right, slightly overlapping-friendly spacing.
-            // Both are optional — the block still prints cleanly without them.
+            // Both fitted inside a max box with true aspect ratio preserved
+            // (via getImageProperties) so the signature no longer appears
+            // stretched or squashed. Signature on the left, stamp to right.
             const sigImgY = y + 3;
-            let placed = false;
-            try {
-                if (settings.signatureData) {
-                    // ~40mm wide, ~18mm tall box, keep aspect via addImage auto
-                    doc.addImage(settings.signatureData, 'PNG', ML, sigImgY, 40, 18);
-                    placed = true;
-                }
-            } catch(e) { /* bad image data — skip */ }
-            try {
-                if (settings.stampData) {
-                    doc.addImage(settings.stampData, 'PNG', ML + 45, sigImgY - 2, 26, 26);
-                    placed = true;
-                }
-            } catch(e) { /* skip */ }
-            y += placed ? 24 : 25;
+            const _sig  = _fitLetterImg(doc, settings.signatureData, ML,      sigImgY,     45, 22);
+            const _stmp = _fitLetterImg(doc, settings.stampData,     ML + 50, sigImgY - 2, 28, 28);
+            const _placedH = Math.max(_sig ? _sig.h : 0, _stmp ? _stmp.h : 0);
+            y += _placedH > 0 ? (_placedH + 4) : 25;
             doc.setFont('helvetica','normal'); doc.setFontSize(10);
             doc.text('Authorised Signatory', ML, y);
             doc.save('ToolsLetter_' + (l.refNo||l.letterID).replace(/[^\w\-]/g,'_') + '.pdf');
