@@ -2231,16 +2231,104 @@
         }
 
         // Compute derived fields for a loan record.
-        // Returns: { deductedCount, deductedTotal, balance, installmentsRemaining }
+        // Returns: { deductedCount, deductedTotal, balance, installmentsRemaining,
+        //            manualRepaidTotal, manualRepaidCount }
+        // Balance now accounts for BOTH salary deductions (deductionLog) and
+        // ad-hoc manual repayments (manualRepayments) — e.g. cash paid to
+        // petty cash or a bank transfer from the staff member outside payroll.
+        // `installmentsRemaining` remains driven by salary deductions only —
+        // manual repayments reduce the balance without consuming an EMI slot.
         function loanDerivedFields(loan) {
             const log = Array.isArray(loan.deductionLog) ? loan.deductionLog : [];
             const deductedCount = log.length;
             const deductedTotal = log.reduce((s, d) => s + (parseFloat(d.amount) || 0), 0);
+            const reps = Array.isArray(loan.manualRepayments) ? loan.manualRepayments : [];
+            const manualRepaidCount = reps.length;
+            const manualRepaidTotal = reps.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
             const principal = parseFloat(loan.principal) || 0;
-            const balance = +(principal - deductedTotal).toFixed(2);
+            const balance = +(principal - deductedTotal - manualRepaidTotal).toFixed(2);
             const installments = parseInt(loan.installments) || 1;
             const installmentsRemaining = Math.max(0, installments - deductedCount);
-            return { deductedCount, deductedTotal, balance, installmentsRemaining };
+            return { deductedCount, deductedTotal, balance, installmentsRemaining,
+                     manualRepaidCount, manualRepaidTotal };
+        }
+
+        // Mint the next sequential Repayment ID for the given FY.
+        // Format: REP-<FYcode>-<3-digit-serial> — scoped globally across all
+        // staff loans so IDs never collide, matching the LN-<FY>-NNN pattern.
+        function generateRepaymentID(date = new Date()) {
+            const fyCode = (typeof getFinancialYearCode === 'function')
+                ? getFinancialYearCode(date) : '2627';
+            const prefix = 'REP-' + fyCode + '-';
+            const existing = [];
+            (staff || []).forEach(s => (s.loans || []).forEach(l =>
+                (l.manualRepayments || []).forEach(r => {
+                    if ((r.repaymentID || '').startsWith(prefix)) {
+                        const n = parseInt(r.repaymentID.substring(prefix.length)) || 0;
+                        existing.push(n);
+                    }
+                })
+            ));
+            const next = (existing.length ? Math.max(...existing) : 0) + 1;
+            return prefix + String(next).padStart(3, '0');
+        }
+
+        // Replay all manual repayments in date order to recompute loan.emi
+        // from a stable baseline (loan.initialEMI, captured when the loan was
+        // first created — falls back to the earliest repayment's emiBefore, or
+        // to loan.emi itself, if initialEMI is missing on older records).
+        //
+        // Called AFTER any add / delete of a manual repayment. Also refreshes
+        // each repayment's own emiBefore/emiAfter snapshots so the history
+        // display always matches the current state.
+        //
+        // "reduce-term" repayments leave emi unchanged; "reduce-emi" repayments
+        // recompute emi = new_balance_at_that_moment / installments_remaining,
+        // where installments_remaining counts ONLY salary deductions dated on
+        // or before the repayment date (manual repayments don't consume an
+        // EMI slot). If the loan is fully paid mid-replay, emi is clamped to
+        // whatever was current at that point.
+        function _recomputeLoanEMI(loan) {
+            if (!loan) return;
+            const initialEMI = parseFloat(loan.initialEMI) || parseFloat(loan.emi) || 0;
+            const reps = Array.isArray(loan.manualRepayments) ? loan.manualRepayments : [];
+            const sorted = [...reps].sort((a, b) => {
+                const dcmp = (a.date || '') > (b.date || '') ? 1 : (a.date || '') < (b.date || '') ? -1 : 0;
+                if (dcmp) return dcmp;
+                return (a.createdAt || '') > (b.createdAt || '') ? 1 : -1;
+            });
+            const principal = parseFloat(loan.principal) || 0;
+            const totalInst = parseInt(loan.installments) || 1;
+            let currentEMI = initialEMI;
+            for (const rp of sorted) {
+                // How many salary deductions had been recorded on or before this repayment date?
+                const dedCountBefore = (loan.deductionLog || []).filter(d => {
+                    // Treat a month/year deduction as last-day-of-month so a
+                    // same-month manual repayment (typically mid-month) is
+                    // considered PRIOR to the payroll deduction of that month.
+                    const dDate = `${d.year}-${String(d.month).padStart(2,'0')}-31`;
+                    return dDate < (rp.date || '');
+                }).length;
+                const dedTotalBefore = (loan.deductionLog || []).filter(d => {
+                    const dDate = `${d.year}-${String(d.month).padStart(2,'0')}-31`;
+                    return dDate < (rp.date || '');
+                }).reduce((s, d) => s + (parseFloat(d.amount) || 0), 0);
+                const priorManualTotal = sorted
+                    .filter(x => x !== rp)
+                    .filter(x => (x.date || '') < (rp.date || '')
+                              || ((x.date || '') === (rp.date || '') && (x.createdAt || '') < (rp.createdAt || '')))
+                    .reduce((s, x) => s + (parseFloat(x.amount) || 0), 0);
+                const balanceAfter = Math.max(0,
+                    principal - dedTotalBefore - priorManualTotal - (parseFloat(rp.amount) || 0));
+                rp.emiBefore = currentEMI;
+                if (rp.recalcMode === 'reduce-emi') {
+                    const installmentsLeft = Math.max(1, totalInst - dedCountBefore);
+                    currentEMI = +(balanceAfter / installmentsLeft).toFixed(2);
+                }
+                rp.emiAfter = currentEMI;
+            }
+            loan.emi = currentEMI;
+            loan.manualRepayments = sorted;
         }
 
         // Compute the loan deduction that WOULD apply for staff `st` in period (month,year)
@@ -23876,11 +23964,11 @@ ${'─'.repeat(50)}
                     <div class="grid grid-cols-4 gap-2 text-[11px] mb-2">
                         <div class="bg-white rounded p-1.5 border border-amber-100">
                             <p class="text-gray-500 text-[9px]">Deducted</p>
-                            <p class="font-bold text-amber-700">${deriv.deductedCount} of ${l.installments || '—'}</p>
+                            <p class="font-bold text-amber-700">${deriv.deductedCount} of ${l.installments || '—'}${deriv.manualRepaidCount ? `<span class="text-emerald-600 font-normal"> + ${deriv.manualRepaidCount} manual</span>` : ''}</p>
                         </div>
                         <div class="bg-white rounded p-1.5 border border-amber-100">
                             <p class="text-gray-500 text-[9px]">Paid So Far</p>
-                            <p class="font-bold text-green-700">${fmt(deriv.deductedTotal)}</p>
+                            <p class="font-bold text-green-700">${fmt(deriv.deductedTotal + deriv.manualRepaidTotal)}${deriv.manualRepaidTotal ? `<span class="text-[9px] text-emerald-600 font-normal block">incl. ${fmt(deriv.manualRepaidTotal)} manual</span>` : ''}</p>
                         </div>
                         <div class="bg-white rounded p-1.5 border border-amber-100">
                             <p class="text-gray-500 text-[9px]">Balance</p>
@@ -23893,11 +23981,35 @@ ${'─'.repeat(50)}
                     </div>
                     <div><label class="block text-[10px] font-semibold text-gray-600 mb-0.5">Remarks</label>
                         <input type="text" value="${(l.remarks||'').replace(/"/g,'&quot;')}" onchange="updateStaffLoanField(${idx},'remarks',this.value)" placeholder="purpose / agreement ref" class="w-full px-2 py-1 border rounded text-xs" /></div>
-                    ${(l.deductionLog && l.deductionLog.length > 0) ? `
+                    ${isActive && deriv.balance > 0.01 ? `
+                    <div class="mt-2 flex justify-end">
+                        <button type="button" onclick="openRepaymentModal(${idx})" class="px-3 py-1.5 bg-emerald-600 text-white text-[11px] font-semibold rounded-lg hover:bg-emerald-700">💵 Record Repayment</button>
+                    </div>` : ''}
+                    ${((l.deductionLog && l.deductionLog.length > 0) || (l.manualRepayments && l.manualRepayments.length > 0)) ? `
                     <details class="mt-2">
-                        <summary class="text-[10px] text-gray-500 cursor-pointer hover:text-gray-700">View deduction history (${l.deductionLog.length})</summary>
+                        <summary class="text-[10px] text-gray-500 cursor-pointer hover:text-gray-700">
+                            View payment history (${(l.deductionLog||[]).length} EMI · ${(l.manualRepayments||[]).length} manual)
+                        </summary>
                         <ul class="text-[10px] text-gray-600 mt-1 ml-4 space-y-0.5">
-                            ${l.deductionLog.map(d => `<li>${months[(parseInt(d.month)||1)-1]} ${d.year}: <strong>${fmt(d.amount)}</strong>${d.payslipRef?' · ref '+d.payslipRef:''}</li>`).join('')}
+                            ${(l.deductionLog||[]).map(d => `<li><span class="inline-block px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-[9px] font-bold mr-1">EMI</span>${months[(parseInt(d.month)||1)-1]} ${d.year}: <strong>${fmt(d.amount)}</strong>${d.payslipRef?' · ref '+d.payslipRef:''}</li>`).join('')}
+                            ${(l.manualRepayments||[]).slice().sort((a,b)=>(a.date||'')>(b.date||'')?1:-1).map(r => {
+                                const recalcBadge = r.recalcMode === 'reduce-emi' ? '↓EMI' : '↓Term';
+                                const dep = r.depositTo === 'PETTY_CASH'
+                                    ? (`Petty Cash: ${((pettyCashOffices||[]).find(o=>o.officeID===r.pettyCashOfficeID)?.officeName)||''}`)
+                                    : (`Bank: ${((bankAccounts||[]).find(b=>b.id===r.bankAccountId)?.accountName || (bankAccounts||[]).find(b=>b.id===r.bankAccountId)?.bankName)||''}`);
+                                return `<li class="flex items-start gap-1">
+                                    <span class="inline-block px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-[9px] font-bold">MANUAL</span>
+                                    <span class="flex-1">
+                                        ${r.date}: <strong>${fmt(r.amount)}</strong> ·
+                                        ${r.mode}${r.refNo ? ' · Ref '+r.refNo : ''} ·
+                                        <span class="text-gray-500">${dep}</span> ·
+                                        <span class="text-[9px] px-1 bg-gray-100 rounded">${recalcBadge}</span>
+                                        ${r.remarks ? ' · <em class="text-gray-500">'+r.remarks.replace(/</g,'&lt;')+'</em>' : ''}
+                                        <span class="text-[9px] text-gray-400 block">by ${r.createdBy||'—'} · ${(r.createdAt||'').split('T')[0]} · ${r.repaymentID}</span>
+                                    </span>
+                                    <button type="button" onclick="_deleteLoanRepayment(${idx},'${r.repaymentID}')" class="text-red-500 hover:text-red-700 text-[10px]" title="Delete this repayment (recomputes EMI)">🗑</button>
+                                </li>`;
+                            }).join('')}
                         </ul>
                     </details>` : `
                     <div class="mt-2 p-2 bg-amber-100 border border-amber-300 rounded-lg flex items-center justify-between gap-2 flex-wrap">
@@ -24055,6 +24167,381 @@ ${'─'.repeat(50)}
             _showToast(`✓ Backfilled ${cnt} EMI(s) for ${l.loanID || 'loan'} · Paid ₹${totalPaid.toLocaleString('en-IN')} · Balance ₹${bal.toLocaleString('en-IN')}`, '#b45309', 5000);
         }
 
+        // ═══════════════════════════════════════════════════════════════
+        // MANUAL LOAN REPAYMENT
+        // ═══════════════════════════════════════════════════════════════
+        // Ad-hoc repayments a staff member makes OUTSIDE the salary EMI —
+        // cash paid to petty cash, bank transfer, UPI, cheque, etc.
+        //
+        // Unlike the loan modal buffer (which stays in memory until Save
+        // Staff is pressed), Record Repayment commits DIRECTLY to the
+        // persistent `staff` array and — for cash-to-petty-cash — the
+        // `pettyCashTransactions` array. That's because a repayment is a
+        // real accounting event ("I received ₹X on this date"), not a
+        // draft. Bank-deposited repayments are picked up automatically by
+        // the Bank Ledger aggregator (see _bankLedgerEntries), so no
+        // separate ledger row is written.
+        //
+        // Flow: openRepaymentModal → user fills form + previews →
+        //       _confirmLoanRepayment → mutate loan.manualRepayments +
+        //       (optionally) loan.emi + (optionally) pettyCashTransactions,
+        //       saveData twice, refresh UI.
+        //
+        // Delete flow: _deleteLoanRepayment → remove from manualRepayments,
+        //       remove matching pettyCashTransactions entry, replay all
+        //       remaining repayments via _recomputeLoanEMI to restore the
+        //       correct EMI, save.
+        function openRepaymentModal(loanIdx) {
+            const rows = window._sLoanRows || [];
+            const l    = rows[loanIdx];
+            if (!l) return;
+            // The loan must exist in the SAVED staff record — repayments can't
+            // be recorded against a brand-new loan that hasn't been saved yet
+            // (no loanID, no persistent home to save to).
+            if (!currentStaff || !l.loanID) {
+                alert('Please save this staff record first (the loan needs a Loan ID before a repayment can be recorded against it).');
+                return;
+            }
+            const deriv = loanDerivedFields(l);
+            if (deriv.balance <= 0.01) {
+                alert(`Loan ${l.loanID} is already fully paid. Balance: ₹${deriv.balance.toFixed(2)}.`);
+                return;
+            }
+            const today = new Date().toISOString().split('T')[0];
+            const banks = (bankAccounts || []).filter(b => b.status !== 'Closed');
+            const offices = (pettyCashOffices || []);
+            const modal = document.createElement('div');
+            modal.id = 'loanRepaymentModal';
+            modal.className = 'modal show';
+            modal.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg m-4 max-h-[90vh] overflow-y-auto">
+                <div class="bg-gradient-to-r from-emerald-600 to-teal-600 p-4 text-white sticky top-0 z-10">
+                    <h3 class="text-base font-bold">💵 Record Loan Repayment</h3>
+                    <p class="text-emerald-100 text-xs mt-0.5">Loan ${l.loanID} · ${currentStaff.name || ''} · Current balance ₹${deriv.balance.toLocaleString('en-IN')}</p>
+                </div>
+                <div class="p-4 space-y-3">
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold mb-1">Date Received *</label>
+                            <input type="date" id="rpDate" value="${today}" max="${today}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold mb-1">Amount (₹) *</label>
+                            <input type="number" id="rpAmount" min="0.01" step="0.01" max="${deriv.balance}" placeholder="e.g. 20000" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                            <p class="text-[10px] text-gray-400 mt-0.5">Max ₹${deriv.balance.toLocaleString('en-IN')} (outstanding balance)</p>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold mb-1">Mode *</label>
+                            <select id="rpMode" onchange="_repaymentModeChanged()" class="w-full px-3 py-2 border rounded-lg text-sm">
+                                <option value="">— Pick —</option>
+                                <option value="Cash">Cash</option>
+                                <option value="Bank Transfer">Bank Transfer</option>
+                                <option value="UPI">UPI</option>
+                                <option value="Cheque">Cheque</option>
+                                <option value="DD">DD</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold mb-1">Reference No. *</label>
+                            <input type="text" id="rpRefNo" placeholder="Receipt no. / UTR / Cheque no." class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                    </div>
+                    <div id="rpDepositBankWrap" style="display:none">
+                        <label class="block text-xs font-semibold mb-1">Deposit to Bank Account *</label>
+                        <select id="rpDepositBank" class="w-full px-3 py-2 border rounded-lg text-sm">
+                            <option value="">— Select bank —</option>
+                            ${banks.map(b => `<option value="${b.id}">${b.accountName || b.bankName || b.name || ''}${b.accountNo ? ' (····'+String(b.accountNo).slice(-4)+')' : ''}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div id="rpDepositPCWrap" style="display:none">
+                        <label class="block text-xs font-semibold mb-1">Deposit to Petty Cash Office *</label>
+                        <select id="rpDepositPCOffice" class="w-full px-3 py-2 border rounded-lg text-sm">
+                            <option value="">— Select office —</option>
+                            ${offices.map(o => `<option value="${o.officeID}">${o.officeName}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold mb-1">Remarks</label>
+                        <input type="text" id="rpRemarks" placeholder="Optional context — e.g. lump-sum after bonus" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                    </div>
+                    <div class="border-t pt-3">
+                        <label class="block text-xs font-semibold mb-2">Adjust remaining loan by: *</label>
+                        <div class="grid grid-cols-2 gap-2">
+                            <label class="flex items-start gap-2 p-2 border rounded-lg cursor-pointer hover:bg-emerald-50">
+                                <input type="radio" name="rpRecalc" value="reduce-term" onchange="_repaymentPreview()"/>
+                                <div>
+                                    <div class="text-xs font-bold">Reduce Term</div>
+                                    <div class="text-[10px] text-gray-500">EMI stays same, loan closes sooner</div>
+                                </div>
+                            </label>
+                            <label class="flex items-start gap-2 p-2 border rounded-lg cursor-pointer hover:bg-emerald-50">
+                                <input type="radio" name="rpRecalc" value="reduce-emi" onchange="_repaymentPreview()"/>
+                                <div>
+                                    <div class="text-xs font-bold">Reduce EMI</div>
+                                    <div class="text-[10px] text-gray-500">Same closing date, smaller monthly EMI</div>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+                    <div id="rpPreview" class="text-xs bg-gray-50 border rounded-lg p-2 text-gray-400 italic">
+                        Fill amount and pick a Recalc option to see the effect.
+                    </div>
+                    <div class="flex justify-end gap-3 pt-2 border-t sticky bottom-0 bg-white">
+                        <button onclick="document.getElementById('loanRepaymentModal').remove()" class="px-4 py-2 border rounded-lg text-sm">Cancel</button>
+                        <button onclick="_confirmLoanRepayment(${loanIdx})" class="px-5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-bold hover:bg-emerald-700">💾 Save Repayment</button>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+            setTimeout(() => {
+                document.getElementById('rpAmount')?.addEventListener('input', _repaymentPreview);
+                _repaymentPreview();
+            }, 100);
+        }
+
+        // Toggle the "Deposit to" input based on mode: Cash → petty cash office,
+        // everything else → bank account. Keeps the form uncluttered.
+        function _repaymentModeChanged() {
+            const mode = document.getElementById('rpMode')?.value;
+            const bankWrap = document.getElementById('rpDepositBankWrap');
+            const pcWrap   = document.getElementById('rpDepositPCWrap');
+            if (!bankWrap || !pcWrap) return;
+            if (mode === 'Cash') {
+                bankWrap.style.display = 'none';
+                pcWrap.style.display   = '';
+            } else if (mode) {
+                bankWrap.style.display = '';
+                pcWrap.style.display   = 'none';
+            } else {
+                bankWrap.style.display = 'none';
+                pcWrap.style.display   = 'none';
+            }
+        }
+
+        // Live preview: show both recalc outcomes side-by-side once amount is
+        // typed and a mode is picked. Empty until amount > 0.
+        function _repaymentPreview() {
+            const wrap = document.getElementById('rpPreview');
+            if (!wrap) return;
+            const loanIdx = parseInt(document.querySelector('#loanRepaymentModal button[onclick^="_confirmLoanRepayment"]')?.getAttribute('onclick')?.match(/\d+/)?.[0] || '-1');
+            const rows = window._sLoanRows || [];
+            const l = rows[loanIdx];
+            if (!l) return;
+            const deriv = loanDerivedFields(l);
+            const amount = parseFloat(document.getElementById('rpAmount')?.value) || 0;
+            const chosen = document.querySelector('input[name="rpRecalc"]:checked')?.value || '';
+            if (amount <= 0) {
+                wrap.className = 'text-xs bg-gray-50 border rounded-lg p-2 text-gray-400 italic';
+                wrap.innerHTML = 'Fill amount and pick a Recalc option to see the effect.';
+                return;
+            }
+            if (amount > deriv.balance + 0.01) {
+                wrap.className = 'text-xs bg-red-50 border border-red-200 rounded-lg p-2 text-red-700';
+                wrap.innerHTML = `<strong>⚠ Amount exceeds outstanding balance</strong> (₹${deriv.balance.toLocaleString('en-IN')}). Overpayments aren't accepted — please reduce and re-enter, or record a smaller amount now and top up later.`;
+                return;
+            }
+            const currentEMI = parseFloat(l.emi) || 0;
+            const newBal = +(deriv.balance - amount).toFixed(2);
+            const instLeft = deriv.installmentsRemaining;
+            const reduceTermEMIs = currentEMI > 0 ? Math.ceil(newBal / currentEMI) : 0;
+            const reduceEMINew = instLeft > 0 ? +(newBal / instLeft).toFixed(2) : 0;
+            const fmt = n => '₹' + Math.max(0, +n || 0).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            const closesNow = newBal <= 0.01;
+            wrap.className = 'text-xs bg-emerald-50 border border-emerald-200 rounded-lg p-2 text-emerald-900';
+            wrap.innerHTML = `
+                <div class="mb-1"><strong>Balance after payment:</strong> ${fmt(newBal)}${closesNow ? ' <span class="text-emerald-700 font-bold">— loan closes with this payment</span>' : ''}</div>
+                ${closesNow ? '' : `
+                <div class="grid grid-cols-2 gap-2 mt-1.5">
+                    <div class="${chosen === 'reduce-term' ? 'bg-white border-emerald-400 border-2' : 'bg-white/60 border'} rounded p-1.5">
+                        <div class="font-bold text-[11px]">Reduce Term</div>
+                        <div class="text-[10px]">${reduceTermEMIs} EMIs × ${fmt(currentEMI)}<br/><span class="text-gray-500">(was ${instLeft} × ${fmt(currentEMI)})</span></div>
+                    </div>
+                    <div class="${chosen === 'reduce-emi' ? 'bg-white border-emerald-400 border-2' : 'bg-white/60 border'} rounded p-1.5">
+                        <div class="font-bold text-[11px]">Reduce EMI</div>
+                        <div class="text-[10px]">${instLeft} EMIs × ${fmt(reduceEMINew)}<br/><span class="text-gray-500">(was ${instLeft} × ${fmt(currentEMI)})</span></div>
+                    </div>
+                </div>`}
+                ${!chosen && !closesNow ? '<div class="mt-1.5 text-[10px] text-emerald-700 italic">Pick Reduce Term or Reduce EMI above to lock in.</div>' : ''}
+            `;
+        }
+
+        async function _confirmLoanRepayment(loanIdx) {
+            const rows = window._sLoanRows || [];
+            const l    = rows[loanIdx];
+            if (!l || !l.loanID || !currentStaff) { alert('Loan not found.'); return; }
+
+            const date    = document.getElementById('rpDate')?.value || '';
+            const amount  = parseFloat(document.getElementById('rpAmount')?.value) || 0;
+            const mode    = document.getElementById('rpMode')?.value || '';
+            const refNo   = (document.getElementById('rpRefNo')?.value || '').trim();
+            const remarks = (document.getElementById('rpRemarks')?.value || '').trim();
+            const recalcMode = document.querySelector('input[name="rpRecalc"]:checked')?.value || '';
+            const depositBank = document.getElementById('rpDepositBank')?.value || '';
+            const depositPC   = document.getElementById('rpDepositPCOffice')?.value || '';
+
+            // Validations
+            if (!date)       { alert('Please pick the Date Received.'); return; }
+            if (amount <= 0) { alert('Amount must be greater than zero.'); return; }
+            if (!mode)       { alert('Please pick a payment Mode.'); return; }
+            if (!refNo)      { alert('Please enter a Reference No. — the receipt / UTR / cheque no.'); return; }
+            if (mode === 'Cash' && !depositPC)   { alert('Please pick the Petty Cash Office receiving this cash.'); return; }
+            if (mode !== 'Cash' && !depositBank) { alert('Please pick the Bank Account receiving this deposit.'); return; }
+            if (!recalcMode) { alert('Please pick either Reduce Term or Reduce EMI so the schedule can be updated.'); return; }
+
+            // Re-derive to catch race conditions & the overpayment block
+            const deriv = loanDerivedFields(l);
+            if (amount > deriv.balance + 0.01) {
+                alert(`Amount ₹${amount.toLocaleString('en-IN')} exceeds outstanding balance ₹${deriv.balance.toLocaleString('en-IN')}. Overpayments aren't accepted — please reduce the amount and re-enter.`);
+                return;
+            }
+
+            // Find the persistent loan record
+            const staffIdx = staff.findIndex(s => s.staffID === currentStaff.staffID);
+            if (staffIdx < 0) { alert('Staff record not found. Save the staff first.'); return; }
+            const originalLoan = (staff[staffIdx].loans || []).find(x => x.loanID === l.loanID);
+            if (!originalLoan) { alert('Loan not found in saved record. Save the staff first, then record the repayment.'); return; }
+
+            // Build the repayment record
+            const repayment = {
+                repaymentID: generateRepaymentID(new Date(date || Date.now())),
+                date, amount: +amount.toFixed(2),
+                mode, refNo, remarks, recalcMode,
+                depositTo: mode === 'Cash' ? 'PETTY_CASH' : 'BANK',
+                bankAccountId:     mode === 'Cash' ? '' : depositBank,
+                pettyCashOfficeID: mode === 'Cash' ? depositPC : '',
+                emiBefore: parseFloat(originalLoan.emi) || 0,
+                emiAfter:  parseFloat(originalLoan.emi) || 0,   // finalized by _recomputeLoanEMI
+                createdBy: (typeof currentUser !== 'undefined' && currentUser?.name) || 'User',
+                createdAt: new Date().toISOString()
+            };
+
+            // Persist to the loan
+            originalLoan.manualRepayments = originalLoan.manualRepayments || [];
+            originalLoan.manualRepayments.push(repayment);
+            if (originalLoan.initialEMI == null) originalLoan.initialEMI = parseFloat(originalLoan.emi) || 0;
+
+            // Replay all repayments to get the current emi (handles interleaving,
+            // and updates each repayment's emiBefore/emiAfter snapshots).
+            _recomputeLoanEMI(originalLoan);
+
+            // Auto-close on balance zero (matches recordLoanDeductions behaviour)
+            const dv = loanDerivedFields(originalLoan);
+            if (dv.balance <= 0.01 && originalLoan.status === 'Active') {
+                originalLoan.status = 'Closed';
+                originalLoan.closedDate = new Date().toISOString().split('T')[0];
+                originalLoan.closedReason = 'Fully repaid (final via manual repayment)';
+            }
+
+            // Petty-cash ledger entry for cash-mode repayments
+            let pcPushed = false;
+            if (mode === 'Cash') {
+                pettyCashTransactions.push({
+                    txnID: generatePettyCashID('PC', new Date(date)),
+                    officeID: depositPC,
+                    txnType: 'STAFF_LOAN_RECOVERY',
+                    txnDate: date,
+                    amount: +amount.toFixed(2),
+                    category: 'STAFF_LOAN_RECOVERY',
+                    description: `Loan recovery — ${currentStaff.name || ''} · ${originalLoan.loanID} · Cash${refNo ? ' · Ref '+refNo : ''}${remarks ? ' · '+remarks : ''}`,
+                    sourceRepaymentID: repayment.repaymentID,
+                    sourceStaffID:     staff[staffIdx].staffID,
+                    sourceLoanID:      originalLoan.loanID,
+                    verified: false,
+                    enteredBy: repayment.createdBy,
+                    enteredAt: repayment.createdAt
+                });
+                pcPushed = true;
+            }
+
+            // Save (staff first; petty cash if we pushed one). Roll back the
+            // memory push on failure so the UI reflects reality.
+            try {
+                await saveData('staff', staff);
+                if (pcPushed) await saveData('pettyCashTransactions', pettyCashTransactions);
+            } catch (e) {
+                // Roll back the in-memory pushes
+                originalLoan.manualRepayments.pop();
+                _recomputeLoanEMI(originalLoan);
+                if (pcPushed) pettyCashTransactions.pop();
+                alert('Could not save the repayment: ' + (e.message || e));
+                return;
+            }
+
+            // Refresh the modal buffer from the fresh staff record so the loan
+            // card shows the updated balance / emi / history.
+            window._sLoanRows[loanIdx] = JSON.parse(JSON.stringify(originalLoan));
+            document.getElementById('loanRepaymentModal').remove();
+            renderStaffLoanRows();
+
+            const fmt = n => '₹' + Math.max(0, +n || 0).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            const closedNote = originalLoan.status === 'Closed' ? ' · loan closed' : '';
+            _showToast(`✓ Recorded ${fmt(amount)} against ${originalLoan.loanID} · new balance ${fmt(dv.balance)} · EMI ${fmt(originalLoan.emi)}${closedNote}`, '#059669', 5000);
+        }
+
+        // Delete a manual repayment. Removes the linked petty-cash entry (if
+        // any), then replays remaining repayments to restore the correct EMI.
+        // If deleting reopens a closed loan (balance now > 0), status auto-
+        // flips back to Active.
+        async function _deleteLoanRepayment(loanIdx, repaymentID) {
+            const rows = window._sLoanRows || [];
+            const l = rows[loanIdx];
+            if (!l || !currentStaff) return;
+            if (!confirm('Delete this repayment? The loan balance and EMI will be recomputed as if it never happened. Any linked petty-cash entry will also be removed.\n\nThis action cannot be undone.')) return;
+
+            const staffIdx = staff.findIndex(s => s.staffID === currentStaff.staffID);
+            if (staffIdx < 0) { alert('Staff record not found.'); return; }
+            const originalLoan = (staff[staffIdx].loans || []).find(x => x.loanID === l.loanID);
+            if (!originalLoan) return;
+            const reps = originalLoan.manualRepayments || [];
+            const idxR = reps.findIndex(r => r.repaymentID === repaymentID);
+            if (idxR < 0) return;
+
+            // Snapshot for rollback
+            const removedRep = reps[idxR];
+            const prevEMI    = originalLoan.emi;
+            const prevStatus = originalLoan.status;
+            const prevClosedDate = originalLoan.closedDate;
+            const prevClosedReason = originalLoan.closedReason;
+
+            // Remove from loan
+            reps.splice(idxR, 1);
+            _recomputeLoanEMI(originalLoan);
+            // If the loan was closed and balance is now > 0, reopen it
+            const dv = loanDerivedFields(originalLoan);
+            if (dv.balance > 0.01 && originalLoan.status === 'Closed'
+                && (originalLoan.closedReason || '').startsWith('Fully repaid')) {
+                originalLoan.status = 'Active';
+                originalLoan.closedDate = '';
+                originalLoan.closedReason = '';
+            }
+
+            // Remove matching petty-cash entry
+            const pcIdx = (pettyCashTransactions || []).findIndex(t => t.sourceRepaymentID === repaymentID);
+            const removedPC = pcIdx >= 0 ? pettyCashTransactions[pcIdx] : null;
+            if (pcIdx >= 0) pettyCashTransactions.splice(pcIdx, 1);
+
+            try {
+                await saveData('staff', staff);
+                if (pcIdx >= 0) await saveData('pettyCashTransactions', pettyCashTransactions);
+            } catch (e) {
+                // Roll back
+                reps.splice(idxR, 0, removedRep);
+                originalLoan.emi = prevEMI;
+                originalLoan.status = prevStatus;
+                originalLoan.closedDate = prevClosedDate;
+                originalLoan.closedReason = prevClosedReason;
+                if (removedPC) pettyCashTransactions.splice(pcIdx, 0, removedPC);
+                alert('Could not delete the repayment: ' + (e.message || e));
+                return;
+            }
+
+            window._sLoanRows[loanIdx] = JSON.parse(JSON.stringify(originalLoan));
+            renderStaffLoanRows();
+            _showToast(`✓ Repayment ${repaymentID} removed · balance ₹${dv.balance.toLocaleString('en-IN')} · EMI ₹${(originalLoan.emi||0).toLocaleString('en-IN')}`, '#dc2626', 5000);
+        }
+
         function addStaffLoanRow() {
             window._sLoanRows = window._sLoanRows || [];
             // Default EMI = principal/installments; user can override
@@ -24065,10 +24552,12 @@ ${'─'.repeat(50)}
                 principal: 0,
                 installments: 12,
                 emi: 0,
+                initialEMI: 0,           // frozen baseline for reduce-emi replay
                 firstDeductMonth: new Date().getMonth() + 1,
                 firstDeductYear: new Date().getFullYear(),
                 status: 'Active',
                 deductionLog: [],
+                manualRepayments: [],    // ad-hoc repayments (cash / bank / UPI etc.)
                 closedDate: '',
                 closedReason: '',
                 remarks: ''
@@ -24127,6 +24616,26 @@ ${'─'.repeat(50)}
                     copy.deductionLog = orig.deductionLog;
                 } else if (!Array.isArray(copy.deductionLog)) {
                     copy.deductionLog = [];
+                }
+                // Same policy for manualRepayments — recorded via the Record
+                // Repayment modal (which commits directly to persistent state),
+                // not editable via the modal buffer. Preserve from the original
+                // record so the buffered form-save doesn't wipe them.
+                if (orig && Array.isArray(orig.manualRepayments)) {
+                    copy.manualRepayments = orig.manualRepayments;
+                } else if (!Array.isArray(copy.manualRepayments)) {
+                    copy.manualRepayments = [];
+                }
+                // initialEMI is the immutable baseline used by _recomputeLoanEMI
+                // when replaying reduce-emi repayments after a deletion. Set it
+                // on first save if not already present so future edits or
+                // reduce-emi mutations can always trace back to what the loan
+                // started as. Existing loans without this field will fall back
+                // to loan.emi at replay time (see _recomputeLoanEMI).
+                if (orig && orig.initialEMI != null) {
+                    copy.initialEMI = orig.initialEMI;
+                } else if (copy.initialEMI == null) {
+                    copy.initialEMI = parseFloat(copy.emi) || 0;
                 }
                 return copy;
             });
@@ -34473,6 +34982,7 @@ Automated WFH alert — ${company} Attendance System.`;
                 else if (t.txnType === 'REPLENISHMENT')  bal += amt;
                 else if (t.txnType === 'OPENING_BALANCE')bal += amt;
                 else if (t.txnType === 'ADJUSTMENT')     bal += amt;
+                else if (t.txnType === 'STAFF_LOAN_RECOVERY') bal += amt;
             });
             if (_dbg) console.log('  → final balance:', bal.toFixed(2));
             return +bal.toFixed(2);
@@ -34561,6 +35071,29 @@ Automated WFH alert — ${company} Attendance System.`;
                     date: ar.receivedDate || ar.invoiceDate || '',
                     desc: `${ar.invoiceNo||'AR'} — ${ar.client||''} (historical payment received)`,
                     credit: received, debit: 0, src: 'AR Historical'
+                });
+            });
+
+            // 1c) Staff Loan Recovery — money IN when a staff member repays
+            //     part of a salary advance directly to this bank (Bank
+            //     Transfer / UPI / Cheque / DD). Cash-mode repayments land
+            //     in petty cash, not here — those live under the petty cash
+            //     ledger (txnType STAFF_LOAN_RECOVERY) and are intentionally
+            //     excluded from bank ledger to avoid double-counting, same
+            //     policy as petty cash replenishments.
+            (staff||[]).forEach(s => {
+                (s.loans || []).forEach(loan => {
+                    (loan.manualRepayments || []).forEach(r => {
+                        if (r.depositTo !== 'BANK') return;
+                        if (r.bankAccountId !== bankId) return;
+                        const amt = +r.amount || 0;
+                        if (amt <= 0) return;
+                        rows.push({
+                            date: r.date || '',
+                            desc: `Staff Loan Recovery — ${s.name || ''} · ${loan.loanID || ''} · ${r.mode || ''}${r.refNo ? ' · Ref '+r.refNo : ''}${r.remarks ? ' · '+r.remarks : ''}`,
+                            credit: amt, debit: 0, src: 'Staff Loan Recovery'
+                        });
+                    });
                 });
             });
 
@@ -35062,8 +35595,8 @@ Automated WFH alert — ${company} Attendance System.`;
                             <tr><td colspan="10" class="px-3 py-8 text-center text-gray-400 italic">No transactions match the current filters</td></tr>` : txns.map(t => {
                                 const office = offices.find(o => o.officeID === t.officeID) || {officeName: t.officeID};
                                 const isExp = t.txnType === 'EXPENSE';
-                                const typeLabel = ({EXPENSE:'💸 Expense', REPLENISHMENT:'💰 Replenish', OPENING_BALANCE:'🏁 Opening', ADJUSTMENT:'⚙ Adjust'})[t.txnType] || t.txnType;
-                                const typeColor = ({EXPENSE:'text-red-600', REPLENISHMENT:'text-green-600', OPENING_BALANCE:'text-blue-600', ADJUSTMENT:'text-gray-600'})[t.txnType] || '';
+                                const typeLabel = ({EXPENSE:'💸 Expense', REPLENISHMENT:'💰 Replenish', OPENING_BALANCE:'🏁 Opening', ADJUSTMENT:'⚙ Adjust', STAFF_LOAN_RECOVERY:'💵 Loan Recovery'})[t.txnType] || t.txnType;
+                                const typeColor = ({EXPENSE:'text-red-600', REPLENISHMENT:'text-green-600', OPENING_BALANCE:'text-blue-600', ADJUSTMENT:'text-gray-600', STAFF_LOAN_RECOVERY:'text-emerald-600'})[t.txnType] || '';
                                 return `
                                 <tr class="border-t hover:bg-amber-50/30">
                                     <td class="px-3 py-2 text-xs whitespace-nowrap">${t.txnDate || '—'}</td>
@@ -37879,8 +38412,10 @@ Automated WFH alert — ${company} Attendance System.`;
                                                 : t.txnType === 'REPLENISHMENT'    ? '💰 Replenishment'
                                                 : t.txnType === 'OPENING_BALANCE'  ? '🏁 Opening Balance'
                                                 : t.txnType === 'ADJUSTMENT'       ? '⚙ Adjustment'
+                                                : t.txnType === 'STAFF_LOAN_RECOVERY' ? '💵 Staff Loan Recovery'
                                                 : (t.txnType || '—');
                                 const isMoneyIn = t.txnType === 'REPLENISHMENT' || t.txnType === 'OPENING_BALANCE'
+                                                  || t.txnType === 'STAFF_LOAN_RECOVERY'
                                                   || (t.txnType === 'ADJUSTMENT' && (+t.amount||0) >= 0);
                                 return `
                                 <tr class="border-t">
@@ -38230,7 +38765,11 @@ Automated WFH alert — ${company} Attendance System.`;
                 head: [['Date','Type / Category','Vendor / Description','Voucher','Amount','\u2713']],
                 body: txns.map(t => [
                     t.txnDate || '\u2014',
-                    t.txnType === 'EXPENSE' ? _pcCategoryLabel(t.category).replace(/^[^\w]+/,'').trim() : 'Replenishment',
+                    t.txnType === 'EXPENSE'             ? _pcCategoryLabel(t.category).replace(/^[^\w]+/,'').trim()
+                    : t.txnType === 'STAFF_LOAN_RECOVERY' ? 'Staff Loan Recovery'
+                    : t.txnType === 'OPENING_BALANCE'   ? 'Opening Balance'
+                    : t.txnType === 'ADJUSTMENT'        ? 'Adjustment'
+                    : 'Replenishment',
                     (t.vendor || t.transferRef || '') + (t.description||t.remarks ? '\n'+(t.description||t.remarks).substring(0,60) : ''),
                     t.voucherNo || '\u2014',
                     (t.txnType === 'EXPENSE' ? '-' : '+') + INR(t.amount),
