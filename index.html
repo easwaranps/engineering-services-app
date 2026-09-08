@@ -37212,8 +37212,11 @@ Automated WFH alert — ${company} Attendance System.`;
         function _drawLetterHeader(doc, opts) {
             const { PW, ML, MR, refNo, letterDate, place } = opts;
             const headY = 10, logoBoxW = 32, logoBoxH = 20;
-            // Logo (top-left, aspect-preserved inside 32 × 20 mm box)
-            const logo = _fitLetterImg(doc, settings.companyLogo, ML, headY, logoBoxW, logoBoxH);
+            // Logo (top-left, aspect-preserved inside 32 × 20 mm box).
+            // Uses settings.logoData (the same key the rest of the app
+            // reads — see invoice PDFs) and falls back to DEFAULT_LOGO
+            // so a fresh install still shows the IMSE logo out of the box.
+            const logo = _fitLetterImg(doc, settings.logoData || DEFAULT_LOGO, ML, headY, logoBoxW, logoBoxH);
             // Company name — centered in space to the right of the logo
             // (or full-width if no logo). Auto-shrinks to fit.
             const nameLeft  = logo ? (ML + logoBoxW + 4) : ML;
