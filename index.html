@@ -636,6 +636,33 @@
                     </div>
                 </div>
 
+                <!-- Refunds Received — for money that comes BACK from the
+                     vendor. Two common cases: (1) you overpaid and asked the
+                     vendor to return the excess, (2) the vendor issued a
+                     partial refund for damaged / short-supplied goods. Both
+                     are "contra to expense", NOT income — the P&L should not
+                     move, but the bank ledger MUST show the inflow to
+                     reconcile against the bank statement. Amounts here reduce
+                     the effective paid total in the balance formula (net paid
+                     = paymentsMade − refundsReceived) and produce a matching
+                     CREDIT row in the bank ledger. Capped at the paymentsMade
+                     total — you can't be refunded more than you paid. -->
+                <div id="expRefundsReceivedSection" class="mb-4 border border-rose-200 bg-rose-50/40 rounded-xl p-3">
+                    <div class="flex items-center justify-between mb-2">
+                        <label class="block text-xs font-bold text-rose-800">↩️ Refunds Received from Vendor <span class="font-normal text-gray-500">(overpayment returned, contra to expense — NOT income)</span></label>
+                        <button type="button" onclick="addExpRefundRow()" class="px-2 py-1 bg-rose-600 text-white rounded-lg text-xs font-semibold hover:bg-rose-700">+ Add Refund</button>
+                    </div>
+                    <p class="text-[11px] text-gray-500 mb-2">Use this when the vendor returns excess funds to your bank account. Each row reduces Balance to Pay by that amount (bringing an overpaid bill back to zero) and shows up as a <strong>credit</strong> row in the Bank Ledger — so your bank statement reconciles exactly. Nothing is added to income.</p>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-xs" id="expRefundsReceivedTable">
+                            <thead class="text-gray-500">
+                                <tr><th class="text-left px-1 py-1">Date</th><th class="text-right px-1 py-1">Amount</th><th class="text-left px-1 py-1">Mode</th><th class="text-left px-1 py-1">Ref No.</th><th class="text-left px-1 py-1">Deposit to Bank</th><th class="text-left px-1 py-1">Remarks</th><th></th></tr>
+                            </thead>
+                            <tbody id="expRefundsReceivedBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
                 <!-- Payment Mode -->
                 <div id="expPaymentModeSection" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
                     <div>
@@ -10656,13 +10683,14 @@
         // ═══════════════════════════════════════════════════════════════
         function _correctExpBalance(e) {
             const paymentsSum = (e.paymentsMade||[]).reduce((s,p)=>s+(parseFloat(p.amount)||0),0);
-            return Math.max(0, (parseFloat(e.netPayable)||0) - (parseFloat(e.totalDeductions)||0) - paymentsSum);
+            const refundsSum  = (e.refundsReceived||[]).reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
+            return Math.max(0, (parseFloat(e.netPayable)||0) - (parseFloat(e.totalDeductions)||0) - paymentsSum + refundsSum);
         }
 
         async function recalculateExpenseBalances() {
             const changes = [];
             (expenses||[]).forEach(e => {
-                if (!(e.paymentsMade||[]).length) return;   // only relevant where multiple payments exist
+                if (!(e.paymentsMade||[]).length && !(e.refundsReceived||[]).length) return;   // only relevant where payments or refunds exist
                 const correct = +_correctExpBalance(e).toFixed(2);
                 const current = +(parseFloat(e.balanceAmt)||0).toFixed(2);
                 if (Math.abs(correct - current) > 0.01) {
@@ -12199,6 +12227,8 @@
             document.getElementById('expAttachList').innerHTML = '';
             const _epmBodyReset = document.getElementById('expPaymentsMadeBody');
             if (_epmBodyReset) _epmBodyReset.innerHTML = '';
+            const _errBodyReset = document.getElementById('expRefundsReceivedBody');
+            if (_errBodyReset) _errBodyReset.innerHTML = '';
             // RCM defaults to off + hidden help text on form reset
             const rcmDefault = document.getElementById('expRCMApplicable');
             if (rcmDefault) rcmDefault.checked = false;
@@ -12323,6 +12353,15 @@
                         (exp.paymentsMade||[]).forEach(p => addExpPaymentMadeRow(p));
                     } catch (e) {
                         console.error('Error restoring Payments Made rows:', e);
+                    }
+                }
+                const _errBody = document.getElementById('expRefundsReceivedBody');
+                if (_errBody) {
+                    _errBody.innerHTML = '';
+                    try {
+                        (exp.refundsReceived||[]).forEach(r => addExpRefundRow(r));
+                    } catch (e) {
+                        console.error('Error restoring Refunds Received rows:', e);
                     }
                 }
                 document.getElementById('expBalanceAmt').value    = exp.balanceAmt||'';
@@ -12498,6 +12537,41 @@
                 .reduce((s,el) => s + (parseFloat(el.value)||0), 0);
         }
 
+        // Refund-received row builder — mirrors addExpPaymentMadeRow but with
+        // a bank-account picker per row. Refunds default to the expense's
+        // main Paid-From bank (so a one-vendor-one-account flow needs zero
+        // extra clicks), but the row can be overridden if the vendor sent
+        // the return to a different account. Live-sums into calcExpAmounts
+        // so Balance to Pay updates as you type.
+        function addExpRefundRow(r = null) {
+            const body = document.getElementById('expRefundsReceivedBody');
+            if (!body) return;
+            const today = new Date().toISOString().split('T')[0];
+            const modes = ['Cash','Cheque','NEFT','RTGS','IMPS','UPI'];
+            const banks = (bankAccounts||[]).filter(b => b.status !== 'Closed');
+            const defaultBank = r?.bankAccountId || document.getElementById('expBankAccount')?.value || '';
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td class="px-1 py-1"><input type="date" class="err-date w-full px-1 py-1 border rounded text-xs" value="${r?.date||today}"/></td>
+                <td class="px-1 py-1"><input type="number" min="0" step="0.01" class="err-amt w-24 px-1 py-1 border rounded text-xs text-right" value="${r?.amount??''}" placeholder="0.00" oninput="calcExpAmounts()"/></td>
+                <td class="px-1 py-1"><select class="err-mode w-full px-1 py-1 border rounded text-xs">${modes.map(m=>`<option value="${m}" ${r?.mode===m?'selected':''}>${m}</option>`).join('')}</select></td>
+                <td class="px-1 py-1"><input type="text" class="err-ref w-full px-1 py-1 border rounded text-xs" value="${(r?.ref||'').replace(/"/g,'&quot;')}" placeholder="UTR / Cheque no."/></td>
+                <td class="px-1 py-1">
+                    <select class="err-bank w-full px-1 py-1 border rounded text-xs">
+                        <option value="">— Same as bill —</option>
+                        ${banks.map(b => `<option value="${b.id}" ${defaultBank===b.id?'selected':''}>${b.accountName||b.bankName||b.name||''}${b.accountNo?' (····'+String(b.accountNo).slice(-4)+')':''}</option>`).join('')}
+                    </select>
+                </td>
+                <td class="px-1 py-1"><input type="text" class="err-remarks w-full px-1 py-1 border rounded text-xs" value="${(r?.remarks||'').replace(/"/g,'&quot;')}" placeholder="e.g. Excess return"/></td>
+                <td class="px-1 py-1 text-center"><button type="button" onclick="this.closest('tr').remove();calcExpAmounts();" class="text-red-500 hover:text-red-700 text-xs font-bold">✕</button></td>`;
+            body.appendChild(tr);
+            calcExpAmounts();
+        }
+        function _sumExpRefundsReceived() {
+            return Array.from(document.querySelectorAll('#expRefundsReceivedBody .err-amt'))
+                .reduce((s,el) => s + (parseFloat(el.value)||0), 0);
+        }
+
         function calcExpAmounts() {
             // If RCM mode is active with a rate picked, update CGST/SGST/IGST first
             // so the rest of this function reads fresh values. Safe — _rcmAutoCalc
@@ -12577,8 +12651,13 @@
             // Balance to Pay = Net Payable - Other Deductions - Payments Made
             // (the optional multi-installment log; sums to 0 when unused,
             // so existing single-advance bills compute exactly as before)
-            const paymentsMadeSum = _sumExpPaymentsMade();
-            const balance    = +Math.max(0, netPayable - totalDeductions - paymentsMadeSum).toFixed(2);
+            // Refunds Received are added BACK (they undo part of paymentsMade),
+            // so effective paid = paymentsMade − refundsReceived. This keeps
+            // an overpaid-then-refunded bill exactly at zero balance without
+            // touching income or netPayable.
+            const paymentsMadeSum   = _sumExpPaymentsMade();
+            const refundsReceivedSum = _sumExpRefundsReceived();
+            const balance    = +Math.max(0, netPayable - totalDeductions - paymentsMadeSum + refundsReceivedSum).toFixed(2);
 
             const balEl = document.getElementById('expBalanceAmt');
             if (balEl) balEl.value = balance.toFixed(2);
@@ -13012,6 +13091,23 @@
             // ── Bill Type — read first so we can branch validation (EXP-003) ─
             const billType = document.getElementById('expBillType').value || '';
 
+            // ── Refunds Received cap: refunds can never exceed payments made
+            // Otherwise the bill would show a positive "amount owed" but the
+            // vendor has your money back — nonsensical. Blocks the save with
+            // a clear diagnostic. The Advance amount counts toward payments
+            // for this check (an advance is a payment).
+            const _refundsSum   = _sumExpRefundsReceived();
+            const _paymentsSum  = _sumExpPaymentsMade();
+            const _advPreview   = parseFloat(document.getElementById('expAdvanceAmt')?.value) || 0;
+            const _totalPaidPreview = _paymentsSum + _advPreview;
+            if (_refundsSum > _totalPaidPreview + 0.01) {
+                alert(`Refunds Received (₹${_refundsSum.toLocaleString('en-IN')}) exceed the total you've paid the vendor (₹${_totalPaidPreview.toLocaleString('en-IN')} — Advance ₹${_advPreview.toLocaleString('en-IN')} + Payments Made ₹${_paymentsSum.toLocaleString('en-IN')}).\n\nYou can't be refunded more than you paid. Please reduce the refund amount(s) or add the missing payment first.`);
+                window._expSaving = false;
+                if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Expense'; }
+                _hideSaveToast();
+                return;
+            }
+
             // IGST vs CGST/SGST mutual-exclusion guardrail (SUPPLIER bills only)
             if (billType === 'SUPPLIER') {
                 const _cgst = parseFloat(document.getElementById('expCGST').value)||0;
@@ -13162,7 +13258,7 @@
                    (parseFloat(document.getElementById('expOtherDeduction').value)||0))
                 : 0;
 
-            const balance = Math.max(0, netPayable - totalDeductions - _sumExpPaymentsMade());
+            const balance = Math.max(0, netPayable - totalDeductions - _sumExpPaymentsMade() + _sumExpRefundsReceived());
 
             // Handle multiple file attachments
             let billAttachments = currentExpense?.billAttachments ? [...currentExpense.billAttachments] : [];
@@ -13258,6 +13354,18 @@
                     ref:     (tr.querySelector('.epm-ref')?.value || '').trim(),
                     remarks: (tr.querySelector('.epm-remarks')?.value || '').trim()
                 })).filter(p => p.amount > 0),
+                // Vendor refunds — contra to expense, NOT income. Empty rows
+                // (amount 0) are dropped so an unused Refunds Received table
+                // saves as []. Bank account per row defaults to the bill's
+                // Paid-From bank if left blank on the row.
+                refundsReceived: Array.from(document.querySelectorAll('#expRefundsReceivedBody tr')).map(tr => ({
+                    date:          tr.querySelector('.err-date')?.value || '',
+                    amount:        parseFloat(tr.querySelector('.err-amt')?.value) || 0,
+                    mode:          tr.querySelector('.err-mode')?.value || '',
+                    ref:           (tr.querySelector('.err-ref')?.value || '').trim(),
+                    bankAccountId: tr.querySelector('.err-bank')?.value || document.getElementById('expBankAccount')?.value || '',
+                    remarks:       (tr.querySelector('.err-remarks')?.value || '').trim()
+                })).filter(r => r.amount > 0),
                 balanceAmt:        balance,
                 payStatus:         document.getElementById('expPayStatus').value,
                 payMode:           document.getElementById('expPayMode').value,
@@ -35163,6 +35271,31 @@ Automated WFH alert — ${company} Attendance System.`;
                     if (amt <= 0) return;
                     rows.push({ date:e.payDate||e.billDate||'', desc:`${who}${e.billNo?' — Bill '+e.billNo:''}`, credit:0, debit:amt, src:'Expenses/Bills' });
                 }
+            });
+
+            // Vendor Refunds Received — money BACK from a supplier who was
+            // overpaid (or issued a partial refund for damaged / short-
+            // supplied goods). Contra to expense, NOT income — so the P&L
+            // report ignores these, but the bank ledger MUST show the inflow
+            // so the bank statement reconciles. Each refund row on any
+            // expense is scanned; the per-row bankAccountId (falling back to
+            // the parent expense's bankAccountId for older records without
+            // the per-row picker) decides which bank it lands in. Rows appear
+            // as credits with a distinctive "Vendor Refund" source label.
+            (expenses||[]).forEach(e => {
+                if (e.billType === 'INTERBANK') return;
+                const who = e.vendor || e.description || 'Vendor';
+                (e.refundsReceived||[]).forEach(r => {
+                    const amt = +r.amount || 0;
+                    if (amt <= 0) return;
+                    const rBank = r.bankAccountId || e.bankAccountId || '';
+                    if (rBank !== bankId) return;
+                    rows.push({
+                        date: r.date || '',
+                        desc: `Vendor Refund — ${who}${e.billNo?' — Bill '+e.billNo:''}${r.mode?' · '+r.mode:''}${r.ref?' · Ref '+r.ref:''}${r.remarks?' — '+r.remarks:' (excess return)'}`,
+                        credit: amt, debit: 0, src: 'Vendor Refund'
+                    });
+                });
             });
 
             // Interbank transfers (Office Expenses module) — both legs.
