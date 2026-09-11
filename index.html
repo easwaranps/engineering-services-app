@@ -1717,6 +1717,15 @@
         // underlying Transactions/Expenses/Payment Requests data, which the
         // Bank Ledger still aggregates fresh and read-only every time.
         let bankReconciliations = [];
+        // ── Other Income module ──────────────────────────────────────────
+        // Non-invoice income: bank interest (current/savings), FD interest
+        // credits, one-off receipts. Each record: { incomeID, date,
+        // bankAccountId, incomeType, amount, fdRef, bankRef, remarks,
+        // createdBy, createdAt }. Shows up in Bank Ledger as a credit row
+        // (source: "Other Income") and feeds a P&L Interest Income tile.
+        // Distinct from customer invoice payments (transactions) and vendor
+        // refunds (expense.refundsReceived — those are contra-expense).
+        let otherIncome = [];
         // ── Chart of Accounts (additive, optional) ──────────────────────
         // A ledger-account master, separate from `parties` (who) and
         // `ACC_CATEGORIES` (expense-only heads). Every transaction module
@@ -3704,6 +3713,7 @@
             bankAccounts = [];
             chartOfAccounts = [];
             bankReconciliations = [];
+            otherIncome = [];
             appFolderId = null;   // Reset so next login re-searches Drive
             settingsUnlocked = false;  // Lock settings on signout
             payslips = [];
@@ -5335,6 +5345,14 @@
                     console.warn('Bank Reconciliations load failed, defaulting to empty:', e.message);
                     bankReconciliations = [];
                 }
+                // Other Income — loaded independently, same safe pattern.
+                try {
+                    const oiData = await loadFileFromDrive('otherIncome.json');
+                    otherIncome = Array.isArray(oiData) ? oiData : [];
+                } catch(e) {
+                    console.warn('Other Income load failed, defaulting to empty:', e.message);
+                    otherIncome = [];
+                }
                 staff           = Array.isArray(staffData)   ? staffData    : [];
                 // SAFETY: blank-name staff records are NEVER auto-deleted.
                 // This used to silently filter them out AND auto-save the
@@ -5726,6 +5744,8 @@
                 { id:'COA-3000', code:'3000', name:"Director's Current Account", type:'Equity', active:true },
                 { id:'COA-3100', code:'3100', name:'Capital',             type:'Equity',    active:true },
                 { id:'COA-4000', code:'4000', name:'Service Income',      type:'Income',    active:true },
+                { id:'COA-4100', code:'4100', name:'Interest Income',     type:'Income',    active:true },
+                { id:'COA-4900', code:'4900', name:'Other Income',        type:'Income',    active:true },
                 { id:'COA-5000', code:'5000', name:'Salaries & Wages',    type:'Expense',   active:true },
                 { id:'COA-5100', code:'5100', name:'Food Expenses',       type:'Expense',   active:true },
                 { id:'COA-5200', code:'5200', name:'Travelling Expenses', type:'Expense',   active:true },
@@ -35118,6 +35138,260 @@ Automated WFH alert — ${company} Attendance System.`;
         // Interbank Expense transfers) by which bank account each entry
         // already references.
         // ═══════════════════════════════════════════════════════════════
+        // ═══════════════════════════════════════════════════════════════
+        // OTHER INCOME MODULE
+        // ═══════════════════════════════════════════════════════════════
+        // Non-invoice income — bank interest, FD interest, one-off receipts.
+        // The scope is deliberately narrow: it records income events that
+        // appear on the bank statement but don't come from customer
+        // invoices. NOT contra-expense (which is refundsReceived on an
+        // expense), NOT an FD asset register (out of scope by design).
+        // Bank ledger picks these up as credit rows automatically; nothing
+        // else in the app changes.
+
+        const OTHER_INCOME_TYPES = [
+            { code: 'INT_CURRENT',  label: 'Bank Interest — Current A/c' },
+            { code: 'INT_SAVINGS',  label: 'Bank Interest — Savings A/c' },
+            { code: 'FD_INTEREST',  label: 'FD Interest Credit'          },
+            { code: 'OTHER',        label: 'Other Income (misc)'          }
+        ];
+        function _otherIncomeTypeLabel(code) {
+            return (OTHER_INCOME_TYPES.find(t => t.code === code) || {}).label || code || 'Other Income';
+        }
+
+        // Mint the next sequential Other Income ID for the current FY.
+        // Format: OI-<FYcode>-<3-digit-serial>. Scoped globally across all
+        // records so IDs never collide.
+        function generateOtherIncomeID(date = new Date()) {
+            const fyCode = (typeof getFinancialYearCode === 'function')
+                ? getFinancialYearCode(date) : '2627';
+            const prefix = 'OI-' + fyCode + '-';
+            const existing = (otherIncome||[])
+                .filter(r => (r.incomeID||'').startsWith(prefix))
+                .map(r => parseInt(r.incomeID.substring(prefix.length)) || 0);
+            const next = (existing.length ? Math.max(...existing) : 0) + 1;
+            return prefix + String(next).padStart(3, '0');
+        }
+
+        // Open the entry modal. Editing an existing record if incomeID
+        // is passed; blank/undefined means "create new".
+        function openOtherIncomeModal(incomeID) {
+            const existing = incomeID ? (otherIncome||[]).find(r => r.incomeID === incomeID) : null;
+            const today = new Date().toISOString().split('T')[0];
+            const banks = (bankAccounts||[]).filter(b => b.isActive !== false);
+            if (!banks.length) {
+                alert('No bank accounts configured. Please add at least one bank account in Settings before recording income against it.');
+                return;
+            }
+            // Default to the bank currently selected in the Bank Ledger view
+            // so a user viewing "HDFC Current" and clicking Record Income
+            // doesn't need to re-pick the bank.
+            const defaultBank = existing?.bankAccountId || window._bankLedgerSel || banks[0].id;
+            const modal = document.createElement('div');
+            modal.id = 'otherIncomeModal';
+            modal.className = 'modal show';
+            modal.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg m-4 max-h-[90vh] overflow-y-auto">
+                <div class="bg-gradient-to-r from-blue-600 to-indigo-600 p-4 text-white sticky top-0 z-10">
+                    <h3 class="text-base font-bold">${existing ? '✏️ Edit' : '💰 Record'} Interest / Other Income</h3>
+                    <p class="text-blue-100 text-xs mt-0.5">${existing ? existing.incomeID : 'New entry — will be assigned an ID on save'}</p>
+                </div>
+                <div class="p-4 space-y-3">
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold mb-1">Date Credited *</label>
+                            <input type="date" id="oiDate" value="${existing?.date || today}" max="${today}" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                            <p class="text-[10px] text-gray-400 mt-0.5">Date the money hit the bank (per statement).</p>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold mb-1">Bank Account *</label>
+                            <select id="oiBank" class="w-full px-3 py-2 border rounded-lg text-sm">
+                                ${banks.map(b => `<option value="${b.id}" ${defaultBank===b.id?'selected':''}>${b.accountName || b.bankName || ''}${b.accountNo?' (····'+String(b.accountNo).slice(-4)+')':''}</option>`).join('')}
+                            </select>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold mb-1">Income Type *</label>
+                        <select id="oiType" class="w-full px-3 py-2 border rounded-lg text-sm">
+                            <option value="">— Pick —</option>
+                            ${OTHER_INCOME_TYPES.map(t => `<option value="${t.code}" ${existing?.incomeType===t.code?'selected':''}>${t.label}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold mb-1">Amount Credited (₹) *</label>
+                            <input type="number" id="oiAmount" min="0.01" step="0.01" value="${existing?.amount ?? ''}" placeholder="e.g. 8000" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                            <p class="text-[10px] text-gray-400 mt-0.5">Full amount as per bank statement.</p>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold mb-1">Bank Ref / Advice No.</label>
+                            <input type="text" id="oiBankRef" value="${(existing?.bankRef||'').replace(/"/g,'&quot;')}" placeholder="From bank statement" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold mb-1">FD Reference <span class="font-normal text-gray-400">(optional — cross-ref your FD receipt no.)</span></label>
+                        <input type="text" id="oiFDRef" value="${(existing?.fdRef||'').replace(/"/g,'&quot;')}" placeholder="e.g. FDR-2026-88104" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold mb-1">Remarks</label>
+                        <input type="text" id="oiRemarks" value="${(existing?.remarks||'').replace(/"/g,'&quot;')}" placeholder="e.g. Quarterly interest Jul-Sep 2026" class="w-full px-3 py-2 border rounded-lg text-sm"/>
+                    </div>
+                    <div class="text-[11px] bg-blue-50 border border-blue-200 rounded-lg p-2 text-blue-900">
+                        <strong>Where this shows up:</strong> Bank Ledger as a credit row on the date above (source: "Other Income"). Counted toward Interest Income / Other Income in P&L totals. Not treated as invoice revenue.
+                    </div>
+                    <div class="flex justify-between gap-3 pt-2 border-t sticky bottom-0 bg-white">
+                        <div>${existing ? `<button onclick="_deleteOtherIncome('${existing.incomeID}')" class="px-4 py-2 bg-red-100 text-red-700 rounded-lg text-sm hover:bg-red-200">🗑 Delete</button>` : ''}</div>
+                        <div class="flex gap-3">
+                            <button onclick="document.getElementById('otherIncomeModal').remove()" class="px-4 py-2 border rounded-lg text-sm">Cancel</button>
+                            <button onclick="_saveOtherIncome('${existing?.incomeID || ''}')" class="px-5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700">💾 Save</button>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+        }
+
+        async function _saveOtherIncome(existingID) {
+            const date         = document.getElementById('oiDate')?.value || '';
+            const bankAccountId= document.getElementById('oiBank')?.value || '';
+            const incomeType   = document.getElementById('oiType')?.value || '';
+            const amount       = parseFloat(document.getElementById('oiAmount')?.value) || 0;
+            const bankRef      = (document.getElementById('oiBankRef')?.value || '').trim();
+            const fdRef        = (document.getElementById('oiFDRef')?.value || '').trim();
+            const remarks      = (document.getElementById('oiRemarks')?.value || '').trim();
+
+            if (!date)         { alert('Please pick the Date Credited.'); return; }
+            if (!bankAccountId){ alert('Please pick a Bank Account.'); return; }
+            if (!incomeType)   { alert('Please pick an Income Type.'); return; }
+            if (amount <= 0)   { alert('Amount must be greater than zero.'); return; }
+
+            let record;
+            const now = new Date().toISOString();
+            const who = (typeof currentUser !== 'undefined' && currentUser?.name) || 'User';
+
+            if (existingID) {
+                // Update in place — preserve creation audit fields
+                const idx = otherIncome.findIndex(r => r.incomeID === existingID);
+                if (idx < 0) { alert('Record not found.'); return; }
+                const prev = otherIncome[idx];
+                record = { ...prev, date, bankAccountId, incomeType, amount: +amount.toFixed(2), bankRef, fdRef, remarks, updatedBy: who, updatedAt: now };
+                otherIncome[idx] = record;
+            } else {
+                record = {
+                    incomeID: generateOtherIncomeID(new Date(date)),
+                    date, bankAccountId, incomeType, amount: +amount.toFixed(2),
+                    bankRef, fdRef, remarks,
+                    createdBy: who, createdAt: now
+                };
+                otherIncome.push(record);
+            }
+
+            try {
+                await saveData('otherIncome', otherIncome);
+            } catch (e) {
+                // Roll back the in-memory change
+                if (existingID) {
+                    // Restore previous version — reload from Drive would be safer,
+                    // but simplest is to warn and let the user retry
+                    alert('Could not save the change: ' + (e.message || e) + '\n\nPlease refresh and try again.');
+                } else {
+                    otherIncome.pop();
+                    alert('Could not save the income record: ' + (e.message || e));
+                }
+                return;
+            }
+
+            document.getElementById('otherIncomeModal').remove();
+            renderView();
+            const ba = (bankAccounts||[]).find(b => b.id === bankAccountId);
+            _showToast(`✓ ${existingID ? 'Updated' : 'Recorded'} ${_otherIncomeTypeLabel(incomeType)} · ₹${amount.toLocaleString('en-IN')} · ${ba?.accountName || 'bank'}`, '#4338ca', 4000);
+        }
+
+        async function _deleteOtherIncome(incomeID) {
+            const idx = otherIncome.findIndex(r => r.incomeID === incomeID);
+            if (idx < 0) return;
+            const rec = otherIncome[idx];
+            if (!confirm(`Delete this income record?\n\n${_otherIncomeTypeLabel(rec.incomeType)} · ₹${(+rec.amount||0).toLocaleString('en-IN')} · ${rec.date}\n\nThis will remove the credit row from the Bank Ledger and drop it from P&L totals. This action cannot be undone.`)) return;
+            const removed = otherIncome.splice(idx, 1)[0];
+            try {
+                await saveData('otherIncome', otherIncome);
+            } catch (e) {
+                otherIncome.splice(idx, 0, removed);   // roll back
+                alert('Could not delete: ' + (e.message || e));
+                return;
+            }
+            document.getElementById('otherIncomeModal')?.remove();
+            renderView();
+            _showToast(`✓ Deleted income record ${incomeID}`, '#dc2626', 4000);
+        }
+
+        // Manage list — read-only overview of all Other Income entries with
+        // click-to-edit affordance. Filter by bank (defaults to the bank
+        // currently selected on the Bank Ledger view). Rows sorted by date
+        // descending so the most recent entries surface first.
+        function openOtherIncomeListModal() {
+            const filterBank = window._otherIncomeListFilter ?? (window._bankLedgerSel || '');
+            const banks = (bankAccounts||[]).filter(b => b.isActive !== false);
+            const rows = (otherIncome||[])
+                .filter(r => !filterBank || r.bankAccountId === filterBank)
+                .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+            const total = rows.reduce((s, r) => s + (+r.amount || 0), 0);
+            const fmt = n => '₹' + (+n || 0).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            const modal = document.createElement('div');
+            modal.id = 'otherIncomeListModal';
+            modal.className = 'modal show';
+            modal.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl m-4 max-h-[90vh] overflow-hidden flex flex-col">
+                <div class="bg-gradient-to-r from-indigo-600 to-blue-600 p-4 text-white flex items-center justify-between gap-3">
+                    <div>
+                        <h3 class="text-base font-bold">📋 Interest / Other Income — Entries</h3>
+                        <p class="text-blue-100 text-xs mt-0.5">${rows.length} entr${rows.length===1?'y':'ies'} · Total ${fmt(total)}</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <select onchange="window._otherIncomeListFilter=this.value;document.getElementById('otherIncomeListModal').remove();openOtherIncomeListModal();" class="px-2 py-1 rounded text-sm text-gray-800">
+                            <option value="" ${!filterBank?'selected':''}>All banks</option>
+                            ${banks.map(b => `<option value="${b.id}" ${filterBank===b.id?'selected':''}>${b.accountName || b.bankName}</option>`).join('')}
+                        </select>
+                        <button onclick="document.getElementById('otherIncomeListModal').remove()" class="text-white/70 hover:text-white text-xl leading-none">×</button>
+                    </div>
+                </div>
+                <div class="flex-1 overflow-y-auto p-4">
+                    ${rows.length === 0 ? `<p class="text-sm text-gray-400 text-center py-8">No entries yet${filterBank ? ' for this bank' : ''}.</p>` : `
+                    <table class="w-full text-xs">
+                        <thead class="text-gray-500 border-b">
+                            <tr>
+                                <th class="text-left px-2 py-1">Date</th>
+                                <th class="text-left px-2 py-1">Type</th>
+                                <th class="text-left px-2 py-1">Bank</th>
+                                <th class="text-right px-2 py-1">Amount</th>
+                                <th class="text-left px-2 py-1">FD Ref / Bank Ref / Remarks</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rows.map(r => {
+                                const ba = banks.find(b => b.id === r.bankAccountId);
+                                const meta = [r.fdRef && ('FD '+r.fdRef), r.bankRef && ('Ref '+r.bankRef), r.remarks].filter(Boolean).join(' · ');
+                                return `<tr class="border-b border-gray-100 hover:bg-indigo-50 cursor-pointer" onclick="document.getElementById('otherIncomeListModal').remove();openOtherIncomeModal('${r.incomeID}')">
+                                    <td class="px-2 py-1.5 whitespace-nowrap">${r.date || '—'}</td>
+                                    <td class="px-2 py-1.5">${_otherIncomeTypeLabel(r.incomeType)}</td>
+                                    <td class="px-2 py-1.5 text-gray-500">${ba?.accountName || ba?.bankName || '—'}</td>
+                                    <td class="px-2 py-1.5 text-right font-semibold text-green-700">${fmt(r.amount)}</td>
+                                    <td class="px-2 py-1.5 text-gray-500 max-w-xs truncate" title="${meta.replace(/"/g,'&quot;')}">${meta || ''}</td>
+                                    <td class="px-2 py-1.5 text-right text-indigo-500">✎</td>
+                                </tr>`;
+                            }).join('')}
+                        </tbody>
+                    </table>`}
+                </div>
+                <div class="border-t p-3 flex justify-end gap-3">
+                    <button onclick="document.getElementById('otherIncomeListModal').remove()" class="px-4 py-2 border rounded-lg text-sm">Close</button>
+                    <button onclick="document.getElementById('otherIncomeListModal').remove();openOtherIncomeModal()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm">+ New Entry</button>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+        }
+
         function _bankLedgerEntries(bankId) {
             const ba = (bankAccounts||[]).find(b => b.id === bankId);
             if (!ba) return [];
@@ -35298,6 +35572,24 @@ Automated WFH alert — ${company} Attendance System.`;
                 });
             });
 
+            // Other Income — bank interest (current/savings/FD) and misc
+            // non-invoice receipts. Genuine income (feeds P&L Interest Income
+            // / Other Income), unlike vendor refunds which are contra to
+            // expense. Bank ledger shows a credit row on the date the money
+            // hit the bank; source label distinguishes it from customer
+            // invoice payments in "Source" column filters.
+            (otherIncome||[]).forEach(oi => {
+                if (oi.bankAccountId !== bankId) return;
+                const amt = +oi.amount || 0;
+                if (amt <= 0) return;
+                const typeLabel = _otherIncomeTypeLabel(oi.incomeType);
+                rows.push({
+                    date: oi.date || '',
+                    desc: `${typeLabel}${oi.fdRef?' · FD '+oi.fdRef:''}${oi.bankRef?' · Ref '+oi.bankRef:''}${oi.remarks?' — '+oi.remarks:''}`,
+                    credit: amt, debit: 0, src: 'Other Income'
+                });
+            });
+
             // Interbank transfers (Office Expenses module) — both legs.
             // NOTE: Director Expense reimbursements are NOT aggregated here as
             // a separate source — they are always paid out via a Payment
@@ -35450,7 +35742,11 @@ Automated WFH alert — ${company} Attendance System.`;
             <div class="mb-6 flex items-center justify-between flex-wrap gap-3">
                 <div>
                     <h2 class="text-2xl font-bold text-gray-800">🏦 Bank</h2>
-                    <p class="text-xs text-gray-400 mt-1">Read-only view — aggregates Transactions (invoice payments received), AR Historical Invoice receipts, Payment Requests, Expenses/Bills (final Net Payable, by Paid Date), and Interbank transfers. Petty Cash replenishments and Fund Pool disbursements are <em>excluded</em> — they're paid via Payment Requests which are already counted above, so including them separately would double-count. Individual petty-cash and pool spending stays in their own modules (they draw from the float, not the bank). Nothing here writes data.</p>
+                    <p class="text-xs text-gray-400 mt-1">Read-only view — aggregates Transactions (invoice payments received), AR Historical Invoice receipts, Payment Requests, Expenses/Bills (final Net Payable, by Paid Date), Vendor Refunds, Interest & Other Income, and Interbank transfers. Petty Cash replenishments and Fund Pool disbursements are <em>excluded</em> — they're paid via Payment Requests which are already counted above, so including them separately would double-count. Individual petty-cash and pool spending stays in their own modules (they draw from the float, not the bank). Only the Record Income button writes data.</p>
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="openOtherIncomeListModal()" class="px-3 py-2 bg-white border border-indigo-300 text-indigo-700 rounded-lg text-sm font-semibold hover:bg-indigo-50 whitespace-nowrap" title="View, edit, or delete past Interest / Other Income entries">📋 Manage</button>
+                    <button onclick="openOtherIncomeModal()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700 whitespace-nowrap">💰 Record Interest / Other Income</button>
                 </div>
             </div>
             <div class="bg-white rounded-xl border p-4 mb-4 flex items-center gap-4 flex-wrap">
