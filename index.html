@@ -629,7 +629,7 @@
                     <div class="overflow-x-auto">
                         <table class="w-full text-xs" id="expPaymentsMadeTable">
                             <thead class="text-gray-500">
-                                <tr><th class="text-left px-1 py-1">Date</th><th class="text-right px-1 py-1">Amount</th><th class="text-left px-1 py-1">Mode</th><th class="text-left px-1 py-1">Ref No.</th><th class="text-left px-1 py-1">Remarks</th><th></th></tr>
+                                <tr><th class="text-left px-1 py-1">Date</th><th class="text-right px-1 py-1">Amount</th><th class="text-left px-1 py-1">Mode</th><th class="text-left px-1 py-1">Ref No.</th><th class="text-left px-1 py-1">Paid from Bank</th><th class="text-left px-1 py-1">Remarks</th><th></th></tr>
                             </thead>
                             <tbody id="expPaymentsMadeBody"></tbody>
                         </table>
@@ -736,7 +736,7 @@
                     <div><span class="text-gray-500 block text-xs">Advance Paid</span><span id="sumAdv" class="font-bold text-purple-700">—</span></div>
                     <div title="Sum of all rows in the Payments Made table"><span class="text-gray-500 block text-xs">Payments Made</span><span id="sumPayments" class="font-bold text-teal-700">—</span></div>
                     <div title="Sum of all rows in the Refunds Received table — subtracted from cost"><span class="text-gray-500 block text-xs">Refunds Received</span><span id="sumRefunds" class="font-bold text-rose-700">—</span></div>
-                    <div title="Net effective cost to the company = Advance + Payments Made − Refunds Received. Refunds reduce cost but do not undo the payment to the vendor (Balance to Pay above stays at 0 once vendor is paid)."><span class="text-gray-500 block text-xs">Net Payable <span class="text-[10px]">(cost)</span></span><span id="sumNet" class="font-bold text-orange-800 text-base">—</span></div>
+                    <div title="Amount still owed to the vendor — same as the Balance to Pay field at the top. Refunds are contra-expense (they reduce effective cost, tracked via the Payments Made and Refunds Received tiles), and do NOT reduce this figure — once the vendor has been paid in full, Balance to Pay stays 0 regardless of who reimbursed the company later."><span class="text-gray-500 block text-xs">Balance to Pay</span><span id="sumNet" class="font-bold text-orange-800 text-base">—</span></div>
                 </div>
 
                 <div class="flex gap-3 justify-end">
@@ -12549,11 +12549,26 @@
             const tr = document.createElement('tr');
             const today = new Date().toISOString().split('T')[0];
             const modes = ['Cash','Cheque','NEFT','RTGS','IMPS','UPI'];
+            // Per-row bank picker: mirrors what Refunds Received already has.
+            // Defaults to the bill-level "Paid from Bank Account" field so
+            // one-vendor-one-account bills need zero extra clicks, but can be
+            // overridden for payments that came out of a different account.
+            // Crucially, this ALSO lets the payment show up in the Bank
+            // Ledger when the bill-level bank was left blank — the row's own
+            // bank association routes it correctly.
+            const banks = (bankAccounts||[]).filter(b => b.status !== 'Closed');
+            const defaultBank = p?.bankAccountId || document.getElementById('expBankAccount')?.value || '';
             tr.innerHTML = `
                 <td class="px-1 py-1"><input type="date" class="epm-date w-full px-1 py-1 border rounded text-xs" value="${p?.date||today}"/></td>
                 <td class="px-1 py-1"><input type="number" min="0" step="0.01" class="epm-amt w-24 px-1 py-1 border rounded text-xs text-right" value="${p?.amount??''}" placeholder="0.00" oninput="calcExpAmounts()"/></td>
                 <td class="px-1 py-1"><select class="epm-mode w-full px-1 py-1 border rounded text-xs">${modes.map(m=>`<option value="${m}" ${p?.mode===m?'selected':''}>${m}</option>`).join('')}</select></td>
                 <td class="px-1 py-1"><input type="text" class="epm-ref w-full px-1 py-1 border rounded text-xs" value="${(p?.ref||'').replace(/"/g,'&quot;')}"/></td>
+                <td class="px-1 py-1">
+                    <select class="epm-bank w-full px-1 py-1 border rounded text-xs" title="Which bank this payment came from. Defaults to the bill-level 'Paid from Bank Account' if you leave it as 'Same as bill'.">
+                        <option value="">— Same as bill —</option>
+                        ${banks.map(b => `<option value="${b.id}" ${defaultBank===b.id?'selected':''}>${b.accountName||b.bankName||b.name||''}${b.accountNo?' (····'+String(b.accountNo).slice(-4)+')':''}</option>`).join('')}
+                    </select>
+                </td>
                 <td class="px-1 py-1"><input type="text" class="epm-remarks w-full px-1 py-1 border rounded text-xs" value="${(p?.remarks||'').replace(/"/g,'&quot;')}"/></td>
                 <td class="px-1 py-1 text-center"><button type="button" onclick="this.closest('tr').remove();calcExpAmounts();" class="text-red-500 hover:text-red-700 text-xs font-bold">✕</button></td>`;
             body.appendChild(tr);
@@ -12723,14 +12738,15 @@
             // (previously the user had to scroll up and mental-sum the tables).
             if (sPM) sPM.textContent = paymentsMadeSum > 0 ? fmt(paymentsMadeSum) : '—';
             if (sRR) sRR.textContent = refundsReceivedSum > 0 ? '−' + fmt(refundsReceivedSum) : '—';
-            // "Net Payable" tile now shows NET EFFECTIVE COST = (advance +
-            // payments) − refunds, per user's mental model: "refund is a
-            // contra entry, Net Payable should show paid − refund". This is
-            // the true cost of the bill to the company after any refunds.
-            // The "Balance to Pay" field at the top of the modal still shows
-            // amount owed to vendor (unaffected by refunds — refunds are
-            // contra-expense, they don't undo the payment).
-            if (s4)  s4.textContent  = fmt(netEffectiveCost);
+            // "Balance to Pay" tile shows the SAME value as the Balance to
+            // Pay field at the top of the form — one consistent figure for
+            // "amount still owed to vendor". For a partial payment, this is
+            // the amount left to pay. For a fully-paid bill (including those
+            // offset by refunds/reimbursements), this is 0. Refunds do not
+            // reduce this — they are contra-expense, not un-payments — but
+            // when both payments and refunds exist, effective cost = payments
+            // − refunds is visible from the two tiles alongside it.
+            if (s4)  s4.textContent  = fmt(balance);
         }
 
         function toggleDeductionFields() {
@@ -13405,6 +13421,7 @@
                     amount:  parseFloat(tr.querySelector('.epm-amt')?.value) || 0,
                     mode:    tr.querySelector('.epm-mode')?.value || '',
                     ref:     (tr.querySelector('.epm-ref')?.value || '').trim(),
+                    bankAccountId: tr.querySelector('.epm-bank')?.value || document.getElementById('expBankAccount')?.value || '',
                     remarks: (tr.querySelector('.epm-remarks')?.value || '').trim()
                 })).filter(p => p.amount > 0),
                 // Vendor refunds — contra to expense, NOT income. Empty rows
@@ -35561,17 +35578,14 @@ Automated WFH alert — ${company} Attendance System.`;
             // the bank), not the bill's own date.
             (expenses||[]).forEach(e => {
                 if (e.billType === 'INTERBANK') return;   // handled separately below
-                if (e.bankAccountId !== bankId) return;
                 const who = e.vendor || e.description || 'Bill/Expense';
+                const billBank = e.bankAccountId || '';
 
                 // ── 1) Advance paid at bill time is a real cash outflow. ──
-                // Previous versions dropped this whenever paymentsMade also
-                // existed (only iterated the array, skipping the advance),
-                // AND for fully-paid-via-advance bills (balanceAmt=0) the
-                // else branch showed nothing because "?? balanceAmt" resolved
-                // to 0 first. This block always surfaces the advance if > 0.
+                // Uses the bill-level bank (advance has no per-row picker —
+                // it's a single field on the main form).
                 const advAmt = +e.advanceAmt || 0;
-                if (advAmt > 0) {
+                if (advAmt > 0 && billBank === bankId) {
                     rows.push({
                         date: e.advanceDate || e.payDate || e.billDate || '',
                         desc: `${who}${e.billNo?' — Bill '+e.billNo:''} (advance)`,
@@ -35579,10 +35593,16 @@ Automated WFH alert — ${company} Attendance System.`;
                     });
                 }
 
-                // ── 2) Multi-installment payments — one debit row each. ──
+                // ── 2) Multi-installment payments — each row carries its own
+                // bankAccountId (per-row picker). Falls back to bill-level
+                // bank when the row's picker was left as "Same as bill".
+                // Older records without the per-row field also fall back to
+                // billBank, so nothing is lost from historical data.
                 (e.paymentsMade||[]).forEach(p => {
                     const amt = +p.amount || 0;
                     if (amt <= 0) return;
+                    const payBank = p.bankAccountId || billBank;
+                    if (payBank !== bankId) return;
                     rows.push({
                         date: p.date || '',
                         desc: `${who}${e.billNo?' — Bill '+e.billNo:''}${p.remarks?' — '+p.remarks:''} (instalment)`,
@@ -35595,8 +35615,8 @@ Automated WFH alert — ${company} Attendance System.`;
                 // are simply marked "Paid" — treat the full netPayable as a
                 // single outflow on the payDate. Only fires when we have
                 // nothing else to show (no advance, no instalments), so it
-                // never double-counts modern records.
-                if (advAmt <= 0 && !(e.paymentsMade||[]).length && e.payStatus === 'Paid') {
+                // never double-counts modern records. Uses bill-level bank.
+                if (advAmt <= 0 && !(e.paymentsMade||[]).length && e.payStatus === 'Paid' && billBank === bankId) {
                     const amt = +(e.netPayable ?? e.billAmtINR) || 0;
                     if (amt > 0) {
                         rows.push({
