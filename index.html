@@ -637,22 +637,22 @@
                 </div>
 
                 <!-- Refunds Received — for money that comes BACK from the
-                     vendor. Two common cases: (1) you overpaid and asked the
-                     vendor to return the excess, (2) the vendor issued a
-                     partial refund for damaged / short-supplied goods. Both
-                     are "contra to expense", NOT income — the P&L should not
-                     move, but the bank ledger MUST show the inflow to
-                     reconcile against the bank statement. Amounts here reduce
-                     the effective paid total in the balance formula (net paid
-                     = paymentsMade − refundsReceived) and produce a matching
-                     CREDIT row in the bank ledger. Capped at the paymentsMade
-                     total — you can't be refunded more than you paid. -->
+                     vendor OR from a third party (e.g. a staff member
+                     reimbursing an expense that was billed via the company).
+                     Both are "contra to expense", NOT income. Refunds reduce
+                     the effective net cost of the bill but do NOT undo the
+                     payment to the vendor — Balance to Pay stays 0 once the
+                     vendor has been paid in full, regardless of who
+                     reimbursed the company later. The bank ledger picks up
+                     each row as a credit so bank reconciliation ties out.
+                     Capped at the amount paid — you can't receive more than
+                     was spent on the bill. -->
                 <div id="expRefundsReceivedSection" class="mb-4 border border-rose-200 bg-rose-50/40 rounded-xl p-3">
                     <div class="flex items-center justify-between mb-2">
-                        <label class="block text-xs font-bold text-rose-800">↩️ Refunds Received from Vendor <span class="font-normal text-gray-500">(overpayment returned, contra to expense — NOT income)</span></label>
+                        <label class="block text-xs font-bold text-rose-800">↩️ Refunds Received <span class="font-normal text-gray-500">(from vendor OR third-party reimbursement — contra to expense, NOT income)</span></label>
                         <button type="button" onclick="addExpRefundRow()" class="px-2 py-1 bg-rose-600 text-white rounded-lg text-xs font-semibold hover:bg-rose-700">+ Add Refund</button>
                     </div>
-                    <p class="text-[11px] text-gray-500 mb-2">Use this when the vendor returns excess funds to your bank account. Each row reduces Balance to Pay by that amount (bringing an overpaid bill back to zero) and shows up as a <strong>credit</strong> row in the Bank Ledger — so your bank statement reconciles exactly. Nothing is added to income.</p>
+                    <p class="text-[11px] text-gray-500 mb-2">Use this whenever money comes BACK into your bank against this bill — vendor returning excess, staff reimbursing a personal expense, insurance claim payout, anything. Each row: (1) reduces the "Net Payable" tile below (effective cost = payments − refunds), (2) shows as a <strong>credit</strong> row in the Bank Ledger so bank statement reconciles, (3) does NOT change "Balance to Pay" above — vendor was paid in full. Nothing is added to income.</p>
                     <div class="overflow-x-auto">
                         <table class="w-full text-xs" id="expRefundsReceivedTable">
                             <thead class="text-gray-500">
@@ -727,14 +727,16 @@
                 </div>
 
                 <!-- Computed totals summary -->
-                <div class="bg-orange-50 border border-orange-200 rounded-xl p-4 mb-6 grid grid-cols-2 md:grid-cols-7 gap-3 text-sm">
+                <div class="bg-orange-50 border border-orange-200 rounded-xl p-4 mb-6 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-9 gap-3 text-sm">
                     <div><span class="text-gray-500 block text-xs">Taxable Amount (INR)</span><span id="sumBillINR" class="font-bold text-orange-700">—</span></div>
                     <div><span class="text-gray-500 block text-xs">Total Bill Amount</span><span id="sumTotalBill" class="font-bold text-blue-700">—</span></div>
                     <div><span class="text-gray-500 block text-xs">Total Tax (GST)</span><span id="sumTax" class="font-bold text-orange-700">—</span></div>
                     <div><span class="text-gray-500 block text-xs">Total Deduction</span><span id="sumTDS" class="font-bold text-orange-700">—</span></div>
                     <div><span class="text-gray-500 block text-xs">Credit Note / Discount</span><span id="sumCN" class="font-bold text-green-700">—</span></div>
                     <div><span class="text-gray-500 block text-xs">Advance Paid</span><span id="sumAdv" class="font-bold text-purple-700">—</span></div>
-                    <div><span class="text-gray-500 block text-xs">Net Payable</span><span id="sumNet" class="font-bold text-orange-800 text-base">—</span></div>
+                    <div title="Sum of all rows in the Payments Made table"><span class="text-gray-500 block text-xs">Payments Made</span><span id="sumPayments" class="font-bold text-teal-700">—</span></div>
+                    <div title="Sum of all rows in the Refunds Received table — subtracted from cost"><span class="text-gray-500 block text-xs">Refunds Received</span><span id="sumRefunds" class="font-bold text-rose-700">—</span></div>
+                    <div title="Net effective cost to the company = Advance + Payments Made − Refunds Received. Refunds reduce cost but do not undo the payment to the vendor (Balance to Pay above stays at 0 once vendor is paid)."><span class="text-gray-500 block text-xs">Net Payable <span class="text-[10px]">(cost)</span></span><span id="sumNet" class="font-bold text-orange-800 text-base">—</span></div>
                 </div>
 
                 <div class="flex gap-3 justify-end">
@@ -10703,8 +10705,9 @@
         // ═══════════════════════════════════════════════════════════════
         function _correctExpBalance(e) {
             const paymentsSum = (e.paymentsMade||[]).reduce((s,p)=>s+(parseFloat(p.amount)||0),0);
-            const refundsSum  = (e.refundsReceived||[]).reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
-            return Math.max(0, (parseFloat(e.netPayable)||0) - (parseFloat(e.totalDeductions)||0) - paymentsSum + refundsSum);
+            // Refunds are contra-expense — they do NOT reduce Balance to Pay
+            // (vendor is still paid). Effective cost is a separate concept.
+            return Math.max(0, (parseFloat(e.netPayable)||0) - (parseFloat(e.totalDeductions)||0) - paymentsSum);
         }
 
         async function recalculateExpenseBalances() {
@@ -11275,7 +11278,11 @@
 
         function expRow(e) {
             const statusCls = {Paid:'bg-green-100 text-green-700', Pending:'bg-red-100 text-red-700', Partial:'bg-yellow-100 text-yellow-700'}[e.payStatus] || 'bg-gray-100';
-            const fmt = n => n ? '₹'+parseFloat(n).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}) : '—';
+            // Uses `== null` instead of the truthy check so ₹0.00 renders as
+            // itself, not "—" (a fully-paid bill with balance 0 was showing
+            // "—" and looked broken). Only true null/undefined falls through
+            // to the dash.
+            const fmt = n => (n == null) ? '—' : '₹'+parseFloat(n).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
             const safeId = e.expID.replace(/'/g, "\\'");
             const tallyDone = !!e.tallyUpdated;
             const hasVoucher = !!(e.tallyVoucherNo || e.tallyVoucherData || e.tallyVoucherDriveId);
@@ -11312,7 +11319,7 @@
                     <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${e.description||''}">${e.description||'—'}</div>
                     ${_ledgerBadge(e.ledgerAccountId)}
                 </td>
-                <td class="px-3 py-2 text-right font-semibold">${fmt(e.balanceAmt ?? e.netPayable)}</td>
+                <td class="px-3 py-2 text-right font-semibold" title="Original amount payable on the bill (before payments). Payment status is shown separately in the Status column.">${fmt(e.netPayable ?? e.balanceAmt ?? e.billAmtINR)}</td>
                 <td class="px-3 py-2 text-center">
                     <span class="px-2 py-0.5 rounded-full text-xs ${statusCls}">${e.payStatus}</span>
                     ${(() => {
@@ -12671,13 +12678,25 @@
             // Balance to Pay = Net Payable - Other Deductions - Payments Made
             // (the optional multi-installment log; sums to 0 when unused,
             // so existing single-advance bills compute exactly as before)
-            // Refunds Received are added BACK (they undo part of paymentsMade),
-            // so effective paid = paymentsMade − refundsReceived. This keeps
-            // an overpaid-then-refunded bill exactly at zero balance without
-            // touching income or netPayable.
+            //
+            // ── REFUND SEMANTICS (updated) ──────────────────────────────
+            // Refunds are a CONTRA ENTRY to the expense — they reduce the
+            // effective net cost of the bill (payments − refunds), but they
+            // do NOT reverse the payment made to the vendor. This handles
+            // BOTH cases uniformly:
+            //   • Vendor overpaid and returned excess → vendor got net less,
+            //     but you paid the bill in full so vendor balance = 0.
+            //   • Third party reimbursed the company (e.g. staff repaying a
+            //     personal expense billed via company) → vendor still got
+            //     paid in full so vendor balance = 0; effective P&L cost = 0.
+            // Both scenarios: vendor balance is unaffected, effective cost
+            // = payments − refunds.
             const paymentsMadeSum   = _sumExpPaymentsMade();
             const refundsReceivedSum = _sumExpRefundsReceived();
-            const balance    = +Math.max(0, netPayable - totalDeductions - paymentsMadeSum + refundsReceivedSum).toFixed(2);
+            const balance    = +Math.max(0, netPayable - totalDeductions - paymentsMadeSum).toFixed(2);
+            // Net effective cost = what actually cost the company after refunds.
+            // Shown in the footer's "Net Payable" tile and available for reports.
+            const netEffectiveCost = +Math.max(0, adv + paymentsMadeSum - refundsReceivedSum).toFixed(2);
 
             const balEl = document.getElementById('expBalanceAmt');
             if (balEl) balEl.value = balance.toFixed(2);
@@ -12691,16 +12710,27 @@
             const s4 = document.getElementById('sumNet');
             const s5 = document.getElementById('sumCN');
             const s6 = document.getElementById('sumAdv');
+            const sPM = document.getElementById('sumPayments');
+            const sRR = document.getElementById('sumRefunds');
             if (s1)  s1.textContent  = fmt(billINR);
             if (s1b) s1b.textContent = fmt(grossTotal);
             if (s2)  s2.textContent  = fmt(totalTax);
             if (s3)  s3.textContent  = fmt(tdsAmt + totalDeductions);
             if (s5)  s5.textContent  = cn > 0 ? fmt(cn) : '—';
             if (s6)  s6.textContent  = adv > 0 ? fmt(adv) : '—';
-            // Net Payable in summary = balance (after all deductions including PF/PT/ESIC/Other),
-            // not the pre-deduction netPayable. Previously this showed netPayable which didn't
-            // reflect the deductions, making the summary inconsistent with the "Balance to Pay" field.
-            if (s4)  s4.textContent  = fmt(balance);
+            // Two new tiles surface what's inside the multi-installment log
+            // and the refunds table so the balance math is visible at a glance
+            // (previously the user had to scroll up and mental-sum the tables).
+            if (sPM) sPM.textContent = paymentsMadeSum > 0 ? fmt(paymentsMadeSum) : '—';
+            if (sRR) sRR.textContent = refundsReceivedSum > 0 ? '−' + fmt(refundsReceivedSum) : '—';
+            // "Net Payable" tile now shows NET EFFECTIVE COST = (advance +
+            // payments) − refunds, per user's mental model: "refund is a
+            // contra entry, Net Payable should show paid − refund". This is
+            // the true cost of the bill to the company after any refunds.
+            // The "Balance to Pay" field at the top of the modal still shows
+            // amount owed to vendor (unaffected by refunds — refunds are
+            // contra-expense, they don't undo the payment).
+            if (s4)  s4.textContent  = fmt(netEffectiveCost);
         }
 
         function toggleDeductionFields() {
@@ -13278,7 +13308,10 @@
                    (parseFloat(document.getElementById('expOtherDeduction').value)||0))
                 : 0;
 
-            const balance = Math.max(0, netPayable - totalDeductions - _sumExpPaymentsMade() + _sumExpRefundsReceived());
+            // Balance to Pay = amount still owed to VENDOR. Refunds are
+            // contra-expense (not un-payments), so they do NOT reduce this.
+            // Effective cost is computed separately for display.
+            const balance = Math.max(0, netPayable - totalDeductions - _sumExpPaymentsMade());
 
             // Handle multiple file attachments
             let billAttachments = currentExpense?.billAttachments ? [...currentExpense.billAttachments] : [];
@@ -35530,20 +35563,48 @@ Automated WFH alert — ${company} Attendance System.`;
                 if (e.billType === 'INTERBANK') return;   // handled separately below
                 if (e.bankAccountId !== bankId) return;
                 const who = e.vendor || e.description || 'Bill/Expense';
-                if ((e.paymentsMade||[]).length > 0) {
-                    // Multi-installment bill — one debit row per payment made,
-                    // each dated by when that specific instalment actually
-                    // went out (instead of one lump-sum row on a single date).
-                    (e.paymentsMade||[]).forEach(p => {
-                        const amt = +p.amount || 0;
-                        if (amt <= 0) return;
-                        rows.push({ date:p.date||'', desc:`${who}${e.billNo?' — Bill '+e.billNo:''}${p.remarks?' — '+p.remarks:''} (instalment)`, credit:0, debit:amt, src:'Expenses/Bills' });
+
+                // ── 1) Advance paid at bill time is a real cash outflow. ──
+                // Previous versions dropped this whenever paymentsMade also
+                // existed (only iterated the array, skipping the advance),
+                // AND for fully-paid-via-advance bills (balanceAmt=0) the
+                // else branch showed nothing because "?? balanceAmt" resolved
+                // to 0 first. This block always surfaces the advance if > 0.
+                const advAmt = +e.advanceAmt || 0;
+                if (advAmt > 0) {
+                    rows.push({
+                        date: e.advanceDate || e.payDate || e.billDate || '',
+                        desc: `${who}${e.billNo?' — Bill '+e.billNo:''} (advance)`,
+                        credit: 0, debit: advAmt, src: 'Expenses/Bills'
                     });
-                } else {
-                    // Single advance+final model (unchanged, existing behaviour)
-                    const amt = +(e.balanceAmt ?? e.netPayable ?? e.billAmtINR) || 0;
+                }
+
+                // ── 2) Multi-installment payments — one debit row each. ──
+                (e.paymentsMade||[]).forEach(p => {
+                    const amt = +p.amount || 0;
                     if (amt <= 0) return;
-                    rows.push({ date:e.payDate||e.billDate||'', desc:`${who}${e.billNo?' — Bill '+e.billNo:''}`, credit:0, debit:amt, src:'Expenses/Bills' });
+                    rows.push({
+                        date: p.date || '',
+                        desc: `${who}${e.billNo?' — Bill '+e.billNo:''}${p.remarks?' — '+p.remarks:''} (instalment)`,
+                        credit: 0, debit: amt, src: 'Expenses/Bills'
+                    });
+                });
+
+                // ── 3) Old-model backwards compat. ──
+                // Bills recorded before advance/paymentsMade tracking that
+                // are simply marked "Paid" — treat the full netPayable as a
+                // single outflow on the payDate. Only fires when we have
+                // nothing else to show (no advance, no instalments), so it
+                // never double-counts modern records.
+                if (advAmt <= 0 && !(e.paymentsMade||[]).length && e.payStatus === 'Paid') {
+                    const amt = +(e.netPayable ?? e.billAmtINR) || 0;
+                    if (amt > 0) {
+                        rows.push({
+                            date: e.payDate || e.billDate || '',
+                            desc: `${who}${e.billNo?' — Bill '+e.billNo:''}`,
+                            credit: 0, debit: amt, src: 'Expenses/Bills'
+                        });
+                    }
                 }
             });
 
