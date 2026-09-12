@@ -26992,11 +26992,17 @@ Automated WFH alert — ${company} Attendance System.`;
                             </div>
                             <button type="button" onclick="_arAddPaymentRow()" class="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-semibold">+ Add Payment</button>
                         </div>
-                        <!-- Summary tiles -->
-                        <div class="grid grid-cols-3 gap-2 mb-3">
+                        <!-- Summary tiles: Grand Total → Amount Receivable
+                             (net after TDS at source, what should actually
+                             hit the bank) → Received → Balance Due. -->
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
                             <div class="bg-gray-50 rounded-lg p-2">
                                 <div class="text-[10px] text-gray-500 uppercase font-semibold">Grand Total</div>
                                 <div id="arSumGrand" class="text-sm font-bold text-gray-800">${currSym}0.00</div>
+                            </div>
+                            <div class="bg-blue-50 rounded-lg p-2" title="Grand Total minus total TDS deducted at source. This is the net amount you should actually see credited to your bank account. Use it to cross-check against your bank statement.">
+                                <div class="text-[10px] text-blue-700 uppercase font-semibold">Amount Receivable</div>
+                                <div id="arSumReceivable" class="text-sm font-bold text-blue-700">${currSym}0.00</div>
                             </div>
                             <div class="bg-green-50 rounded-lg p-2">
                                 <div class="text-[10px] text-green-700 uppercase font-semibold">Received</div>
@@ -27075,9 +27081,57 @@ Automated WFH alert — ${company} Attendance System.`;
             if (field === 'tdsPct')    p.tdsAmt    = +(base * (+p.tdsPct    || 0) / 100).toFixed(2);
             if (field === 'itTdsPct')  p.itTdsAmt  = +(base * (+p.itTdsPct  || 0) / 100).toFixed(2);
             if (field === 'gstTdsPct') p.gstTdsAmt = +(base * (+p.gstTdsPct || 0) / 100).toFixed(2);
-            _arRenderPaymentRows();
+            // ── SURGICAL UPDATE (no innerHTML regen) ──────────────────
+            // The old code called _arRenderPaymentRows() here, which
+            // regenerated the entire tbody's innerHTML on every keystroke —
+            // that destroyed the input the user was typing into and created
+            // a new one, so focus was lost after each character (users
+            // reported "can't enter continuously"). Now we only mutate the
+            // specific cells that depend on the changed field, leaving
+            // every input node — and the caret — in place.
+            _arUpdateRowSurgical(idx);
             _arRecomputeSummary();
         }
+
+        // Surgical per-row updater: refreshes the auto-derived TDS Amt inputs
+        // (when % was edited) and the two read-only cells (Amt Receivable,
+        // Difference), without regenerating any inputs. Skips whichever
+        // input currently has focus so the user's typing is never disturbed.
+        function _arUpdateRowSurgical(idx) {
+            const p = (window._arWorkingPayments || [])[idx];
+            if (!p) return;
+            const tr = document.querySelector(`#arPaymentsRows tr[data-row-idx="${idx}"]`);
+            if (!tr) return;
+            const invAmt = +document.getElementById('arInvAmt')?.value || 0;
+            const { sym } = _arCurrentCurrency();
+            const fmt = n => sym + (+n || 0).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
+            const active = document.activeElement;
+            // Sync auto-derived TDS Amt inputs — only when NOT the focused
+            // element (so a user typing an amount directly isn't overwritten
+            // by an auto-derivation triggered elsewhere).
+            const tdsAmtIn   = tr.querySelector('.ar-tdsAmt');
+            const itTdsAmtIn = tr.querySelector('.ar-itTdsAmt');
+            const gstTdsAmtIn= tr.querySelector('.ar-gstTdsAmt');
+            if (tdsAmtIn   && active !== tdsAmtIn)   tdsAmtIn.value   = (+p.tdsAmt   || 0).toFixed(2);
+            if (itTdsAmtIn && active !== itTdsAmtIn) itTdsAmtIn.value = (+p.itTdsAmt || 0).toFixed(2);
+            if (gstTdsAmtIn&& active !== gstTdsAmtIn)gstTdsAmtIn.value= (+p.gstTdsAmt|| 0).toFixed(2);
+            // Recompute Amt Receivable + Difference — same math as the row
+            // renderer, kept in sync.
+            const combinedTDS   = +p.tdsAmt   || 0;
+            const brokendownTDS = (+p.itTdsAmt || 0) + (+p.gstTdsAmt || 0);
+            const effectiveTDS  = Math.max(combinedTDS, brokendownTDS);
+            const receivable    = +(invAmt - effectiveTDS).toFixed(2);
+            const diff          = +((+p.amount || 0) - receivable).toFixed(2);
+            const diffColor     = Math.abs(diff) < 1 ? 'text-green-700' : diff > 0 ? 'text-amber-700' : 'text-red-700';
+            const recvCell = tr.querySelector('.ar-receivable');
+            const diffCell = tr.querySelector('.ar-diff');
+            if (recvCell) recvCell.textContent = fmt(receivable);
+            if (diffCell) {
+                diffCell.textContent = sym + diff.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+                diffCell.className = 'px-2 py-1 text-right font-semibold ' + diffColor;
+            }
+        }
+
         function _arRenderPaymentRows() {
             const tbody = document.getElementById('arPaymentsRows');
             if (!tbody) return;
@@ -27089,26 +27143,49 @@ Automated WFH alert — ${company} Attendance System.`;
             }
             const invAmt = +document.getElementById('arInvAmt')?.value || 0;
             tbody.innerHTML = rows.map((p, i) => {
-                const tdsTotal = (+p.tdsAmt||0) + (+p.itTdsAmt||0) + (+p.gstTdsAmt||0);
-                const receivable = (+p.amount || 0) + tdsTotal;
-                // Difference = per-row leftover of invoice amount NOT yet settled
-                // by this row (positive = still due after this row; negative =
-                // over-received — likely a data-entry mistake). Shown per-row
-                // for spotcheck; the summary tile at top gives the overall.
-                const diff = invAmt > 0 ? +(invAmt - receivable).toFixed(2) : 0;
-                const diffColor = diff > 0 ? 'text-amber-700' : diff < 0 ? 'text-red-700' : 'text-green-700';
-                return `<tr class="border-t border-gray-100">
+                // Effective TDS handles the common Indian-tax data-entry
+                // pattern where "TDS AMT" is the COMBINED total and
+                // "IT TDS AMT" + "GST TDS AMT" are its breakdowns. Taking
+                // max() avoids double/triple-counting when the user fills
+                // in both the combined total and the two breakdowns (which
+                // is the typical case — client deducts one lump-sum TDS
+                // with two components, e.g. 2% income-tax + 2% GST TDS).
+                //   • If only TDS AMT is set: use it (combined).
+                //   • If only IT + GST are set: use their sum.
+                //   • If all three set (breakdowns match total): max = total (correct).
+                //   • If breakdowns > combined (uncommon): max defers to breakdowns.
+                const combinedTDS   = +p.tdsAmt   || 0;
+                const brokendownTDS = (+p.itTdsAmt || 0) + (+p.gstTdsAmt || 0);
+                const effectiveTDS  = Math.max(combinedTDS, brokendownTDS);
+                // Amt Receivable = expected bank credit after TDS at source.
+                // Matches user's mental model: "Grand Total − TDS is the
+                // amount receivable". For a single-payment invoice this is
+                // the amount that should hit the bank; for multi-payment,
+                // it's the total-invoice benchmark (same across rows).
+                const receivable = +(invAmt - effectiveTDS).toFixed(2);
+                // Difference tells you whether the bank credit matched
+                // expectations. Near-zero (|diff| < 1) = clean rounding
+                // match (green). Positive = over-received (rare — amber).
+                // Negative = short-received (bank charges deducted, or
+                // data-entry error worth investigating — red).
+                const diff = +((+p.amount || 0) - receivable).toFixed(2);
+                const diffColor = Math.abs(diff) < 1 ? 'text-green-700' : diff > 0 ? 'text-amber-700' : 'text-red-700';
+                // Stable data-row-idx + class hooks so _arUpdateRowSurgical
+                // can find and update this row's derived cells without
+                // regenerating the input elements (which would kill focus
+                // on every keystroke).
+                return `<tr class="border-t border-gray-100" data-row-idx="${i}">
                     <td class="px-1 py-1"><input type="date" value="${p.date||''}" onchange="_arUpdatePaymentField(${i},'date',this.value)" class="w-full px-1.5 py-1 border border-gray-200 rounded text-[11px]"/></td>
                     <td class="px-1 py-1"><input type="number" step="0.01" value="${p.amount||0}" oninput="_arUpdatePaymentField(${i},'amount',this.value)" class="w-24 text-right px-1.5 py-1 border border-gray-200 rounded text-[11px]"/></td>
                     <td class="px-1 py-1"><input type="number" step="0.01" value="${p.taxableAmt||0}" oninput="_arUpdatePaymentField(${i},'taxableAmt',this.value)" class="w-24 text-right px-1.5 py-1 border border-gray-200 rounded text-[11px]"/></td>
                     <td class="px-1 py-1"><input type="number" step="0.01" value="${p.tdsPct||0}" oninput="_arUpdatePaymentField(${i},'tdsPct',this.value)" class="w-14 text-right px-1.5 py-1 border border-gray-200 rounded text-[11px]"/></td>
-                    <td class="px-1 py-1"><input type="number" step="0.01" value="${p.tdsAmt||0}" oninput="_arUpdatePaymentField(${i},'tdsAmt',this.value)" class="w-20 text-right px-1.5 py-1 border border-gray-200 rounded text-[11px]"/></td>
+                    <td class="px-1 py-1"><input type="number" step="0.01" value="${p.tdsAmt||0}" oninput="_arUpdatePaymentField(${i},'tdsAmt',this.value)" class="ar-tdsAmt w-20 text-right px-1.5 py-1 border border-gray-200 rounded text-[11px]"/></td>
                     <td class="px-1 py-1"><input type="number" step="0.01" value="${p.itTdsPct||0}" oninput="_arUpdatePaymentField(${i},'itTdsPct',this.value)" class="w-14 text-right px-1.5 py-1 border border-gray-200 rounded text-[11px]"/></td>
-                    <td class="px-1 py-1"><input type="number" step="0.01" value="${p.itTdsAmt||0}" oninput="_arUpdatePaymentField(${i},'itTdsAmt',this.value)" class="w-20 text-right px-1.5 py-1 border border-gray-200 rounded text-[11px]"/></td>
+                    <td class="px-1 py-1"><input type="number" step="0.01" value="${p.itTdsAmt||0}" oninput="_arUpdatePaymentField(${i},'itTdsAmt',this.value)" class="ar-itTdsAmt w-20 text-right px-1.5 py-1 border border-gray-200 rounded text-[11px]"/></td>
                     <td class="px-1 py-1"><input type="number" step="0.01" value="${p.gstTdsPct||0}" oninput="_arUpdatePaymentField(${i},'gstTdsPct',this.value)" class="w-14 text-right px-1.5 py-1 border border-gray-200 rounded text-[11px]"/></td>
-                    <td class="px-1 py-1"><input type="number" step="0.01" value="${p.gstTdsAmt||0}" oninput="_arUpdatePaymentField(${i},'gstTdsAmt',this.value)" class="w-20 text-right px-1.5 py-1 border border-gray-200 rounded text-[11px]"/></td>
-                    <td class="px-2 py-1 text-right font-semibold text-gray-700">${sym}${receivable.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
-                    <td class="px-2 py-1 text-right font-semibold ${diffColor}">${sym}${diff.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+                    <td class="px-1 py-1"><input type="number" step="0.01" value="${p.gstTdsAmt||0}" oninput="_arUpdatePaymentField(${i},'gstTdsAmt',this.value)" class="ar-gstTdsAmt w-20 text-right px-1.5 py-1 border border-gray-200 rounded text-[11px]"/></td>
+                    <td class="ar-receivable px-2 py-1 text-right font-semibold text-gray-700">${sym}${receivable.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+                    <td class="ar-diff px-2 py-1 text-right font-semibold ${diffColor}">${sym}${diff.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
                     <td class="px-1 py-1 text-center"><button type="button" onclick="_arRemovePaymentRow(${i})" class="text-red-500 hover:text-red-700 text-sm font-bold" title="Remove this row">✕</button></td>
                 </tr>`;
             }).join('');
@@ -27117,13 +27194,39 @@ Automated WFH alert — ${company} Attendance System.`;
             const invAmt = +document.getElementById('arInvAmt')?.value || 0;
             const rows = window._arWorkingPayments || [];
             const received = rows.reduce((s, p) => s + (+p.amount || 0), 0);
-            const tdsTotal = rows.reduce((s, p) => s + (+p.tdsAmt||0) + (+p.itTdsAmt||0) + (+p.gstTdsAmt||0), 0);
+            // Per-row effective TDS matches the same max() rule used in the
+            // row renderer — one authoritative deduction per row, no triple
+            // counting when the user filled both the combined TDS AMT and
+            // its IT/GST breakdowns.
+            const tdsTotal = rows.reduce((s, p) => {
+                const combined   = +p.tdsAmt || 0;
+                const brokendown = (+p.itTdsAmt || 0) + (+p.gstTdsAmt || 0);
+                return s + Math.max(combined, brokendown);
+            }, 0);
             const balance = Math.max(0, +(invAmt - received - tdsTotal).toFixed(2));
             const { sym } = _arCurrentCurrency();
             const fmt = n => sym + (+n || 0).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
             const g = document.getElementById('arSumGrand');    if (g) g.textContent = fmt(invAmt);
+            // "Amount Receivable" tile — Grand Total minus total TDS. This
+            // is the NET amount that should hit the bank after the client
+            // deducts TDS at source. Useful for cross-checking against the
+            // bank statement: what actually credited should equal this
+            // figure (± any rounding). Never negative — clamp at 0 for the
+            // edge case of over-declared TDS.
+            const receivable = Math.max(0, +(invAmt - tdsTotal).toFixed(2));
+            const rcv = document.getElementById('arSumReceivable'); if (rcv) rcv.textContent = fmt(receivable);
+            // "Received" tile shows total INVOICE VALUE settled = actual
+            // bank credits + TDS deducted at source (both count toward
+            // settling the invoice, since TDS is claimable back at ITR
+            // filing). When received + tdsTotal ≈ grandTotal, the invoice
+            // is fully settled and Balance Due is ~zero.
             const r = document.getElementById('arSumReceived'); if (r) r.textContent = fmt(received + tdsTotal);
             const b = document.getElementById('arSumBalance');  if (b) b.textContent = fmt(balance);
+            // Every row's Amt Receivable + Difference cells depend on invAmt
+            // (they read it fresh each render). When the top-level invoice
+            // amount changes, refresh every row surgically — no focus loss,
+            // no innerHTML regen. Cheap: O(rows) DOM ops, no re-parsing.
+            for (let i = 0; i < rows.length; i++) _arUpdateRowSurgical(i);
         }
         function _arOnCurrencyChange() {
             const { code, sym } = _arCurrentCurrency();
