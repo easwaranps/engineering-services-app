@@ -3642,10 +3642,15 @@
                         // Start auto-refresh every 5 minutes (multi-user data sync)
                         _startAutoRefresh();
                         // Start polling for active locks every 2 minutes
+                        // (unless the user paused it in Settings → Background Sync)
                         if (_lockRefresh) clearInterval(_lockRefresh);
-                        _lockRefresh = setInterval(_checkActiveLocks, 120000);
-                        // Also check once immediately after 3s
-                        setTimeout(_checkActiveLocks, 3000);
+                        if (_getSyncPref('lockCheck')) {
+                            _lockRefresh = setInterval(_checkActiveLocks, 120000);
+                            // Also check once immediately after 3s
+                            setTimeout(_checkActiveLocks, 3000);
+                        } else {
+                            _lockRefresh = null;
+                        }
                     }
                 },
             });
@@ -4394,11 +4399,14 @@
         // Set up polling cadence. Slower when idle, faster when a modal is open.
         function _restartPollTimer() {
             if (_concur.timer) clearInterval(_concur.timer);
+            // Respect Background Sync pref — leave timer null so nothing fires.
+            if (!_getSyncPref('concurrencyPoll')) { _concur.timer = null; return; }
             const ms = _concur.openEdit ? 10000 : 30000;
             _concur.timer = setInterval(_concurPollOnce, ms);
         }
         function _startConcurrencyPolling() {
             if (!accessToken) return;
+            if (!_getSyncPref('concurrencyPoll')) return;
             _restartPollTimer();
             // Run one quick poll so we capture baseline modifiedTimes immediately.
             setTimeout(_concurPollOnce, 1500);
@@ -5201,10 +5209,62 @@
             }
         }
 
+        // ── Background Sync preferences ──────────────────────────────
+        // Users can pause any of the three periodic Drive-polling timers
+        // via Settings → Background Sync. Prefs live under
+        // `settings.syncPrefs.{lockCheck,concurrencyPoll,autoRefresh}` and
+        // persist to Drive. Default TRUE for every pref so existing
+        // behaviour is preserved for anyone who has never touched them
+        // (absent key === true, so upgrades are transparent).
+        function _getSyncPref(key) {
+            const p = (typeof settings !== 'undefined' && settings && settings.syncPrefs) || {};
+            return p[key] !== false;
+        }
+        async function _setSyncPref(key, val) {
+            if (!settings.syncPrefs) settings.syncPrefs = {};
+            settings.syncPrefs[key] = !!val;
+            try { await saveData('settings', settings); }
+            catch (e) { console.warn('sync pref save failed:', e); }
+            // Start / stop the relevant timer immediately.
+            if (key === 'lockCheck') {
+                if (val) {
+                    if (accessToken && typeof _checkActiveLocks === 'function' && !_lockRefresh) {
+                        _lockRefresh = setInterval(_checkActiveLocks, 120000);
+                        setTimeout(_checkActiveLocks, 500);
+                    }
+                } else if (_lockRefresh) {
+                    clearInterval(_lockRefresh); _lockRefresh = null;
+                }
+            } else if (key === 'concurrencyPoll') {
+                if (val) {
+                    if (accessToken && typeof _startConcurrencyPolling === 'function') _startConcurrencyPolling();
+                } else if (_concur?.timer) {
+                    clearInterval(_concur.timer); _concur.timer = null;
+                }
+            } else if (key === 'autoRefresh') {
+                if (val) {
+                    if (accessToken) _startAutoRefresh();
+                } else if (_autoRefreshTimer) {
+                    clearInterval(_autoRefreshTimer); _autoRefreshTimer = null;
+                }
+            }
+            const labels = {
+                lockCheck:       'Active-locks check (2 min)',
+                concurrencyPoll: 'Concurrency poll (30 s)',
+                autoRefresh:     'Data auto-refresh (5 min)'
+            };
+            if (typeof _showToast === 'function') {
+                _showToast(`${val ? '▶ Resumed' : '⏸ Paused'}: ${labels[key] || key}`, val ? '#059669' : '#b45309', 3500);
+            }
+        }
+
         // Auto-refresh every 5 minutes when app is active (multi-user safety)
         let _autoRefreshTimer = null;
         function _startAutoRefresh() {
             if (_autoRefreshTimer) clearInterval(_autoRefreshTimer);
+            // Respect the user's Background Sync preference — bail out if
+            // they've paused the 5-min data refresh in Settings.
+            if (!_getSyncPref('autoRefresh')) { _autoRefreshTimer = null; return; }
             _autoRefreshTimer = setInterval(() => {
                 // Do not auto-refresh while the Director Expense settle modal is open —
                 // the refresh would reset _dsState and lose the user's bill selection.
@@ -5218,6 +5278,9 @@
         // Also refresh when tab becomes visible after being hidden
         document.addEventListener('visibilitychange', () => {
             if (document.getElementById('dirSettleModal')?.classList.contains('show')) return;
+            // Same Background Sync pref as _startAutoRefresh — if the user
+            // has paused auto-refresh, tab-visibility shouldn't force one.
+            if (!_getSyncPref('autoRefresh')) return;
             if (document.visibilityState === 'visible' && accessToken) {
                 console.log('👁 Tab visible — refreshing data…');
                 refreshDataFromDrive().catch(()=>{});
@@ -17672,6 +17735,41 @@
                             12 tabs are pushed: <strong>Settings</strong>, <strong>Parties</strong>, <strong>AllTransactions</strong>, <strong>ApprovedTxns</strong>, <strong>Expenses</strong>, <strong>DirectorExpenses</strong>, <strong>Staff</strong>, <strong>Payslips</strong>, <strong>Attendance</strong>, <strong>WorkLogs</strong>, <strong>DailyEntries</strong>, <strong>Calibrations</strong>. Each sync replaces the entire tab content with the current BMS data — manual edits in those tabs will be overwritten. Tabs that don't exist in your sheet are skipped automatically.
                         </p>
                     </details>
+                </div>
+
+                <!-- Background Sync — periodic Drive polling toggles.
+                     Each toggle controls one interval timer. Changes apply
+                     immediately (no reload needed) and persist to Drive via
+                     settings.syncPrefs. Default state = all enabled, so
+                     existing users see no change until they touch a toggle. -->
+                <div class="bg-gradient-to-br from-amber-50 to-orange-50 border-2 border-amber-200 rounded-2xl shadow-lg p-6 mb-6">
+                    <h3 class="text-xl font-bold mb-1 text-amber-900">⏸ Background Sync</h3>
+                    <p class="text-xs text-amber-700 mb-4">
+                        Pause any of the three periodic Drive-polling timers if they're distracting or you're working offline. Each toggle applies immediately and persists across sessions. When a timer is paused, use the <strong>🔄 Refresh</strong> button at the top of the app to sync manually.
+                    </p>
+                    <div class="space-y-3">
+                        <label class="flex items-start gap-3 p-3 bg-white rounded-lg border cursor-pointer hover:border-amber-300">
+                            <input type="checkbox" ${_getSyncPref('concurrencyPoll') ? 'checked' : ''} onchange="_setSyncPref('concurrencyPoll', this.checked)" class="mt-1 w-4 h-4"/>
+                            <div class="flex-1">
+                                <div class="font-semibold text-sm text-gray-800">Concurrency polling <span class="text-xs font-normal text-amber-700">— every 30 seconds</span></div>
+                                <div class="text-[11px] text-gray-500 mt-0.5">Checks Drive for changes to files you're viewing so the "🔄 Last sync: 30s ago" indicator at the top stays live and you get warned when a colleague saves something you have open. This is the highest-frequency timer — the biggest bandwidth saver if disabled.</div>
+                            </div>
+                        </label>
+                        <label class="flex items-start gap-3 p-3 bg-white rounded-lg border cursor-pointer hover:border-amber-300">
+                            <input type="checkbox" ${_getSyncPref('lockCheck') ? 'checked' : ''} onchange="_setSyncPref('lockCheck', this.checked)" class="mt-1 w-4 h-4"/>
+                            <div class="flex-1">
+                                <div class="font-semibold text-sm text-gray-800">Active-locks check <span class="text-xs font-normal text-amber-700">— every 2 minutes</span></div>
+                                <div class="text-[11px] text-gray-500 mt-0.5">Detects edit locks from other users so you see "someone else is editing this" warnings before overwriting their changes. Safe to disable if you're the only editor.</div>
+                            </div>
+                        </label>
+                        <label class="flex items-start gap-3 p-3 bg-white rounded-lg border cursor-pointer hover:border-amber-300">
+                            <input type="checkbox" ${_getSyncPref('autoRefresh') ? 'checked' : ''} onchange="_setSyncPref('autoRefresh', this.checked)" class="mt-1 w-4 h-4"/>
+                            <div class="flex-1">
+                                <div class="font-semibold text-sm text-gray-800">Full data refresh <span class="text-xs font-normal text-amber-700">— every 5 minutes</span></div>
+                                <div class="text-[11px] text-gray-500 mt-0.5">Re-downloads all your data from Drive so recent edits by other users appear without a manual refresh. Also fires whenever you switch back to this browser tab. Disabling this stops both triggers.</div>
+                            </div>
+                        </label>
+                    </div>
                 </div>
 
                 <div class="bg-white rounded-2xl shadow-lg p-6">
